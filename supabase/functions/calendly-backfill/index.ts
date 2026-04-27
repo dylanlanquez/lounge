@@ -48,25 +48,67 @@ Deno.serve(async (req) => {
 
   const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  let body: { since?: string; until?: string };
+  let body: { action?: 'backfill' | 'verify'; since?: string; until?: string };
   try {
     body = await req.json();
   } catch {
     body = {};
   }
 
-  // Default window: past 30 days + future 60 days. Past is needed so a fresh
-  // user testing today's booking actually sees it on backfill (webhook handled
-  // it live, but we re-replay idempotently — duplicates suppress on the
-  // partial unique index).
-  const since = body.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const until = body.until ?? new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-
-  // Step 1: resolve the connected Calendly user URI
+  // Step 1: resolve the connected Calendly user URI (used by both actions)
   const me = await calendly('GET', '/users/me');
   if (!me.ok) return jsonResponse(502, { ok: false, error: 'Calendly /users/me failed', detail: me.body });
-  const userUri = me.body?.resource?.uri;
+  const userUri = me.body?.resource?.uri as string | undefined;
+  const orgUri = me.body?.resource?.current_organization as string | undefined;
   if (!userUri) return jsonResponse(502, { ok: false, error: 'No user URI in /users/me' });
+
+  // action=verify → list webhook subscriptions and tell the UI which (if any)
+  // points at this project's calendly-webhook function.
+  if (body.action === 'verify') {
+    const expectedUrl = `${SUPABASE_URL.replace('https://', 'https://').replace(
+      '.supabase.co',
+      '.functions.supabase.co'
+    )}/calendly-webhook`;
+    const subs = await calendly(
+      'GET',
+      `/webhook_subscriptions?organization=${encodeURIComponent(orgUri ?? '')}&user=${encodeURIComponent(userUri)}&scope=user`
+    );
+    if (!subs.ok) {
+      return jsonResponse(502, { ok: false, error: 'webhook_subscriptions failed', detail: subs.body });
+    }
+    const list = (subs.body?.collection ?? []) as Array<{
+      uri?: string;
+      callback_url?: string;
+      events?: string[];
+      state?: string;
+      created_at?: string;
+      retry_started_at?: string | null;
+    }>;
+    const matching = list.filter((s) => s.callback_url === expectedUrl);
+    return jsonResponse(200, {
+      ok: true,
+      action: 'verify',
+      expectedUrl,
+      userUri,
+      orgUri,
+      subscriptionsTotal: list.length,
+      subscriptionsMatching: matching.length,
+      activeMatching: matching.filter((s) => s.state === 'active').length,
+      subscriptions: list.map((s) => ({
+        uri: s.uri,
+        callback_url: s.callback_url,
+        events: s.events,
+        state: s.state,
+        created_at: s.created_at,
+        retry_started_at: s.retry_started_at,
+        matchesProject: s.callback_url === expectedUrl,
+      })),
+    });
+  }
+
+  // Default action: backfill. Window past 30d..future 60d.
+  const since = body.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const until = body.until ?? new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
 
   // Step 2: paginate scheduled_events
   let pageToken: string | undefined = undefined;
