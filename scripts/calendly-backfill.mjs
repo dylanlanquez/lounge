@@ -5,15 +5,15 @@
 // function (which needs a user JWT we don't have here).
 //
 // Usage:
-//   node scripts/calendly-backfill.mjs                      # default: today + 60 days forward
-//   node scripts/calendly-backfill.mjs --days-back=30 --days-ahead=90
+//   node scripts/calendly-backfill.mjs                      # default: -30d..+60d
+//   node scripts/calendly-backfill.mjs --days-back=90 --days-ahead=120
 //   node scripts/calendly-backfill.mjs --dry-run
 
 import pg from 'pg';
 
 const args = parseArgs(process.argv.slice(2));
 const DRY = args['dry-run'] !== undefined;
-const DAYS_BACK = Number(args['days-back'] ?? '0');
+const DAYS_BACK = Number(args['days-back'] ?? '30');
 const DAYS_AHEAD = Number(args['days-ahead'] ?? '60');
 
 const PAT = process.env.CALENDLY_PAT;

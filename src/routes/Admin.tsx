@@ -93,9 +93,10 @@ function CalendlyTab() {
       setToast({ tone: 'error', title: 'Backfill failed', description: res.error });
       return;
     }
+    const skippedNote = res.skipped && res.skipped > 0 ? ` · ${res.skipped} already imported` : '';
     setToast({
       tone: 'success',
-      title: `Pulled ${res.received ?? 0} events, applied ${res.applied ?? 0}.`,
+      title: `Pulled ${res.received ?? 0} events, applied ${res.applied ?? 0}${skippedNote}.`,
       description:
         (res.errors?.length ?? 0) > 0
           ? `${res.errors!.length} error(s). Reload Schedule to see new appointments.`
@@ -144,7 +145,7 @@ function CalendlyTab() {
         </div>
 
         <p style={{ marginTop: theme.space[4], fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-          Backfill pulls active scheduled_events from your Calendly account for the next 60 days, identity-resolves invitees against Meridian patients, and inserts appointments. Idempotent on Calendly invitee URI.
+          Backfill pulls active scheduled_events from past 30 days through next 60 days, identity-resolves invitees against Meridian patients (fill-blanks merge for existing), and inserts appointments. Idempotent on Calendly invitee URI — safe to re-run.
         </p>
       </Card>
 
