@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, BarChart3, CreditCard, Users } from 'lucide-react';
+import { Navigate } from 'react-router-dom';
+import { AlertTriangle, BarChart3, CalendarCheck, CreditCard, RefreshCw, Users } from 'lucide-react';
 import {
-  Avatar,
   Button,
   Card,
   EmptyState,
   SegmentedControl,
   Skeleton,
   StatusPill,
+  Toast,
 } from '../components/index.ts';
+import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import {
   useReceptionistSessions,
@@ -19,36 +21,29 @@ import {
   usePaymentTotals,
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
+import { useCalendlyDiagnostic, runCalendlyBackfill } from '../lib/queries/calendlyDiagnostic.ts';
 import { formatPence } from '../lib/queries/carts.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('reports');
+  const isMobile = useIsMobile(640);
+  const [tab, setTab] = useState<Tab>('calendly');
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        <header style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], marginBottom: theme.space[5] }}>
-          <Button variant="tertiary" size="sm" onClick={() => navigate('/schedule')}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <ArrowLeft size={16} /> Schedule
-            </span>
-          </Button>
-          <div style={{ flex: 1 }} />
-          <Avatar name={user.email ?? 'You'} size="md" />
-        </header>
+        <TopBar variant="subpage" backTo="/schedule" title="Admin" />
 
         <h1
           style={{
             margin: 0,
-            fontSize: theme.type.size.xxl,
+            fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
             fontWeight: theme.type.weight.semibold,
             letterSpacing: theme.type.tracking.tight,
             marginBottom: theme.space[5],
@@ -57,11 +52,12 @@ export function Admin() {
           Admin
         </h1>
 
-        <div style={{ marginBottom: theme.space[5] }}>
+        <div style={{ marginBottom: theme.space[5], overflowX: 'auto' }}>
           <SegmentedControl<Tab>
             value={tab}
             onChange={setTab}
             options={[
+              { value: 'calendly', label: 'Calendly' },
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
               { value: 'failures', label: 'Failures' },
@@ -69,9 +65,143 @@ export function Admin() {
           />
         </div>
 
-        {tab === 'reports' ? <ReportsTab /> : tab === 'devices' ? <DevicesTab /> : <FailuresTab />}
+        {tab === 'calendly' ? (
+          <CalendlyTab />
+        ) : tab === 'reports' ? (
+          <ReportsTab />
+        ) : tab === 'devices' ? (
+          <DevicesTab />
+        ) : (
+          <FailuresTab />
+        )}
       </div>
     </main>
+  );
+}
+
+function CalendlyTab() {
+  const d = useCalendlyDiagnostic();
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error' | 'info'; title: string; description?: string } | null>(null);
+
+  const onBackfill = async () => {
+    setBusy(true);
+    setToast(null);
+    const res = await runCalendlyBackfill();
+    setBusy(false);
+    if (!res.ok) {
+      setToast({ tone: 'error', title: 'Backfill failed', description: res.error });
+      return;
+    }
+    setToast({
+      tone: 'success',
+      title: `Pulled ${res.received ?? 0} events, applied ${res.applied ?? 0}.`,
+      description:
+        (res.errors?.length ?? 0) > 0
+          ? `${res.errors!.length} error(s). Reload Schedule to see new appointments.`
+          : 'Reload Schedule to see new appointments.',
+    });
+    d.refresh();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <Card padding="lg">
+        <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+          Calendly status
+        </h2>
+        <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          Webhook handler is live at <code>…/functions/v1/calendly-webhook</code>. New bookings auto-import. Existing bookings need a one-time backfill.
+        </p>
+
+        {d.loading ? (
+          <Skeleton height={120} />
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: theme.space[3] }}>
+            <DiagTile label="Webhook deliveries" value={String(d.deliveriesTotal)} />
+            <DiagTile label="Processed" value={String(d.deliveriesProcessed)} />
+            <DiagTile label="Failed" value={String(d.deliveriesFailed)} tone={d.deliveriesFailed > 0 ? 'alert' : 'normal'} />
+            <DiagTile label="Calendly appts" value={String(d.lngAppointmentsCalendly)} />
+            <DiagTile label="Errors (24h)" value={String(d.recentFailures)} tone={d.recentFailures > 0 ? 'alert' : 'normal'} />
+            <DiagTile
+              label="Last delivery"
+              value={d.lastDelivery ? new Date(d.lastDelivery).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+            />
+          </div>
+        )}
+
+        <div style={{ marginTop: theme.space[5], display: 'flex', gap: theme.space[3], flexWrap: 'wrap' }}>
+          <Button variant="primary" loading={busy} onClick={onBackfill}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <CalendarCheck size={16} /> Backfill from Calendly API
+            </span>
+          </Button>
+          <Button variant="secondary" onClick={() => d.refresh()}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <RefreshCw size={16} /> Refresh
+            </span>
+          </Button>
+        </div>
+
+        <p style={{ marginTop: theme.space[4], fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+          Backfill pulls active scheduled_events from your Calendly account for the next 60 days, identity-resolves invitees against Meridian patients, and inserts appointments. Idempotent on Calendly invitee URI.
+        </p>
+      </Card>
+
+      <Card padding="lg">
+        <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+          If nothing is showing
+        </h2>
+        <ol style={{ margin: `${theme.space[3]}px 0 0 ${theme.space[5]}px`, padding: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.relaxed }}>
+          <li>Click <strong>Backfill from Calendly API</strong> above. Imports your existing bookings.</li>
+          <li>Make a fresh Calendly booking. Webhook should fire within seconds.</li>
+          <li>Check <strong>Failures</strong> tab for any calendly-webhook entries.</li>
+          <li>If the webhook deliveries count is 0 after a fresh booking, the webhook subscription may be inactive. Re-run <code>scripts/calendly-setup.sh</code>.</li>
+        </ol>
+      </Card>
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone === 'info' ? 'info' : toast.tone === 'error' ? 'error' : 'success'} title={toast.title} description={toast.description} duration={6000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DiagTile({ label, value, tone = 'normal' }: { label: string; value: string; tone?: 'normal' | 'alert' }) {
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        padding: theme.space[4],
+        boxShadow: theme.shadow.card,
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          fontWeight: theme.type.weight.medium,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        {label}
+      </span>
+      <p
+        style={{
+          margin: `${theme.space[2]}px 0 0`,
+          fontSize: theme.type.size.lg,
+          fontWeight: theme.type.weight.semibold,
+          color: tone === 'alert' ? theme.color.alert : theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {value}
+      </p>
+    </div>
   );
 }
 

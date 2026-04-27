@@ -67,9 +67,19 @@ export function NewWalkIn() {
     setSubmitting(true);
     setError(null);
     try {
+      // patients.account_id is a legacy NOT NULL column. Resolve from the
+      // signed-in user via auth_account_id() RPC.
+      const { data: accountId, error: accErr } = await supabase.rpc('auth_account_id');
+      if (accErr || !accountId) {
+        throw new Error(
+          accErr?.message ??
+            'Could not resolve your account. Make sure your accounts row is set up in Meridian.'
+        );
+      }
       const { data, error: err } = await supabase
         .from('patients')
         .insert({
+          account_id: accountId,
           location_id: location.id,
           first_name: newPatient.first_name.trim(),
           last_name: newPatient.last_name.trim(),

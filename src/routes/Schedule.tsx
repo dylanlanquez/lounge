@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { CalendarOff, ChevronRight, LogOut, Plus } from 'lucide-react';
+import { CalendarOff, ChevronRight, Plus } from 'lucide-react';
 import {
-  Avatar,
   BottomSheet,
   Button,
   Card,
@@ -18,8 +17,10 @@ import {
   heightForDuration,
 } from '../components/CalendarGrid/CalendarGrid.tsx';
 import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
+import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type AppointmentRow,
   patientDisplayName,
@@ -33,8 +34,9 @@ import { supabase } from '../lib/supabase.ts';
 type View = 'today' | 'upcoming' | 'past';
 
 export function Schedule() {
-  const { user, loading: authLoading, signOut } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const isMobile = useIsMobile(640);
   const [view, setView] = useState<View>('today');
   const [selected, setSelected] = useState<AppointmentRow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,28 +59,15 @@ export function Schedule() {
     view === 'today' ? 'Today' : view === 'upcoming' ? 'Upcoming' : 'Past 30 days';
 
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: isMobile ? theme.space[4] : theme.space[6],
+      }}
+    >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        <header
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[4],
-            marginBottom: theme.space[6],
-          }}
-        >
-          <img src="/lounge-logo.png" alt="Lounge" style={{ height: 32, width: 'auto' }} />
-          <div style={{ flex: 1 }} />
-          <Avatar name={user.email ?? 'You'} size="md" badge="online" />
-          <Button variant="tertiary" onClick={() => navigate('/admin')}>
-            Admin
-          </Button>
-          <Button variant="tertiary" onClick={signOut}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <LogOut size={16} /> Sign out
-            </span>
-          </Button>
-        </header>
+        <TopBar variant="home" />
 
         <div
           style={{
@@ -90,7 +79,7 @@ export function Schedule() {
             flexWrap: 'wrap',
           }}
         >
-          <div>
+          <div style={{ minWidth: 0 }}>
             <p
               style={{
                 margin: 0,
@@ -104,7 +93,7 @@ export function Schedule() {
             <h1
               style={{
                 margin: `${theme.space[1]}px 0 0`,
-                fontSize: theme.type.size.xxl,
+                fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
                 fontWeight: theme.type.weight.semibold,
                 letterSpacing: theme.type.tracking.tight,
               }}
@@ -112,9 +101,9 @@ export function Schedule() {
               {headerTitle}
             </h1>
           </div>
-          <Button variant="primary" onClick={() => navigate('/walk-in/new')}>
+          <Button variant="primary" size={isMobile ? 'md' : 'lg'} onClick={() => navigate('/walk-in/new')}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Plus size={18} /> New walk-in
+              <Plus size={isMobile ? 16 : 18} /> {isMobile ? 'Walk-in' : 'New walk-in'}
             </span>
           </Button>
         </div>
@@ -131,7 +120,7 @@ export function Schedule() {
           />
         </div>
 
-        <Card padding="md">
+        <Card padding={isMobile ? 'sm' : 'md'}>
           {view === 'today' ? (
             today.loading ? (
               <SkeletonRows />
@@ -139,12 +128,7 @@ export function Schedule() {
               <EmptyState
                 icon={<CalendarOff size={24} />}
                 title="No appointments today"
-                description="Create a walk-in below, or wait for a Calendly booking to land."
-                action={
-                  <Button variant="primary" showArrow onClick={() => navigate('/walk-in/new')}>
-                    New walk-in
-                  </Button>
-                }
+                description="Tap the New walk-in button above when someone arrives, or wait for Calendly bookings to land."
               />
             ) : (
               <div style={{ paddingTop: theme.space[2] }}>
@@ -194,7 +178,7 @@ export function Schedule() {
             textAlign: 'center',
           }}
         >
-          Lounge v0.6 preview · build {import.meta.env.MODE} · signed in as {user.email}
+          Lounge v0.7 · {user.email}
         </p>
       </div>
 
