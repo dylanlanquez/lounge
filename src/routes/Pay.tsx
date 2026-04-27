@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
+import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useVisitDetail } from '../lib/queries/visits.ts';
@@ -29,6 +30,7 @@ export function Pay() {
   const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>('email');
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [bnplOpen, setBnplOpen] = useState(false);
   const [journey, setJourney] = useState<Journey>('standard');
   const { data: readers } = useTerminalReaders();
   const reader = readers[0] ?? null;
@@ -42,6 +44,15 @@ export function Pay() {
     }
     setJourney(j);
     setTerminalOpen(true);
+  };
+
+  const openBnpl = (provider: BnplProvider) => {
+    if (!reader) {
+      setError('No card reader registered. BNPL needs the same reader.');
+      return;
+    }
+    setJourney(provider);
+    setBnplOpen(true);
   };
 
   if (authLoading) return null;
@@ -184,14 +195,14 @@ export function Pay() {
                 icon={<ShoppingBag size={20} />}
                 title="Klarna"
                 description={`£30 minimum, £2,000 max. Reader: ${reader?.friendly_name ?? '—'}`}
-                onClick={() => openTerminal('klarna')}
+                onClick={() => openBnpl('klarna')}
                 disabled={!reader}
               />
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Clearpay"
                 description={`Customer's app caps the limit. Reader: ${reader?.friendly_name ?? '—'}`}
-                onClick={() => openTerminal('clearpay')}
+                onClick={() => openBnpl('clearpay')}
                 disabled={!reader}
               />
             </div>
@@ -286,21 +297,40 @@ export function Pay() {
       </div>
 
       {reader && cart ? (
-        <TerminalPaymentModal
-          open={terminalOpen}
-          onClose={() => setTerminalOpen(false)}
-          visitId={visit?.id ?? ''}
-          cartId={cart.id}
-          amountPence={total}
-          readerId={reader.id}
-          readerName={reader.friendly_name}
-          paymentJourney={journey}
-          onSucceeded={(pid) => {
-            setPaymentId(pid);
-            setTerminalOpen(false);
-            setStage('success');
-          }}
-        />
+        <>
+          <TerminalPaymentModal
+            open={terminalOpen}
+            onClose={() => setTerminalOpen(false)}
+            visitId={visit?.id ?? ''}
+            cartId={cart.id}
+            amountPence={total}
+            readerId={reader.id}
+            readerName={reader.friendly_name}
+            paymentJourney={journey === 'klarna' || journey === 'clearpay' ? journey : 'standard'}
+            onSucceeded={(pid) => {
+              setPaymentId(pid);
+              setTerminalOpen(false);
+              setStage('success');
+            }}
+          />
+          {(journey === 'klarna' || journey === 'clearpay') ? (
+            <BNPLHelper
+              open={bnplOpen}
+              onClose={() => setBnplOpen(false)}
+              provider={journey}
+              visitId={visit?.id ?? ''}
+              cartId={cart.id}
+              amountPence={total}
+              readerId={reader.id}
+              readerName={reader.friendly_name}
+              onSucceeded={(pid) => {
+                setPaymentId(pid);
+                setBnplOpen(false);
+                setStage('success');
+              }}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {error ? (
