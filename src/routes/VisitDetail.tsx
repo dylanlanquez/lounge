@@ -4,6 +4,7 @@ import { Plus, ShoppingCart } from 'lucide-react';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { VisitFiles } from '../components/VisitFiles/VisitFiles.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -243,6 +244,12 @@ export function VisitDetail() {
                 >
                   Take payment {formatPence(total)}
                 </Button>
+              </div>
+            ) : null}
+
+            {patient ? (
+              <div style={{ marginTop: theme.space[6] }}>
+                <VisitFiles patientId={patient.id} patientName={patientFullName(patient)} />
               </div>
             ) : null}
           </>
