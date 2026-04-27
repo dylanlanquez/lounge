@@ -9,7 +9,7 @@ source ~/.zshrc
 PROJECT_REF="npuvhxakffxqoszytkxw"
 cd ~/Desktop/lounge-app
 
-for fn in calendly-webhook calendly-backfill terminal-start-payment terminal-webhook terminal-cancel-payment terminal-refund; do
+for fn in calendly-webhook calendly-backfill terminal-start-payment terminal-webhook terminal-cancel-payment terminal-refund send-receipt; do
   if [[ -d "supabase/functions/$fn" ]]; then
     echo "[deploy] $fn"
     if [[ "$fn" == "terminal-webhook" || "$fn" == "calendly-webhook" ]]; then
