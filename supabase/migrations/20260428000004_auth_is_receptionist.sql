@@ -20,7 +20,7 @@ as $$
       join public.accounts a on a.id = lm.account_id
      where a.auth_user_id = auth.uid()
        and lm.lab_role = 'receptionist'
-       and lm.status = 'active'
+       and lm.removed_at is null
   );
 $$;
 
