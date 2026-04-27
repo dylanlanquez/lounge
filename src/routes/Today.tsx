@@ -1,5 +1,5 @@
-import { Navigate } from 'react-router-dom';
-import { CalendarOff, LogOut } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { CalendarOff, LogOut, Plus } from 'lucide-react';
 import { Avatar, Button, Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
 import { CalendarGrid, offsetForTime, heightForDuration } from '../components/CalendarGrid/CalendarGrid.tsx';
 import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
@@ -13,6 +13,7 @@ import {
 
 export function Today() {
   const { user, loading: authLoading, signOut } = useAuth();
+  const navigate = useNavigate();
   const { data: appointments, loading, error } = useTodayAppointments();
 
   if (authLoading) return <Loading message="Checking session…" />;
@@ -45,27 +46,43 @@ export function Today() {
           </Button>
         </header>
 
-        <div style={{ marginBottom: theme.space[6] }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              fontWeight: theme.type.weight.medium,
-            }}
-          >
-            {todayLabel}
-          </p>
-          <h1
-            style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.xxl,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-            }}
-          >
-            Today
-          </h1>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'space-between',
+            gap: theme.space[4],
+            marginBottom: theme.space[6],
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {todayLabel}
+            </p>
+            <h1
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.xxl,
+                fontWeight: theme.type.weight.semibold,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              Today
+            </h1>
+          </div>
+          <Button variant="primary" onClick={() => navigate('/walk-in/new')}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Plus size={18} /> New walk-in
+            </span>
+          </Button>
         </div>
 
         <Card padding="md">
@@ -85,10 +102,10 @@ export function Today() {
             <EmptyState
               icon={<CalendarOff size={24} />}
               title="No appointments today"
-              description="Once a Calendly booking lands or a walk-in arrives, it will appear here."
+              description="Create a walk-in below, or wait for a Calendly booking to land."
               action={
-                <Button variant="primary" disabled showArrow>
-                  New walk-in (slice 4)
+                <Button variant="primary" showArrow onClick={() => navigate('/walk-in/new')}>
+                  New walk-in
                 </Button>
               }
             />
