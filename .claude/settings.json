@@ -1,0 +1,52 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --yes supabase@latest --version)",
+      "Bash(npx --yes supabase@latest --help)",
+      "Bash(npx --yes supabase@latest projects list)",
+      "Bash(npx --yes supabase@latest branches list)",
+      "Bash(npx --yes supabase@latest branches get *)",
+      "Bash(npx --yes supabase@latest migration list)",
+      "Bash(npx --yes supabase@latest functions list)",
+      "Bash(npx --yes supabase@latest secrets list)",
+      "Bash(npx supabase --version)",
+      "Bash(npx supabase --help)",
+      "Bash(npx supabase projects list)",
+      "Bash(npx supabase branches list)",
+      "Bash(npx supabase branches get *)",
+      "Bash(npx supabase migration list)",
+      "Bash(npx supabase functions list)",
+      "Bash(npx supabase secrets list)",
+      "Bash(supabase --version)",
+      "Bash(supabase migration list)",
+      "Bash(supabase functions list)",
+      "Bash(supabase branches list)",
+      "Bash(supabase branches get *)",
+      "Bash(supabase secrets list)",
+      "Bash(supabase projects list)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck *)",
+      "Bash(npm run lint *)",
+      "Bash(git fetch *)",
+      "Bash(git remote *)",
+      "Bash(git remote)",
+      "Bash(git ls-remote *)",
+
+      "Bash(/Users/dylan/Desktop/lounge-app/scripts/shadow-bootstrap.sh)",
+      "Bash(/Users/dylan/Desktop/lounge-app/scripts/shadow-cleanup.sh)",
+      "Bash(/Users/dylan/Desktop/lounge-app/scripts/meridian-apply.sh)",
+      "Bash(./scripts/shadow-bootstrap.sh)",
+      "Bash(./scripts/shadow-cleanup.sh)",
+      "Bash(./scripts/meridian-apply.sh)",
+
+      "Bash(npx vercel link *)",
+      "Bash(npx vercel --prod *)",
+      "Bash(npx vercel deploy *)",
+      "Bash(npx vercel env *)",
+      "Bash(npx vercel domains *)",
+      "Bash(npx vercel ls)",
+      "Bash(npx vercel inspect *)"
+    ]
+  }
+}
