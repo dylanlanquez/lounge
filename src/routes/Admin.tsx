@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, RefreshCw, ShieldAlert, Users } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, Mail, RefreshCw, ShieldAlert, Users } from 'lucide-react';
 import {
   Button,
   Card,
@@ -19,6 +19,8 @@ import {
   useReceptionistSessions,
   useUnresolvedFailures,
   usePaymentTotals,
+  usePendingReceipts,
+  retrySendReceipt,
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
 import {
@@ -30,7 +32,7 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'receipts';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -63,6 +65,7 @@ export function Admin() {
             onChange={setTab}
             options={[
               { value: 'calendly', label: 'Calendly' },
+              { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
               { value: 'failures', label: 'Failures' },
@@ -72,6 +75,8 @@ export function Admin() {
 
         {tab === 'calendly' ? (
           <CalendlyTab />
+        ) : tab === 'receipts' ? (
+          <ReceiptsTab />
         ) : tab === 'reports' ? (
           <ReportsTab />
         ) : tab === 'devices' ? (
@@ -354,6 +359,104 @@ function ReportsTab() {
           </ul>
         )}
       </Card>
+    </div>
+  );
+}
+
+function ReceiptsTab() {
+  const r = usePendingReceipts();
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const onRetry = async (receiptId: string) => {
+    setRetrying(receiptId);
+    setToast(null);
+    const res = await retrySendReceipt(receiptId);
+    setRetrying(null);
+    if (!res.ok) {
+      setToast({ tone: 'error', title: 'Retry failed', description: res.error });
+      return;
+    }
+    setToast({ tone: 'success', title: 'Receipt re-delivered.' });
+    r.refresh();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <Card padding="lg">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+              Pending receipts
+            </h2>
+            <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              Receipts that haven't been delivered yet, or where Resend / Twilio reported a failure. Tap Retry to re-attempt.
+            </p>
+          </div>
+          <Button variant="tertiary" size="sm" onClick={r.refresh}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <RefreshCw size={14} /> Refresh
+            </span>
+          </Button>
+        </div>
+
+        <div style={{ marginTop: theme.space[4] }}>
+          {r.loading ? (
+            <Skeleton height={64} />
+          ) : r.data.length === 0 ? (
+            <EmptyState
+              icon={<Mail size={20} />}
+              title="No pending receipts"
+              description="Every receipt has been delivered. If a customer reports they didn't receive one, ask them to check spam first."
+            />
+          ) : (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {r.data.map((row) => (
+                <li
+                  key={row.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    padding: theme.space[3],
+                    background: theme.color.surface,
+                    border: `1px solid ${theme.color.border}`,
+                    borderRadius: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <StatusPill tone={row.failure_reason ? 'no_show' : 'in_progress'} size="sm">
+                    {row.failure_reason ? 'Failed' : 'Queued'}
+                  </StatusPill>
+                  <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>
+                    {row.channel.toUpperCase()}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 200, fontSize: theme.type.size.sm, color: theme.color.inkMuted, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {row.recipient ?? '—'}
+                    {row.failure_reason ? (
+                      <span style={{ display: 'block', fontSize: theme.type.size.xs, color: theme.color.inkSubtle, marginTop: 2 }}>
+                        {row.failure_reason}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+                    {new Date(row.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  <Button variant="secondary" size="sm" loading={retrying === row.id} onClick={() => onRetry(row.id)}>
+                    Retry
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={5000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
     </div>
   );
 }
