@@ -2,15 +2,18 @@ import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
+import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useVisitDetail } from '../lib/queries/visits.ts';
 import { useCart, formatPence } from '../lib/queries/carts.ts';
 import { recordCashPayment } from '../lib/queries/payments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
+import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
 
 type Stage = 'choose' | 'cash' | 'card' | 'bnpl' | 'success';
+type Journey = 'standard' | 'klarna' | 'clearpay';
 
 export function Pay() {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +28,21 @@ export function Pay() {
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>('email');
   const [receiptRecipient, setReceiptRecipient] = useState('');
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [journey, setJourney] = useState<Journey>('standard');
+  const { data: readers } = useTerminalReaders();
+  const reader = readers[0] ?? null;
+
+  const openTerminal = (j: Journey) => {
+    if (!reader) {
+      setError(
+        'No card reader registered. Activate Terminal in Stripe Dashboard, register a Simulated WisePOS E or your S700, then INSERT a row into lng_terminal_readers.'
+      );
+      return;
+    }
+    setJourney(j);
+    setTerminalOpen(true);
+  };
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -137,10 +155,50 @@ export function Pay() {
 
         {stage === 'choose' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-            <MethodCard icon={<CreditCard size={20} />} title="Card" description="Slice 8 — Stripe Terminal S700" onClick={() => setStage('card')} disabled />
-            <MethodCard icon={<Banknote size={20} />} title="Cash" description="Live now. Change calculator built-in." onClick={() => setStage('cash')} />
-            <MethodCard icon={<ShoppingBag size={20} />} title="Buy now, pay later" description="Slice 12 — Klarna and Clearpay via the same terminal" onClick={() => setStage('bnpl')} disabled />
+            <MethodCard
+              icon={<CreditCard size={20} />}
+              title="Card"
+              description={reader ? `Reader: ${reader.friendly_name}` : 'No reader registered yet'}
+              onClick={() => openTerminal('standard')}
+              disabled={!reader}
+            />
+            <MethodCard icon={<Banknote size={20} />} title="Cash" description="Change calculator built-in." onClick={() => setStage('cash')} />
+            <MethodCard
+              icon={<ShoppingBag size={20} />}
+              title="Buy now, pay later"
+              description={reader ? 'Klarna or Clearpay via the same reader' : 'Needs a registered reader'}
+              onClick={() => setStage('bnpl')}
+              disabled={!reader}
+            />
           </div>
+        ) : stage === 'bnpl' ? (
+          <Card padding="lg">
+            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+              Pick a provider
+            </h2>
+            <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              Both work the same way: customer opens their app, taps phone on the reader. Receipt says Visa contactless.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              <MethodCard
+                icon={<ShoppingBag size={20} />}
+                title="Klarna"
+                description={`£30 minimum, £2,000 max. Reader: ${reader?.friendly_name ?? '—'}`}
+                onClick={() => openTerminal('klarna')}
+                disabled={!reader}
+              />
+              <MethodCard
+                icon={<ShoppingBag size={20} />}
+                title="Clearpay"
+                description={`Customer's app caps the limit. Reader: ${reader?.friendly_name ?? '—'}`}
+                onClick={() => openTerminal('clearpay')}
+                disabled={!reader}
+              />
+            </div>
+            <Button variant="tertiary" onClick={() => setStage('choose')} style={{ marginTop: theme.space[4] }}>
+              Back to methods
+            </Button>
+          </Card>
         ) : stage === 'cash' ? (
           <Card padding="lg">
             <Input
@@ -161,20 +219,12 @@ export function Pay() {
               </Button>
             </div>
           </Card>
-        ) : stage === 'card' || stage === 'bnpl' ? (
+        ) : stage === 'card' ? (
           <Card padding="lg">
             <EmptyState
-              title={stage === 'card' ? 'Card payments not live yet' : 'BNPL not live yet'}
-              description={
-                stage === 'card'
-                  ? 'Stripe Terminal arrives in slice 8. Use cash for now.'
-                  : 'Klarna and Clearpay run on the same terminal. Slice 12.'
-              }
-              action={
-                <Button variant="primary" onClick={() => setStage('choose')}>
-                  Back to methods
-                </Button>
-              }
+              title="Use the Card option above"
+              description="The terminal modal opens automatically when you pick Card."
+              action={<Button variant="primary" onClick={() => setStage('choose')}>Back</Button>}
             />
           </Card>
         ) : (
@@ -235,9 +285,27 @@ export function Pay() {
         </div>
       </div>
 
+      {reader && cart ? (
+        <TerminalPaymentModal
+          open={terminalOpen}
+          onClose={() => setTerminalOpen(false)}
+          visitId={visit?.id ?? ''}
+          cartId={cart.id}
+          amountPence={total}
+          readerId={reader.id}
+          readerName={reader.friendly_name}
+          paymentJourney={journey}
+          onSucceeded={(pid) => {
+            setPaymentId(pid);
+            setTerminalOpen(false);
+            setStage('success');
+          }}
+        />
+      ) : null}
+
       {error ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
-          <Toast tone="error" title="Could not record payment" description={error} duration={6000} onDismiss={() => setError(null)} />
+          <Toast tone="error" title="Could not record payment" description={error} duration={8000} onDismiss={() => setError(null)} />
         </div>
       ) : null}
     </main>
