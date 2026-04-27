@@ -1,0 +1,93 @@
+export const theme = {
+  color: {
+    bg: '#F7F6F2',
+    surface: '#FFFFFF',
+    ink: '#0E1414',
+    inkMuted: 'rgba(14, 20, 20, 0.6)',
+    inkSubtle: 'rgba(14, 20, 20, 0.4)',
+    accent: '#1F4D3A',
+    accentBg: '#E8F5EC',
+    alert: '#B83A2A',
+    border: 'rgba(14, 20, 20, 0.08)',
+    overlay: 'rgba(14, 20, 20, 0.5)',
+    focus: 'rgba(31, 77, 58, 0.32)',
+  },
+  type: {
+    family: '"Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+    size: {
+      xs: 12,
+      sm: 14,
+      base: 16,
+      md: 18,
+      lg: 22,
+      xl: 28,
+      xxl: 36,
+      display: 48,
+      hero: 64,
+    },
+    weight: {
+      regular: 400,
+      medium: 500,
+      semibold: 600,
+      bold: 700,
+    },
+    leading: {
+      tight: 1.15,
+      snug: 1.3,
+      normal: 1.5,
+      relaxed: 1.65,
+    },
+    tracking: {
+      tight: '-0.01em',
+      normal: '0',
+      wide: '0.04em',
+    },
+  },
+  space: {
+    0: 0,
+    1: 4,
+    2: 8,
+    3: 12,
+    4: 16,
+    5: 20,
+    6: 24,
+    8: 32,
+    10: 40,
+    12: 48,
+    16: 64,
+    24: 96,
+  },
+  radius: {
+    none: 0,
+    input: 14,
+    card: 18,
+    pill: 999,
+  },
+  shadow: {
+    card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
+    raised: '0 6px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04)',
+    overlay: '0 24px 48px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.06)',
+  },
+  motion: {
+    duration: {
+      fast: 160,
+      base: 240,
+      slow: 320,
+    },
+    easing: {
+      spring: 'cubic-bezier(0.25, 1, 0.3, 1)',
+      standard: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    },
+  },
+  layout: {
+    tabletMin: 1024,
+    desktopMin: 1280,
+    sidebarWidth: 264,
+    primaryButtonHeight: 56,
+    inputHeight: 56,
+    minTouchTarget: 48,
+    safeAreaPaddingY: 16,
+  },
+} as const;
+
+export type Theme = typeof theme;
