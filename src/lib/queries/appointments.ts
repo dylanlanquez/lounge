@@ -1,0 +1,140 @@
+import { useEffect, useState } from 'react';
+import { supabase } from '../supabase.ts';
+import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
+
+export interface AppointmentRow {
+  id: string;
+  patient_id: string;
+  location_id: string;
+  start_at: string;
+  end_at: string;
+  status: AppointmentStatus;
+  event_type_label: string | null;
+  staff_account_id: string | null;
+  patient_first_name: string | null;
+  patient_last_name: string | null;
+  staff_first_name: string | null;
+  staff_last_name: string | null;
+}
+
+interface UseTodayAppointmentsResult {
+  data: AppointmentRow[];
+  loading: boolean;
+  error: string | null;
+}
+
+export function useTodayAppointments(): UseTodayAppointmentsResult {
+  const [data, setData] = useState<AppointmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+
+        // RLS scopes this query to the receptionist's location.
+        const { data: rows, error: err } = await supabase
+          .from('lng_appointments')
+          .select(
+            `
+            id,
+            patient_id,
+            location_id,
+            start_at,
+            end_at,
+            status,
+            event_type_label,
+            staff_account_id,
+            patient:patients ( first_name, last_name ),
+            staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
+          `
+          )
+          .gte('start_at', start.toISOString())
+          .lte('start_at', end.toISOString())
+          .order('start_at', { ascending: true });
+
+        if (cancelled) return;
+        if (err) {
+          // PGRST200 is "relation not found in the embedded resource" — happens
+          // before slice 0 migrations land. Treat as empty rather than error.
+          if (err.code === 'PGRST200' || err.code === '42P01') {
+            setData([]);
+            setError(null);
+          } else {
+            setError(err.message);
+          }
+          setLoading(false);
+          return;
+        }
+
+        const mapped: AppointmentRow[] = (rows ?? []).map((r) => {
+          const raw = r as unknown as AppointmentRowRaw;
+          const patient = Array.isArray(raw.patient) ? raw.patient[0] : raw.patient;
+          const staff = Array.isArray(raw.staff) ? raw.staff[0] : raw.staff;
+          return {
+            id: raw.id,
+            patient_id: raw.patient_id,
+            location_id: raw.location_id,
+            start_at: raw.start_at,
+            end_at: raw.end_at,
+            status: raw.status,
+            event_type_label: raw.event_type_label,
+            staff_account_id: raw.staff_account_id,
+            patient_first_name: patient?.first_name ?? null,
+            patient_last_name: patient?.last_name ?? null,
+            staff_first_name: staff?.first_name ?? null,
+            staff_last_name: staff?.last_name ?? null,
+          };
+        });
+        setData(mapped);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Unknown error');
+        setLoading(false);
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { data, loading, error };
+}
+
+interface AppointmentRowRaw {
+  id: string;
+  patient_id: string;
+  location_id: string;
+  start_at: string;
+  end_at: string;
+  status: AppointmentStatus;
+  event_type_label: string | null;
+  staff_account_id: string | null;
+  patient:
+    | { first_name: string | null; last_name: string | null }
+    | { first_name: string | null; last_name: string | null }[]
+    | null;
+  staff:
+    | { first_name: string | null; last_name: string | null }
+    | { first_name: string | null; last_name: string | null }[]
+    | null;
+}
+
+export function patientDisplayName(row: AppointmentRow): string {
+  const first = row.patient_first_name ?? '';
+  const last = row.patient_last_name ?? '';
+  if (!first && !last) return 'Patient';
+  return `${first} ${last.slice(0, 1)}${last.slice(0, 1) ? '.' : ''}`.trim();
+}
+
+export function staffDisplayName(row: AppointmentRow): string | undefined {
+  if (!row.staff_first_name && !row.staff_last_name) return undefined;
+  return [row.staff_first_name, row.staff_last_name].filter(Boolean).join(' ');
+}

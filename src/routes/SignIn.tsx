@@ -28,7 +28,7 @@ export function SignIn() {
     );
   }
 
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) return <Navigate to="/today" replace />;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
