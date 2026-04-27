@@ -69,6 +69,7 @@ export interface BackfillResult {
   ok: boolean;
   received?: number;
   applied?: number;
+  skipped?: number;
   errors?: string[];
   error?: string;
 }
@@ -87,7 +88,13 @@ export async function runCalendlyBackfill(): Promise<BackfillResult> {
     });
     const body = await r.json();
     if (!r.ok) return { ok: false, error: body?.error ?? `HTTP ${r.status}` };
-    return { ok: true, received: body.received, applied: body.applied, errors: body.errors };
+    return {
+      ok: true,
+      received: body.received,
+      applied: body.applied,
+      skipped: body.skipped,
+      errors: body.errors,
+    };
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' };
   }

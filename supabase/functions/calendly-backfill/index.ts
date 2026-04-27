@@ -55,8 +55,12 @@ Deno.serve(async (req) => {
     body = {};
   }
 
-  const since = body.since ?? new Date().toISOString();
-  const until = body.until ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  // Default window: past 30 days + future 60 days. Past is needed so a fresh
+  // user testing today's booking actually sees it on backfill (webhook handled
+  // it live, but we re-replay idempotently — duplicates suppress on the
+  // partial unique index).
+  const since = body.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const until = body.until ?? new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
 
   // Step 1: resolve the connected Calendly user URI
   const me = await calendly('GET', '/users/me');
@@ -68,6 +72,7 @@ Deno.serve(async (req) => {
   let pageToken: string | undefined = undefined;
   let totalReceived = 0;
   let totalApplied = 0;
+  let totalSkipped = 0;
   const errors: string[] = [];
 
   for (let i = 0; i < 50; i++) {
@@ -110,8 +115,9 @@ Deno.serve(async (req) => {
       }>;
       for (const inv of invitees) {
         try {
-          await applyInvitee(supabase, evt, inv);
-          totalApplied++;
+          const outcome = await applyInvitee(supabase, evt, inv);
+          if (outcome === 'skipped') totalSkipped++;
+          else totalApplied++;
         } catch (e) {
           errors.push(`apply ${inv.uri}: ${(e as Error).message}`);
         }
@@ -128,6 +134,7 @@ Deno.serve(async (req) => {
     until,
     received: totalReceived,
     applied: totalApplied,
+    skipped: totalSkipped,
     errors,
   });
 });
@@ -136,7 +143,7 @@ async function applyInvitee(
   supabase: SupabaseClient,
   evt: { uri: string; name: string; start_time: string; end_time: string },
   inv: { uri: string; email: string; first_name?: string; last_name?: string; name?: string }
-) {
+): Promise<'applied' | 'skipped'> {
   // Default location
   const { data: locRow } = await supabase
     .from('locations')
@@ -149,31 +156,47 @@ async function applyInvitee(
   if (!locRow) throw new Error('no Venneir lab location');
   const location_id = (locRow as { id: string }).id;
 
-  // Identity resolve
+  const firstName = inv.first_name ?? splitName(inv.name).first;
+  const lastName = inv.last_name ?? splitName(inv.name).last;
   const email = inv.email?.toLowerCase().trim();
+
+  // Identity resolve
   let patient_id: string | null = null;
   if (email) {
     const { data: ex } = await supabase
       .from('patients')
-      .select('id')
+      .select('id, first_name, last_name')
       .eq('location_id', location_id)
       .ilike('email', email)
       .maybeSingle();
-    if (ex) patient_id = (ex as { id: string }).id;
+    if (ex) {
+      patient_id = (ex as { id: string }).id;
+      // Fill-blanks: only fill name fields if currently null (never overwrite).
+      const cur = ex as { first_name: string | null; last_name: string | null };
+      const patch: Record<string, string> = {};
+      if (cur.first_name == null && firstName) patch.first_name = firstName;
+      if (cur.last_name == null && lastName) patch.last_name = lastName;
+      if (Object.keys(patch).length > 0) {
+        await supabase.from('patients').update(patch).eq('id', patient_id);
+      }
+    }
   }
   if (!patient_id) {
-    const fn = inv.first_name ?? splitName(inv.name).first ?? 'Patient';
-    const ln = inv.last_name ?? splitName(inv.name).last ?? '';
     const { data: created, error: createErr } = await supabase
       .from('patients')
-      .insert({ location_id, first_name: fn || 'Patient', last_name: ln, email })
+      .insert({
+        location_id,
+        first_name: firstName || 'Patient',
+        last_name: lastName || '',
+        email,
+      })
       .select('id')
       .single();
     if (createErr || !created) throw new Error(createErr?.message ?? 'create patient failed');
     patient_id = (created as { id: string }).id;
   }
 
-  await supabase.from('lng_appointments').insert({
+  const { error: apptErr } = await supabase.from('lng_appointments').insert({
     patient_id,
     location_id,
     source: 'calendly',
@@ -184,6 +207,13 @@ async function applyInvitee(
     event_type_label: evt.name,
     status: 'booked',
   });
+  // 23505 == unique violation on calendly_invitee_uri (already imported). Treat
+  // as a skip — backfill is idempotent by design.
+  if (apptErr) {
+    if (apptErr.code === '23505') return 'skipped';
+    throw new Error(apptErr.message);
+  }
+  return 'applied';
 }
 
 async function calendly(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<{ ok: boolean; body: { [k: string]: unknown } }> {
