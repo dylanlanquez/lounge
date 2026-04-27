@@ -27,6 +27,9 @@
   },
   "devDependencies": {
     "@playwright/test": "1.49.1",
+    "@storybook/addon-a11y": "8.4.7",
+    "@storybook/addon-essentials": "8.4.7",
+    "@storybook/react-vite": "8.4.7",
     "@types/node": "22.10.2",
     "@types/react": "19.0.2",
     "@types/react-dom": "19.0.2",
@@ -37,6 +40,7 @@
     "eslint-plugin-react": "7.37.3",
     "eslint-plugin-react-hooks": "5.1.0",
     "globals": "15.14.0",
+    "storybook": "8.4.7",
     "typescript": "5.7.2",
     "typescript-eslint": "8.18.2",
     "vite": "6.0.5"
