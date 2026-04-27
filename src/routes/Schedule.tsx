@@ -70,6 +70,9 @@ export function Schedule() {
           <img src="/lounge-logo.png" alt="Lounge" style={{ height: 32, width: 'auto' }} />
           <div style={{ flex: 1 }} />
           <Avatar name={user.email ?? 'You'} size="md" badge="online" />
+          <Button variant="tertiary" onClick={() => navigate('/admin')}>
+            Admin
+          </Button>
           <Button variant="tertiary" onClick={signOut}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
               <LogOut size={16} /> Sign out
