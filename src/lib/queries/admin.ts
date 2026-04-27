@@ -74,6 +74,59 @@ export function useReceptionistSessions() {
   return { data, loading };
 }
 
+export interface PendingReceiptRow {
+  id: string;
+  payment_id: string;
+  channel: 'email' | 'sms' | 'print' | 'none';
+  recipient: string | null;
+  failure_reason: string | null;
+  created_at: string;
+}
+
+export function usePendingReceipts() {
+  const [data, setData] = useState<PendingReceiptRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // sent_at IS NULL OR failure_reason IS NOT NULL — anything still owed.
+      const { data: rows } = await supabase
+        .from('lng_receipts')
+        .select('id, payment_id, channel, recipient, failure_reason, created_at, sent_at')
+        .or('sent_at.is.null,failure_reason.not.is.null')
+        .in('channel', ['email', 'sms'])
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (cancelled) return;
+      setData((rows ?? []).filter((r) => !r.sent_at || r.failure_reason) as PendingReceiptRow[]);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [tick]);
+  return { data, loading, refresh: () => setTick((t) => t + 1) };
+}
+
+export async function retrySendReceipt(receiptId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return { ok: false, error: 'Not signed in' };
+    const url = new URL(import.meta.env.VITE_SUPABASE_URL);
+    const projectRef = url.hostname.split('.')[0];
+    const r = await fetch(`https://${projectRef}.functions.supabase.co/send-receipt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receiptId }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || !body?.ok) return { ok: false, error: body?.error ?? `HTTP ${r.status}` };
+    return { ok: true };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' };
+  }
+}
+
 // Aggregates payments by day for the last N days. Falls back to client-side
 // roll-up since we don't have a dedicated reporting view yet (slice 22 v2).
 export function usePaymentTotals(daysBack = 7) {
