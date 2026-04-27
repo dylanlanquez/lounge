@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Banknote, CreditCard, ShoppingBag } from 'lucide-react';
+import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
+import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { useIsMobile } from '../lib/useIsMobile.ts';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
@@ -116,15 +118,13 @@ export function Pay() {
     }
   };
 
+  const isMobile = useIsMobile(640);
+
   if (!visit || !cart || items.length === 0) {
     return (
-      <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+      <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
         <div style={{ maxWidth: 520, margin: '0 auto' }}>
-          <Button variant="tertiary" size="sm" onClick={() => navigate(-1)}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <ArrowLeft size={16} /> Back
-            </span>
-          </Button>
+          <TopBar variant="subpage" />
           <Card padding="lg" style={{ marginTop: theme.space[5] }}>
             <EmptyState
               title="Nothing to pay for"
@@ -138,13 +138,9 @@ export function Pay() {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
       <div style={{ maxWidth: 520, margin: '0 auto' }}>
-        <Button variant="tertiary" size="sm" onClick={() => navigate(`/visit/${id}`)}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <ArrowLeft size={16} /> Visit
-          </span>
-        </Button>
+        <TopBar variant="subpage" backTo={`/visit/${id}`} />
 
         <h1
           style={{

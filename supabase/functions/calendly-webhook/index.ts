@@ -185,13 +185,21 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       .maybeSingle();
     if (existing) {
       patient_id = (existing as { id: string }).id;
-      // fill-blanks for name only
-      await supabase
+      // fill-blanks merge: only set name fields if currently null. Use a SQL
+      // expression via update with COALESCE-like behaviour by reading first.
+      const { data: cur } = await supabase
         .from('patients')
-        .update({
-          first_name: undefined, // can't COALESCE in JS; do via RPC if needed
-        })
-        .eq('id', patient_id);
+        .select('first_name, last_name')
+        .eq('id', patient_id)
+        .maybeSingle();
+      const patch: Record<string, string> = {};
+      if (cur && (cur as { first_name: string | null }).first_name == null && firstName)
+        patch.first_name = firstName;
+      if (cur && (cur as { last_name: string | null }).last_name == null && lastName)
+        patch.last_name = lastName;
+      if (Object.keys(patch).length > 0) {
+        await supabase.from('patients').update(patch).eq('id', patient_id);
+      }
     }
   }
   if (!patient_id) {
