@@ -14,5 +14,15 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          supabase: ['@supabase/supabase-js'],
+          stripe: ['@stripe/stripe-js'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
   },
 });
