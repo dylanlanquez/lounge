@@ -86,35 +86,62 @@ export function Pay() {
 
   const sendReceipt = async () => {
     if (!paymentId || receiptChannel === 'none') {
+      await closeVisit();
       navigate(`/visit/${id}`);
       return;
     }
     setBusy(true);
     try {
-      await supabase.from('lng_receipts').insert({
-        payment_id: paymentId,
-        channel: receiptChannel,
-        recipient: receiptRecipient || null,
-        sent_at: new Date().toISOString(),
-        content: { note: 'V0 receipt — actual delivery via Resend lands in slice 13b.' },
+      // 1. Insert as queued (no sent_at). The edge function flips it to sent
+      //    after Resend/Twilio confirms delivery — or sets failure_reason.
+      const { data: receipt, error: insErr } = await supabase
+        .from('lng_receipts')
+        .insert({
+          payment_id: paymentId,
+          channel: receiptChannel,
+          recipient: receiptRecipient || null,
+          content: null,
+        })
+        .select('id')
+        .single();
+      if (insErr || !receipt) throw new Error(insErr?.message ?? 'Could not queue receipt');
+
+      // 2. Invoke the send-receipt edge function. Surface but don't block on
+      //    a delivery failure — the row is recoverable from /admin later.
+      const url = new URL(import.meta.env.VITE_SUPABASE_URL);
+      const projectRef = url.hostname.split('.')[0];
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      const r = await fetch(`https://${projectRef}.functions.supabase.co/send-receipt`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token ?? ''}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receiptId: (receipt as { id: string }).id }),
       });
-      // Close the visit
-      if (visit) {
-        await supabase.from('lng_visits').update({ status: 'complete', closed_at: new Date().toISOString() }).eq('id', visit.id);
-        // Patient-axis event
-        if (patient) {
-          await supabase.from('patient_events').insert({
-            patient_id: patient.id,
-            event_type: 'visit_closed',
-            payload: { visit_id: visit.id, total_pence: total, receipt_channel: receiptChannel },
-          });
-        }
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body?.ok) {
+        // Show a soft warning toast but proceed: the visit still closes.
+        const reason = body?.error ?? `HTTP ${r.status}`;
+        setError(`Receipt queued but not delivered: ${reason}. You can resend from the visit later.`);
       }
+
+      await closeVisit();
       navigate(`/visit/${id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const closeVisit = async () => {
+    if (!visit) return;
+    await supabase.from('lng_visits').update({ status: 'complete', closed_at: new Date().toISOString() }).eq('id', visit.id);
+    if (patient) {
+      await supabase.from('patient_events').insert({
+        patient_id: patient.id,
+        event_type: 'visit_closed',
+        payload: { visit_id: visit.id, total_pence: total, receipt_channel: receiptChannel },
+      });
     }
   };
 
