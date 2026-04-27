@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, BarChart3, CalendarCheck, CreditCard, RefreshCw, Users } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, RefreshCw, ShieldAlert, Users } from 'lucide-react';
 import {
   Button,
   Card,
@@ -21,7 +21,12 @@ import {
   usePaymentTotals,
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
-import { useCalendlyDiagnostic, runCalendlyBackfill } from '../lib/queries/calendlyDiagnostic.ts';
+import {
+  useCalendlyDiagnostic,
+  runCalendlyBackfill,
+  verifyCalendlyWebhook,
+  type VerifyResult,
+} from '../lib/queries/calendlyDiagnostic.ts';
 import { formatPence } from '../lib/queries/carts.ts';
 import { supabase } from '../lib/supabase.ts';
 
@@ -82,6 +87,8 @@ export function Admin() {
 function CalendlyTab() {
   const d = useCalendlyDiagnostic();
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verify, setVerify] = useState<VerifyResult | null>(null);
   const [toast, setToast] = useState<{ tone: 'success' | 'error' | 'info'; title: string; description?: string } | null>(null);
 
   const onBackfill = async () => {
@@ -103,6 +110,29 @@ function CalendlyTab() {
           : 'Reload Schedule to see new appointments.',
     });
     d.refresh();
+  };
+
+  const onVerify = async () => {
+    setVerifying(true);
+    setToast(null);
+    const res = await verifyCalendlyWebhook();
+    setVerifying(false);
+    setVerify(res);
+    if (!res.ok) {
+      setToast({ tone: 'error', title: 'Verify failed', description: res.error });
+      return;
+    }
+    if ((res.activeMatching ?? 0) > 0) {
+      setToast({ tone: 'success', title: 'Webhook subscription is active.' });
+    } else if ((res.subscriptionsMatching ?? 0) > 0) {
+      setToast({ tone: 'error', title: 'Webhook subscription exists but is not active.', description: 'Re-run scripts/calendly-setup.sh to recreate.' });
+    } else {
+      setToast({
+        tone: 'error',
+        title: 'No webhook subscription pointing at this project.',
+        description: 'Run scripts/calendly-setup.sh to register one.',
+      });
+    }
   };
 
   return (
@@ -137,12 +167,71 @@ function CalendlyTab() {
               <CalendarCheck size={16} /> Backfill from Calendly API
             </span>
           </Button>
-          <Button variant="secondary" onClick={() => d.refresh()}>
+          <Button variant="secondary" loading={verifying} onClick={onVerify}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <ShieldAlert size={16} /> Verify webhook subscription
+            </span>
+          </Button>
+          <Button variant="tertiary" onClick={() => d.refresh()}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
               <RefreshCw size={16} /> Refresh
             </span>
           </Button>
         </div>
+
+        {verify && verify.ok ? (
+          <div
+            style={{
+              marginTop: theme.space[5],
+              padding: theme.space[4],
+              background: theme.color.bg,
+              borderRadius: theme.radius.card,
+              fontSize: theme.type.size.sm,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[3] }}>
+              {(verify.activeMatching ?? 0) > 0 ? (
+                <StatusPill tone="arrived" size="sm">
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                    <Check size={12} /> Active
+                  </span>
+                </StatusPill>
+              ) : (
+                <StatusPill tone="no_show" size="sm">Not active</StatusPill>
+              )}
+              <span style={{ color: theme.color.inkMuted }}>
+                {verify.activeMatching ?? 0} of {verify.subscriptionsMatching ?? 0} matching subscription(s) active · {verify.subscriptionsTotal ?? 0} total in Calendly
+              </span>
+            </div>
+            <div style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.xs, marginBottom: theme.space[2] }}>
+              Expected URL: <code>{verify.expectedUrl}</code>
+            </div>
+            {(verify.subscriptions ?? []).map((s) => (
+              <div
+                key={s.uri}
+                style={{
+                  marginTop: theme.space[2],
+                  padding: theme.space[3],
+                  background: theme.color.surface,
+                  borderRadius: 8,
+                  border: `1px solid ${s.matchesProject ? theme.color.accent : theme.color.border}`,
+                  fontSize: theme.type.size.xs,
+                  fontFamily: 'ui-monospace, monospace',
+                  color: theme.color.inkMuted,
+                  wordBreak: 'break-all',
+                }}
+              >
+                <div style={{ color: theme.color.ink, marginBottom: theme.space[1] }}>
+                  {s.callback_url}
+                </div>
+                <div>
+                  state: {s.state} · events: {(s.events ?? []).join(', ')}
+                  {s.created_at ? ` · created ${new Date(s.created_at).toLocaleDateString('en-GB')}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <p style={{ marginTop: theme.space[4], fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
           Backfill pulls active scheduled_events from past 30 days through next 60 days, identity-resolves invitees against Meridian patients (fill-blanks merge for existing), and inserts appointments. Idempotent on Calendly invitee URI — safe to re-run.

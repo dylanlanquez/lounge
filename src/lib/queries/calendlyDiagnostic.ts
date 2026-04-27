@@ -74,26 +74,70 @@ export interface BackfillResult {
   error?: string;
 }
 
+export interface VerifyResult {
+  ok: boolean;
+  expectedUrl?: string;
+  subscriptionsTotal?: number;
+  subscriptionsMatching?: number;
+  activeMatching?: number;
+  subscriptions?: Array<{
+    uri?: string;
+    callback_url?: string;
+    events?: string[];
+    state?: string;
+    created_at?: string;
+    matchesProject?: boolean;
+  }>;
+  error?: string;
+}
+
+async function callBackfillFn(payload: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) return { ok: false, status: 401, body: { error: 'Not signed in' } };
+  const url = new URL(import.meta.env.VITE_SUPABASE_URL);
+  const projectRef = url.hostname.split('.')[0];
+  const r = await fetch(`https://${projectRef}.functions.supabase.co/calendly-backfill`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let body: Record<string, unknown> = {};
+  try {
+    body = await r.json();
+  } catch {
+    body = {};
+  }
+  return { ok: r.ok, status: r.status, body };
+}
+
 export async function runCalendlyBackfill(): Promise<BackfillResult> {
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) return { ok: false, error: 'Not signed in' };
-    const url = new URL(import.meta.env.VITE_SUPABASE_URL);
-    const projectRef = url.hostname.split('.')[0];
-    const r = await fetch(`https://${projectRef}.functions.supabase.co/calendly-backfill`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    const body = await r.json();
-    if (!r.ok) return { ok: false, error: body?.error ?? `HTTP ${r.status}` };
+    const { ok, status, body } = await callBackfillFn({ action: 'backfill' });
+    if (!ok) return { ok: false, error: (body.error as string | undefined) ?? `HTTP ${status}` };
     return {
       ok: true,
-      received: body.received,
-      applied: body.applied,
-      skipped: body.skipped,
-      errors: body.errors,
+      received: body.received as number,
+      applied: body.applied as number,
+      skipped: body.skipped as number,
+      errors: body.errors as string[] | undefined,
+    };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' };
+  }
+}
+
+export async function verifyCalendlyWebhook(): Promise<VerifyResult> {
+  try {
+    const { ok, status, body } = await callBackfillFn({ action: 'verify' });
+    if (!ok) return { ok: false, error: (body.error as string | undefined) ?? `HTTP ${status}` };
+    return {
+      ok: true,
+      expectedUrl: body.expectedUrl as string,
+      subscriptionsTotal: body.subscriptionsTotal as number,
+      subscriptionsMatching: body.subscriptionsMatching as number,
+      activeMatching: body.activeMatching as number,
+      subscriptions: body.subscriptions as VerifyResult['subscriptions'],
     };
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' };
