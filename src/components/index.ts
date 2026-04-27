@@ -11,3 +11,12 @@ export type { InputProps } from './Input/Input.tsx';
 
 export { Card } from './Card/Card.tsx';
 export type { CardProps, CardPadding, CardElevation } from './Card/Card.tsx';
+
+export { StatusPill } from './StatusPill/StatusPill.tsx';
+export type { StatusPillProps, StatusTone } from './StatusPill/StatusPill.tsx';
+
+export { SegmentedControl } from './SegmentedControl/SegmentedControl.tsx';
+export type { SegmentedControlOption, SegmentedControlProps } from './SegmentedControl/SegmentedControl.tsx';
+
+export { Toast } from './Toast/Toast.tsx';
+export type { ToastProps, ToastTone } from './Toast/Toast.tsx';
