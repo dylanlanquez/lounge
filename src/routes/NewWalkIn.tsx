@@ -1,10 +1,12 @@
 import { type FormEvent, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { Button, Card, Input, Toast } from '../components/index.ts';
 import { PatientSearch } from '../components/PatientSearch/PatientSearch.tsx';
+import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type PatientRow,
   patientFullName,
@@ -116,20 +118,20 @@ export function NewWalkIn() {
   };
 
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: useIsMobile(640) ? theme.space[4] : theme.space[6],
+      }}
+    >
       <div style={{ maxWidth: 520, margin: '0 auto' }}>
-        <header style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[5] }}>
-          <Button variant="tertiary" size="sm" onClick={() => navigate(-1)}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <ArrowLeft size={16} /> Today
-            </span>
-          </Button>
-        </header>
+        <TopBar variant="subpage" backTo="/schedule" />
 
         <h1
           style={{
             margin: 0,
-            fontSize: theme.type.size.xxl,
+            fontSize: useIsMobile(640) ? theme.type.size.xl : theme.type.size.xxl,
             fontWeight: theme.type.weight.semibold,
             letterSpacing: theme.type.tracking.tight,
             marginBottom: theme.space[2],

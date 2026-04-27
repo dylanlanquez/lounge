@@ -1,9 +1,11 @@
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Calendar, CreditCard, ShoppingCart, User } from 'lucide-react';
-import { Avatar, Button, Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
+import { Calendar, CreditCard, ShoppingCart, User } from 'lucide-react';
+import { Avatar, Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
+import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useIsMobile } from '../lib/useIsMobile.ts';
 import { type PatientRow, getPatient, patientFullName } from '../lib/queries/patients.ts';
 import { usePatientTimeline } from '../lib/queries/patientTimeline.ts';
 import { formatPence } from '../lib/queries/carts.ts';
@@ -11,7 +13,6 @@ import { formatPence } from '../lib/queries/carts.ts';
 export function PatientTimeline() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
   const [patient, setPatient] = useState<PatientRow | null>(null);
   const [loadingPatient, setLoadingPatient] = useState(true);
   const { events, visits, appointments, payments, loading } = usePatientTimeline(id);
@@ -42,16 +43,11 @@ export function PatientTimeline() {
     .filter((p) => p.status === 'succeeded')
     .reduce((s, p) => s + p.amount_pence, 0);
 
+  const isMobile = useIsMobile(640);
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <header style={{ marginBottom: theme.space[5] }}>
-          <Button variant="tertiary" size="sm" onClick={() => navigate(-1)}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <ArrowLeft size={16} /> Back
-            </span>
-          </Button>
-        </header>
+        <TopBar variant="subpage" />
 
         {loadingPatient ? (
           <Skeleton height={64} radius={16} />

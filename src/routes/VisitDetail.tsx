@@ -1,10 +1,12 @@
 import { type FormEvent, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, ShoppingCart } from 'lucide-react';
+import { Plus, ShoppingCart } from 'lucide-react';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
+import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useVisitDetail } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
@@ -87,16 +89,17 @@ export function VisitDetail() {
     }
   };
 
+  const isMobile = useIsMobile(640);
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: theme.space[6] }}>
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: isMobile ? theme.space[4] : theme.space[6],
+      }}
+    >
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <header style={{ marginBottom: theme.space[5] }}>
-          <Button variant="tertiary" size="sm" onClick={() => navigate('/today')}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <ArrowLeft size={16} /> Today
-            </span>
-          </Button>
-        </header>
+        <TopBar variant="subpage" backTo="/schedule" />
 
         {loading ? (
           <p style={{ color: theme.color.inkMuted }}>Loading visit…</p>
