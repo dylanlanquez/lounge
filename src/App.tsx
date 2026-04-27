@@ -6,6 +6,7 @@ import { NewWalkIn } from './routes/NewWalkIn.tsx';
 import { VisitDetail } from './routes/VisitDetail.tsx';
 import { Pay } from './routes/Pay.tsx';
 import { PatientTimeline } from './routes/PatientTimeline.tsx';
+import { Admin } from './routes/Admin.tsx';
 import { NotFound } from './routes/NotFound.tsx';
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
         <Route path="/visit/:id" element={<VisitDetail />} />
         <Route path="/visit/:id/pay" element={<Pay />} />
         <Route path="/patient/:id" element={<PatientTimeline />} />
+        <Route path="/admin" element={<Admin />} />
         {/* old aliases */}
         <Route path="/today" element={<Navigate to="/schedule" replace />} />
         <Route path="/dashboard" element={<Navigate to="/schedule" replace />} />
