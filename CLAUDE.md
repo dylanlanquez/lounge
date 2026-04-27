@@ -37,10 +37,11 @@ This file is loaded automatically when Claude Code is invoked in this directory.
 
 ## Working with Supabase
 
-- Lounge runs on Meridian's project `npuvhxakffxqoszytkxw`.
+- Lounge runs on Meridian's project `npuvhxakffxqoszytkxw` (production).
+- A second Supabase project `vkgghplhykavklevfhkz` is the **shadow** — refreshed copy of Meridian's schema, used to test every migration before production. See `docs/runbooks/migration-workflow.md`.
 - Migration filenames: `YYYYMMDD_NN_lng_<description>.sql`.
 - Coordinate with Meridian: read latest migration in `~/Desktop/meridian-app/supabase/migrations/` before adding a Lounge migration.
-- Apply via Supabase branch first, show the diff, then production.
+- Apply order: write → shadow (verify) → Meridian. Never directly to Meridian without shadow verification.
 - Edge function deploy: `npx supabase functions deploy <name> --project-ref npuvhxakffxqoszytkxw`.
 
 ## Working agreement with Dylan
