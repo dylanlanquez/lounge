@@ -21,7 +21,8 @@ export type AppointmentStatus =
   | 'in_progress'
   | 'complete'
   | 'no_show'
-  | 'cancelled';
+  | 'cancelled'
+  | 'rescheduled';
 
 const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   booked: 'neutral',
@@ -30,6 +31,7 @@ const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',
+  rescheduled: 'cancelled',
 };
 
 const BAR_COLOR: Record<AppointmentStatus, string> = {
@@ -39,6 +41,7 @@ const BAR_COLOR: Record<AppointmentStatus, string> = {
   complete: theme.color.inkSubtle,
   no_show: theme.color.alert,
   cancelled: theme.color.inkSubtle,
+  rescheduled: theme.color.inkSubtle,
 };
 
 const FILL_COLOR: Record<AppointmentStatus, string> = {
@@ -48,6 +51,7 @@ const FILL_COLOR: Record<AppointmentStatus, string> = {
   complete: theme.color.surface,
   no_show: theme.color.surface,
   cancelled: theme.color.surface,
+  rescheduled: theme.color.surface,
 };
 
 export function AppointmentCard({

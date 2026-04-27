@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { CalendarOff, LogOut, Plus } from 'lucide-react';
-import { Avatar, Button, Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
+import { Avatar, BottomSheet, Button, Card, EmptyState, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { CalendarGrid, offsetForTime, heightForDuration } from '../components/CalendarGrid/CalendarGrid.tsx';
 import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { theme } from '../theme/index.ts';
@@ -9,12 +10,18 @@ import {
   useTodayAppointments,
   patientDisplayName,
   staffDisplayName,
+  type AppointmentRow,
 } from '../lib/queries/appointments.ts';
+import { markAppointmentArrived } from '../lib/queries/visits.ts';
+import { supabase } from '../lib/supabase.ts';
 
 export function Today() {
   const { user, loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
   const { data: appointments, loading, error } = useTodayAppointments();
+  const [selected, setSelected] = useState<AppointmentRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [toastError, setToastError] = useState<string | null>(null);
 
   if (authLoading) return <Loading message="Checking session…" />;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -123,6 +130,7 @@ export function Today() {
                     serviceLabel={a.event_type_label ?? undefined}
                     top={offsetForTime(a.start_at, 8, 80)}
                     height={heightForDuration(a.start_at, a.end_at, 80)}
+                    onClick={() => setSelected(a)}
                   />
                 ))}
               </CalendarGrid>
@@ -153,11 +161,99 @@ export function Today() {
             textAlign: 'center',
           }}
         >
-          Lounge v0.4 preview · build {import.meta.env.MODE} · signed in as {user.email}
+          Lounge v0.5 preview · build {import.meta.env.MODE} · signed in as {user.email}
         </p>
       </div>
+
+      {selected ? (
+        <BottomSheet
+          open={!!selected}
+          onClose={() => setSelected(null)}
+          title={patientDisplayName(selected)}
+          description={`${formatTime(selected.start_at)} to ${formatTime(selected.end_at)}${
+            staffDisplayName(selected) ? ` with ${staffDisplayName(selected)}` : ''
+          }${selected.event_type_label ? ` · ${selected.event_type_label}` : ''}`}
+          footer={
+            selected.status === 'booked' ? (
+              <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between' }}>
+                <Button
+                  variant="tertiary"
+                  onClick={async () => {
+                    if (!selected) return;
+                    setBusy(true);
+                    try {
+                      await supabase.from('lng_appointments').update({ status: 'no_show' }).eq('id', selected.id);
+                      setSelected(null);
+                      window.location.reload();
+                    } catch (e) {
+                      setToastError(e instanceof Error ? e.message : 'Could not update');
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  disabled={busy}
+                >
+                  Mark no-show
+                </Button>
+                <Button
+                  variant="primary"
+                  showArrow
+                  loading={busy}
+                  onClick={async () => {
+                    if (!selected) return;
+                    setBusy(true);
+                    try {
+                      const { visit_id } = await markAppointmentArrived(selected.id);
+                      navigate(`/visit/${visit_id}`);
+                    } catch (e) {
+                      setToastError(e instanceof Error ? e.message : 'Could not mark arrived');
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Mark as arrived
+                </Button>
+              </div>
+            ) : (
+              <Button variant="secondary" onClick={() => setSelected(null)} fullWidth>
+                Close
+              </Button>
+            )
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <p style={{ margin: 0, color: theme.color.ink }}>
+              Status: <strong>{selected.status}</strong>
+            </p>
+            {selected.status === 'cancelled' || selected.status === 'rescheduled' ? (
+              <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+                {selected.status === 'rescheduled'
+                  ? 'This booking was rescheduled in Calendly. The replacement appointment will appear on the new date.'
+                  : 'This booking was cancelled in Calendly.'}
+              </p>
+            ) : null}
+            {selected.status === 'booked' ? (
+              <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+                Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.
+              </p>
+            ) : null}
+          </div>
+        </BottomSheet>
+      ) : null}
+
+      {toastError ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone="error" title="Could not update" description={toastError} onDismiss={() => setToastError(null)} />
+        </div>
+      ) : null}
     </main>
   );
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
 function Loading({ message }: { message: string }) {
