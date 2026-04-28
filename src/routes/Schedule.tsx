@@ -8,7 +8,6 @@ import {
   ChevronRight,
   List,
   Monitor,
-  Plus,
   Video,
 } from 'lucide-react';
 import {
@@ -31,7 +30,7 @@ import {
 import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ClusterCard } from '../components/ClusterCard/ClusterCard.tsx';
 import { ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
-import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
@@ -148,12 +147,12 @@ export function Schedule() {
         minHeight: '100dvh',
         background: theme.color.bg,
         padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        <TopBar variant="home" />
-
-        {/* Single-row header: week label + nav on the left, walk-in on the right. */}
+        {/* Single-row header: week label + Today chip on the left, week nav on the right.
+            Walk-in lives in the bottom nav so it stays one tap away on every page. */}
         <div
           style={{
             display: 'flex',
@@ -207,16 +206,6 @@ export function Schedule() {
             <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
               <ChevronRight size={20} />
             </IconNavButton>
-            <Button
-              variant="secondary"
-              size={isMobile ? 'sm' : 'md'}
-              onClick={() => navigate('/walk-in/new')}
-              style={{ marginLeft: theme.space[2] }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                <Plus size={16} /> {isMobile ? 'Walk-in' : 'New walk-in'}
-              </span>
-            </Button>
           </div>
         </div>
 

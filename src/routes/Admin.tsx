@@ -11,6 +11,7 @@ import {
   Toast,
 } from '../components/index.ts';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -46,7 +47,14 @@ export function Admin() {
   if (!user) return <Navigate to="/sign-in" replace />;
 
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
+      }}
+    >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
         <TopBar variant="subpage" backTo="/schedule" title="Admin" />
 

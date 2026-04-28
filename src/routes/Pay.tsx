@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
@@ -56,6 +57,8 @@ export function Pay() {
     setJourney(provider);
     setBnplOpen(true);
   };
+
+  const isMobile = useIsMobile(640);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -145,11 +148,16 @@ export function Pay() {
     }
   };
 
-  const isMobile = useIsMobile(640);
-
   if (!visit || !cart || items.length === 0) {
     return (
-      <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
+      <main
+        style={{
+          minHeight: '100dvh',
+          background: theme.color.bg,
+          padding: isMobile ? theme.space[4] : theme.space[6],
+          paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
+        }}
+      >
         <div style={{ maxWidth: 520, margin: '0 auto' }}>
           <TopBar variant="subpage" />
           <Card padding="lg" style={{ marginTop: theme.space[5] }}>
@@ -165,7 +173,14 @@ export function Pay() {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
+      }}
+    >
       <div style={{ maxWidth: 520, margin: '0 auto' }}>
         <TopBar variant="subpage" backTo={`/visit/${id}`} />
 
