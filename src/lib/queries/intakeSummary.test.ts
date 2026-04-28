@@ -14,6 +14,8 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   intake,
   patient_first_name: 'Sandra',
   patient_last_name: 'Denyer',
+  patient_email: null,
+  patient_phone: null,
   staff_first_name: null,
   staff_last_name: null,
 });

@@ -245,9 +245,20 @@ export function Schedule() {
           open={!!selected}
           onClose={() => setSelected(null)}
           title={patientDisplayName(selected)}
-          description={`${formatRange(selected.start_at, selected.end_at)}${
-            staffDisplayName(selected) ? ` with ${staffDisplayName(selected)}` : ''
-          }${selected.event_type_label ? ` · ${selected.event_type_label}` : ''}`}
+          description={
+            <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+              <span>
+                {formatRange(selected.start_at, selected.end_at)}
+                {staffDisplayName(selected) ? ` with ${staffDisplayName(selected)}` : ''}
+                {selected.event_type_label ? ` · ${selected.event_type_label}` : ''}
+              </span>
+              {selected.patient_email || selected.patient_phone ? (
+                <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
+                  {[selected.patient_email, selected.patient_phone].filter(Boolean).join(' · ')}
+                </span>
+              ) : null}
+            </span>
+          }
           footer={
             <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
               <Button
