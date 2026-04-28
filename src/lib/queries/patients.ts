@@ -124,9 +124,17 @@ interface ListResult {
   hasMore: boolean;
 }
 
-const LIST_PAGE_SIZE = 50;
+export const PATIENT_LIST_PAGE_SIZE = 50;
 
-export function usePatientList(term: string, limit: number = LIST_PAGE_SIZE): ListResult {
+// Page-aware patient list. `page` is zero-indexed; page 0 returns the
+// first 50 patients, page 1 the next 50, etc. The query fetches one
+// extra row past the page boundary so the consumer can disable the
+// Next button without a separate count query.
+export function usePatientList(
+  term: string,
+  page: number = 0,
+  limit: number = PATIENT_LIST_PAGE_SIZE
+): ListResult {
   const [data, setData] = useState<PatientListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +146,10 @@ export function usePatientList(term: string, limit: number = LIST_PAGE_SIZE): Li
     const cleaned = term.trim();
     const timer = setTimeout(async () => {
       try {
-        // Pull one extra row to detect "more pages exist".
+        const startIdx = page * limit;
+        // PostgREST .range is inclusive on both ends. Fetching one
+        // extra row tells us whether a next page exists.
+        const endIdx = startIdx + limit; // limit + 1 rows total
         let q = supabase
           .from('patients')
           .select(
@@ -146,7 +157,7 @@ export function usePatientList(term: string, limit: number = LIST_PAGE_SIZE): Li
           )
           .order('last_name', { ascending: true })
           .order('first_name', { ascending: true })
-          .limit(limit + 1);
+          .range(startIdx, endIdx);
 
         if (cleaned.length >= 2) {
           const phoneDigits = cleaned.replace(/\D/g, '');
@@ -170,13 +181,13 @@ export function usePatientList(term: string, limit: number = LIST_PAGE_SIZE): Li
           // deploy. Retry without that column rather than crash.
           if (err.code === '42703') {
             const { data: fallback, error: err2 } = await (cleaned.length >= 2
-              ? buildFallback(cleaned).limit(limit + 1)
+              ? buildFallback(cleaned).range(startIdx, endIdx)
               : supabase
                   .from('patients')
                   .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id')
                   .order('last_name', { ascending: true })
                   .order('first_name', { ascending: true })
-                  .limit(limit + 1));
+                  .range(startIdx, endIdx));
             if (cancelled) return;
             if (err2) {
               setError(err2.message);
@@ -218,7 +229,7 @@ export function usePatientList(term: string, limit: number = LIST_PAGE_SIZE): Li
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [term, limit]);
+  }, [term, page, limit]);
 
   return { data, loading, error, hasMore };
 }

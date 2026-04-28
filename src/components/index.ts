@@ -60,3 +60,6 @@ export { WaiverInline } from './WaiverInline/WaiverInline.tsx';
 export type { WaiverInlineProps } from './WaiverInline/WaiverInline.tsx';
 
 export { BeforeAfterGallery, MarketingGallery } from './PhotoGallery/PhotoGallery.tsx';
+
+export { StickyPageHeader } from './StickyPageHeader/StickyPageHeader.tsx';
+export type { StickyPageHeaderProps } from './StickyPageHeader/StickyPageHeader.tsx';
