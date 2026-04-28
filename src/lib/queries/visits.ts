@@ -100,6 +100,33 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
   return { visit_id: visit.id, walk_in_id: walkIn.id, lwo_ref: lwoRef };
 }
 
+// Records that staff joined a virtual meeting. Flips the appointment to
+// 'arrived' (re-uses the existing status — virtual attendance is still
+// "the patient turned up") and writes a patient_events row so the
+// timeline shows when the meeting was actually attended. Does NOT create
+// an lng_visit — virtual impressions don't need an EPOS visit lifecycle.
+export async function markVirtualMeetingJoined(appointmentId: string): Promise<void> {
+  const { data: appt, error: apptErr } = await supabase
+    .from('lng_appointments')
+    .update({ status: 'arrived' })
+    .eq('id', appointmentId)
+    .select('id, patient_id, location_id')
+    .single();
+  if (apptErr || !appt) throw new Error(apptErr?.message ?? 'Could not record join');
+
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+
+  await supabase.from('patient_events').insert({
+    patient_id: appt.patient_id,
+    event_type: 'virtual_meeting_joined',
+    payload: {
+      appointment_id: appt.id,
+      staff_account_id: accountId ?? null,
+      joined_at: new Date().toISOString(),
+    },
+  });
+}
+
 export async function markAppointmentArrived(appointmentId: string): Promise<{ visit_id: string }> {
   const { data: appt, error: apptErr } = await supabase
     .from('lng_appointments')

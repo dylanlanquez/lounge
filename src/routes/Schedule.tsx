@@ -33,7 +33,7 @@ import {
   useTodayAppointments,
 } from '../lib/queries/appointments.ts';
 import { usePastAppointments, useUpcomingAppointments } from '../lib/queries/scheduleViews.ts';
-import { markAppointmentArrived } from '../lib/queries/visits.ts';
+import { markAppointmentArrived, markVirtualMeetingJoined } from '../lib/queries/visits.ts';
 import { supabase } from '../lib/supabase.ts';
 
 type View = 'today' | 'upcoming' | 'past';
@@ -295,25 +295,55 @@ export function Schedule() {
                   >
                     No-show
                   </Button>
-                  <Button
-                    variant="primary"
-                    showArrow
-                    loading={busy}
-                    onClick={async () => {
-                      if (!selected) return;
-                      setBusy(true);
-                      try {
-                        const { visit_id } = await markAppointmentArrived(selected.id);
-                        navigate(`/visit/${visit_id}`);
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Could not mark arrived');
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    Mark as arrived
-                  </Button>
+                  {selected.join_url ? (
+                    isDesktop ? (
+                      <Button
+                        variant="primary"
+                        loading={busy}
+                        onClick={async () => {
+                          if (!selected || !selected.join_url) return;
+                          // Open immediately so the click counts as a user
+                          // gesture (browsers block window.open from awaited
+                          // code paths), then record attendance in the DB.
+                          window.open(selected.join_url, '_blank', 'noopener,noreferrer');
+                          setBusy(true);
+                          try {
+                            await markVirtualMeetingJoined(selected.id);
+                            setSelected(null);
+                            window.location.reload();
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : 'Could not record join');
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                          <Video size={16} /> Join meeting
+                        </span>
+                      </Button>
+                    ) : null
+                  ) : (
+                    <Button
+                      variant="primary"
+                      showArrow
+                      loading={busy}
+                      onClick={async () => {
+                        if (!selected) return;
+                        setBusy(true);
+                        try {
+                          const { visit_id } = await markAppointmentArrived(selected.id);
+                          navigate(`/visit/${visit_id}`);
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : 'Could not mark arrived');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Mark as arrived
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <Button variant="secondary" onClick={() => setSelected(null)}>
@@ -328,50 +358,24 @@ export function Schedule() {
               Status: <strong>{selected.status}</strong>
             </p>
 
-            {selected.join_url ? (
-              isDesktop ? (
-                <button
-                  type="button"
-                  onClick={() => window.open(selected.join_url!, '_blank', 'noopener,noreferrer')}
-                  style={{
-                    appearance: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                    background: theme.color.accent,
-                    color: theme.color.surface,
-                    borderRadius: 12,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: theme.space[2],
-                    fontSize: theme.type.size.base,
-                    fontWeight: theme.type.weight.semibold,
-                    boxShadow: theme.shadow.card,
-                  }}
-                  aria-label="Join the virtual meeting in a new tab"
-                >
-                  <Video size={18} aria-hidden /> Join meeting
-                </button>
-              ) : (
-                <div
-                  style={{
-                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                    background: theme.color.accentBg,
-                    border: `1px solid ${theme.color.accent}`,
-                    borderRadius: 12,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: theme.space[3],
-                    color: theme.color.ink,
-                  }}
-                >
-                  <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
-                  <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-                    Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting.
-                  </p>
-                </div>
-              )
+            {selected.join_url && !isDesktop ? (
+              <div
+                style={{
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                  background: theme.color.accentBg,
+                  border: `1px solid ${theme.color.accent}`,
+                  borderRadius: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                  color: theme.color.ink,
+                }}
+              >
+                <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
+                <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
+                  Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting and record attendance.
+                </p>
+              </div>
             ) : null}
 
             {formatBookingSummary(selected) ? (
@@ -412,7 +416,9 @@ export function Schedule() {
 
             <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
               {selected.status === 'booked'
-                ? 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
+                ? selected.join_url
+                  ? 'Tap Join meeting on a desktop when the call begins. Mark no-show 15 min after the start time if they have not connected.'
+                  : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
                 : selected.status === 'rescheduled'
                   ? 'This booking was rescheduled in Calendly.'
                   : selected.status === 'cancelled'
