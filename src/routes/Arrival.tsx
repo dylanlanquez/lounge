@@ -19,7 +19,6 @@ import {
 import {
   Button,
   Card,
-  Input,
   Skeleton,
   Toast,
   WaiverInline,
@@ -1883,15 +1882,7 @@ function AllergiesField({
         gap: theme.space[2],
       }}
     >
-      <span
-        style={{
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.medium,
-          color: theme.color.inkMuted,
-        }}
-      >
-        Allergies &amp; sensitivities
-      </span>
+      <span style={cardLabelStyle}>Allergies &amp; sensitivities</span>
       <textarea
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
@@ -1967,7 +1958,7 @@ function FieldRow({
   if (multiline) {
     return (
       <label style={{ ...wrapper, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-        <span style={labelStyle}>{label}</span>
+        <span style={cardLabelStyle}>{label}</span>
         {helper ? <span style={helperStyle}>{helper}</span> : null}
         <textarea value={value} onChange={(e) => onChange(e.currentTarget.value)} rows={3} style={textareaStyle} />
       </label>
@@ -1975,14 +1966,75 @@ function FieldRow({
   }
   return (
     <div style={wrapper}>
-      <Input
+      <EditableFieldCard
         label={label}
         helper={helper}
         type={type}
         value={value}
-        onChange={(e) => onChange(e.currentTarget.value)}
+        onChange={onChange}
       />
     </div>
+  );
+}
+
+// Editable field rendered as a card matching OnFileCard's silhouette —
+// muted sentence-case label, large semibold value-as-input — so the
+// edit and on-file states share one visual language. Replaces the
+// generic <Input> for the customer step where the design system's
+// input chrome (bold ink label) reads as a different surface from the
+// on-file tiles either side of it.
+function EditableFieldCard({
+  label,
+  helper,
+  type = 'text',
+  value,
+  onChange,
+}: {
+  label: string;
+  helper?: string;
+  type?: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <label
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${focused ? theme.color.ink : theme.color.border}`,
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        cursor: 'text',
+      }}
+    >
+      <span style={cardLabelStyle}>{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.currentTarget.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          outline: 'none',
+          padding: 0,
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+          width: '100%',
+          minWidth: 0,
+        }}
+      />
+      {helper ? <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>{helper}</span> : null}
+    </label>
   );
 }
 
@@ -2008,8 +2060,18 @@ function SexRow({
     );
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      <span style={labelStyle}>Sex</span>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <span style={cardLabelStyle}>Sex</span>
       <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
         {SEX_OPTIONS.map((opt) => {
           const selected = value === opt;
@@ -2296,10 +2358,13 @@ const qtyButton: CSSProperties = {
   fontFamily: 'inherit',
 };
 
-const labelStyle: CSSProperties = {
+// Shared label style for the customer-step card-shaped fields. Muted
+// sentence-case mirrors the OnFileCard label so editable + on-file
+// states present one consistent visual rhythm.
+const cardLabelStyle: CSSProperties = {
   fontSize: theme.type.size.sm,
   fontWeight: theme.type.weight.medium,
-  color: theme.color.ink,
+  color: theme.color.inkMuted,
 };
 
 const helperStyle: CSSProperties = {
