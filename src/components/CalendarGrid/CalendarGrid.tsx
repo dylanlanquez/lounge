@@ -108,29 +108,53 @@ export function CalendarGrid({
 }
 
 function NowIndicator({ offset }: { offset: number }) {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  const ampm = h < 12 ? 'am' : 'pm';
+  const label = `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
+
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: offset,
-        left: -4,
-        right: 0,
-        pointerEvents: 'none',
-        zIndex: 5,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-        <div
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: theme.color.accent,
-          }}
-        />
-        <div style={{ flex: 1, height: 2, background: theme.color.accent }} />
+    <>
+      {/* Line — sits behind appointment cards (zIndex 0). Cards (zIndex 1)
+          naturally cover it, so it never appears to slice through a booking. */}
+      <div
+        style={{
+          position: 'absolute',
+          top: offset,
+          left: 0,
+          right: 0,
+          height: 1,
+          background: theme.color.accent,
+          opacity: 0.6,
+          pointerEvents: 'none',
+          zIndex: 0,
+        }}
+      />
+      {/* Time pill anchored to the left edge of the slot column. Sits above
+          everything (zIndex 4) so the receptionist can always see "now". */}
+      <div
+        style={{
+          position: 'absolute',
+          top: offset - 10,
+          left: -4,
+          padding: '2px 8px',
+          background: theme.color.accent,
+          color: theme.color.surface,
+          borderRadius: 999,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: theme.type.tracking.wide,
+          boxShadow: theme.shadow.card,
+          pointerEvents: 'none',
+          zIndex: 4,
+        }}
+      >
+        {label}
       </div>
-    </div>
+    </>
   );
 }
 

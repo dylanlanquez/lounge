@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { archToAnatomy, formatBookingSummary } from './appointments.ts';
+import { archToAnatomy, eventTypeCategory, formatBookingSummary } from './appointments.ts';
 import type { AppointmentRow, IntakeAnswer } from './appointments.ts';
 
 const makeRow = (
@@ -166,5 +166,21 @@ describe('formatBookingSummary', () => {
         ])
       )
     ).toBe('Upper and Lower Retainer');
+  });
+});
+
+describe('eventTypeCategory', () => {
+  it.each([
+    ['Denture Repairs', 'repair'],
+    ['Same-day Click-in Veneers', 'sameDay'],
+    ['Same-day Appliances', 'appliance'],
+    ['Virtual Impression Appointment', 'impression'],
+    ['In-person Impression Appointment', 'impression'],
+    ['Initial Consultation', 'consult'],
+    [null, 'consult'],
+    [undefined, 'consult'],
+    ['', 'consult'],
+  ] as const)('maps "%s" → %s', (label, expected) => {
+    expect(eventTypeCategory(label)).toBe(expected);
   });
 });

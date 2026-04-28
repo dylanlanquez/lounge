@@ -214,6 +214,21 @@ export function archToAnatomy(raw: string | null | undefined): string | undefine
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+// Maps a Calendly event-type label to one of the muted category colors.
+// Match by inclusion (case-insensitive) so minor wording variations still
+// land in the right bucket.
+export function eventTypeCategory(
+  label: string | null | undefined
+): 'repair' | 'sameDay' | 'appliance' | 'impression' | 'consult' {
+  if (!label) return 'consult';
+  const v = label.toLowerCase();
+  if (/denture\s+repair|repair/i.test(v)) return 'repair';
+  if (/click[\s-]?in\s+veneer|veneer/i.test(v)) return 'sameDay';
+  if (/same[\s-]?day\s+appliance|appliance/i.test(v)) return 'appliance';
+  if (/impression/i.test(v)) return 'impression';
+  return 'consult';
+}
+
 // One-line, human-readable summary of the appointment for cards and sheets.
 // Combines arch + appliance/repair into "Upper Missing Tooth Retainer";
 // strips event-type prefixes ("Same-day ", "In-person ", "Virtual ") so the

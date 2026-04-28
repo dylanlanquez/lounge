@@ -43,6 +43,7 @@ export function ClusterCard({
     display: 'flex',
     cursor: isInteractive ? 'pointer' : 'default',
     transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+    zIndex: 1,
   };
 
   return (

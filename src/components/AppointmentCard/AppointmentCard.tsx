@@ -16,6 +16,9 @@ export interface AppointmentCardProps {
   // Compute via assignAppointmentLanes() before rendering.
   lane?: number;
   lanesInGroup?: number;
+  // Optional event-type accent for the left bar. Only applies when
+  // status='booked' — once the patient arrives the status color takes over.
+  barColor?: string;
   onClick?: () => void;
 }
 
@@ -69,10 +72,12 @@ export function AppointmentCard({
   height,
   lane = 0,
   lanesInGroup = 1,
+  barColor,
   onClick,
 }: AppointmentCardProps) {
   const isInteractive = Boolean(onClick);
   const lanePct = 100 / lanesInGroup;
+  // Sit above the now-indicator line; below the now-time pill.
   const styles: CSSProperties = {
     position: 'absolute',
     top,
@@ -87,7 +92,9 @@ export function AppointmentCard({
     cursor: isInteractive ? 'pointer' : 'default',
     transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
     textDecoration: status === 'cancelled' ? 'line-through' : 'none',
+    zIndex: 1,
   };
+  const effectiveBarColor = status === 'booked' && barColor ? barColor : BAR_COLOR[status];
 
   return (
     <div
@@ -106,7 +113,7 @@ export function AppointmentCard({
       <div
         style={{
           width: 4,
-          background: BAR_COLOR[status],
+          background: effectiveBarColor,
           flexShrink: 0,
         }}
         aria-hidden
