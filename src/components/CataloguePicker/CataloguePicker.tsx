@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, Minus, Plus, Sparkles } from 'lucide-react';
+import { ChevronRight, Minus, Package, Plus, Sparkles } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Input } from '../Input/Input.tsx';
@@ -196,7 +196,7 @@ function Section({
                 appearance: 'none',
                 width: '100%',
                 textAlign: 'left',
-                padding: theme.space[4],
+                padding: theme.space[3],
                 background: theme.color.surface,
                 border: `1px solid ${theme.color.border}`,
                 borderRadius: 14,
@@ -216,6 +216,7 @@ function Section({
                 (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
               }}
             >
+              <Thumb src={row.image_url} alt={row.name} />
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span
                   style={{
@@ -323,6 +324,12 @@ function ConfigureForm({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      {row.image_url ? (
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <Thumb src={row.image_url} alt={row.name} size={120} />
+        </div>
+      ) : null}
+
       <div
         style={{
           padding: `${theme.space[3]}px ${theme.space[4]}px`,
@@ -486,6 +493,44 @@ function ArchPick({
     >
       {value}
     </button>
+  );
+}
+
+// Square thumbnail with rounded clip + subtle border, fallback to Package
+// glyph on a tinted background. Mirrors the admin's CatalogueThumbnail
+// but kept local so the picker is self-contained.
+function Thumb({ src, alt, size = 48 }: { src: string | null; alt: string; size?: number }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        flexShrink: 0,
+        width: size,
+        height: size,
+        borderRadius: 10,
+        overflow: 'hidden',
+        background: src ? theme.color.surface : 'rgba(14, 20, 20, 0.04)',
+        border: `1px solid ${theme.color.border}`,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: theme.color.inkSubtle,
+      }}
+    >
+      {src ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <Package size={Math.round(size * 0.4)} />
+      )}
+    </span>
   );
 }
 

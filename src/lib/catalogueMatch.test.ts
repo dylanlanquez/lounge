@@ -11,6 +11,7 @@ const baseRow = (over: Partial<CatalogueRow> = {}): CatalogueRow => ({
   unit_price: 100,
   extra_unit_price: null,
   unit_label: null,
+  image_url: null,
   service_type: null,
   product_key: null,
   repair_variant: null,

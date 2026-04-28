@@ -22,6 +22,10 @@ export interface CatalogueRow {
   unit_price: number; // pounds
   extra_unit_price: number | null; // pounds; null → no volume discount
   unit_label: string | null;
+  // Frozen URL — either a Supabase Storage public URL (admin upload)
+  // or a third-party CDN URL pulled by SKU from Shopify. Once written
+  // it is not re-resolved at render time.
+  image_url: string | null;
   service_type: string | null;
   product_key: string | null;
   repair_variant: string | null;
@@ -63,7 +67,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, unit_label, service_type, product_key, repair_variant, arch_match, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -108,6 +112,7 @@ export async function upsertCatalogueRow(
     unit_price: draft.unit_price,
     extra_unit_price: draft.extra_unit_price,
     unit_label: draft.unit_label,
+    image_url: draft.image_url,
     service_type: draft.service_type,
     product_key: draft.product_key,
     repair_variant: draft.repair_variant,
@@ -140,4 +145,57 @@ export async function upsertCatalogueRow(
 export async function setCatalogueActive(id: string, active: boolean): Promise<void> {
   const { error } = await supabase.from('lwo_catalogue').update({ active }).eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+// Uploads a product photo to the catalogue-images bucket and returns the
+// public URL. The object name is keyed on the catalogue code so one row
+// has at most one image — re-uploading replaces the previous file.
+//
+// Caller is responsible for writing the returned URL to
+// lwo_catalogue.image_url (do that via upsertCatalogueRow). Doing it in
+// two steps keeps storage semantics explicit and matches Checkpoint's
+// "draft then save" admin pattern.
+export async function uploadCatalogueImage(file: File, code: string): Promise<string> {
+  if (!code.trim()) throw new Error('Catalogue code is required before uploading');
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png';
+  const objectName = `${slugifyCode(code)}.${ext}`;
+  const { error: uploadErr } = await supabase.storage
+    .from('catalogue-images')
+    .upload(objectName, file, {
+      cacheControl: '3600',
+      upsert: true,
+      contentType: file.type || undefined,
+    });
+  if (uploadErr) throw new Error(uploadErr.message);
+  const { data: pub } = supabase.storage.from('catalogue-images').getPublicUrl(objectName);
+  if (!pub?.publicUrl) throw new Error('Could not resolve public URL for uploaded image');
+  // Append a cache-busting suffix so the admin sees the new image
+  // immediately without a hard reload (the storage CDN otherwise hands
+  // out the previous image until the cache TTL elapses).
+  return `${pub.publicUrl}?v=${Date.now()}`;
+}
+
+// Removes the image from storage and clears image_url on the catalogue
+// row. Caller commits image_url=null via upsertCatalogueRow.
+export async function deleteCatalogueImage(code: string): Promise<void> {
+  if (!code.trim()) return;
+  // We don't know the extension so list + delete by prefix. Cheap on a
+  // small bucket; revisit if the catalogue ever grows past a few hundred.
+  const { data: files } = await supabase.storage
+    .from('catalogue-images')
+    .list('', { search: slugifyCode(code) });
+  const matching = (files ?? []).filter((f) => f.name.startsWith(slugifyCode(code) + '.'));
+  if (matching.length === 0) return;
+  const { error } = await supabase.storage
+    .from('catalogue-images')
+    .remove(matching.map((f) => f.name));
+  if (error) throw new Error(error.message);
+}
+
+// Storage object names allow letters, digits, dashes, underscores and
+// dots. Catalogue codes are already in that shape (e.g. 'den_snapped')
+// but we belt-and-braces normalise just in case admin enters something
+// weirder.
+function slugifyCode(code: string): string {
+  return code.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
 }
