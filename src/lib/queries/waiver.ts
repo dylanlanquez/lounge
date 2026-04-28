@@ -84,6 +84,13 @@ export function usePatientWaiverState(patientId: string | null | undefined): Pat
       setLoading(false);
       return;
     }
+    // Reset loading to true at the start of every fetch — without
+    // this, the moment patientId flips from null → a real id the
+    // hook would briefly report `loading=false` with the previous
+    // empty Map, causing downstream banners to render the
+    // not-yet-signed default state and flicker. See
+    // feedback_no_load_flicker.
+    setLoading(true);
     let cancelled = false;
     (async () => {
       const { data, error: err } = await supabase
