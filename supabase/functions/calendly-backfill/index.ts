@@ -251,11 +251,14 @@ async function applyInvitee(
 
   const firstName = inv.first_name ?? splitName(inv.name).first;
   const lastName = inv.last_name ?? splitName(inv.name).last;
-  const email = inv.email?.toLowerCase().trim();
+  const rawEmail = inv.email?.toLowerCase().trim();
+  const email = isPlaceholderEmail(rawEmail) ? null : (rawEmail ?? null);
   const phone = (inv.text_reminder_number ?? '').trim() || null;
   const intake = inv.questions_and_answers ?? null;
 
-  // Identity resolve
+  // Identity resolve. Skip placeholder emails (noemail@gmail.com etc.) so
+  // multiple invitees sharing a stub email don't all collapse onto one
+  // existing patient record.
   let patient_id: string | null = null;
   if (email) {
     const { data: ex } = await supabase
@@ -298,17 +301,63 @@ async function applyInvitee(
   // Look for an existing row first. If present, fill in intake +
   // event_type_label only when those are currently null — never clobber
   // a manually-edited status or staff_account_id.
+  //
+  // Also detect "wrong patient" matches caused by placeholder-email
+  // collisions (multiple invitees sharing noemail@gmail.com all merging
+  // onto one existing patient). Signal: the linked patient's email is a
+  // placeholder AND the invitee's name doesn't match. In that case,
+  // re-resolve: create a new patient and re-point the appointment.
   const { data: existingAppt } = await supabase
     .from('lng_appointments')
-    .select('id, intake, event_type_label')
+    .select('id, intake, event_type_label, patient_id')
     .eq('calendly_invitee_uri', inv.uri)
     .maybeSingle();
 
   if (existingAppt) {
-    const cur = existingAppt as { id: string; intake: unknown; event_type_label: string | null };
+    const cur = existingAppt as {
+      id: string;
+      intake: unknown;
+      event_type_label: string | null;
+      patient_id: string;
+    };
+
+    let nextPatientId = cur.patient_id;
+
+    const { data: linkedPat } = await supabase
+      .from('patients')
+      .select('email, first_name, last_name')
+      .eq('id', cur.patient_id)
+      .maybeSingle();
+    const lp = linkedPat as
+      | { email: string | null; first_name: string | null; last_name: string | null }
+      | null;
+    const linkedName = `${lp?.first_name ?? ''} ${lp?.last_name ?? ''}`.trim().toLowerCase();
+    const inviteeName = `${firstName ?? ''} ${lastName ?? ''}`.trim().toLowerCase();
+    const wrongMatch = isPlaceholderEmail(lp?.email) && (!linkedName || linkedName !== inviteeName);
+
+    if (wrongMatch) {
+      const account_id = await resolveDefaultAccountId(supabase, location_id);
+      const { data: created, error: createErr } = await supabase
+        .from('patients')
+        .insert({
+          account_id,
+          location_id,
+          first_name: firstName || 'Patient',
+          last_name: lastName || '',
+          email,
+          phone,
+        })
+        .select('id')
+        .single();
+      if (!createErr && created) {
+        nextPatientId = (created as { id: string }).id;
+      }
+    }
+
     const patch: Record<string, unknown> = {};
     if (cur.intake == null && intake != null) patch.intake = intake;
     if (cur.event_type_label == null && evt.name) patch.event_type_label = evt.name;
+    if (nextPatientId !== cur.patient_id) patch.patient_id = nextPatientId;
     if (Object.keys(patch).length > 0) {
       await supabase.from('lng_appointments').update(patch).eq('id', cur.id);
       return 'applied';
@@ -353,6 +402,28 @@ async function calendly(method: 'GET' | 'POST' | 'DELETE', path: string, body?: 
     parsed = {};
   }
   return { ok: r.ok, body: parsed };
+}
+
+// Mirror of src/lib/identity.ts::isPlaceholderEmail. Keep both in sync —
+// the vitest suite under src/lib/identity.test.ts is source-of-truth.
+const PLACEHOLDER_LOCAL_RE =
+  /^(no[\-_.]?email|none|noaddress|no[\-_.]?reply|donotreply|do[\-_.]?not[\-_.]?reply|unknown|na|n\/a)$/;
+const PLACEHOLDER_DOMAINS = new Set([
+  'noemail.com',
+  'noaddress.com',
+  'example.com',
+  'test.com',
+  'invalid.com',
+]);
+function isPlaceholderEmail(email: string | null | undefined): boolean {
+  if (!email) return true;
+  const trimmed = email.toLowerCase().trim();
+  if (!trimmed || !trimmed.includes('@')) return true;
+  const [local, domain] = trimmed.split('@');
+  if (!local || !domain) return true;
+  if (PLACEHOLDER_LOCAL_RE.test(local)) return true;
+  if (PLACEHOLDER_DOMAINS.has(domain)) return true;
+  return false;
 }
 
 async function resolveDefaultAccountId(supabase: SupabaseClient, location_id: string): Promise<string> {
