@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  ArrivalIntakeSheet,
   BottomSheet,
   Button,
   Card,
@@ -21,6 +22,7 @@ import {
   Skeleton,
   StatusPill,
   Toast,
+  WaiverSheet,
   WeekStrip,
 } from '../components/index.ts';
 import {
@@ -101,6 +103,16 @@ export function Schedule() {
   // waiting for them to pick a reason. Cleared on cancel or successful submit.
   const [pickingNoShowReason, setPickingNoShowReason] = useState(false);
 
+  // Arrival flow state. Captures the appointment we're walking through
+  // intake + waiver for, so the schedule's own bottom sheet can close
+  // without losing context. Lives outside `selected` because the
+  // receptionist may dismiss the schedule sheet mid-flow but the
+  // arrival flow has its own full-screen sheet stack.
+  const [arrivalFlow, setArrivalFlow] = useState<
+    | { appointment: AppointmentRow; step: 'intake' | 'waiver' }
+    | null
+  >(null);
+
   const day = useDayAppointments(selectedDate);
   // Week-of-selected counts power the dots under each day pill.
   const weekDays = getWeekDays(selectedDate);
@@ -113,7 +125,13 @@ export function Schedule() {
   // the booking's event_type_label only — once a cart exists the visit
   // page does the more accurate cart-item resolution.
   const { sections: waiverSections } = useWaiverSections();
-  const { latest: patientSignatures } = usePatientWaiverState(selected?.patient_id);
+  // Waiver state follows whichever surface needs it: the schedule sheet
+  // (selected) when nothing's mid-arrival, or the arrival flow's
+  // captured appointment once intake is open. Keeps the WaiverSheet
+  // sections and signatures fresh for the patient we're actually about
+  // to gate.
+  const waiverPatientId = arrivalFlow?.appointment.patient_id ?? selected?.patient_id;
+  const { latest: patientSignatures } = usePatientWaiverState(waiverPatientId);
   const waiverFlag: WaiverFlag | null = (() => {
     if (!selected) return null;
     if (waiverSections.length === 0) return null;
@@ -124,6 +142,19 @@ export function Schedule() {
     );
     return summariseWaiverFlag(required, patientSignatures);
   })();
+
+  // Sections to walk through for the arrival flow's waiver step.
+  // Computed against the arrival appointment so it's correct even
+  // after the schedule sheet has been dismissed.
+  const arrivalRequiredSections = (() => {
+    if (!arrivalFlow) return [];
+    if (waiverSections.length === 0) return [];
+    const inferred = inferServiceTypeFromEventLabel(arrivalFlow.appointment.event_type_label);
+    return requiredSectionsForServiceTypes(inferred ? [inferred] : [], waiverSections);
+  })();
+  const arrivalWaiverFlag: WaiverFlag | null = arrivalFlow
+    ? summariseWaiverFlag(arrivalRequiredSections, patientSignatures)
+    : null;
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -148,6 +179,26 @@ export function Schedule() {
     setSelected(null);
     setClusterRows(null);
     setPickingNoShowReason(false);
+  };
+
+  // Final step of the arrival flow. Creates the visit + lwo_ref +
+  // patient_events row, then routes to /visit/:id. Errors surface in
+  // the existing schedule toast so the receptionist sees them in
+  // context and can retry without losing intake data.
+  const finaliseArrival = async (appointment: AppointmentRow) => {
+    setBusy(true);
+    try {
+      const { visit_id } = await markAppointmentArrived(appointment.id);
+      setArrivalFlow(null);
+      navigate(`/visit/${visit_id}`, { state: { from: 'schedule' } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not mark arrived');
+      // Leave arrivalFlow set on the waiver step so the receptionist
+      // can re-trigger from the waiver "All signed" callback if they
+      // need to. (signing is idempotent on its current section.)
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleSelectDate = (dateIso: string) => {
@@ -452,7 +503,7 @@ export function Schedule() {
                   }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                    Patient timeline <ChevronRight size={16} />
+                    Patient profile <ChevronRight size={16} />
                   </span>
                 </Button>
                 {(() => {
@@ -548,18 +599,15 @@ export function Schedule() {
                         <Button
                           variant="primary"
                           showArrow
-                          loading={busy}
-                          onClick={async () => {
+                          onClick={() => {
                             if (!selected) return;
-                            setBusy(true);
-                            try {
-                              const { visit_id } = await markAppointmentArrived(selected.id);
-                              navigate(`/visit/${visit_id}`, { state: { from: 'schedule' } });
-                            } catch (e) {
-                              setError(e instanceof Error ? e.message : 'Could not mark arrived');
-                            } finally {
-                              setBusy(false);
-                            }
+                            // Capture the appointment, close the schedule
+                            // sheet, and hand control to the arrival flow.
+                            // Intake → (waiver if required) → markAppointmentArrived.
+                            const apt = selected;
+                            setSelected(null);
+                            setClusterRows(null);
+                            setArrivalFlow({ appointment: apt, step: 'intake' });
                           }}
                         >
                           Mark as arrived
@@ -775,7 +823,7 @@ export function Schedule() {
                     : selected.status === 'no_show'
                       ? selected.join_url
                         ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
-                        : 'Marked as a no-show. If the patient turned up late, tap "Patient attended" to flip them back to arrived and start a visit.'
+                        : 'Marked as a no-show. If the patient turned up late, tap "Patient attended" to flip them back to arrived and open the appointment.'
                       : selected.status === 'rescheduled'
                         ? 'This booking was rescheduled in Calendly.'
                         : selected.status === 'cancelled'
@@ -785,6 +833,48 @@ export function Schedule() {
             </div>
           ) : null}
         </BottomSheet>
+      ) : null}
+
+      {arrivalFlow ? (
+        <ArrivalIntakeSheet
+          open={arrivalFlow.step === 'intake'}
+          onClose={() => setArrivalFlow(null)}
+          appointmentId={arrivalFlow.appointment.id}
+          patientId={arrivalFlow.appointment.patient_id}
+          eventTypeLabel={arrivalFlow.appointment.event_type_label}
+          onSubmitted={() => {
+            // After intake is saved, decide whether the patient still
+            // needs to sign the waiver before we open the visit. If yes,
+            // pivot to the waiver step; if no, finish the arrival.
+            const needsWaiver =
+              arrivalWaiverFlag !== null && arrivalWaiverFlag.status !== 'ready';
+            if (needsWaiver) {
+              setArrivalFlow((s) => (s ? { ...s, step: 'waiver' } : s));
+            } else {
+              finaliseArrival(arrivalFlow.appointment);
+            }
+          }}
+        />
+      ) : null}
+
+      {arrivalFlow && arrivalFlow.step === 'waiver' ? (
+        <WaiverSheet
+          open
+          onClose={() => setArrivalFlow(null)}
+          patientId={arrivalFlow.appointment.patient_id}
+          // No visit yet — we sign before lng_visits is created so
+          // signWaiver writes patient-only signatures. The visit page
+          // will pick up the up-to-date waiver state on first render.
+          visitId={null}
+          sections={(() => {
+            const flag = arrivalWaiverFlag;
+            const missing = flag?.missingSections ?? [];
+            const stale = flag?.staleSections ?? [];
+            return [...missing, ...stale];
+          })()}
+          patientName={patientFullDisplayName(arrivalFlow.appointment)}
+          onAllSigned={() => finaliseArrival(arrivalFlow.appointment)}
+        />
       ) : null}
 
       {error ? (

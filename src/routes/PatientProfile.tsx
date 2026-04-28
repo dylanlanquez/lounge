@@ -988,7 +988,7 @@ function WalkInAppointments({
             fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {visits.length} {visits.length === 1 ? 'visit' : 'visits'}
+          {visits.length} {visits.length === 1 ? 'appointment' : 'appointments'}
         </span>
       </div>
 
@@ -997,7 +997,7 @@ function WalkInAppointments({
       {loading ? (
         <Skeleton height={120} radius={14} />
       ) : visits.length === 0 ? (
-        <EmptyState title="No visits yet" description="Walk-ins and arrivals will list here." />
+        <EmptyState title="No appointments yet" description="Walk-ins and arrivals will list here." />
       ) : isMobile ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
           {visits.map((v) => (
@@ -1099,7 +1099,7 @@ function VisitRowMobile({ visit, onClick }: { visit: PatientVisitRow; onClick: (
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-          {visit.service_label ?? 'Visit'}
+          {visit.service_label ?? 'Appointment'}
         </p>
         <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums' }}>
           {formatDateTime(visit.opened_at)} · {visit.lwo_ref ?? 'no LWO ref'}
