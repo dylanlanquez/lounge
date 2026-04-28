@@ -12,6 +12,10 @@ export interface AppointmentCardProps {
   // Layout — provided by the parent CalendarGrid:
   top: number;
   height: number;
+  // Overlap layout. Default lane=0, lanesInGroup=1 = full-width.
+  // Compute via assignAppointmentLanes() before rendering.
+  lane?: number;
+  lanesInGroup?: number;
   onClick?: () => void;
 }
 
@@ -63,14 +67,17 @@ export function AppointmentCard({
   serviceLabel,
   top,
   height,
+  lane = 0,
+  lanesInGroup = 1,
   onClick,
 }: AppointmentCardProps) {
   const isInteractive = Boolean(onClick);
+  const lanePct = 100 / lanesInGroup;
   const styles: CSSProperties = {
     position: 'absolute',
     top,
-    left: 4,
-    right: 4,
+    left: `calc(${lane * lanePct}% + 2px)`,
+    width: `calc(${lanePct}% - 4px)`,
     height,
     background: FILL_COLOR[status],
     borderRadius: 12,
