@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { archToAnatomy, eventTypeCategory, formatBookingSummary } from './appointments.ts';
+import { archToAnatomy, eventTypeCategory, formatBookingSummary, properCase } from './appointments.ts';
 import type { AppointmentRow, IntakeAnswer } from './appointments.ts';
 
 const makeRow = (
@@ -228,6 +228,27 @@ describe('formatBookingSummary', () => {
         ])
       )
     ).toBe('Cracked Denture, Snapped Denture');
+  });
+});
+
+describe('properCase', () => {
+  it.each([
+    ['amanda bryce', 'Amanda Bryce'],
+    ['naheem shafiq', 'Naheem Shafiq'],
+    ['stephen green', 'Stephen Green'],
+    ['John Smith', 'John Smith'],
+    ['AMANDA SOLANKE', 'Amanda Solanke'],
+    ['MARK WRIGLEY', 'Mark Wrigley'],
+    ['DARREN WINTER', 'Darren Winter'],
+    ['Micheal DPD', 'Micheal DPD'],          // short all-caps preserved
+    ['McDonald', 'McDonald'],                 // mixed-case preserved
+    ['mary-jane', 'Mary-Jane'],
+    ["o'brien", "O'Brien"],
+    ['', ''],
+    [null, ''],
+    [undefined, ''],
+  ] as const)('properCase("%s") → "%s"', (input, expected) => {
+    expect(properCase(input)).toBe(expected);
   });
 });
 
