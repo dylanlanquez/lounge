@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { AppointmentRow } from './appointments.ts';
+import { formatDateIso, getMonthGridDays } from '../calendarMonth.ts';
 
-interface Result {
+interface DayResult {
   data: AppointmentRow[];
   loading: boolean;
   error: string | null;
@@ -66,7 +67,17 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
   });
 }
 
-export function useUpcomingAppointments(daysAhead = 14): Result {
+// Boundary handling note: an ISO date like "2026-04-28" is treated as the
+// receptionist's local-time day. We bracket the query with the local
+// midnight pair so an appointment at 23:30 on the 28th never leaks into
+// the 29th's view.
+function localDayBounds(dateIso: string): { startIso: string; endIso: string } {
+  const start = new Date(`${dateIso}T00:00:00`);
+  const end = new Date(`${dateIso}T23:59:59.999`);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+export function useDayAppointments(dateIso: string): DayResult {
   const [data, setData] = useState<AppointmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,18 +85,18 @@ export function useUpcomingAppointments(daysAhead = 14): Result {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+      setLoading(true);
+      const { startIso, endIso } = localDayBounds(dateIso);
       const run = (sel: string) =>
         supabase
           .from('lng_appointments')
           .select(sel)
-          .gte('start_at', start.toISOString())
-          .lte('start_at', end.toISOString())
-          .in('status', ['booked', 'arrived', 'in_progress', 'no_show'])
+          .gte('start_at', startIso)
+          .lte('start_at', endIso)
           .order('start_at', { ascending: true });
       let { data: rows, error: err } = await run(SELECT_WITH_INTAKE);
+      // 42703 = undefined_column. Frontend deployed before the intake
+      // migration: degrade gracefully without intake instead of blanking.
       if (err && err.code === '42703') {
         const fb = await run(SELECT_NO_INTAKE);
         rows = fb.data;
@@ -93,7 +104,13 @@ export function useUpcomingAppointments(daysAhead = 14): Result {
       }
       if (cancelled) return;
       if (err) {
-        setError(err.message);
+        // PGRST200 / 42P01 = pre-migration; treat as empty rather than error.
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setData([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
         setLoading(false);
         return;
       }
@@ -103,48 +120,66 @@ export function useUpcomingAppointments(daysAhead = 14): Result {
     return () => {
       cancelled = true;
     };
-  }, [daysAhead]);
+  }, [dateIso]);
 
   return { data, loading, error };
 }
 
-export function usePastAppointments(daysBack = 30): Result {
-  const [data, setData] = useState<AppointmentRow[]>([]);
+interface MonthCountsResult {
+  counts: Map<string, number>;
+  loading: boolean;
+  error: string | null;
+}
+
+// Returns a per-date appointment count for the visible 6-week month grid
+// (so dots on previous/next-month padding cells are accurate too).
+// Excludes cancelled and rescheduled rows — the dot represents work that
+// the receptionist still needs to track on that day.
+export function useMonthCounts(year: number, month: number): MonthCountsResult {
+  const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const end = new Date();
-      end.setHours(0, 0, 0, 0);
-      const start = new Date(end.getTime() - daysBack * 24 * 60 * 60 * 1000);
-      const run = (sel: string) =>
-        supabase
-          .from('lng_appointments')
-          .select(sel)
-          .gte('start_at', start.toISOString())
-          .lt('start_at', end.toISOString())
-          .order('start_at', { ascending: false });
-      let { data: rows, error: err } = await run(SELECT_WITH_INTAKE);
-      if (err && err.code === '42703') {
-        const fb = await run(SELECT_NO_INTAKE);
-        rows = fb.data;
-        err = fb.error;
-      }
+      setLoading(true);
+      const grid = getMonthGridDays(year, month);
+      const firstIso = grid[0]!.dateIso;
+      const lastIso = grid[grid.length - 1]!.dateIso;
+      const start = new Date(`${firstIso}T00:00:00`);
+      const end = new Date(`${lastIso}T23:59:59.999`);
+      const { data: rows, error: err } = await supabase
+        .from('lng_appointments')
+        .select('start_at, status')
+        .gte('start_at', start.toISOString())
+        .lte('start_at', end.toISOString())
+        .not('status', 'in', '(cancelled,rescheduled)');
+
       if (cancelled) return;
       if (err) {
-        setError(err.message);
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setCounts(new Map());
+          setError(null);
+        } else {
+          setError(err.message);
+        }
         setLoading(false);
         return;
       }
-      setData(mapRows(rows ?? []));
+      const m = new Map<string, number>();
+      for (const r of rows ?? []) {
+        const startAt = (r as { start_at: string }).start_at;
+        const dateIso = formatDateIso(new Date(startAt));
+        m.set(dateIso, (m.get(dateIso) ?? 0) + 1);
+      }
+      setCounts(m);
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [daysBack]);
+  }, [year, month]);
 
-  return { data, loading, error };
+  return { counts, loading, error };
 }
