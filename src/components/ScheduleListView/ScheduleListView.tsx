@@ -4,6 +4,7 @@ import { theme } from '../../theme/index.ts';
 import {
   type AppointmentRow,
   formatBookingSummary,
+  humaniseStatus,
   patientDisplayName,
   staffDisplayName,
 } from '../../lib/queries/appointments.ts';
@@ -132,7 +133,7 @@ function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
           </p>
         </div>
         <StatusPill tone={tone} size="sm">
-          {row.status.replace(/_/g, ' ')}
+          {humaniseStatus(row.status)}
         </StatusPill>
         <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
       </button>

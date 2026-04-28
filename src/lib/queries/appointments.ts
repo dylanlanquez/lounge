@@ -160,6 +160,29 @@ export function patientDisplayName(row: AppointmentRow): string {
   return `${first} ${last.slice(0, 1)}${last.slice(0, 1) ? '.' : ''}`.trim();
 }
 
+// Human-readable label for an appointment status. Backed-end enums like
+// 'no_show' / 'in_progress' are not for the receptionist to see.
+export function humaniseStatus(status: AppointmentRow['status']): string {
+  switch (status) {
+    case 'booked':
+      return 'Booked';
+    case 'arrived':
+      return 'Arrived';
+    case 'in_progress':
+      return 'In progress';
+    case 'complete':
+      return 'Complete';
+    case 'no_show':
+      return 'No-show';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'rescheduled':
+      return 'Rescheduled';
+    default:
+      return status;
+  }
+}
+
 // Full-name version for confirmation surfaces (booking detail sheet).
 export function patientFullDisplayName(row: AppointmentRow): string {
   const first = (row.patient_first_name ?? '').trim();
