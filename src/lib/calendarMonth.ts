@@ -53,24 +53,3 @@ export function getWeekDays(dateIso: string): string[] {
   return [0, 1, 2, 3, 4, 5, 6].map((i) => addDaysIso(start, i));
 }
 
-// Header label for a visible week range.
-// - "April 2026" when both ends fall in the same month
-// - "April-May 2026" when the week straddles a month boundary
-// - "Dec 2025-Jan 2026" when it also crosses a year boundary
-export function formatWeekLabel(startIso: string, endIso: string): string {
-  const s = new Date(`${startIso}T00:00:00`);
-  const e = new Date(`${endIso}T00:00:00`);
-  const sameYear = s.getFullYear() === e.getFullYear();
-  const sameMonth = sameYear && s.getMonth() === e.getMonth();
-  if (sameMonth) {
-    return s.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-  }
-  if (sameYear) {
-    const sMonth = s.toLocaleDateString('en-GB', { month: 'long' });
-    const eMonth = e.toLocaleDateString('en-GB', { month: 'long' });
-    return `${sMonth}-${eMonth} ${e.getFullYear()}`;
-  }
-  const sLabel = s.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-  const eLabel = e.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-  return `${sLabel}-${eLabel}`;
-}
