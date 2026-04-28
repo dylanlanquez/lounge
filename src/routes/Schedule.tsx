@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CalendarDays,
   CalendarOff,
+  Check,
   ChevronLeft,
   ChevronRight,
   List,
@@ -594,35 +595,31 @@ export function Schedule() {
             </ul>
           ) : selected ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexWrap: 'wrap' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
                   <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
                   <StatusPill tone={statusToTone(selected.status)} size="sm">
                     {humaniseStatus(selected.status)}
                   </StatusPill>
-                </span>
+                </div>
+
                 {selected.deposit_pence != null && selected.deposit_pence > 0 ? (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Deposit</span>
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        padding: `2px ${theme.space[2]}px`,
-                        background: theme.color.accentBg,
-                        color: theme.color.accent,
-                        borderRadius: theme.radius.pill,
-                        fontSize: theme.type.size.xs,
-                        fontWeight: theme.type.weight.semibold,
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
-                    >
-                      {formatGbp(selected.deposit_pence)} paid
-                      {selected.deposit_provider ? ` · ${capitalise(selected.deposit_provider)}` : ''}
-                    </span>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[2],
+                    color: theme.color.ink,
+                    fontSize: theme.type.size.sm,
+                  }}
+                >
+                  <Check size={16} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
+                  <span>
+                    {formatGbp(selected.deposit_pence)} deposit paid
+                    {selected.deposit_provider ? ` · ${capitalise(selected.deposit_provider)}` : ''}
                   </span>
-                ) : null}
+                </div>
+              ) : null}
               </div>
 
               {selected.status === 'booked' && isBookingLate(selected.start_at, now) ? (
