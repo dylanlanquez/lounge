@@ -60,7 +60,11 @@ interface FormState {
   sex: string;
   email: string;
   phone: string;
-  address: string;
+  portal_ship_line1: string;
+  portal_ship_line2: string;
+  portal_ship_city: string;
+  portal_ship_postcode: string;
+  portal_ship_country_code: string;
   allergies: string;
   emergency_contact_name: string;
   emergency_contact_phone: string;
@@ -74,7 +78,14 @@ const EMPTY_FORM: FormState = {
   sex: '',
   email: '',
   phone: '',
-  address: '',
+  portal_ship_line1: '',
+  portal_ship_line2: '',
+  portal_ship_city: '',
+  portal_ship_postcode: '',
+  // GB by default — clinic operates in UK; receptionist can override
+  // for the rare overseas patient. Empty string means "not yet
+  // confirmed by receptionist", so the on-file display still works.
+  portal_ship_country_code: 'GB',
   allergies: '',
   emergency_contact_name: '',
   emergency_contact_phone: '',
@@ -125,7 +136,11 @@ export function ArrivalIntakeSheet({
           sex: snap.sex ?? '',
           email: snap.email ?? '',
           phone: snap.phone ?? '',
-          address: snap.address ?? '',
+          portal_ship_line1: snap.portal_ship_line1 ?? '',
+          portal_ship_line2: snap.portal_ship_line2 ?? '',
+          portal_ship_city: snap.portal_ship_city ?? '',
+          portal_ship_postcode: snap.portal_ship_postcode ?? '',
+          portal_ship_country_code: snap.portal_ship_country_code ?? 'GB',
           allergies: snap.allergies ?? '',
           emergency_contact_name: snap.emergency_contact_name ?? '',
           emergency_contact_phone: snap.emergency_contact_phone ?? '',
@@ -160,7 +175,10 @@ export function ArrivalIntakeSheet({
     need('Sex', snapshot.sex, form.sex);
     need('Email', snapshot.email, form.email);
     need('Phone', snapshot.phone, form.phone);
-    need('Address', snapshot.address, form.address);
+    need('Address line 1', snapshot.portal_ship_line1, form.portal_ship_line1);
+    need('City', snapshot.portal_ship_city, form.portal_ship_city);
+    need('Postcode', snapshot.portal_ship_postcode, form.portal_ship_postcode);
+    need('Country', snapshot.portal_ship_country_code, form.portal_ship_country_code);
     if (form.allergies.trim() === '' && (snapshot.allergies ?? '') === '') {
       list.push('Allergies & sensitivities');
     }
@@ -218,7 +236,11 @@ export function ArrivalIntakeSheet({
           sex: form.sex,
           email: form.email,
           phone: form.phone,
-          address: form.address,
+          portal_ship_line1: form.portal_ship_line1,
+          portal_ship_line2: form.portal_ship_line2,
+          portal_ship_city: form.portal_ship_city,
+          portal_ship_postcode: form.portal_ship_postcode,
+          portal_ship_country_code: form.portal_ship_country_code,
           allergies: form.allergies,
           emergency_contact_name: form.emergency_contact_name,
           emergency_contact_phone: form.emergency_contact_phone,
@@ -309,13 +331,42 @@ export function ArrivalIntakeSheet({
               onChange={(v) => update('phone', v)}
               type="tel"
             />
+          </Section>
+
+          <Section title="Address">
+            <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              In case we need to send anything to the patient.
+            </p>
             <FillField
-              label="Address"
-              helper="In case we need to send anything to the patient."
-              current={snapshot.address}
-              value={form.address}
-              onChange={(v) => update('address', v)}
-              multiline
+              label="Address line 1"
+              current={snapshot.portal_ship_line1}
+              value={form.portal_ship_line1}
+              onChange={(v) => update('portal_ship_line1', v)}
+            />
+            <FillField
+              label="Address line 2"
+              current={snapshot.portal_ship_line2}
+              value={form.portal_ship_line2}
+              onChange={(v) => update('portal_ship_line2', v)}
+            />
+            <FillField
+              label="City"
+              current={snapshot.portal_ship_city}
+              value={form.portal_ship_city}
+              onChange={(v) => update('portal_ship_city', v)}
+            />
+            <FillField
+              label="Postcode"
+              current={snapshot.portal_ship_postcode}
+              value={form.portal_ship_postcode}
+              onChange={(v) => update('portal_ship_postcode', v)}
+            />
+            <FillField
+              label="Country"
+              helper="ISO code, e.g. GB."
+              current={snapshot.portal_ship_country_code}
+              value={form.portal_ship_country_code}
+              onChange={(v) => update('portal_ship_country_code', v)}
             />
           </Section>
 
