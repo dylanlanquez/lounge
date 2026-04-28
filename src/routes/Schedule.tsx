@@ -517,7 +517,7 @@ export function Schedule() {
           open={!!clusterRows}
           onClose={() => setClusterRows(null)}
           title={`${clusterRows.length} appointments`}
-          description={`${formatStart(clusterRows[0]!.start_at)} · tap one to open`}
+          description={formatClusterRange(clusterRows)}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             {clusterRows.map((r) => (
@@ -776,7 +776,18 @@ function formatRange(startIso: string, endIso: string): string {
   return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} to ${e.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-function formatStart(startIso: string): string {
-  const s = new Date(startIso);
-  return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+function formatClusterRange(rows: AppointmentRow[]): string {
+  if (rows.length === 0) return '';
+  let earliestStart = rows[0]!.start_at;
+  let latestEnd = rows[0]!.end_at;
+  for (const r of rows) {
+    if (r.start_at < earliestStart) earliestStart = r.start_at;
+    if (r.end_at > latestEnd) latestEnd = r.end_at;
+  }
+  const s = new Date(earliestStart);
+  const e = new Date(latestEnd);
+  const day = s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const sTime = s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const eTime = e.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${day}, ${sTime} to ${eTime}. Pick one to open.`;
 }
