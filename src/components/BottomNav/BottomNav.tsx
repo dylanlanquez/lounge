@@ -105,6 +105,7 @@ export function BottomNav() {
           );
         })}
       </ul>
+      <BottomNavStyles />
     </nav>
   );
 }
@@ -141,6 +142,7 @@ function NavButton({ label, icon, active, onClick }: NavButtonProps) {
   return (
     <button
       type="button"
+      className="lng-bottom-nav-btn"
       aria-current={active ? 'page' : undefined}
       aria-label={label}
       onClick={onClick}
@@ -152,17 +154,29 @@ function NavButton({ label, icon, active, onClick }: NavButtonProps) {
         if (active) return;
         (e.currentTarget as HTMLElement).style.color = theme.color.inkSubtle;
       }}
-      onFocus={(e) => {
-        (e.currentTarget as HTMLElement).style.boxShadow = `inset 0 0 0 2px ${theme.color.focus}`;
-        (e.currentTarget as HTMLElement).style.borderRadius = `${theme.radius.input}px`;
-      }}
-      onBlur={(e) => {
-        (e.currentTarget as HTMLElement).style.boxShadow = 'none';
-      }}
       style={styles}
     >
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+// :focus-visible only matches when the browser thinks focus came from a
+// keyboard (Tab / arrow / Enter), not after a mouse click or touch tap.
+// Pre-:focus-visible we ran an onFocus handler that drew the ring on every
+// kind of focus, including post-click — which left a sticky border on the
+// active nav item after every tap. Scoped to .lng-bottom-nav-btn so the
+// rule can't leak into other surfaces.
+function BottomNavStyles() {
+  return (
+    <style>{`
+      .lng-bottom-nav-btn:focus { outline: none; }
+      .lng-bottom-nav-btn:focus-visible {
+        outline: 2px solid ${theme.color.focus};
+        outline-offset: -4px;
+        border-radius: ${theme.radius.input}px;
+      }
+    `}</style>
   );
 }
