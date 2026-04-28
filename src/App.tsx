@@ -10,7 +10,7 @@ const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ defau
 const NewWalkIn = lazy(() => import('./routes/NewWalkIn.tsx').then((m) => ({ default: m.NewWalkIn })));
 const VisitDetail = lazy(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })));
 const Pay = lazy(() => import('./routes/Pay.tsx').then((m) => ({ default: m.Pay })));
-const PatientTimeline = lazy(() => import('./routes/PatientTimeline.tsx').then((m) => ({ default: m.PatientTimeline })));
+const PatientProfile = lazy(() => import('./routes/PatientProfile.tsx').then((m) => ({ default: m.PatientProfile })));
 const Patients = lazy(() => import('./routes/Patients.tsx').then((m) => ({ default: m.Patients })));
 const InClinic = lazy(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })));
 const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })));
@@ -46,7 +46,7 @@ export function App() {
           <Route path="/walk-in/new" element={<NewWalkIn />} />
           <Route path="/visit/:id" element={<VisitDetail />} />
           <Route path="/visit/:id/pay" element={<Pay />} />
-          <Route path="/patient/:id" element={<PatientTimeline />} />
+          <Route path="/patient/:id" element={<PatientProfile />} />
           <Route path="/patients" element={<Patients />} />
           <Route path="/in-clinic" element={<InClinic />} />
           <Route path="/admin" element={<Admin />} />
