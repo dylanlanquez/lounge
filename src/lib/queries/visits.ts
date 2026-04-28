@@ -97,6 +97,28 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
     },
   });
 
+  // Calendar marker. Walk-ins live in lng_walk_ins + lng_visits, but the
+  // schedule surfaces (today / week strip / patient timeline) read from
+  // lng_appointments. Insert a marker row with source='manual' so the
+  // walk-in shows up alongside Calendly bookings — the receptionist sees
+  // a complete picture of who turned up today.
+  //
+  // The visit's appointment_id stays NULL — the schema constraint on
+  // lng_visits (exactly one of appointment_id / walk_in_id) means we
+  // can't link both. Calendar surfaces just render this row with the
+  // walk-in icon based on source.
+  const start = new Date();
+  const end = new Date(start.getTime() + 30 * 60_000);
+  await supabase.from('lng_appointments').insert({
+    patient_id: input.patient_id,
+    location_id: input.location_id,
+    source: 'manual',
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    event_type_label: 'Walk-in',
+    status: 'arrived',
+  });
+
   return { visit_id: visit.id, walk_in_id: walkIn.id, lwo_ref: lwoRef };
 }
 

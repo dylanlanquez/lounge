@@ -29,7 +29,7 @@ import {
   offsetForTime,
   heightForDuration,
 } from '../components/CalendarGrid/CalendarGrid.tsx';
-import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
+import { AppointmentCard, SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ClusterCard } from '../components/ClusterCard/ClusterCard.tsx';
 import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -333,6 +333,7 @@ export function Schedule() {
                       lane={item.lane}
                       lanesInGroup={item.lanesInGroup}
                       barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
+                      source={item.data.source}
                       lateMinutes={
                         onToday &&
                         item.data.status === 'booked' &&
@@ -403,9 +404,13 @@ export function Schedule() {
               <span>Pick the reason. We log it against the appointment so reports show no-show causes.</span>
             ) : selected ? (
               <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-                <span>
-                  {formatRange(selected.start_at, selected.end_at)}
-                  {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <SourceGlyph source={selected.source} size={13} />
+                  <span>
+                    {selected.source === 'manual' ? 'Walk-in · ' : ''}
+                    {formatRange(selected.start_at, selected.end_at)}
+                    {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
+                  </span>
                 </span>
                 {selected.patient_email || selected.patient_phone ? (
                   <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>

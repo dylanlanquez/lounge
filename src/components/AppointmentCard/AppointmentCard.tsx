@@ -1,7 +1,12 @@
 import { type CSSProperties } from 'react';
+import { Footprints } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
-import { formatLateDuration } from '../../lib/queries/appointments.ts';
+import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
+import {
+  type AppointmentSource,
+  formatLateDuration,
+} from '../../lib/queries/appointments.ts';
 
 export interface AppointmentCardProps {
   patientName: string;
@@ -20,6 +25,10 @@ export interface AppointmentCardProps {
   // Optional event-type accent for the left bar. Only applies when
   // status='booked' — once the patient arrives the status color takes over.
   barColor?: string;
+  // Where the appointment came from. Drives the small badge next to the
+  // patient name — Calendly glyph for public bookings, walking figure
+  // for walk-ins / native rows.
+  source?: AppointmentSource;
   // Minutes past start_at. Set on booked rows that have crossed the late
   // threshold so the card flags the receptionist to mark a no-show. Ignored
   // on every status other than 'booked'.
@@ -83,6 +92,7 @@ export function AppointmentCard({
   lane = 0,
   lanesInGroup = 1,
   barColor,
+  source = 'calendly',
   lateMinutes,
   dimmed = false,
   onClick,
@@ -156,9 +166,13 @@ export function AppointmentCard({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             lineHeight: theme.type.leading.snug,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
           }}
         >
-          {patientName}
+          <SourceGlyph source={source} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{patientName}</span>
         </p>
         <p
           style={{
@@ -198,6 +212,23 @@ function formatTime(iso: string): string {
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
   return `${hh}${mm}${ampm}`;
+}
+
+// Compact source glyph next to the patient name. CalendlyIcon for
+// public bookings, Footprints for walk-ins / manual rows. Exported so
+// the list view + cluster sheet + detail header share the same badge.
+export function SourceGlyph({ source, size = 12 }: { source: AppointmentSource; size?: number }) {
+  if (source === 'calendly') {
+    return <CalendlyIcon size={size} title="Calendly booking" color={theme.color.inkSubtle} />;
+  }
+  return (
+    <Footprints
+      size={size + 2}
+      color={theme.color.inkSubtle}
+      aria-label="Walk-in"
+      style={{ flexShrink: 0 }}
+    />
+  );
 }
 
 // Re-export the tone mapping so other surfaces can show consistent badges.
