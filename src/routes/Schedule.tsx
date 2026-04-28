@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { AlertTriangle, CalendarOff, ChevronRight, Monitor, Plus, Video } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarDays,
+  CalendarOff,
+  ChevronLeft,
+  ChevronRight,
+  List,
+  Monitor,
+  Plus,
+  Video,
+} from 'lucide-react';
 import {
   BottomSheet,
   Button,
   Card,
   EmptyState,
+  MonthGrid,
   SegmentedControl,
   Skeleton,
   StatusPill,
@@ -26,6 +37,11 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { useNow } from '../lib/useNow.ts';
 import {
+  monthLabel,
+  shiftMonth,
+  todayIso as computeTodayIso,
+} from '../lib/calendarMonth.ts';
+import {
   type AppointmentRow,
   eventTypeCategory,
   formatBookingSummary,
@@ -35,9 +51,8 @@ import {
   patientDisplayName,
   patientFullDisplayName,
   staffDisplayName,
-  useTodayAppointments,
 } from '../lib/queries/appointments.ts';
-import { usePastAppointments, useUpcomingAppointments } from '../lib/queries/scheduleViews.ts';
+import { useDayAppointments, useMonthCounts } from '../lib/queries/scheduleViews.ts';
 import {
   markAppointmentArrived,
   markNoShow,
@@ -47,22 +62,33 @@ import {
   reverseNoShow,
 } from '../lib/queries/visits.ts';
 
-type View = 'today' | 'upcoming' | 'past';
 type Layout = 'calendar' | 'list';
-
 const LAYOUT_KEY = 'lounge.scheduleLayout';
+// Threshold above which we offer the Calendar/List toggle and auto-pick
+// list when the user hasn't expressed a preference. Sparse days don't
+// need the alternate view — calendar always reads cleanly under 4 rows.
+const DENSE_THRESHOLD = 4;
 
 export function Schedule() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const isDesktop = useIsDesktop();
-  const [view, setView] = useState<View>('today');
+  const now = useNow();
+  const todayIso = computeTodayIso(now);
+
+  const [selectedDate, setSelectedDate] = useState<string>(todayIso);
+  const [viewMonth, setViewMonth] = useState<{ year: number; month: number }>(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+
   const [layout, setLayout] = useState<Layout>(() => {
     if (typeof window === 'undefined') return 'calendar';
     const saved = window.localStorage.getItem(LAYOUT_KEY);
     return saved === 'list' || saved === 'calendar' ? saved : 'calendar';
   });
+
   const [selected, setSelected] = useState<AppointmentRow | null>(null);
   const [clusterRows, setClusterRows] = useState<AppointmentRow[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,16 +96,9 @@ export function Schedule() {
   // True when staff has tapped "No-show" inside the BottomSheet and we're
   // waiting for them to pick a reason. Cleared on cancel or successful submit.
   const [pickingNoShowReason, setPickingNoShowReason] = useState(false);
-  const now = useNow();
 
-  const today = useTodayAppointments();
-  const upcoming = useUpcomingAppointments(14);
-  const past = usePastAppointments(30);
-
-  const closeSheet = () => {
-    setSelected(null);
-    setPickingNoShowReason(false);
-  };
+  const day = useDayAppointments(selectedDate);
+  const monthCounts = useMonthCounts(viewMonth.year, viewMonth.month);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -87,26 +106,50 @@ export function Schedule() {
     }
   }, [layout]);
 
-  // Auto-switch to list when today is dense and the user hasn't picked yet.
+  // Auto-switch to list when the selected day is dense and the user
+  // hasn't expressed a preference yet.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const saved = window.localStorage.getItem(LAYOUT_KEY);
-    if (!saved && today.data.length > 8) {
+    if (!saved && day.data.length > 8) {
       setLayout('list');
     }
-  }, [today.data.length]);
+  }, [day.data.length]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
-  const dateLabel = new Date().toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
+  const closeSheet = () => {
+    setSelected(null);
+    setPickingNoShowReason(false);
+  };
 
-  const headerTitle =
-    view === 'today' ? 'Today' : view === 'upcoming' ? 'Upcoming' : 'Past 30 days';
+  const handleSelectDate = (dateIso: string) => {
+    setSelectedDate(dateIso);
+    // If the user tapped a previous/next-month padding cell, slide the
+    // visible month so the selected day is in view.
+    const [yStr, mStr] = dateIso.split('-');
+    const y = Number(yStr);
+    const m = Number(mStr) - 1;
+    if (y !== viewMonth.year || m !== viewMonth.month) {
+      setViewMonth({ year: y, month: m });
+    }
+  };
+
+  const handleShiftMonth = (delta: number) => {
+    setViewMonth((prev) => shiftMonth(prev.year, prev.month, delta));
+  };
+
+  const handleJumpToToday = () => {
+    setSelectedDate(todayIso);
+    const d = new Date();
+    setViewMonth({ year: d.getFullYear(), month: d.getMonth() });
+  };
+
+  const onToday = selectedDate === todayIso;
+  const dayHeading = formatDayHeading(selectedDate);
+  const dense = day.data.length >= DENSE_THRESHOLD;
+  const showLayoutToggle = day.data.length > 0 && dense;
 
   return (
     <main
@@ -119,140 +162,194 @@ export function Schedule() {
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
         <TopBar variant="home" />
 
+        {/* Single-row header: month nav left, walk-in right. */}
         <div
           style={{
             display: 'flex',
-            alignItems: 'flex-end',
+            alignItems: 'center',
             justifyContent: 'space-between',
-            gap: theme.space[4],
-            marginBottom: theme.space[5],
+            gap: theme.space[3],
+            marginBottom: theme.space[4],
             flexWrap: 'wrap',
           }}
         >
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              {dateLabel}
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
+            <IconNavButton ariaLabel="Previous month" onClick={() => handleShiftMonth(-1)}>
+              <ChevronLeft size={20} />
+            </IconNavButton>
             <h1
               style={{
-                margin: `${theme.space[1]}px 0 0`,
+                margin: 0,
                 fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
                 fontWeight: theme.type.weight.semibold,
                 letterSpacing: theme.type.tracking.tight,
+                whiteSpace: 'nowrap',
               }}
             >
-              {headerTitle}
+              {monthLabel(viewMonth.year, viewMonth.month)}
             </h1>
+            <IconNavButton ariaLabel="Next month" onClick={() => handleShiftMonth(1)}>
+              <ChevronRight size={20} />
+            </IconNavButton>
+            {!onToday ? (
+              <button
+                type="button"
+                onClick={handleJumpToToday}
+                style={{
+                  appearance: 'none',
+                  border: `1px solid ${theme.color.border}`,
+                  background: theme.color.surface,
+                  color: theme.color.ink,
+                  fontFamily: 'inherit',
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  padding: `${theme.space[1]}px ${theme.space[3]}px`,
+                  height: 32,
+                  borderRadius: theme.radius.pill,
+                  cursor: 'pointer',
+                  marginLeft: theme.space[2],
+                }}
+              >
+                Today
+              </button>
+            ) : null}
           </div>
-          <Button variant="primary" size={isMobile ? 'md' : 'lg'} onClick={() => navigate('/walk-in/new')}>
+
+          <Button
+            variant="secondary"
+            size={isMobile ? 'sm' : 'md'}
+            onClick={() => navigate('/walk-in/new')}
+          >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Plus size={isMobile ? 16 : 18} /> {isMobile ? 'Walk-in' : 'New walk-in'}
+              <Plus size={16} /> {isMobile ? 'Walk-in' : 'New walk-in'}
             </span>
           </Button>
         </div>
 
-        <div style={{ marginBottom: theme.space[5] }}>
-          <SegmentedControl<View>
-            value={view}
-            onChange={setView}
-            options={[
-              { value: 'today', label: `Today${today.data.length ? ` · ${today.data.length}` : ''}` },
-              { value: 'upcoming', label: `Upcoming${upcoming.data.length ? ` · ${upcoming.data.length}` : ''}` },
-              { value: 'past', label: `Past${past.data.length ? ` · ${past.data.length}` : ''}` },
-            ]}
+        {/* Month grid. Card wraps it for the same surface treatment as the day timeline. */}
+        <Card padding="md" style={{ marginBottom: theme.space[4] }}>
+          <MonthGrid
+            year={viewMonth.year}
+            month={viewMonth.month}
+            selectedIso={selectedDate}
+            todayIso={todayIso}
+            counts={monthCounts.counts}
+            onSelect={handleSelectDate}
+            loading={monthCounts.loading}
           />
-        </div>
+        </Card>
 
-        {view === 'today' && today.data.length > 0 ? (
-          <div style={{ marginBottom: theme.space[4], display: 'flex', justifyContent: 'flex-end' }}>
+        {/* Selected-day heading + optional layout toggle. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+            marginBottom: theme.space[3],
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[3], minWidth: 0 }}>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+              }}
+            >
+              {dayHeading}
+            </h2>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {day.loading
+                ? ''
+                : day.data.length === 0
+                  ? 'No appointments'
+                  : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+            </span>
+          </div>
+          {showLayoutToggle ? (
             <SegmentedControl<Layout>
+              ariaLabel="Day view layout"
               value={layout}
               onChange={setLayout}
+              size="sm"
               options={[
-                { value: 'calendar', label: 'Calendar' },
-                { value: 'list', label: 'List' },
+                {
+                  value: 'calendar',
+                  label: <CalendarDays size={16} aria-label="Calendar view" />,
+                },
+                {
+                  value: 'list',
+                  label: <List size={16} aria-label="List view" />,
+                },
               ]}
             />
-          </div>
-        ) : null}
+          ) : null}
+        </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>
-          {view === 'today' ? (
-            today.loading ? (
-              <SkeletonRows />
-            ) : today.data.length === 0 ? (
-              <EmptyState
-                icon={<CalendarOff size={24} />}
-                title="No appointments today"
-                description="Tap the New walk-in button above when someone arrives, or wait for Calendly bookings to land."
-              />
-            ) : layout === 'list' ? (
-              <ScheduleListView rows={today.data} onPick={setSelected} />
-            ) : (
-              <div style={{ paddingTop: theme.space[2] }}>
-                <CalendarGrid>
-                  {layoutAppointments(today.data).map((item) =>
-                    item.kind === 'card' ? (
-                      <AppointmentCard
-                        key={item.data.id}
-                        patientName={patientDisplayName(item.data)}
-                        startAt={item.data.start_at}
-                        endAt={item.data.end_at}
-                        status={item.data.status}
-                        staffName={staffDisplayName(item.data)}
-                        serviceLabel={formatBookingSummary(item.data) || undefined}
-                        top={offsetForTime(item.data.start_at, 8, 80)}
-                        height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
-                        lane={item.lane}
-                        lanesInGroup={item.lanesInGroup}
-                        barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
-                        lateMinutes={
-                          item.data.status === 'booked' && isBookingLate(item.data.start_at, now)
-                            ? minutesPastStart(item.data.start_at, now)
-                            : null
-                        }
-                        onClick={() => setSelected(item.data)}
-                      />
-                    ) : (
-                      <ClusterCard
-                        key={item.key}
-                        count={item.rows.length}
-                        startAt={item.startAt}
-                        endAt={item.endAt}
-                        firstNames={item.rows.map((r) => firstNameOf(patientDisplayName(r)))}
-                        top={offsetForTime(item.startAt, 8, 80)}
-                        height={heightForDuration(item.startAt, item.endAt, 80)}
-                        onClick={() => setClusterRows(item.rows)}
-                      />
-                    )
-                  )}
-                </CalendarGrid>
-              </div>
-            )
-          ) : view === 'upcoming' ? (
-            upcoming.loading ? (
-              <SkeletonRows />
-            ) : upcoming.data.length === 0 ? (
-              <EmptyState
-                title="Nothing on the books"
-                description="No appointments in the next 14 days."
-              />
-            ) : (
-              <AppointmentList rows={upcoming.data} onPick={(a) => setSelected(a)} navigate={navigate} />
-            )
-          ) : past.loading ? (
+          {day.loading ? (
             <SkeletonRows />
-          ) : past.data.length === 0 ? (
-            <EmptyState title="Nothing in the past 30 days" description="History fills in as you process visits." />
+          ) : day.data.length === 0 ? (
+            <EmptyState
+              icon={<CalendarOff size={24} />}
+              title={onToday ? 'No appointments today' : 'Nothing on this day'}
+              description={
+                onToday
+                  ? 'Tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
+                  : 'Pick another day in the calendar above, or create a walk-in.'
+              }
+            />
+          ) : layout === 'list' ? (
+            <ScheduleListView rows={day.data} onPick={setSelected} />
           ) : (
-            <AppointmentList rows={past.data} onPick={(a) => setSelected(a)} navigate={navigate} />
+            <div style={{ paddingTop: theme.space[2] }}>
+              <CalendarGrid showNowIndicator={onToday}>
+                {layoutAppointments(day.data).map((item) =>
+                  item.kind === 'card' ? (
+                    <AppointmentCard
+                      key={item.data.id}
+                      patientName={patientDisplayName(item.data)}
+                      startAt={item.data.start_at}
+                      endAt={item.data.end_at}
+                      status={item.data.status}
+                      staffName={staffDisplayName(item.data)}
+                      serviceLabel={formatBookingSummary(item.data) || undefined}
+                      top={offsetForTime(item.data.start_at, 8, 80)}
+                      height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
+                      lane={item.lane}
+                      lanesInGroup={item.lanesInGroup}
+                      barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
+                      lateMinutes={
+                        onToday && item.data.status === 'booked' && isBookingLate(item.data.start_at, now)
+                          ? minutesPastStart(item.data.start_at, now)
+                          : null
+                      }
+                      onClick={() => setSelected(item.data)}
+                    />
+                  ) : (
+                    <ClusterCard
+                      key={item.key}
+                      count={item.rows.length}
+                      startAt={item.startAt}
+                      endAt={item.endAt}
+                      firstNames={item.rows.map((r) => firstNameOf(patientDisplayName(r)))}
+                      top={offsetForTime(item.startAt, 8, 80)}
+                      height={heightForDuration(item.startAt, item.endAt, 80)}
+                      onClick={() => setClusterRows(item.rows)}
+                    />
+                  )
+                )}
+              </CalendarGrid>
+            </div>
           )}
         </Card>
 
@@ -298,154 +395,132 @@ export function Schedule() {
                 </Button>
               </div>
             ) : (
-            <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <Button
-                variant="tertiary"
-                onClick={() => {
-                  if (!selected) return;
-                  navigate(`/patient/${selected.patient_id}`);
-                }}
-              >
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                  Patient timeline <ChevronRight size={16} />
-                </span>
-              </Button>
-              {(() => {
-                const isVirtual = !!selected.join_url;
-                const status = selected.status;
-                // Whether the No-show button should appear:
-                //   Booked (any kind) — about to start, mark no-show if late.
-                //   Virtual + arrived — staff joined the call but the patient
-                //   never connected; need to flip it.
-                const showNoShow = status === 'booked' || (isVirtual && status === 'arrived');
-                // Whether a primary Join / Mark-arrived button should appear.
-                // Virtual rejoin works from any non-cancelled status (incl.
-                // no_show — patient may turn up late after the no-show flag).
-                const showVirtualJoin =
-                  isVirtual && (status === 'booked' || status === 'arrived' || status === 'no_show');
-                const showMarkArrived = !isVirtual && status === 'booked';
-                // Show Close-only when none of the action buttons apply.
-                // Patient attended (showUndoNoShow below) also counts.
-                const showCloseOnly =
-                  !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
-                if (showCloseOnly) {
-                  return (
-                    <Button variant="secondary" onClick={closeSheet}>
-                      Close
-                    </Button>
-                  );
-                }
-                const joinLabel =
-                  status === 'arrived' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
-                // Patient attended is available on any no-show — patient
-                // may have arrived late after staff already flipped them.
-                const showUndoNoShow = status === 'no_show';
-                return (
-                  <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-                    {showUndoNoShow ? (
-                      <Button
-                        variant={isVirtual ? 'secondary' : 'primary'}
-                        showArrow={!isVirtual}
-                        disabled={busy}
-                        loading={busy}
-                        onClick={async () => {
-                          if (!selected) return;
-                          setBusy(true);
-                          try {
-                            const { visit_id } = await reverseNoShow(selected.id);
-                            // For in-person no_show reversals a fresh visit
-                            // is created — drop straight into /visit so the
-                            // receptionist can carry on as if Mark as arrived
-                            // had been tapped originally.
-                            if (visit_id && !isVirtual) {
-                              navigate(`/visit/${visit_id}`);
-                            } else {
-                              setSelected(null);
-                              window.location.reload();
-                            }
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : 'Could not undo no-show');
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        Patient attended
+              <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <Button
+                  variant="tertiary"
+                  onClick={() => {
+                    if (!selected) return;
+                    navigate(`/patient/${selected.patient_id}`);
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                    Patient timeline <ChevronRight size={16} />
+                  </span>
+                </Button>
+                {(() => {
+                  const isVirtual = !!selected.join_url;
+                  const status = selected.status;
+                  const showNoShow = status === 'booked' || (isVirtual && status === 'arrived');
+                  const showVirtualJoin =
+                    isVirtual && (status === 'booked' || status === 'arrived' || status === 'no_show');
+                  const showMarkArrived = !isVirtual && status === 'booked';
+                  const showCloseOnly =
+                    !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
+                  if (showCloseOnly) {
+                    return (
+                      <Button variant="secondary" onClick={closeSheet}>
+                        Close
                       </Button>
-                    ) : null}
-                    {showNoShow ? (
-                      (() => {
-                        const late =
-                          status === 'booked' && isBookingLate(selected.start_at, now);
-                        return (
-                          <Button
-                            variant={late ? 'primary' : 'secondary'}
-                            disabled={busy}
-                            onClick={() => setPickingNoShowReason(true)}
-                          >
-                            No-show
-                          </Button>
-                        );
-                      })()
-                    ) : null}
-                    {showVirtualJoin ? (
-                      isDesktop ? (
+                    );
+                  }
+                  const joinLabel =
+                    status === 'arrived' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
+                  const showUndoNoShow = status === 'no_show';
+                  return (
+                    <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+                      {showUndoNoShow ? (
                         <Button
-                          variant="primary"
+                          variant={isVirtual ? 'secondary' : 'primary'}
+                          showArrow={!isVirtual}
+                          disabled={busy}
                           loading={busy}
                           onClick={async () => {
-                            if (!selected || !selected.join_url) return;
-                            // Open immediately so the click counts as a user
-                            // gesture (browsers block window.open from awaited
-                            // code paths), then record attendance.
-                            window.open(selected.join_url, '_blank', 'noopener,noreferrer');
-                            // Re-join after a previous join (or a no-show
-                            // reversal): just open the URL, don't record
-                            // again or change status.
-                            if (status === 'arrived' || status === 'no_show') return;
+                            if (!selected) return;
                             setBusy(true);
                             try {
-                              await markVirtualMeetingJoined(selected.id);
-                              setSelected(null);
-                              window.location.reload();
+                              const { visit_id } = await reverseNoShow(selected.id);
+                              if (visit_id && !isVirtual) {
+                                navigate(`/visit/${visit_id}`);
+                              } else {
+                                setSelected(null);
+                                window.location.reload();
+                              }
                             } catch (e) {
-                              setError(e instanceof Error ? e.message : 'Could not record join');
+                              setError(e instanceof Error ? e.message : 'Could not undo no-show');
                             } finally {
                               setBusy(false);
                             }
                           }}
                         >
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                            <Video size={16} /> {joinLabel}
-                          </span>
+                          Patient attended
                         </Button>
-                      ) : null
-                    ) : null}
-                    {showMarkArrived ? (
-                      <Button
-                        variant="primary"
-                        showArrow
-                        loading={busy}
-                        onClick={async () => {
-                          if (!selected) return;
-                          setBusy(true);
-                          try {
-                            const { visit_id } = await markAppointmentArrived(selected.id);
-                            navigate(`/visit/${visit_id}`);
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : 'Could not mark arrived');
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        Mark as arrived
-                      </Button>
-                    ) : null}
-                  </div>
-                );
-              })()}
-            </div>
+                      ) : null}
+                      {showNoShow ? (
+                        (() => {
+                          const late = status === 'booked' && isBookingLate(selected.start_at, now);
+                          return (
+                            <Button
+                              variant={late ? 'primary' : 'secondary'}
+                              disabled={busy}
+                              onClick={() => setPickingNoShowReason(true)}
+                            >
+                              No-show
+                            </Button>
+                          );
+                        })()
+                      ) : null}
+                      {showVirtualJoin ? (
+                        isDesktop ? (
+                          <Button
+                            variant="primary"
+                            loading={busy}
+                            onClick={async () => {
+                              if (!selected || !selected.join_url) return;
+                              window.open(selected.join_url, '_blank', 'noopener,noreferrer');
+                              if (status === 'arrived' || status === 'no_show') return;
+                              setBusy(true);
+                              try {
+                                await markVirtualMeetingJoined(selected.id);
+                                setSelected(null);
+                                window.location.reload();
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : 'Could not record join');
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                              <Video size={16} /> {joinLabel}
+                            </span>
+                          </Button>
+                        ) : null
+                      ) : null}
+                      {showMarkArrived ? (
+                        <Button
+                          variant="primary"
+                          showArrow
+                          loading={busy}
+                          onClick={async () => {
+                            if (!selected) return;
+                            setBusy(true);
+                            try {
+                              const { visit_id } = await markAppointmentArrived(selected.id);
+                              navigate(`/visit/${visit_id}`);
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : 'Could not mark arrived');
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Mark as arrived
+                        </Button>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+              </div>
             )
           }
         >
@@ -473,111 +548,111 @@ export function Schedule() {
               }}
             />
           ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-              <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
-              <StatusPill tone={statusToTone(selected.status)} size="sm">
-                {humaniseStatus(selected.status)}
-              </StatusPill>
-            </div>
-
-            {selected.status === 'booked' && isBookingLate(selected.start_at, now) ? (
-              <div
-                style={{
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  background: 'rgba(184, 58, 42, 0.08)',
-                  border: `1px solid ${theme.color.alert}`,
-                  borderRadius: 12,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[3],
-                  color: theme.color.ink,
-                }}
-              >
-                <AlertTriangle size={20} color={theme.color.alert} aria-hidden style={{ flexShrink: 0 }} />
-                <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-                  <strong>{minutesPastStart(selected.start_at, now)} min late.</strong>{' '}
-                  {selected.join_url
-                    ? 'If they have not connected, tap No-show.'
-                    : 'If they have not turned up, tap No-show.'}
-                </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
+                <StatusPill tone={statusToTone(selected.status)} size="sm">
+                  {humaniseStatus(selected.status)}
+                </StatusPill>
               </div>
-            ) : null}
 
-            {selected.join_url && !isDesktop ? (
-              <div
-                style={{
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  background: theme.color.accentBg,
-                  border: `1px solid ${theme.color.accent}`,
-                  borderRadius: 12,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[3],
-                  color: theme.color.ink,
-                }}
-              >
-                <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
-                <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-                  Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting and record attendance.
-                </p>
-              </div>
-            ) : null}
-
-            {formatBookingSummary(selected) ? (
-              <div
-                style={{
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  background: theme.color.accentBg,
-                  border: `1px solid ${theme.color.accent}`,
-                  borderRadius: 12,
-                }}
-              >
-                <p
+              {selected.status === 'booked' && isBookingLate(selected.start_at, now) ? (
+                <div
                   style={{
-                    margin: 0,
-                    fontSize: theme.type.size.xs,
-                    color: theme.color.inkMuted,
-                    fontWeight: theme.type.weight.medium,
-                    textTransform: 'uppercase',
-                    letterSpacing: theme.type.tracking.wide,
-                    marginBottom: theme.space[1],
-                  }}
-                >
-                  Booking details
-                </p>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.lg,
-                    fontWeight: theme.type.weight.semibold,
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: 'rgba(184, 58, 42, 0.08)',
+                    border: `1px solid ${theme.color.alert}`,
+                    borderRadius: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
                     color: theme.color.ink,
-                    lineHeight: theme.type.leading.snug,
                   }}
                 >
-                  {formatBookingSummary(selected)}
-                </p>
-              </div>
-            ) : null}
+                  <AlertTriangle size={20} color={theme.color.alert} aria-hidden style={{ flexShrink: 0 }} />
+                  <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
+                    <strong>{minutesPastStart(selected.start_at, now)} min late.</strong>{' '}
+                    {selected.join_url
+                      ? 'If they have not connected, tap No-show.'
+                      : 'If they have not turned up, tap No-show.'}
+                  </p>
+                </div>
+              ) : null}
 
-            <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-              {selected.status === 'booked'
-                ? selected.join_url
-                  ? 'Tap Join meeting on a desktop when the call begins. Mark no-show 15 min after the start time if they have not connected.'
-                  : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
-                : selected.status === 'arrived' && selected.join_url
-                  ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
-                  : selected.status === 'no_show'
-                    ? selected.join_url
-                      ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
-                      : 'Marked as a no-show. If the patient turned up late, tap "Patient attended" to flip them back to arrived and start a visit.'
-                    : selected.status === 'rescheduled'
-                      ? 'This booking was rescheduled in Calendly.'
-                      : selected.status === 'cancelled'
-                        ? 'This booking was cancelled in Calendly.'
-                        : ''}
-            </p>
-          </div>
+              {selected.join_url && !isDesktop ? (
+                <div
+                  style={{
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: theme.color.accentBg,
+                    border: `1px solid ${theme.color.accent}`,
+                    borderRadius: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    color: theme.color.ink,
+                  }}
+                >
+                  <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
+                  <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
+                    Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting and record attendance.
+                  </p>
+                </div>
+              ) : null}
+
+              {formatBookingSummary(selected) ? (
+                <div
+                  style={{
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: theme.color.accentBg,
+                    border: `1px solid ${theme.color.accent}`,
+                    borderRadius: 12,
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                      fontWeight: theme.type.weight.medium,
+                      textTransform: 'uppercase',
+                      letterSpacing: theme.type.tracking.wide,
+                      marginBottom: theme.space[1],
+                    }}
+                  >
+                    Booking details
+                  </p>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.lg,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.ink,
+                      lineHeight: theme.type.leading.snug,
+                    }}
+                  >
+                    {formatBookingSummary(selected)}
+                  </p>
+                </div>
+              ) : null}
+
+              <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+                {selected.status === 'booked'
+                  ? selected.join_url
+                    ? 'Tap Join meeting on a desktop when the call begins. Mark no-show 15 min after the start time if they have not connected.'
+                    : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
+                  : selected.status === 'arrived' && selected.join_url
+                    ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
+                    : selected.status === 'no_show'
+                      ? selected.join_url
+                        ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
+                        : 'Marked as a no-show. If the patient turned up late, tap "Patient attended" to flip them back to arrived and start a visit.'
+                      : selected.status === 'rescheduled'
+                        ? 'This booking was rescheduled in Calendly.'
+                        : selected.status === 'cancelled'
+                          ? 'This booking was cancelled in Calendly.'
+                          : ''}
+              </p>
+            </div>
           )}
         </BottomSheet>
       ) : null}
@@ -673,6 +748,46 @@ export function Schedule() {
   );
 }
 
+function IconNavButton({
+  ariaLabel,
+  onClick,
+  children,
+}: {
+  ariaLabel: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        color: theme.color.ink,
+        width: 40,
+        height: 40,
+        borderRadius: theme.radius.pill,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.background = 'rgba(14, 20, 20, 0.05)';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.background = 'transparent';
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function firstNameOf(fullName: string): string {
   const trimmed = fullName.trim();
   const space = trimmed.indexOf(' ');
@@ -685,143 +800,6 @@ function SkeletonRows() {
       <Skeleton height={56} radius={12} />
       <Skeleton height={56} radius={12} />
       <Skeleton height={56} radius={12} />
-    </div>
-  );
-}
-
-function AppointmentList({
-  rows,
-  onPick,
-  navigate,
-}: {
-  rows: AppointmentRow[];
-  onPick: (a: AppointmentRow) => void;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
-  // Group by date
-  const byDate = new Map<string, AppointmentRow[]>();
-  rows.forEach((a) => {
-    const d = new Date(a.start_at).toLocaleDateString('en-GB', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-    });
-    const arr = byDate.get(d) ?? [];
-    arr.push(a);
-    byDate.set(d, arr);
-  });
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-      {[...byDate.entries()].map(([date, group]) => (
-        <div key={date}>
-          <p
-            style={{
-              margin: `0 0 ${theme.space[2]}px`,
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkSubtle,
-              textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
-            }}
-          >
-            {date}
-          </p>
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            {group.map((a) => {
-              const barColor =
-                a.status === 'booked' ? theme.category[eventTypeCategory(a.event_type_label)] : undefined;
-              return (
-              <li key={a.id}>
-                <button
-                  type="button"
-                  onClick={() => onPick(a)}
-                  style={{
-                    appearance: 'none',
-                    border: `1px solid ${theme.color.border}`,
-                    background: theme.color.surface,
-                    borderRadius: 12,
-                    padding: 0,
-                    width: '100%',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    display: 'flex',
-                    alignItems: 'stretch',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {barColor ? (
-                    <div style={{ width: 6, background: barColor, flexShrink: 0 }} aria-hidden />
-                  ) : null}
-                  <div
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: theme.space[3],
-                      padding: theme.space[3],
-                    }}
-                  >
-                  <div
-                    style={{
-                      width: 64,
-                      flexShrink: 0,
-                      fontSize: theme.type.size.sm,
-                      color: theme.color.ink,
-                      fontVariantNumeric: 'tabular-nums',
-                    }}
-                  >
-                    {new Date(a.start_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: theme.type.size.base,
-                        fontWeight: theme.type.weight.semibold,
-                        color: theme.color.ink,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {patientDisplayName(a)}
-                    </p>
-                    <p
-                      style={{
-                        margin: `${theme.space[1]}px 0 0`,
-                        fontSize: theme.type.size.xs,
-                        color: theme.color.inkMuted,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {formatBookingSummary(a) || 'Appointment'}
-                      {staffDisplayName(a) ? ` · ${staffDisplayName(a)}` : ''}
-                    </p>
-                  </div>
-                  <StatusPill tone={statusToTone(a.status)} size="sm">
-                    {humaniseStatus(a.status)}
-                  </StatusPill>
-                  <ChevronRight size={18} style={{ color: theme.color.inkSubtle }} />
-                  </div>
-                </button>
-              </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
-      {rows.length > 0 ? (
-        <p style={{ margin: 0, color: theme.color.inkSubtle, fontSize: theme.type.size.xs, textAlign: 'center' }}>
-          {rows.length} appointment{rows.length === 1 ? '' : 's'} · tap to mark arrived or open the patient timeline
-        </p>
-      ) : null}
-      <Button variant="tertiary" size="sm" onClick={() => navigate('/walk-in/new')}>
-        Or create a walk-in
-      </Button>
     </div>
   );
 }
@@ -912,4 +890,10 @@ function formatClusterRange(rows: AppointmentRow[]): string {
   const sTime = s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const eTime = e.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   return `${day}, ${sTime} to ${eTime}. Pick one to open.`;
+}
+
+// Date heading shown above the day's timeline. e.g. "Tuesday 28 April".
+function formatDayHeading(dateIso: string): string {
+  const d = new Date(`${dateIso}T00:00:00`);
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 }
