@@ -131,6 +131,8 @@ export interface PatientFileEntry {
   status: string;
   uploaded_at: string;
   uploaded_by_name: string | null;
+  version: number | null;
+  thumbnail_path: string | null;
 }
 
 interface FilesResult {
@@ -153,14 +155,16 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
     (async () => {
       // Inner-join to file_labels so we always have a label_key. Left-join
       // to accounts for the uploader display name (may be null for
-      // historical rows / Shopify-side uploads).
+      // historical rows / Shopify-side uploads). version + thumbnail_path
+      // are Meridian-side append-only columns — version stays stamped
+      // on every row, thumbnail_path caches a rendered PNG for STL/OBJ
+      // scan files. Both may be null on legacy rows.
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
-          'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, file_labels:label_id(key, label), uploader:uploaded_by(full_name)'
+          'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, file_labels:label_id(key, label), uploader:uploaded_by(full_name)'
         )
         .eq('patient_id', patientId)
-        .eq('status', 'active')
         .order('uploaded_at', { ascending: false });
       if (cancelled) return;
       if (err) {
@@ -189,6 +193,8 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
           status: r.status as string,
           uploaded_at: r.uploaded_at as string,
           uploaded_by_name: up?.full_name ?? null,
+          version: (r.version as number | null) ?? null,
+          thumbnail_path: (r.thumbnail_path as string | null) ?? null,
         };
       });
       setData(mapped);

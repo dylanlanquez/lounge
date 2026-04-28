@@ -55,3 +55,6 @@ export type { SignaturePadProps, SignaturePadHandle } from './SignaturePad/Signa
 
 export { WaiverSheet } from './WaiverSheet/WaiverSheet.tsx';
 export type { WaiverSheetProps } from './WaiverSheet/WaiverSheet.tsx';
+
+export { PatientFileViewer } from './PatientFileViewer/PatientFileViewer.tsx';
+export type { PatientFileViewerProps } from './PatientFileViewer/PatientFileViewer.tsx';

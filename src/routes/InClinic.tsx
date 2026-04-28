@@ -86,7 +86,7 @@ export function InClinic() {
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {data.map((v) => (
                 <li key={v.id}>
-                  <ActiveVisitListItem visit={v} now={now} onClick={() => navigate(`/visit/${v.id}`)} />
+                  <ActiveVisitListItem visit={v} now={now} onClick={() => navigate(`/visit/${v.id}`, { state: { from: 'in_clinic' } })} />
                 </li>
               ))}
             </ul>
