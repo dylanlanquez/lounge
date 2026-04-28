@@ -110,12 +110,15 @@ export function CalendarGrid({
 }
 
 function NowLine({ offset }: { offset: number }) {
+  // Extend 5px past the slot column's left edge so the line visually meets
+  // the right edge of the NowPill (which sits at right:4 of the time-axis
+  // column). 1px buffer compensates for the pill's rounded end.
   return (
     <div
       style={{
         position: 'absolute',
         top: offset,
-        left: 0,
+        left: -5,
         right: 0,
         height: 1,
         background: theme.color.accent,
