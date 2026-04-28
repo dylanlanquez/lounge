@@ -45,7 +45,11 @@ export function VisitDetail() {
   // service_types when items exist (post-arrival truth) and fall back to
   // the appointment's event-type label for an empty cart (pre-arrival
   // inference). 'general' is always included.
-  const { sections: waiverSections } = useWaiverSections();
+  const {
+    sections: waiverSections,
+    loading: waiverSectionsLoading,
+    error: waiverSectionsError,
+  } = useWaiverSections();
   const { latest: patientSignatures, refresh: refreshSignatures } = usePatientWaiverState(
     patient?.id ?? null
   );
@@ -173,9 +177,12 @@ export function VisitDetail() {
               </div>
             </div>
 
-            <WaiverBanner
+            <WaiverCard
               flag={waiverFlag}
-              hasRequired={requiredSections.length > 0}
+              requiredCount={requiredSections.length}
+              schemaLoading={waiverSectionsLoading}
+              schemaError={waiverSectionsError}
+              schemaEmpty={!waiverSectionsLoading && !waiverSectionsError && waiverSections.length === 0}
               onOpen={() => setWaiverOpen(true)}
             />
 
@@ -361,38 +368,122 @@ function VisitBreadcrumbs({
   );
 }
 
-function WaiverBanner({
+// Waiver surface for the visit page. Always visible — the receptionist
+// should never have to wonder whether a waiver is needed for this
+// patient. Five states drive the layout:
+//
+//   loading      → schema is being fetched; muted neutral skeleton row
+//   error        → query failed; alert-coloured banner with the message
+//   schemaEmpty  → no sections seeded (migration didn't take); warning
+//                  banner pointing at the cause
+//   needs        → one or more required sections missing/stale; red
+//                  border + "Sign waiver" / "Re-sign" CTA
+//   ready        → all required sections current; quiet ink-tinted
+//                  confirmation row, no border
+//
+// Previously this rendered nothing when `requiredSections.length === 0`,
+// which silently hid the entire feature when the schema didn't load —
+// staff thought the waiver flow was missing. The five-state model
+// makes the system's status legible at all times.
+function WaiverCard({
   flag,
-  hasRequired,
+  requiredCount,
+  schemaLoading,
+  schemaError,
+  schemaEmpty,
   onOpen,
 }: {
   flag: ReturnType<typeof summariseWaiverFlag>;
-  hasRequired: boolean;
+  requiredCount: number;
+  schemaLoading: boolean;
+  schemaError: string | null;
+  schemaEmpty: boolean;
   onOpen: () => void;
 }) {
-  // No banner shown until we know what's required. Pre-migration this
-  // means hasRequired is false and we render nothing — never crash on a
-  // missing waiver schema.
-  if (!hasRequired) return null;
+  const wrapStyle = (border: string): React.CSSProperties => ({
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: theme.space[3],
+    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+    marginBottom: theme.space[5],
+    borderRadius: theme.radius.input,
+    background: theme.color.surface,
+    border: `1px solid ${border}`,
+  });
+
+  if (schemaLoading) {
+    return (
+      <div style={wrapStyle(theme.color.border)}>
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          Loading waiver…
+        </span>
+      </div>
+    );
+  }
+
+  if (schemaError) {
+    return (
+      <div role="alert" style={wrapStyle(theme.color.alert)}>
+        <AlertTriangle size={18} color={theme.color.alert} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.alert }}>
+            Waiver unavailable
+          </p>
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            {schemaError}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (schemaEmpty) {
+    // Schema query succeeded but no rows. Either the migration's
+    // seed insert didn't run on this DB, or all sections are
+    // inactive. Either way, the waiver flow can't proceed; be
+    // explicit about it instead of failing silent.
+    return (
+      <div role="alert" style={wrapStyle(theme.color.warn)}>
+        <AlertTriangle size={18} color={theme.color.warn} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.warn }}>
+            Waiver not configured
+          </p>
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            No active waiver sections found. Apply the lng_waiver migration or re-seed lng_waiver_sections.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Schema loaded with rows but nothing required for this visit.
+  // 'general' is always required so this branch is rare in practice
+  // (would only hit if every section were marked inactive). Stay
+  // visible so the absence of a CTA reads as deliberate.
+  if (requiredCount === 0) {
+    return (
+      <div style={wrapStyle(theme.color.border)}>
+        <CheckCircle2 size={16} color={theme.color.inkSubtle} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          No waiver required for this visit.
+        </span>
+      </div>
+    );
+  }
 
   if (flag.status === 'ready') {
     return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
-          marginBottom: theme.space[5],
-          borderRadius: theme.radius.input,
-          background: theme.color.surface,
-          border: `1px solid ${theme.color.border}`,
-          color: theme.color.inkMuted,
-          fontSize: theme.type.size.sm,
-        }}
-      >
-        <CheckCircle2 size={16} color={theme.color.accent} aria-hidden />
-        Waiver signed and up to date.
+      <div style={wrapStyle(theme.color.border)}>
+        <CheckCircle2 size={16} color={theme.color.accent} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+            Waiver signed and up to date
+          </p>
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Every required section is current. Print and view-signed land in the next phase.
+          </p>
+        </div>
       </div>
     );
   }
@@ -404,45 +495,21 @@ function WaiverBanner({
         ? 'Waiver partially signed'
         : 'Waiver needed';
   const body = composeBannerBody(flag);
+  const ctaLabel = flag.status === 'stale' ? 'Re-sign waiver' : 'Sign waiver';
 
   return (
-    <div
-      role="alert"
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        marginBottom: theme.space[5],
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.alert}`,
-      }}
-    >
+    <div role="alert" style={wrapStyle(theme.color.alert)}>
       <AlertTriangle size={18} color={theme.color.alert} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.base,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.alert,
-          }}
-        >
+        <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.alert }}>
           {title}
         </p>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-          }}
-        >
+        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
           {body}
         </p>
       </div>
       <Button variant="primary" size="sm" onClick={onOpen}>
-        Sign waiver
+        {ctaLabel}
       </Button>
     </div>
   );
