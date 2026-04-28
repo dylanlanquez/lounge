@@ -3,7 +3,7 @@ import { StatusPill } from '../StatusPill/StatusPill.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   type AppointmentRow,
-  intakeSummary,
+  formatBookingSummary,
   patientDisplayName,
   staffDisplayName,
 } from '../../lib/queries/appointments.ts';
@@ -128,9 +128,7 @@ function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
               whiteSpace: 'nowrap',
             }}
           >
-            {[row.event_type_label, intakeSummary(row), staffDisplayName(row)]
-              .filter(Boolean)
-              .join(' · ') || '—'}
+            {[formatBookingSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
           </p>
         </div>
         <StatusPill tone={tone} size="sm">

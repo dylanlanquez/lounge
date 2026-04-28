@@ -73,7 +73,6 @@ export function AppointmentCard({
 }: AppointmentCardProps) {
   const isInteractive = Boolean(onClick);
   const lanePct = 100 / lanesInGroup;
-  const isNarrow = lanesInGroup > 1;
   const styles: CSSProperties = {
     position: 'absolute',
     top,
@@ -148,9 +147,8 @@ export function AppointmentCard({
             fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {formatTimeRange(startAt, endAt)}
-          {staffName ? ` · ${staffName}` : ''}
-          {!isNarrow && serviceLabel ? ` · ${serviceLabel}` : ''}
+          {formatTime(startAt)}
+          {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
         </p>
       </div>
     </div>

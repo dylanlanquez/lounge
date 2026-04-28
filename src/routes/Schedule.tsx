@@ -26,7 +26,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type AppointmentRow,
-  filterCareIntake,
+  formatBookingSummary,
   patientDisplayName,
   staffDisplayName,
   useTodayAppointments,
@@ -185,7 +185,7 @@ export function Schedule() {
                         endAt={item.data.end_at}
                         status={item.data.status}
                         staffName={staffDisplayName(item.data)}
-                        serviceLabel={item.data.event_type_label ?? undefined}
+                        serviceLabel={formatBookingSummary(item.data) || undefined}
                         top={offsetForTime(item.data.start_at, 8, 80)}
                         height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
                         lane={item.lane}
@@ -249,8 +249,7 @@ export function Schedule() {
             <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
               <span>
                 {formatRange(selected.start_at, selected.end_at)}
-                {staffDisplayName(selected) ? ` with ${staffDisplayName(selected)}` : ''}
-                {selected.event_type_label ? ` · ${selected.event_type_label}` : ''}
+                {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
               </span>
               {selected.patient_email || selected.patient_phone ? (
                 <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
@@ -326,10 +325,10 @@ export function Schedule() {
               Status: <strong>{selected.status}</strong>
             </p>
 
-            {filterCareIntake(selected.intake).length > 0 ? (
+            {formatBookingSummary(selected) ? (
               <div
                 style={{
-                  padding: theme.space[3],
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
                   background: theme.color.accentBg,
                   border: `1px solid ${theme.color.accent}`,
                   borderRadius: 12,
@@ -343,37 +342,22 @@ export function Schedule() {
                     fontWeight: theme.type.weight.medium,
                     textTransform: 'uppercase',
                     letterSpacing: theme.type.tracking.wide,
-                    marginBottom: theme.space[2],
+                    marginBottom: theme.space[1],
                   }}
                 >
                   Booking details
                 </p>
-                <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: `${theme.space[1]}px ${theme.space[3]}px` }}>
-                  {filterCareIntake(selected.intake).map((qa, i) => (
-                    <div key={i} style={{ display: 'contents' }}>
-                      <dt
-                        style={{
-                          fontSize: theme.type.size.sm,
-                          color: theme.color.inkMuted,
-                          fontWeight: theme.type.weight.medium,
-                          margin: 0,
-                        }}
-                      >
-                        {qa.question}
-                      </dt>
-                      <dd
-                        style={{
-                          fontSize: theme.type.size.sm,
-                          color: theme.color.ink,
-                          fontWeight: theme.type.weight.semibold,
-                          margin: 0,
-                        }}
-                      >
-                        {qa.answer}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.lg,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.ink,
+                    lineHeight: theme.type.leading.snug,
+                  }}
+                >
+                  {formatBookingSummary(selected)}
+                </p>
               </div>
             ) : null}
 
@@ -447,7 +431,7 @@ export function Schedule() {
                   >
                     {patientDisplayName(r)}
                   </span>
-                  {r.event_type_label ? (
+                  {formatBookingSummary(r) ? (
                     <span
                       style={{
                         display: 'block',
@@ -459,7 +443,7 @@ export function Schedule() {
                         marginTop: 2,
                       }}
                     >
-                      {r.event_type_label}
+                      {formatBookingSummary(r)}
                     </span>
                   ) : null}
                 </span>
