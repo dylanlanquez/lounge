@@ -83,7 +83,7 @@ export function useUpcomingAppointments(daysAhead = 14): Result {
           .select(sel)
           .gte('start_at', start.toISOString())
           .lte('start_at', end.toISOString())
-          .in('status', ['booked', 'arrived', 'in_progress'])
+          .in('status', ['booked', 'arrived', 'in_progress', 'no_show'])
           .order('start_at', { ascending: true });
       let { data: rows, error: err } = await run(SELECT_WITH_INTAKE);
       if (err && err.code === '42703') {
