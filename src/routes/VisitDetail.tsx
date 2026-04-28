@@ -19,7 +19,6 @@ import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
-import { VisitFiles } from '../components/VisitFiles/VisitFiles.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -303,11 +302,6 @@ export function VisitDetail() {
               </div>
             ) : null}
 
-            {patient ? (
-              <div style={{ marginTop: theme.space[6] }}>
-                <VisitFiles patientId={patient.id} patientName={patientFullName(patient)} />
-              </div>
-            ) : null}
           </>
         )}
       </div>

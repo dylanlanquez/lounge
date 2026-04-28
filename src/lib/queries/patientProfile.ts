@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,12 +139,15 @@ interface FilesResult {
   data: PatientFileEntry[];
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 export function usePatientProfileFiles(patientId: string | null | undefined): FilesResult {
   const [data, setData] = useState<PatientFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!patientId) {
@@ -203,28 +206,10 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, tick]);
 
-  return { data, loading, error };
+  return { data, loading, error, refresh };
 }
-
-// Canonical patient-file slot order shown as tiles in the profile. Every
-// slot key matches a row in file_labels — the same keys Meridian uses,
-// so any file uploaded on Meridian shows up under the right tile here.
-export interface PatientFileSlot {
-  key: string;
-  label: string;
-  acceptHint: string;
-}
-
-export const PATIENT_FILE_SLOTS: PatientFileSlot[] = [
-  { key: 'upper_arch', label: 'Upper Arch', acceptHint: 'STL, OBJ, PLY, ZIP' },
-  { key: 'lower_arch', label: 'Lower Arch', acceptHint: 'STL, OBJ, PLY, ZIP' },
-  { key: 'bite_registration', label: 'Bite Registration', acceptHint: 'STL, OBJ, PLY, ZIP' },
-  { key: 'full_face_photo', label: 'Full Face Photo', acceptHint: 'JPG, PNG' },
-  { key: 'smile_photo_right', label: 'Smile Photo — Right', acceptHint: 'JPG, PNG' },
-  { key: 'smile_photo_left', label: 'Smile Photo — Left', acceptHint: 'JPG, PNG' },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Walk-in appointments table — every visit this patient has had at this
