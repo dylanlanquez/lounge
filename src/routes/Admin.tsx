@@ -10,7 +10,6 @@ import {
   StatusPill,
   Toast,
 } from '../components/index.ts';
-import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -58,8 +57,6 @@ export function Admin() {
       }}
     >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        <TopBar variant="subpage" backTo="/schedule" title="Admin" />
-
         <h1
           style={{
             margin: 0,

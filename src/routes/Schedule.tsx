@@ -645,14 +645,11 @@ export function Schedule() {
               ) : null}
 
               {formatBookingSummary(selected) ? (
-                <div
-                  style={{
-                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                    background: theme.color.accentBg,
-                    border: `1px solid ${theme.color.accent}`,
-                    borderRadius: 12,
-                  }}
-                >
+                // Plain block — no card / no accent fill — so it doesn't
+                // compete with the virtual-appointment notice above when
+                // both are present on mobile. The uppercase label is
+                // enough visual cue on its own.
+                <div>
                   <p
                     style={{
                       margin: 0,
