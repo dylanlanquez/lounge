@@ -1,4 +1,5 @@
-import { Wifi, WifiOff, Zap } from 'lucide-react';
+import { Settings, Wifi, WifiOff, Zap } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { useOnline } from '../../lib/useOnline.ts';
@@ -17,6 +18,7 @@ export function KioskStatusBar() {
   const now = useNow(60_000);
   const { level, charging, supported } = useBattery();
   const online = useOnline();
+  const navigate = useNavigate();
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   // Compact date — full "Tuesday, 28 April 2026" overflows on portrait
@@ -69,6 +71,29 @@ export function KioskStatusBar() {
         {supported && percent !== null ? (
           <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
         ) : null}
+        <button
+          type="button"
+          aria-label="Admin"
+          onClick={() => navigate('/admin')}
+          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            color: theme.color.ink,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 24,
+            height: 24,
+            padding: 0,
+            borderRadius: theme.radius.pill,
+            WebkitTapHighlightColor: 'transparent',
+            outline: 'none',
+          }}
+        >
+          <Settings size={15} />
+        </button>
       </span>
     </div>
   );

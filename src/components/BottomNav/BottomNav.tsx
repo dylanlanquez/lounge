@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CalendarDays, LogOut, Plus, Settings } from 'lucide-react';
+import { CalendarDays, Plus, Stethoscope, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { Avatar } from '../Avatar/Avatar.tsx';
@@ -30,7 +30,12 @@ export const BOTTOM_NAV_HEIGHT = 88;
 // items either side of it.
 //
 // Order, left to right:
-//   Schedule | Profile | (FAB Walk-in) | Admin | Sign out
+//   Schedule | Patients | (FAB Walk-in) | In clinic | Profile
+//
+// Sign out lives inside the Profile sheet — the receptionist signs out
+// from there, freeing a slot on the bar. Admin moves to the kiosk top
+// bar (next to WiFi / battery) so it's still one tap away without
+// crowding the primary surface.
 
 export function BottomNav() {
   const location = useLocation();
@@ -41,16 +46,18 @@ export function BottomNav() {
   if (!shouldShowBottomNav(location.pathname, !!user)) return null;
 
   const onSchedule = () => navigate('/schedule');
+  const onPatients = () => navigate('/patients');
   const onWalkIn = () => navigate('/walk-in/new');
-  const onAdmin = () => navigate('/admin');
+  const onInClinic = () => navigate('/in-clinic');
   const onSignOut = () => {
     void signOut();
   };
   const onProfile = () => setProfileOpen(true);
 
   const isSchedule = location.pathname === '/' || location.pathname.startsWith('/schedule');
+  const isPatients = location.pathname.startsWith('/patients');
   const isWalkIn = location.pathname.startsWith('/walk-in');
-  const isAdmin = location.pathname.startsWith('/admin');
+  const isInClinic = location.pathname.startsWith('/in-clinic');
 
   return (
     <>
@@ -90,10 +97,10 @@ export function BottomNav() {
           </li>
           <li>
             <NavTab
-              label="Profile"
-              icon={<Avatar name={user?.email ?? 'You'} size="sm" badge="online" />}
-              active={false}
-              onClick={onProfile}
+              label="Patients"
+              icon={<Users size={22} />}
+              active={isPatients}
+              onClick={onPatients}
             />
           </li>
           <li>
@@ -101,26 +108,25 @@ export function BottomNav() {
           </li>
           <li>
             <NavTab
-              label="Admin"
-              icon={<Settings size={22} />}
-              active={isAdmin}
-              onClick={onAdmin}
+              label="In clinic"
+              icon={<Stethoscope size={22} />}
+              active={isInClinic}
+              onClick={onInClinic}
             />
           </li>
           <li>
             <NavTab
-              label="Sign out"
-              icon={<LogOut size={22} />}
+              label="Profile"
+              icon={<Avatar name={user?.email ?? 'You'} size="sm" badge="online" />}
               active={false}
-              onClick={onSignOut}
+              onClick={onProfile}
             />
           </li>
         </ul>
         <BottomNavStyles />
       </nav>
 
-      {/* Profile sheet — minimal v1: who's signed in. Will grow when we
-          have a real profile page (preferences, theme, etc.). */}
+      {/* Profile sheet — minimal v1: who's signed in + sign-out shortcut. */}
       <BottomSheet
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
@@ -129,7 +135,7 @@ export function BottomNav() {
           <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
             <span>{user?.email ?? 'No account'}</span>
             <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
-              Tap Sign out in the bottom nav to end the session.
+              Tap Sign out below to end the session.
             </span>
           </span>
         }

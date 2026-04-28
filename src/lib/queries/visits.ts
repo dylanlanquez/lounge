@@ -328,6 +328,91 @@ export interface VisitAppointmentContext {
   intake: Array<{ question: string; answer: string }> | null;
 }
 
+// Visits currently in progress at the receptionist's location. RLS scopes
+// the query — every signed-in receptionist sees their own clinic. Used by
+// the In-clinic route as the live "who's here right now" board.
+export interface ActiveVisitRow {
+  id: string;
+  patient_id: string;
+  status: 'opened' | 'in_progress';
+  arrival_type: 'walk_in' | 'scheduled';
+  opened_at: string;
+  patient_first_name: string | null;
+  patient_last_name: string | null;
+  patient_phone: string | null;
+}
+
+interface ActiveVisitsResult {
+  data: ActiveVisitRow[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+export function useActiveVisits(): ActiveVisitsResult {
+  const [data, setData] = useState<ActiveVisitRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data: rows, error: err } = await supabase
+        .from('lng_visits')
+        .select(
+          'id, patient_id, status, arrival_type, opened_at, patient:patients ( first_name, last_name, phone )'
+        )
+        .in('status', ['opened', 'in_progress'])
+        .order('opened_at', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setData([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+      const mapped: ActiveVisitRow[] = (rows ?? []).map((r) => {
+        const raw = r as {
+          id: string;
+          patient_id: string;
+          status: 'opened' | 'in_progress';
+          arrival_type: 'walk_in' | 'scheduled';
+          opened_at: string;
+          patient:
+            | { first_name: string | null; last_name: string | null; phone: string | null }
+            | { first_name: string | null; last_name: string | null; phone: string | null }[]
+            | null;
+        };
+        const p = Array.isArray(raw.patient) ? raw.patient[0] : raw.patient;
+        return {
+          id: raw.id,
+          patient_id: raw.patient_id,
+          status: raw.status,
+          arrival_type: raw.arrival_type,
+          opened_at: raw.opened_at,
+          patient_first_name: p?.first_name ?? null,
+          patient_last_name: p?.last_name ?? null,
+          patient_phone: p?.phone ?? null,
+        };
+      });
+      setData(mapped);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  return { data, loading, error, refresh };
+}
+
 interface VisitDetailResult {
   visit: VisitRow | null;
   patient: PatientRow | null;
