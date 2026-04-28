@@ -325,7 +325,7 @@ function FabTab({ label, active, onClick }: { label: string; active: boolean; on
           // Graphite (theme's `consult` category tone) sits forward
           // enough to be the dominant action without the forest-green
           // shouting at staff every time they glance at the surface.
-          background: theme.color.category.consult,
+          background: theme.category.consult,
           color: theme.color.surface,
           display: 'inline-flex',
           alignItems: 'center',
