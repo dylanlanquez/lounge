@@ -936,7 +936,7 @@ function DepositLine({
   const labelWeight = isPaid ? theme.type.weight.medium : theme.type.weight.semibold;
   const text = isPaid
     ? `${formatGbp(amountPence)} deposit paid${provider ? ` · ${capitalise(provider)}` : ''}`
-    : `Deposit ${formatGbp(amountPence)} failed${provider ? ` · ${capitalise(provider)}` : ''} — chase before checkout`;
+    : `${formatGbp(amountPence)} deposit failed${provider ? ` · ${capitalise(provider)}` : ''}`;
   return (
     <div
       role={isPaid ? undefined : 'alert'}
