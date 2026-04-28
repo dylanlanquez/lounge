@@ -81,36 +81,36 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper and Lower Click-in Veneers');
   });
 
-  it('Virtual Impression with no intake → "Virtual Impression" (Appointment stripped)', () => {
+  it('Virtual Impression with no intake → full event label', () => {
     expect(formatBookingSummary(makeRow('Virtual Impression Appointment', null))).toBe(
-      'Virtual Impression'
+      'Virtual Impression Appointment'
     );
   });
 
-  it('In-person Impression with empty intake → "In-person Impression"', () => {
+  it('In-person Impression with empty intake → full event label', () => {
     expect(formatBookingSummary(makeRow('In-person Impression Appointment', []))).toBe(
-      'In-person Impression'
+      'In-person Impression Appointment'
     );
   });
 
-  it('Virtual Impression + product → "Virtual Impression · Whitening Trays"', () => {
+  it('Virtual Impression + product → "Virtual Impression Appointment for Whitening Trays"', () => {
     expect(
       formatBookingSummary(
         makeRow('Virtual Impression Appointment', [
           { question: 'What product is the impression for?', answer: 'Whitening Trays' },
         ])
       )
-    ).toBe('Virtual Impression · Whitening Trays');
+    ).toBe('Virtual Impression Appointment for Whitening Trays');
   });
 
-  it('In-person Impression + product → "In-person Impression · Retainers"', () => {
+  it('In-person Impression + product → "In-person Impression Appointment for Retainers"', () => {
     expect(
       formatBookingSummary(
         makeRow('In-person Impression Appointment', [
           { question: 'What product is the impression for?', answer: 'Retainers' },
         ])
       )
-    ).toBe('In-person Impression · Retainers');
+    ).toBe('In-person Impression Appointment for Retainers');
   });
 
   it('Impression event keeps the impression label even when product question is generic', () => {
@@ -120,7 +120,7 @@ describe('formatBookingSummary', () => {
           { question: 'Service', answer: 'Bleaching trays' },
         ])
       )
-    ).toBe('Virtual Impression · Bleaching trays');
+    ).toBe('Virtual Impression Appointment for Bleaching trays');
   });
 
   it('ignores contact-only intake fields', () => {
