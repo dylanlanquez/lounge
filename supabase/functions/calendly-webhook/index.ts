@@ -161,7 +161,10 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   const lastName = evt.payload?.last_name ?? splitName(evt.payload?.name).last;
   const eventTypeLabel = evt.payload?.scheduled_event?.name ?? null;
   const intake = evt.payload?.questions_and_answers ?? null;
-  const phone = ((evt.payload as { text_reminder_number?: string } | undefined)?.text_reminder_number ?? '').trim() || null;
+  // Calendly's "Contact Number" is captured as a custom question on most
+  // event types, not as text_reminder_number. Try both.
+  const phoneFromHeader = ((evt.payload as { text_reminder_number?: string } | undefined)?.text_reminder_number ?? '').trim();
+  const phone = phoneFromHeader || extractPhoneFromIntake(intake) || null;
 
   if (!startAt || !endAt) throw new Error('missing start_time or end_time');
 
@@ -339,6 +342,22 @@ function isPlaceholderEmail(email: string | null | undefined): boolean {
   if (PLACEHOLDER_LOCAL_RE.test(local)) return true;
   if (PLACEHOLDER_DOMAINS.has(domain)) return true;
   return false;
+}
+
+const PHONE_QUESTION_RE = /\b(contact|phone|mobile|tel(ephone)?|cell)\s*(number|#|no)?\b/i;
+function extractPhoneFromIntake(
+  intake: Array<{ question?: string | null; answer?: string | null }> | null | undefined
+): string | null {
+  if (!intake) return null;
+  for (const qa of intake) {
+    if (!qa) continue;
+    if (typeof qa.question !== 'string' || typeof qa.answer !== 'string') continue;
+    if (PHONE_QUESTION_RE.test(qa.question)) {
+      const t = qa.answer.trim();
+      if (t) return t;
+    }
+  }
+  return null;
 }
 
 async function resolveDefaultAccountId(supabase: SupabaseClient, location_id: string): Promise<string> {

@@ -32,3 +32,24 @@ export function isPlaceholderEmail(email: string | null | undefined): boolean {
   if (PLACEHOLDER_DOMAINS.has(domain)) return true;
   return false;
 }
+
+// Extracts a phone number from a Calendly questions_and_answers payload.
+// Calendly's "Contact Number" / "Phone Number" is set up as a custom
+// question on most event types, not as `text_reminder_number`. Pull it
+// from the intake when the dedicated field is empty.
+const PHONE_QUESTION_RE = /\b(contact|phone|mobile|tel(ephone)?|cell)\s*(number|#|no)?\b/i;
+
+export function extractPhoneFromIntake(
+  intake: Array<{ question?: string | null; answer?: string | null }> | null | undefined
+): string | null {
+  if (!intake) return null;
+  for (const qa of intake) {
+    if (!qa) continue;
+    if (typeof qa.question !== 'string' || typeof qa.answer !== 'string') continue;
+    if (PHONE_QUESTION_RE.test(qa.question)) {
+      const trimmed = qa.answer.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
+}
