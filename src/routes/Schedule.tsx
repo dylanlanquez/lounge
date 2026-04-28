@@ -849,8 +849,11 @@ export function Schedule() {
           eventTypeLabel={arrivalFlow.appointment.event_type_label}
           onSubmitted={() => {
             // After intake is saved, decide whether the patient still
-            // needs to sign the waiver before we open the visit. If yes,
-            // pivot to the waiver step; if no, finish the arrival.
+            // needs to sign the waiver before we open the appointment.
+            // If yes, pivot to the waiver step; if no, finish the
+            // arrival. Schedule's onSubmitted ignores the returned
+            // refs — they're already stamped on the appointment row by
+            // submitArrivalIntake.
             const needsWaiver =
               arrivalWaiverFlag !== null && arrivalWaiverFlag.status !== 'ready';
             if (needsWaiver) {

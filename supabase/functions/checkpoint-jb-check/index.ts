@@ -2,15 +2,19 @@
 //
 // Receptionist-side JB conflict check for the Lounge arrival intake sheet.
 // Given a job box number (digits only, e.g. "33"), this asks Checkpoint
-// whether the box is currently occupied by an open check-in or walk-in
-// slot. If it is, we surface enough context (order name, customer name)
-// so the receptionist can either reuse the box if it's the same person
-// or pick a different one.
+// whether the box is currently occupied by an active lab order or
+// active walk-in. If it is, we surface enough context (order name,
+// customer name) so the receptionist can either reuse the box if it's
+// the same person or pick a different one.
 //
-// Mirrors Meridian's production-begin → checkpoint pattern: the caller
-// is authenticated against Lounge with a normal user JWT, and we then
-// fan out to Checkpoint with the service-role key configured for that
-// project.
+// Source-of-truth tables (mirrors Meridian's checkpoint-lookup):
+//   - order_arch_slots — live lab orders. Active = status='in_lab'.
+//   - walk_ins         — live walk-in impressions. Active = status not in
+//                        ('complete', 'cancelled').
+//
+// Note: Checkpoint's check_ins table is the AUDIT LOG, not live state.
+// Querying it would surface every historical occupant of the box.
+// Meridian's checkpoint-lookup carries the same warning.
 //
 // Auth model: anon-key Bearer JWT for the caller (per Lounge brief
 // §8.5). The caller must have a Lounge account row.
@@ -49,7 +53,7 @@ function json(body: unknown, status = 200) {
 // consistent shape.
 function normaliseJbDigits(input: unknown): string | null {
   if (typeof input !== 'string') return null;
-  const trimmed = input.trim().toUpperCase().replace(/^JB/, '');
+  const trimmed = input.trim().toUpperCase().replace(/^JB[-_\s]*/i, '');
   if (!/^\d{1,4}$/.test(trimmed)) return null;
   return String(parseInt(trimmed, 10));
 }
@@ -59,7 +63,7 @@ interface Conflict {
   customer_name: string | null;
   status: string | null;
   checked_in_at: string | null;
-  source: 'shopify_order' | 'walk_in';
+  source: 'lab_order' | 'walk_in';
 }
 
 Deno.serve(async (req) => {
@@ -106,30 +110,30 @@ Deno.serve(async (req) => {
   const jbFormatted = `JB${digits}`;
 
   // ── Checkpoint lookup ────────────────────────────────────────────────
-  // Two surfaces can hold a JB on Checkpoint:
-  //   - check_ins (Shopify-order-driven flow)
-  //   - walk_ins  (impression-only walk-ins from the front desk)
-  // Both should be considered "occupied" — a JB only holds one patient's
-  // impression at a time. Status filtering excludes dispatched/cleared
-  // rows; "checked_in" / "in_progress" / null status are still active.
   const sbCheckpoint = createClient(CHECKPOINT_SUPABASE_URL, CHECKPOINT_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { data: checkInRows, error: checkInErr } = await sbCheckpoint
-    .from('check_ins')
-    .select('order_name, customer_name, status, checked_in_at, job_box')
+  let conflict: Conflict | null = null;
+
+  // 1. Lab orders — order_arch_slots. Live state lives here. Active
+  //    occupants have status='in_lab'; 'dispatched' rows are historical
+  //    and don't represent the box being currently occupied.
+  const { data: slotRows, error: slotsErr } = await sbCheckpoint
+    .from('order_arch_slots')
+    .select('order_name, customer_name, status, checked_in_at')
     .eq('job_box', jbFormatted)
-    .neq('status', 'dispatched')
+    .eq('status', 'in_lab')
     .order('checked_in_at', { ascending: false })
     .limit(1);
-  if (checkInErr) {
-    return json({ error: 'checkpoint_query_failed', detail: checkInErr.message }, 502);
+  if (slotsErr) {
+    return json(
+      { error: 'checkpoint_query_failed', source: 'order_arch_slots', detail: slotsErr.message },
+      502
+    );
   }
-
-  let conflict: Conflict | null = null;
-  if (checkInRows && checkInRows.length > 0) {
-    const r = checkInRows[0] as {
+  if (slotRows && slotRows.length > 0) {
+    const r = slotRows[0] as {
       order_name: string | null;
       customer_name: string | null;
       status: string | null;
@@ -140,25 +144,25 @@ Deno.serve(async (req) => {
       customer_name: r.customer_name,
       status: r.status,
       checked_in_at: r.checked_in_at,
-      source: 'shopify_order',
+      source: 'lab_order',
     };
   }
 
+  // 2. Walk-in impressions — walk_ins. Active = status not in
+  //    ('complete', 'cancelled'). Mirrors Meridian's checkpoint-lookup.
   if (!conflict) {
-    // Checkpoint also has a walk_ins table (impression-only walk-ins).
-    // The shape mirrors check_ins but the source label differs.
     const { data: walkInRows, error: walkInErr } = await sbCheckpoint
       .from('walk_ins')
-      .select('first_name, last_name, status, created_at, job_box')
+      .select('first_name, last_name, status, created_at')
       .eq('job_box', jbFormatted)
-      .neq('status', 'dispatched')
+      .not('status', 'in', '("complete","cancelled")')
       .order('created_at', { ascending: false })
       .limit(1);
     if (walkInErr && walkInErr.code !== '42P01') {
-      // 42P01 = relation does not exist; tolerate that since not every
-      // Checkpoint deploy has the walk_ins table yet. Anything else is
-      // a real failure.
-      return json({ error: 'checkpoint_query_failed', detail: walkInErr.message }, 502);
+      return json(
+        { error: 'checkpoint_query_failed', source: 'walk_ins', detail: walkInErr.message },
+        502
+      );
     }
     if (walkInRows && walkInRows.length > 0) {
       const r = walkInRows[0] as {
