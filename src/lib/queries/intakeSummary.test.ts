@@ -12,6 +12,7 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   event_type_label: 'Denture Repairs',
   staff_account_id: null,
   intake,
+  join_url: null,
   patient_first_name: 'Sandra',
   patient_last_name: 'Denyer',
   patient_email: null,

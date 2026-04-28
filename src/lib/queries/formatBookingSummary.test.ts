@@ -15,6 +15,7 @@ const makeRow = (
   event_type_label,
   staff_account_id: null,
   intake,
+  join_url: null,
   patient_first_name: null,
   patient_last_name: null,
   patient_email: null,

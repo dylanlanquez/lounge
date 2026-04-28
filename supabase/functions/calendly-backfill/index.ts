@@ -148,6 +148,7 @@ Deno.serve(async (req) => {
       start_time: string;
       end_time: string;
       event_type: string;
+      location?: { join_url?: string; location?: string; type?: string } | null;
     }>;
     totalReceived += collection.length;
     pageDiagnostics.push({
@@ -226,7 +227,13 @@ Deno.serve(async (req) => {
 
 async function applyInvitee(
   supabase: SupabaseClient,
-  evt: { uri: string; name: string; start_time: string; end_time: string },
+  evt: {
+    uri: string;
+    name: string;
+    start_time: string;
+    end_time: string;
+    location?: { join_url?: string; location?: string; type?: string } | null;
+  },
   inv: {
     uri: string;
     email: string;
@@ -258,6 +265,7 @@ async function applyInvitee(
   // event types, not as text_reminder_number. Try both.
   const phoneFromHeader = (inv.text_reminder_number ?? '').trim();
   const phone = phoneFromHeader || extractPhoneFromIntake(intake) || null;
+  const join_url = extractJoinUrl(evt.location);
 
   // Identity resolve. Skip placeholder emails (noemail@gmail.com etc.) so
   // multiple invitees sharing a stub email don't all collapse onto one
@@ -312,7 +320,7 @@ async function applyInvitee(
   // re-resolve: create a new patient and re-point the appointment.
   const { data: existingAppt } = await supabase
     .from('lng_appointments')
-    .select('id, intake, event_type_label, patient_id')
+    .select('id, intake, event_type_label, patient_id, join_url')
     .eq('calendly_invitee_uri', inv.uri)
     .maybeSingle();
 
@@ -322,6 +330,7 @@ async function applyInvitee(
       intake: unknown;
       event_type_label: string | null;
       patient_id: string;
+      join_url: string | null;
     };
 
     let nextPatientId = cur.patient_id;
@@ -372,6 +381,7 @@ async function applyInvitee(
     const patch: Record<string, unknown> = {};
     if (cur.intake == null && intake != null) patch.intake = intake;
     if (cur.event_type_label == null && evt.name) patch.event_type_label = evt.name;
+    if (cur.join_url == null && join_url) patch.join_url = join_url;
     if (nextPatientId !== cur.patient_id) patch.patient_id = nextPatientId;
     if (Object.keys(patch).length > 0) {
       await supabase.from('lng_appointments').update(patch).eq('id', cur.id);
@@ -390,6 +400,7 @@ async function applyInvitee(
     end_at: evt.end_time,
     event_type_label: evt.name,
     intake,
+    join_url,
     status: 'booked',
   });
   // 23505 == unique violation on calendly_invitee_uri. Shouldn't normally
@@ -453,6 +464,16 @@ function extractPhoneFromIntake(
       const t = qa.answer.trim();
       if (t) return t;
     }
+  }
+  return null;
+}
+
+function extractJoinUrl(loc: unknown): string | null {
+  if (!loc || typeof loc !== 'object') return null;
+  const l = loc as { join_url?: unknown; location?: unknown };
+  if (typeof l.join_url === 'string' && l.join_url.trim()) return l.join_url.trim();
+  if (typeof l.location === 'string' && /^https?:\/\//.test(l.location.trim())) {
+    return l.location.trim();
   }
   return null;
 }

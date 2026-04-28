@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { CalendarOff, ChevronRight, Plus } from 'lucide-react';
+import { CalendarOff, ChevronRight, Monitor, Plus, Video } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -23,7 +23,7 @@ import { ScheduleListView } from '../components/ScheduleListView/ScheduleListVie
 import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useIsMobile } from '../lib/useIsMobile.ts';
+import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type AppointmentRow,
   eventTypeCategory,
@@ -45,6 +45,7 @@ export function Schedule() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
+  const isDesktop = useIsDesktop();
   const [view, setView] = useState<View>('today');
   const [layout, setLayout] = useState<Layout>(() => {
     if (typeof window === 'undefined') return 'calendar';
@@ -326,6 +327,52 @@ export function Schedule() {
             <p style={{ margin: 0, color: theme.color.ink }}>
               Status: <strong>{selected.status}</strong>
             </p>
+
+            {selected.join_url ? (
+              isDesktop ? (
+                <button
+                  type="button"
+                  onClick={() => window.open(selected.join_url!, '_blank', 'noopener,noreferrer')}
+                  style={{
+                    appearance: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: theme.color.accent,
+                    color: theme.color.surface,
+                    borderRadius: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: theme.space[2],
+                    fontSize: theme.type.size.base,
+                    fontWeight: theme.type.weight.semibold,
+                    boxShadow: theme.shadow.card,
+                  }}
+                  aria-label="Join the virtual meeting in a new tab"
+                >
+                  <Video size={18} aria-hidden /> Join meeting
+                </button>
+              ) : (
+                <div
+                  style={{
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: theme.color.accentBg,
+                    border: `1px solid ${theme.color.accent}`,
+                    borderRadius: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    color: theme.color.ink,
+                  }}
+                >
+                  <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
+                  <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
+                    Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting.
+                  </p>
+                </div>
+              )
+            ) : null}
 
             {formatBookingSummary(selected) ? (
               <div
