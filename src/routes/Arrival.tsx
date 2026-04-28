@@ -1777,8 +1777,7 @@ function FieldRow({
   if (onFile) {
     return (
       <div style={wrapper}>
-        <span style={onFileLabelStyle}>{label}</span>
-        <span style={onFileValueStyle}>{current}</span>
+        <OnFileCard label={label} value={formatOnFileValue(label, current!)} />
       </div>
     );
   }
@@ -1816,8 +1815,7 @@ function SexRow({
   if (current !== null && current !== '') {
     return (
       <div>
-        <span style={onFileLabelStyle}>Sex</span>
-        <span style={onFileValueStyle}>{current}</span>
+        <OnFileCard label="Sex" value={current} />
       </div>
     );
   }
@@ -1836,6 +1834,64 @@ function SexRow({
       </div>
     </div>
   );
+}
+
+// On-file pair card. The patient sees a soft white tile per field
+// they don't have to fill in — small sentence-case label, large bold
+// value, framed with a subtle border so each pair is unambiguously
+// one block. Replaces the previous label-stacked-on-value-with-no-frame
+// pattern that bled adjacent rows together visually.
+function OnFileCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkMuted,
+          letterSpacing: 0,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+          wordBreak: 'break-word',
+          lineHeight: 1.3,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// Format on-file values for human reading. Date of birth lands as a
+// raw ISO string from the patients row — render it as "25 Feb 1992"
+// so the patient confirms a value that matches the format on their
+// driver's licence rather than a database string.
+function formatOnFileValue(label: string, raw: string): string {
+  if (label === 'Date of birth') {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+  }
+  return raw;
 }
 
 function SectionHeading({ title, sub }: { title: string; sub?: string }) {
@@ -2034,20 +2090,3 @@ const textareaStyle: CSSProperties = {
   outline: 'none',
 };
 
-const onFileLabelStyle: CSSProperties = {
-  display: 'block',
-  fontSize: theme.type.size.xs,
-  fontWeight: theme.type.weight.medium,
-  color: theme.color.inkMuted,
-  textTransform: 'uppercase',
-  letterSpacing: theme.type.tracking.wide,
-  marginBottom: theme.space[1],
-};
-
-const onFileValueStyle: CSSProperties = {
-  display: 'block',
-  fontSize: theme.type.size.base,
-  color: theme.color.ink,
-  fontWeight: theme.type.weight.medium,
-  wordBreak: 'break-word',
-};
