@@ -23,6 +23,11 @@ export interface AppointmentCardProps {
   // threshold so the card flags the receptionist to mark a no-show. Ignored
   // on every status other than 'booked'.
   lateMinutes?: number | null;
+  // Reduce opacity to push the row into the visual background — used on
+  // appointments whose slot has finished or whose status is terminal so
+  // the eye lands on active work first. Parent decides; the card just
+  // renders.
+  dimmed?: boolean;
   onClick?: () => void;
 }
 
@@ -78,14 +83,12 @@ export function AppointmentCard({
   lanesInGroup = 1,
   barColor,
   lateMinutes,
+  dimmed = false,
   onClick,
 }: AppointmentCardProps) {
   const isInteractive = Boolean(onClick);
   const lanePct = 100 / lanesInGroup;
   const showLate = status === 'booked' && typeof lateMinutes === 'number' && lateMinutes > 0;
-  // Terminal-and-uneventful statuses fade so the eye lands on the active rows.
-  // no_show stays at full strength because its alert colour is the signal.
-  const faded = status === 'complete' || status === 'cancelled' || status === 'rescheduled';
   // Sit above the now-indicator line; below the now-time pill.
   const styles: CSSProperties = {
     position: 'absolute',
@@ -101,7 +104,7 @@ export function AppointmentCard({
     cursor: isInteractive ? 'pointer' : 'default',
     transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
     textDecoration: status === 'cancelled' ? 'line-through' : 'none',
-    opacity: faded ? 0.65 : 1,
+    opacity: dimmed ? 0.55 : 1,
     zIndex: 1,
   };
   const effectiveBarColor = showLate
