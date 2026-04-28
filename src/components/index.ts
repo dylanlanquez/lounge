@@ -49,3 +49,9 @@ export { WeekStrip } from './WeekStrip/WeekStrip.tsx';
 export type { WeekStripProps } from './WeekStrip/WeekStrip.tsx';
 
 export { BottomNav, BOTTOM_NAV_HEIGHT, shouldShowBottomNav } from './BottomNav/BottomNav.tsx';
+
+export { SignaturePad, svgFromPath } from './SignaturePad/SignaturePad.tsx';
+export type { SignaturePadProps, SignaturePadHandle } from './SignaturePad/SignaturePad.tsx';
+
+export { WaiverSheet } from './WaiverSheet/WaiverSheet.tsx';
+export type { WaiverSheetProps } from './WaiverSheet/WaiverSheet.tsx';
