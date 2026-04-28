@@ -148,14 +148,18 @@ export function VisitDetail() {
           <EmptyState title="Visit not found" description="That visit no longer exists or you do not have access." />
         ) : (
           <>
+            {/* Visit header. The previous version stacked
+                  breadcrumb → "Walk-in · opened 17:48" → h1 → pills,
+                which read as one cramped block with no air between
+                breadcrumb and title and a redundant time line (the
+                breadcrumb crumb already shows the timestamp). Now:
+                title sits clean below the breadcrumb; arrival type
+                joins the pills row alongside status and cart, so
+                every meta atom lives in one consistent rhythm. */}
             <div style={{ marginBottom: theme.space[6] }}>
-              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-                {visit.arrival_type === 'walk_in' ? 'Walk-in' : 'Scheduled'} · opened{' '}
-                {new Date(visit.opened_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-              </p>
               <h1
                 style={{
-                  margin: `${theme.space[1]}px 0 ${theme.space[2]}px`,
+                  margin: `0 0 ${theme.space[3]}px`,
                   fontSize: theme.type.size.xxl,
                   fontWeight: theme.type.weight.semibold,
                   letterSpacing: theme.type.tracking.tight,
@@ -164,14 +168,17 @@ export function VisitDetail() {
                 {patient ? patientFullName(patient) : 'Patient'}
               </h1>
               <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-                {patient?.lwo_ref ? <StatusPill tone="arrived" size="sm">{patient.lwo_ref}</StatusPill> : null}
                 {patient?.internal_ref ? <StatusPill tone="neutral" size="sm">{patient.internal_ref}</StatusPill> : null}
-                <StatusPill tone={visit.status === 'opened' ? 'in_progress' : 'neutral'} size="sm">
-                  {visit.status}
+                {patient?.lwo_ref ? <StatusPill tone="arrived" size="sm">{patient.lwo_ref}</StatusPill> : null}
+                <StatusPill tone="neutral" size="sm">
+                  {visit.arrival_type === 'walk_in' ? 'Walk-in' : 'Scheduled'}
+                </StatusPill>
+                <StatusPill tone={visitStatusTone(visit.status)} size="sm">
+                  {visitStatusLabel(visit.status)}
                 </StatusPill>
                 {cart ? (
                   <StatusPill tone={cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show'} size="sm">
-                    Cart: {cart.status}
+                    {cartStatusLabel(cart.status)}
                   </StatusPill>
                 ) : null}
               </div>
@@ -362,7 +369,7 @@ function VisitBreadcrumbs({
   })();
 
   return (
-    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[5]}px` }}>
+    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[6]}px` }}>
       <Breadcrumb items={items} />
     </div>
   );
@@ -513,6 +520,44 @@ function WaiverCard({
       </Button>
     </div>
   );
+}
+
+// Visit-status helpers. The DB stores the raw enum (opened /
+// in_progress / complete / cancelled); the UI shows humanised copy
+// to match the other status pills in the app.
+function visitStatusLabel(s: 'opened' | 'in_progress' | 'complete' | 'cancelled'): string {
+  switch (s) {
+    case 'opened':
+      return 'Opened';
+    case 'in_progress':
+      return 'In progress';
+    case 'complete':
+      return 'Complete';
+    case 'cancelled':
+      return 'Cancelled';
+  }
+}
+function visitStatusTone(s: 'opened' | 'in_progress' | 'complete' | 'cancelled') {
+  switch (s) {
+    case 'opened':
+      return 'in_progress' as const;
+    case 'in_progress':
+      return 'in_progress' as const;
+    case 'complete':
+      return 'complete' as const;
+    case 'cancelled':
+      return 'cancelled' as const;
+  }
+}
+function cartStatusLabel(s: 'open' | 'paid' | 'voided'): string {
+  switch (s) {
+    case 'open':
+      return 'Cart open';
+    case 'paid':
+      return 'Cart paid';
+    case 'voided':
+      return 'Cart voided';
+  }
 }
 
 function composeBannerBody(flag: ReturnType<typeof summariseWaiverFlag>): string {
