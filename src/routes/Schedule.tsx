@@ -290,7 +290,10 @@ export function Schedule() {
                 const showVirtualJoin =
                   isVirtual && (status === 'booked' || status === 'arrived' || status === 'no_show');
                 const showMarkArrived = !isVirtual && status === 'booked';
-                const showCloseOnly = !showNoShow && !showVirtualJoin && !showMarkArrived;
+                // Show Close-only when none of the action buttons apply.
+                // Patient attended (showUndoNoShow below) also counts.
+                const showCloseOnly =
+                  !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
                 if (showCloseOnly) {
                   return (
                     <Button variant="secondary" onClick={() => setSelected(null)}>
@@ -300,20 +303,32 @@ export function Schedule() {
                 }
                 const joinLabel =
                   status === 'arrived' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
-                const showUndoNoShow = isVirtual && status === 'no_show';
+                // Patient attended is available on any no-show — patient
+                // may have arrived late after staff already flipped them.
+                const showUndoNoShow = status === 'no_show';
                 return (
                   <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                     {showUndoNoShow ? (
                       <Button
-                        variant="secondary"
+                        variant={isVirtual ? 'secondary' : 'primary'}
+                        showArrow={!isVirtual}
                         disabled={busy}
+                        loading={busy}
                         onClick={async () => {
                           if (!selected) return;
                           setBusy(true);
                           try {
-                            await reverseNoShow(selected.id);
-                            setSelected(null);
-                            window.location.reload();
+                            const { visit_id } = await reverseNoShow(selected.id);
+                            // For in-person no_show reversals a fresh visit
+                            // is created — drop straight into /visit so the
+                            // receptionist can carry on as if Mark as arrived
+                            // had been tapped originally.
+                            if (visit_id && !isVirtual) {
+                              navigate(`/visit/${visit_id}`);
+                            } else {
+                              setSelected(null);
+                              window.location.reload();
+                            }
                           } catch (e) {
                             setError(e instanceof Error ? e.message : 'Could not undo no-show');
                           } finally {
@@ -483,8 +498,10 @@ export function Schedule() {
                   : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
                 : selected.status === 'arrived' && selected.join_url
                   ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
-                  : selected.status === 'no_show' && selected.join_url
-                    ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
+                  : selected.status === 'no_show'
+                    ? selected.join_url
+                      ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
+                      : 'Marked as a no-show. If the patient turned up late, tap "Patient attended" to flip them back to arrived and start a visit.'
                     : selected.status === 'rescheduled'
                       ? 'This booking was rescheduled in Calendly.'
                       : selected.status === 'cancelled'
@@ -500,7 +517,7 @@ export function Schedule() {
           open={!!clusterRows}
           onClose={() => setClusterRows(null)}
           title={`${clusterRows.length} appointments`}
-          description={`${formatRange(clusterRows[0]!.start_at, clusterRows[clusterRows.length - 1]!.end_at)} · tap one to open`}
+          description={`${formatStart(clusterRows[0]!.start_at)} · tap one to open`}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             {clusterRows.map((r) => (
@@ -536,7 +553,7 @@ export function Schedule() {
                     color: theme.color.ink,
                   }}
                 >
-                  {formatRange(r.start_at, r.end_at)}
+                  {new Date(r.start_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                 </span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span
@@ -757,4 +774,9 @@ function formatRange(startIso: string, endIso: string): string {
   const s = new Date(startIso);
   const e = new Date(endIso);
   return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} to ${e.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function formatStart(startIso: string): string {
+  const s = new Date(startIso);
+  return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 }

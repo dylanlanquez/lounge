@@ -153,9 +153,31 @@ interface AppointmentRowRaw {
     | null;
 }
 
+// Title-cases a name. Lowercase words → "Amanda". All-caps words longer
+// than 3 chars → "Amanda" (catches "AMANDA SOLANKE"). Short all-caps stays
+// (preserves acronyms like "DPD"). Mixed-case stays (preserves "McDonald").
+// Splits on whitespace, hyphens, and apostrophes so "o'brien" → "O'Brien"
+// and "mary-jane" → "Mary-Jane".
+export function properCase(name: string | null | undefined): string {
+  if (!name) return '';
+  return name
+    .split(/(\s+|-|’|')/)
+    .map((part) => {
+      if (!part || /^[\s\-'’]+$/.test(part)) return part;
+      const isAllLower = part.toLowerCase() === part;
+      const isAllUpper = part.toUpperCase() === part;
+      if (isAllLower) return part.charAt(0).toUpperCase() + part.slice(1);
+      if (isAllUpper && part.length > 3) {
+        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+      }
+      return part;
+    })
+    .join('');
+}
+
 export function patientDisplayName(row: AppointmentRow): string {
-  const first = row.patient_first_name ?? '';
-  const last = row.patient_last_name ?? '';
+  const first = properCase(row.patient_first_name);
+  const last = properCase(row.patient_last_name);
   if (!first && !last) return 'Patient';
   return `${first} ${last.slice(0, 1)}${last.slice(0, 1) ? '.' : ''}`.trim();
 }
@@ -185,8 +207,8 @@ export function humaniseStatus(status: AppointmentRow['status']): string {
 
 // Full-name version for confirmation surfaces (booking detail sheet).
 export function patientFullDisplayName(row: AppointmentRow): string {
-  const first = (row.patient_first_name ?? '').trim();
-  const last = (row.patient_last_name ?? '').trim();
+  const first = properCase(row.patient_first_name);
+  const last = properCase(row.patient_last_name);
   if (!first && !last) return 'Patient';
   return `${first} ${last}`.trim();
 }
