@@ -1,6 +1,19 @@
 import { useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Plus, ShoppingCart } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarCheck,
+  CheckCircle2,
+  CheckCircle,
+  Circle,
+  CircleSlash,
+  CreditCard,
+  Hash,
+  Loader2,
+  Plus,
+  ShoppingCart,
+  UserPlus,
+} from 'lucide-react';
 import { Breadcrumb, Button, Card, EmptyState, StatusPill, Toast, WaiverSheet } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
@@ -50,9 +63,11 @@ export function VisitDetail() {
     loading: waiverSectionsLoading,
     error: waiverSectionsError,
   } = useWaiverSections();
-  const { latest: patientSignatures, refresh: refreshSignatures } = usePatientWaiverState(
-    patient?.id ?? null
-  );
+  const {
+    latest: patientSignatures,
+    loading: patientSignaturesLoading,
+    refresh: refreshSignatures,
+  } = usePatientWaiverState(patient?.id ?? null);
   const requiredSections = useMemo<WaiverSection[]>(() => {
     if (waiverSections.length === 0) return [];
     if (items.length > 0) {
@@ -168,18 +183,34 @@ export function VisitDetail() {
                 {patient ? patientFullName(patient) : 'Patient'}
               </h1>
               <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-                {patient?.internal_ref ? <StatusPill tone="neutral" size="sm">{patient.internal_ref}</StatusPill> : null}
-                {patient?.lwo_ref ? <StatusPill tone="arrived" size="sm">{patient.lwo_ref}</StatusPill> : null}
-                <StatusPill tone="neutral" size="sm">
+                {showableRef(patient?.internal_ref) ? (
+                  <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
+                    {patient!.internal_ref}
+                  </MetaPill>
+                ) : null}
+                {showableRef(patient?.lwo_ref) ? (
+                  <MetaPill icon={<Hash size={12} />} tone="arrived" size="sm">
+                    {patient!.lwo_ref}
+                  </MetaPill>
+                ) : null}
+                <MetaPill
+                  icon={visit.arrival_type === 'walk_in' ? <UserPlus size={12} /> : <CalendarCheck size={12} />}
+                  tone="neutral"
+                  size="sm"
+                >
                   {visit.arrival_type === 'walk_in' ? 'Walk-in' : 'Scheduled'}
-                </StatusPill>
-                <StatusPill tone={visitStatusTone(visit.status)} size="sm">
+                </MetaPill>
+                <MetaPill icon={visitStatusIcon(visit.status)} tone={visitStatusTone(visit.status)} size="sm">
                   {visitStatusLabel(visit.status)}
-                </StatusPill>
+                </MetaPill>
                 {cart ? (
-                  <StatusPill tone={cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show'} size="sm">
+                  <MetaPill
+                    icon={cartStatusIcon(cart.status)}
+                    tone={cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show'}
+                    size="sm"
+                  >
                     {cartStatusLabel(cart.status)}
-                  </StatusPill>
+                  </MetaPill>
                 ) : null}
               </div>
             </div>
@@ -190,6 +221,12 @@ export function VisitDetail() {
               schemaLoading={waiverSectionsLoading}
               schemaError={waiverSectionsError}
               schemaEmpty={!waiverSectionsLoading && !waiverSectionsError && waiverSections.length === 0}
+              // Wait for both the patient row AND the signatures fetch
+              // before resolving. Without the !patient gate the card
+              // would briefly think "no patient = no signatures = needed"
+              // and flip the moment the patient resolved. See
+              // feedback_no_load_flicker.
+              signaturesLoading={!patient || patientSignaturesLoading}
               onOpen={() => setWaiverOpen(true)}
             />
 
@@ -398,6 +435,7 @@ function WaiverCard({
   schemaLoading,
   schemaError,
   schemaEmpty,
+  signaturesLoading,
   onOpen,
 }: {
   flag: ReturnType<typeof summariseWaiverFlag>;
@@ -405,6 +443,13 @@ function WaiverCard({
   schemaLoading: boolean;
   schemaError: string | null;
   schemaEmpty: boolean;
+  // True until the patient's signatures have been fetched. We must
+  // wait for both this AND the schema before rendering the resolved
+  // status; otherwise the card would briefly show "Waiver needed"
+  // (the default for "no signatures yet") and flip to "signed and up
+  // to date" the instant the signatures landed — a classic flicker
+  // that makes the surface feel broken. See feedback_no_load_flicker.
+  signaturesLoading: boolean;
   onOpen: () => void;
 }) {
   const wrapStyle = (border: string): React.CSSProperties => ({
@@ -418,7 +463,7 @@ function WaiverCard({
     border: `1px solid ${border}`,
   });
 
-  if (schemaLoading) {
+  if (schemaLoading || signaturesLoading) {
     return (
       <div style={wrapStyle(theme.color.border)}>
         <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
@@ -520,6 +565,68 @@ function WaiverCard({
       </Button>
     </div>
   );
+}
+
+// MetaPill — visit-header chip with a leading icon. Wraps StatusPill
+// so the colour tones stay consistent with every other status pill in
+// the app, but the icon turns enum keys ("Walk-in", "Opened",
+// "Cart open") into glanceable badges instead of bare text.
+function MetaPill({
+  icon,
+  tone,
+  size,
+  children,
+}: {
+  icon: React.ReactNode;
+  tone: 'neutral' | 'arrived' | 'in_progress' | 'complete' | 'no_show' | 'cancelled';
+  size?: 'sm' | 'md';
+  children: React.ReactNode;
+}) {
+  return (
+    <StatusPill tone={tone} size={size}>
+      <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>
+        {icon}
+      </span>
+      {children}
+    </StatusPill>
+  );
+}
+
+// Filters out internal placeholders that occasionally leak through
+// from the walk-in trigger flow (e.g. lwo_ref still set to
+// "__GENERATE__" between insert and after-trigger). Anything starting
+// with "__" or empty is treated as not-yet-resolved and hidden from
+// the UI rather than rendered as raw plumbing.
+function showableRef(value: string | null | undefined): value is string {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed.startsWith('__')) return false;
+  return true;
+}
+
+function visitStatusIcon(s: 'opened' | 'in_progress' | 'complete' | 'cancelled') {
+  switch (s) {
+    case 'opened':
+      return <Circle size={12} />;
+    case 'in_progress':
+      return <Loader2 size={12} />;
+    case 'complete':
+      return <CheckCircle size={12} />;
+    case 'cancelled':
+      return <CircleSlash size={12} />;
+  }
+}
+
+function cartStatusIcon(s: 'open' | 'paid' | 'voided') {
+  switch (s) {
+    case 'open':
+      return <ShoppingCart size={12} />;
+    case 'paid':
+      return <CreditCard size={12} />;
+    case 'voided':
+      return <CircleSlash size={12} />;
+  }
 }
 
 // Visit-status helpers. The DB stores the raw enum (opened /
