@@ -14,8 +14,10 @@ export function shouldShowBottomNav(pathname: string, signedIn: boolean): boolea
 }
 
 // Height the nav reserves for content. Pages add this as bottom padding so
-// nothing hides under the fixed bar.
-export const BOTTOM_NAV_HEIGHT = 72;
+// nothing hides under the fixed bar. The BottomSheet footer reads from the
+// same constant so its top hairline aligns with the nav's top hairline,
+// and its lg-sized action buttons (56px) get comfortable breathing room.
+export const BOTTOM_NAV_HEIGHT = 88;
 
 interface NavItem {
   label: string;
