@@ -135,6 +135,11 @@ export function Schedule() {
   const waiverFlag: WaiverFlag | null = (() => {
     if (!selected) return null;
     if (waiverSections.length === 0) return null;
+    // Virtual impression appointments never take a physical impression in
+    // clinic, so the waiver isn't applicable at this booking. The patient
+    // still needs to sign for any future in-person follow-up — that's
+    // handled by the next in-person appointment's intake gate.
+    if (selected.join_url) return null;
     const inferred = inferServiceTypeFromEventLabel(selected.event_type_label);
     const required = requiredSectionsForServiceTypes(
       inferred ? [inferred] : [],
