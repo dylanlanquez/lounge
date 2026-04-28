@@ -157,9 +157,9 @@ export function VisitDetail() {
         <VisitBreadcrumbs visit={visit} patient={patient} />
 
         {loading ? (
-          <p style={{ color: theme.color.inkMuted }}>Loading visit…</p>
+          <p style={{ color: theme.color.inkMuted }}>Loading appointment…</p>
         ) : !visit ? (
-          <EmptyState title="Visit not found" description="That visit no longer exists or you do not have access." />
+          <EmptyState title="Appointment not found" description="That appointment no longer exists or you do not have access." />
         ) : (
           <>
             {/* Visit header. The previous version stacked
@@ -359,13 +359,13 @@ function VisitBreadcrumbs({
   const entry = (location.state as VisitEntryState | null) ?? {};
 
   const visitLabel = visit
-    ? `Visit, ${new Date(visit.opened_at).toLocaleString('en-GB', {
+    ? `Appointment, ${new Date(visit.opened_at).toLocaleString('en-GB', {
         day: '2-digit',
         month: 'short',
         hour: '2-digit',
         minute: '2-digit',
       })}`
-    : 'Visit';
+    : 'Appointment';
 
   const items = (() => {
     if (entry.from === 'patient' && entry.patientId) {

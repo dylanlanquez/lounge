@@ -57,13 +57,13 @@ export function InClinic() {
           {loading
             ? 'Loading…'
             : data.length === 0
-              ? 'No active visits right now.'
-              : `${data.length} active visit${data.length === 1 ? '' : 's'}.`}
+              ? 'No active appointments right now.'
+              : `${data.length} active appointment${data.length === 1 ? '' : 's'}.`}
         </p>
 
         {error ? (
           <Card padding="lg">
-            <p style={{ color: theme.color.alert, margin: 0 }}>Could not load visits: {error}</p>
+            <p style={{ color: theme.color.alert, margin: 0 }}>Could not load appointments: {error}</p>
           </Card>
         ) : loading ? (
           <Card padding="lg">

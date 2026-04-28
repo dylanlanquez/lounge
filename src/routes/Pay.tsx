@@ -140,7 +140,7 @@ export function Pay() {
       if (!r.ok || !body?.ok) {
         // Show a soft warning toast but proceed: the visit still closes.
         const reason = body?.error ?? `HTTP ${r.status}`;
-        setError(`Receipt queued but not delivered: ${reason}. You can resend from the visit later.`);
+        setError(`Receipt queued but not delivered: ${reason}. You can resend from the appointment later.`);
       }
 
       await closeVisit();
@@ -181,7 +181,7 @@ export function Pay() {
             <EmptyState
               title="Nothing to pay for"
               description="Cart has no line items. Add some, then come back."
-              action={<Button variant="primary" onClick={() => navigate(`/visit/${id}`)}>Back to visit</Button>}
+              action={<Button variant="primary" onClick={() => navigate(`/visit/${id}`)}>Back to appointment</Button>}
             />
           </Card>
         </div>
@@ -210,7 +210,7 @@ export function Pay() {
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {patient ? patientFullName(patient) : 'Visit'} · {formatPence(total)}
+          {patient ? patientFullName(patient) : 'Appointment'} · {formatPence(total)}
           {depositPence > 0 ? (
             <span
               style={{
