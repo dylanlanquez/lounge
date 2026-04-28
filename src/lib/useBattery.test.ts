@@ -6,8 +6,9 @@ describe('batteryTone', () => {
     expect(batteryTone(null)).toBe('ok');
   });
 
-  it('flips to "low" at 20% and below', () => {
-    expect(batteryTone(21)).toBe('ok');
+  it('flips to "low" at 25% and below', () => {
+    expect(batteryTone(26)).toBe('ok');
+    expect(batteryTone(25)).toBe('low');
     expect(batteryTone(20)).toBe('low');
     expect(batteryTone(15)).toBe('low');
     expect(batteryTone(11)).toBe('low');

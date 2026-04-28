@@ -1,28 +1,26 @@
-import { Battery, BatteryFull, BatteryLow, BatteryMedium, BatteryWarning, Zap } from 'lucide-react';
-import { batteryTone, useBattery } from '../../lib/useBattery.ts';
+import { Wifi, WifiOff, Zap } from 'lucide-react';
+import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
+import { useOnline } from '../../lib/useOnline.ts';
 import { theme } from '../../theme/index.ts';
 
 // Reserved height pages add as paddingTop so content doesn't slip
 // underneath the fixed bar.
 export const KIOSK_STATUS_BAR_HEIGHT = 32;
 
-// Always-visible top strip showing wall-clock time and device battery.
-// Lives outside any route so it persists through navigation. Critical
-// in kiosk mode where the system status bar is hidden — the receptionist
-// has no other way to see the battery before it dies.
+// Always-visible top strip showing wall-clock time, network status,
+// and device battery. Lives outside any route so it persists through
+// navigation. Critical in kiosk mode where the system status bar is
+// hidden — the receptionist has no other way to see the battery
+// before it dies, or to spot an offline state.
 export function KioskStatusBar() {
   const now = useNow(60_000);
   const { level, charging, supported } = useBattery();
+  const online = useOnline();
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const percent = level === null ? null : Math.round(level * 100);
   const tone = batteryTone(percent);
-
-  const batteryColor =
-    tone === 'critical' ? theme.color.alert : tone === 'low' ? theme.color.alert : theme.color.ink;
-  const batteryWeight =
-    tone === 'critical' || tone === 'low' ? theme.type.weight.semibold : theme.type.weight.medium;
 
   return (
     <div
@@ -56,30 +54,156 @@ export function KioskStatusBar() {
         {time}
       </span>
 
-      {supported && percent !== null ? (
-        <span
-          aria-label={`Battery ${percent}%${charging ? ', charging' : ''}`}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[1],
-            color: batteryColor,
-            fontWeight: batteryWeight,
-          }}
-        >
-          {charging ? <Zap size={14} fill="currentColor" stroke="none" aria-hidden /> : null}
-          <BatteryGlyph percent={percent} tone={tone} />
-          <span>{percent}%</span>
-        </span>
-      ) : null}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
+        <NetworkIndicator online={online} />
+        {supported && percent !== null ? (
+          <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
+        ) : null}
+      </span>
     </div>
   );
 }
 
-function BatteryGlyph({ percent, tone }: { percent: number; tone: ReturnType<typeof batteryTone> }) {
-  if (tone === 'critical') return <BatteryWarning size={16} aria-hidden />;
-  if (tone === 'low') return <BatteryLow size={16} aria-hidden />;
-  if (percent >= 75) return <BatteryFull size={16} aria-hidden />;
-  if (percent >= 40) return <BatteryMedium size={16} aria-hidden />;
-  return <Battery size={16} aria-hidden />;
+function NetworkIndicator({ online }: { online: boolean }) {
+  if (online) {
+    return (
+      <span
+        aria-label="Online"
+        title="Online"
+        style={{ display: 'inline-flex', alignItems: 'center', color: theme.color.ink }}
+      >
+        <Wifi size={15} aria-hidden />
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-label="Offline"
+      title="Offline. The device is not connected to a network."
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        color: theme.color.alert,
+        fontWeight: theme.type.weight.semibold,
+      }}
+    >
+      <WifiOff size={15} aria-hidden />
+      <span>Offline</span>
+    </span>
+  );
+}
+
+function BatteryIndicator({
+  percent,
+  charging,
+  tone,
+}: {
+  percent: number;
+  charging: boolean;
+  tone: BatteryTone;
+}) {
+  // Fill colour mirrors iOS conventions:
+  //   charging      → green (matches the apple charging fill)
+  //   <=10% (crit)  → alert red
+  //   <=25% (low)   → amber warn
+  //   otherwise     → ink
+  const fillColor = charging
+    ? theme.color.accent
+    : tone === 'critical'
+      ? theme.color.alert
+      : tone === 'low'
+        ? theme.color.warn
+        : theme.color.ink;
+  const labelColor = charging
+    ? theme.color.ink
+    : tone === 'critical' || tone === 'low'
+      ? fillColor
+      : theme.color.ink;
+
+  return (
+    <span
+      aria-label={`Battery ${percent}%${charging ? ', charging' : ''}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        color: labelColor,
+        fontWeight:
+          tone === 'critical' || tone === 'low'
+            ? theme.type.weight.semibold
+            : theme.type.weight.medium,
+      }}
+    >
+      <span>{percent}%</span>
+      <BatteryGlyph percent={percent} fillColor={fillColor} charging={charging} />
+    </span>
+  );
+}
+
+// Custom battery glyph: outer rounded body + small terminal nub + inner
+// fill rect that scales to the percent. Lucide's outline icons don't
+// show the fill clearly on iPad so we draw our own. Charging shows a
+// lightning bolt overlay on the fill.
+function BatteryGlyph({
+  percent,
+  fillColor,
+  charging,
+}: {
+  percent: number;
+  fillColor: string;
+  charging: boolean;
+}) {
+  const bodyW = 22;
+  const bodyH = 11;
+  const innerW = 18; // body inner width (after 2px padding each side)
+  const innerH = 7;
+  const fillW = Math.max(1, Math.round((percent / 100) * innerW));
+  return (
+    <svg
+      width={bodyW + 3}
+      height={bodyH}
+      viewBox={`0 0 ${bodyW + 3} ${bodyH}`}
+      aria-hidden
+      style={{ display: 'inline-block', flexShrink: 0 }}
+    >
+      {/* Body outline */}
+      <rect
+        x={0.5}
+        y={0.5}
+        width={bodyW - 1}
+        height={bodyH - 1}
+        rx={2}
+        ry={2}
+        fill="none"
+        stroke={theme.color.ink}
+        strokeOpacity={0.4}
+        strokeWidth={1}
+      />
+      {/* Terminal nub */}
+      <rect
+        x={bodyW}
+        y={(bodyH - 5) / 2}
+        width={2}
+        height={5}
+        rx={1}
+        fill={theme.color.ink}
+        fillOpacity={0.4}
+      />
+      {/* Fill */}
+      <rect x={2} y={2} width={fillW} height={innerH} rx={1} fill={fillColor} />
+      {/* Charging bolt overlay */}
+      {charging ? (
+        <Zap
+          x={(bodyW - 9) / 2}
+          y={(bodyH - 9) / 2}
+          width={9}
+          height={9}
+          fill={theme.color.surface}
+          stroke={theme.color.surface}
+          strokeWidth={0}
+        />
+      ) : null}
+    </svg>
+  );
 }
