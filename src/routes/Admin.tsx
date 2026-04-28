@@ -1887,6 +1887,7 @@ function WaiverSectionEditor({
             <option value="denture_repair">Denture repair</option>
             <option value="same_day_appliance">Same-day appliance</option>
             <option value="click_in_veneers">Click-in veneers</option>
+            <option value="impression_appointment">In-person impression appointment</option>
           </select>
         </label>
         <Input
@@ -1973,7 +1974,7 @@ interface WaiverDraftState {
   title: string;
   terms: string[];
   version: string;
-  applies_to_service_type: 'denture_repair' | 'same_day_appliance' | 'click_in_veneers' | null;
+  applies_to_service_type: WaiverSection['applies_to_service_type'];
   sort_order: number;
   active: boolean;
 }
@@ -2007,5 +2008,6 @@ function serviceTypeScope(s: WaiverSection['applies_to_service_type']): string {
   if (s === 'denture_repair') return 'Denture repair';
   if (s === 'same_day_appliance') return 'Same-day appliance';
   if (s === 'click_in_veneers') return 'Click-in veneers';
+  if (s === 'impression_appointment') return 'In-person impression appointment';
   return s;
 }

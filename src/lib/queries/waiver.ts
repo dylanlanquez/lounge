@@ -7,7 +7,12 @@ export interface WaiverSection {
   title: string;
   terms: string[];
   version: string;
-  applies_to_service_type: 'denture_repair' | 'same_day_appliance' | 'click_in_veneers' | null;
+  applies_to_service_type:
+    | 'denture_repair'
+    | 'same_day_appliance'
+    | 'click_in_veneers'
+    | 'impression_appointment'
+    | null;
   sort_order: number;
   active: boolean;
 }
@@ -158,12 +163,20 @@ export function requiredSectionsForServiceTypes(
 // Maps a Calendly event-type label to a likely service_type. Mirrors the
 // inference in CataloguePicker so a pre-arrival flag works. Falls back to
 // null when the label is ambiguous; in that case only 'general' applies.
+//
+// Order of checks matters: "impression" is tested first so a label
+// like "In-person Impression Appointment for Whitening Trays" maps
+// to the impression_appointment waiver (which covers the act of
+// capturing the impression), not the same_day_appliance waiver
+// (which covers the finished appliance). Patients sign the appliance
+// waiver later at collection.
 export function inferServiceTypeFromEventLabel(label: string | null): string | null {
   if (!label) return null;
   const l = label.toLowerCase();
+  if (/impression/i.test(l)) return 'impression_appointment';
   if (/denture\s+repair|repair/i.test(l)) return 'denture_repair';
   if (/click[\s-]?in\s+veneer|veneer/i.test(l)) return 'click_in_veneers';
-  if (/same[\s-]?day\s+appliance|appliance|impression|aligner|retainer|guard|whitening/i.test(l))
+  if (/same[\s-]?day\s+appliance|appliance|aligner|retainer|guard|whitening/i.test(l))
     return 'same_day_appliance';
   return null;
 }
@@ -277,7 +290,7 @@ export interface WaiverSectionDraft {
   title: string;
   terms: string[];
   version: string;
-  applies_to_service_type: 'denture_repair' | 'same_day_appliance' | 'click_in_veneers' | null;
+  applies_to_service_type: WaiverSection['applies_to_service_type'];
   sort_order: number;
   active: boolean;
 }
