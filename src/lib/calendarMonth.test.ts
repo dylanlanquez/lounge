@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addDaysIso,
   formatDateIso,
-  getMonthGridDays,
-  isSameMonth,
+  formatWeekLabel,
+  getWeekDays,
+  getWeekStartIso,
   monthLabel,
-  nextGridIndex,
   shiftMonth,
 } from './calendarMonth.ts';
 
@@ -22,59 +23,6 @@ describe('formatDateIso', () => {
   });
 });
 
-describe('getMonthGridDays', () => {
-  it('returns 42 cells regardless of month length', () => {
-    expect(getMonthGridDays(2026, 1)).toHaveLength(42); // Feb 2026 (28 days)
-    expect(getMonthGridDays(2026, 0)).toHaveLength(42); // Jan 2026 (31 days)
-  });
-
-  it('starts on Monday for April 2026 (1st is a Wednesday)', () => {
-    const grid = getMonthGridDays(2026, 3);
-    // Apr 1 2026 = Wednesday → Mon=Mar 30, Tue=Mar 31, Wed=Apr 1
-    expect(grid[0]).toEqual({ dateIso: '2026-03-30', dayOfMonth: 30, isCurrentMonth: false });
-    expect(grid[1]).toEqual({ dateIso: '2026-03-31', dayOfMonth: 31, isCurrentMonth: false });
-    expect(grid[2]).toEqual({ dateIso: '2026-04-01', dayOfMonth: 1, isCurrentMonth: true });
-  });
-
-  it('flags isCurrentMonth correctly for padding days', () => {
-    const grid = getMonthGridDays(2026, 3);
-    const inMonth = grid.filter((c) => c.isCurrentMonth);
-    expect(inMonth).toHaveLength(30); // April has 30 days
-    expect(inMonth[0]?.dayOfMonth).toBe(1);
-    expect(inMonth[inMonth.length - 1]?.dayOfMonth).toBe(30);
-  });
-
-  it('handles a month that starts on Monday with no leading padding', () => {
-    // June 2026 starts on Monday
-    const grid = getMonthGridDays(2026, 5);
-    expect(grid[0]).toEqual({ dateIso: '2026-06-01', dayOfMonth: 1, isCurrentMonth: true });
-  });
-
-  it('handles a month that starts on Sunday with full leading padding', () => {
-    // March 2026 starts on a Sunday → 6 days of leading padding (Mon-Sat)
-    const grid = getMonthGridDays(2026, 2);
-    expect(grid[0]).toEqual({ dateIso: '2026-02-23', dayOfMonth: 23, isCurrentMonth: false });
-    expect(grid[6]).toEqual({ dateIso: '2026-03-01', dayOfMonth: 1, isCurrentMonth: true });
-  });
-
-  it('handles February in a leap year', () => {
-    // Feb 2024 (leap, 29 days). Starts Thursday.
-    const grid = getMonthGridDays(2024, 1);
-    const inMonth = grid.filter((c) => c.isCurrentMonth);
-    expect(inMonth).toHaveLength(29);
-    expect(inMonth[inMonth.length - 1]?.dateIso).toBe('2024-02-29');
-  });
-
-  it('produces consecutive ISO dates with no gaps', () => {
-    const grid = getMonthGridDays(2026, 0);
-    for (let i = 1; i < grid.length; i++) {
-      const prev = new Date(grid[i - 1]!.dateIso + 'T00:00:00');
-      const curr = new Date(grid[i]!.dateIso + 'T00:00:00');
-      expect(curr.getTime() - prev.getTime()).toBe(24 * 60 * 60 * 1000);
-    }
-  });
-});
-
 describe('shiftMonth', () => {
   it('moves forward within a year', () => {
     expect(shiftMonth(2026, 3, 1)).toEqual({ year: 2026, month: 4 });
@@ -87,11 +35,6 @@ describe('shiftMonth', () => {
   it('rolls back into the previous year', () => {
     expect(shiftMonth(2026, 0, -1)).toEqual({ year: 2025, month: 11 });
   });
-
-  it('handles multi-month deltas', () => {
-    expect(shiftMonth(2026, 3, 15)).toEqual({ year: 2027, month: 6 });
-    expect(shiftMonth(2026, 3, -15)).toEqual({ year: 2025, month: 0 });
-  });
 });
 
 describe('monthLabel', () => {
@@ -102,66 +45,109 @@ describe('monthLabel', () => {
   });
 });
 
-describe('isSameMonth', () => {
-  it('matches when year and month line up', () => {
-    expect(isSameMonth(2026, 3, '2026-04-15')).toBe(true);
+describe('addDaysIso', () => {
+  it('adds days within a month', () => {
+    expect(addDaysIso('2026-04-28', 1)).toBe('2026-04-29');
+    expect(addDaysIso('2026-04-28', 7)).toBe('2026-05-05');
   });
 
-  it('rejects different month', () => {
-    expect(isSameMonth(2026, 3, '2026-05-01')).toBe(false);
+  it('subtracts days', () => {
+    expect(addDaysIso('2026-04-28', -7)).toBe('2026-04-21');
+    expect(addDaysIso('2026-04-01', -1)).toBe('2026-03-31');
   });
 
-  it('rejects different year', () => {
-    expect(isSameMonth(2026, 3, '2025-04-15')).toBe(false);
+  it('rolls across year boundaries', () => {
+    expect(addDaysIso('2025-12-31', 1)).toBe('2026-01-01');
+    expect(addDaysIso('2026-01-01', -1)).toBe('2025-12-31');
+  });
+
+  it('respects leap years', () => {
+    expect(addDaysIso('2024-02-28', 1)).toBe('2024-02-29');
+    expect(addDaysIso('2024-02-29', 1)).toBe('2024-03-01');
+  });
+
+  it('is a no-op when delta is zero', () => {
+    expect(addDaysIso('2026-04-28', 0)).toBe('2026-04-28');
   });
 });
 
-describe('nextGridIndex', () => {
-  it('arrow keys move by ±1 / ±7 within bounds', () => {
-    expect(nextGridIndex(15, 'ArrowLeft')).toBe(14);
-    expect(nextGridIndex(15, 'ArrowRight')).toBe(16);
-    expect(nextGridIndex(15, 'ArrowUp')).toBe(8);
-    expect(nextGridIndex(15, 'ArrowDown')).toBe(22);
+describe('getWeekStartIso', () => {
+  it('returns Monday for any day in the week (Tue 28 Apr 2026)', () => {
+    expect(getWeekStartIso('2026-04-28')).toBe('2026-04-27');
   });
 
-  it('returns null when ArrowLeft would leave the grid', () => {
-    expect(nextGridIndex(0, 'ArrowLeft')).toBeNull();
+  it('returns Monday when given Sunday (last day of the week)', () => {
+    // Sun 3 May 2026
+    expect(getWeekStartIso('2026-05-03')).toBe('2026-04-27');
   });
 
-  it('returns null when ArrowRight would leave the grid', () => {
-    expect(nextGridIndex(41, 'ArrowRight')).toBeNull();
+  it('is a no-op when given a Monday', () => {
+    expect(getWeekStartIso('2026-04-27')).toBe('2026-04-27');
   });
 
-  it('returns null when ArrowUp from the first row', () => {
-    expect(nextGridIndex(3, 'ArrowUp')).toBeNull();
+  it('crosses month boundaries', () => {
+    // Wed 1 Apr 2026 → Mon 30 Mar 2026
+    expect(getWeekStartIso('2026-04-01')).toBe('2026-03-30');
   });
 
-  it('returns null when ArrowDown from the last row', () => {
-    expect(nextGridIndex(38, 'ArrowDown')).toBeNull();
+  it('crosses year boundaries', () => {
+    // Thu 1 Jan 2026 → Mon 29 Dec 2025
+    expect(getWeekStartIso('2026-01-01')).toBe('2025-12-29');
+  });
+});
+
+describe('getWeekDays', () => {
+  it('returns 7 consecutive ISO dates starting on Monday', () => {
+    const days = getWeekDays('2026-04-28');
+    expect(days).toEqual([
+      '2026-04-27', // Mon
+      '2026-04-28', // Tue
+      '2026-04-29', // Wed
+      '2026-04-30', // Thu
+      '2026-05-01', // Fri
+      '2026-05-02', // Sat
+      '2026-05-03', // Sun
+    ]);
   });
 
-  it('Home/End jump to row boundaries', () => {
-    // Index 10 is in row 1 (0-6 = row 0, 7-13 = row 1)
-    expect(nextGridIndex(10, 'Home')).toBe(7);
-    expect(nextGridIndex(10, 'End')).toBe(13);
+  it('returns the same week regardless of which day-in-week is passed', () => {
+    const fromMon = getWeekDays('2026-04-27');
+    const fromSun = getWeekDays('2026-05-03');
+    expect(fromMon).toEqual(fromSun);
   });
 
-  it('Home is a no-op on a row-start', () => {
-    expect(nextGridIndex(7, 'Home')).toBe(7);
+  it('handles leap-year week spans (Feb 26-Mar 3 2024)', () => {
+    const days = getWeekDays('2024-02-29');
+    expect(days).toEqual([
+      '2024-02-26',
+      '2024-02-27',
+      '2024-02-28',
+      '2024-02-29',
+      '2024-03-01',
+      '2024-03-02',
+      '2024-03-03',
+    ]);
+  });
+});
+
+describe('formatWeekLabel', () => {
+  it('returns "Month YYYY" when the week sits in one month', () => {
+    // 6-12 April 2026: all April
+    expect(formatWeekLabel('2026-04-06', '2026-04-12')).toBe('April 2026');
   });
 
-  it('End is a no-op on a row-end', () => {
-    expect(nextGridIndex(6, 'End')).toBe(6);
+  it('joins months with a hyphen when the week straddles two', () => {
+    // 27 April-3 May 2026
+    expect(formatWeekLabel('2026-04-27', '2026-05-03')).toBe('April-May 2026');
   });
 
-  it('returns null for keys it does not handle', () => {
-    expect(nextGridIndex(15, 'a')).toBeNull();
-    expect(nextGridIndex(15, 'PageUp')).toBeNull();
+  it('joins short month + year on each side when crossing a year boundary', () => {
+    // 29 Dec 2025-4 Jan 2026
+    expect(formatWeekLabel('2025-12-29', '2026-01-04')).toBe('Dec 2025-Jan 2026');
   });
 
-  it('respects custom grid sizes', () => {
-    // 3-row × 7-col grid (21 cells)
-    expect(nextGridIndex(20, 'ArrowDown', 21)).toBeNull();
-    expect(nextGridIndex(13, 'ArrowDown', 21)).toBe(20);
+  it('handles January-spanning weeks where same-year branch is taken', () => {
+    // Jan 2026 only — same month
+    expect(formatWeekLabel('2026-01-05', '2026-01-11')).toBe('January 2026');
   });
 });

@@ -45,5 +45,5 @@ export type { SidebarProps, SidebarItem, SidebarSection } from './Sidebar/Sideba
 export { KeyboardAwareScroll } from './KeyboardAwareScroll/KeyboardAwareScroll.tsx';
 export type { KeyboardAwareScrollProps } from './KeyboardAwareScroll/KeyboardAwareScroll.tsx';
 
-export { MonthGrid } from './MonthGrid/MonthGrid.tsx';
-export type { MonthGridProps } from './MonthGrid/MonthGrid.tsx';
+export { WeekStrip } from './WeekStrip/WeekStrip.tsx';
+export type { WeekStripProps } from './WeekStrip/WeekStrip.tsx';

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { AppointmentRow } from './appointments.ts';
-import { formatDateIso, getMonthGridDays } from '../calendarMonth.ts';
+import { formatDateIso } from '../calendarMonth.ts';
 
 interface DayResult {
   data: AppointmentRow[];
@@ -125,17 +125,20 @@ export function useDayAppointments(dateIso: string): DayResult {
   return { data, loading, error };
 }
 
-interface MonthCountsResult {
+interface DateRangeCountsResult {
   counts: Map<string, number>;
   loading: boolean;
   error: string | null;
 }
 
-// Returns a per-date appointment count for the visible 6-week month grid
-// (so dots on previous/next-month padding cells are accurate too).
-// Excludes cancelled and rescheduled rows — the dot represents work that
-// the receptionist still needs to track on that day.
-export function useMonthCounts(year: number, month: number): MonthCountsResult {
+// Per-date appointment count for an inclusive date range. Used by the
+// week strip to render event dots under each visible day. Excludes
+// cancelled and rescheduled rows — the dot represents work that still
+// needs tracking, not historical noise.
+export function useDateRangeCounts(
+  startIso: string,
+  endIso: string
+): DateRangeCountsResult {
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -144,11 +147,8 @@ export function useMonthCounts(year: number, month: number): MonthCountsResult {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const grid = getMonthGridDays(year, month);
-      const firstIso = grid[0]!.dateIso;
-      const lastIso = grid[grid.length - 1]!.dateIso;
-      const start = new Date(`${firstIso}T00:00:00`);
-      const end = new Date(`${lastIso}T23:59:59.999`);
+      const start = new Date(`${startIso}T00:00:00`);
+      const end = new Date(`${endIso}T23:59:59.999`);
       const { data: rows, error: err } = await supabase
         .from('lng_appointments')
         .select('start_at, status')
@@ -179,7 +179,7 @@ export function useMonthCounts(year: number, month: number): MonthCountsResult {
     return () => {
       cancelled = true;
     };
-  }, [year, month]);
+  }, [startIso, endIso]);
 
   return { counts, loading, error };
 }
