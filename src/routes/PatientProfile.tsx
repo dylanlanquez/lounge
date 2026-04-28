@@ -247,7 +247,9 @@ function buildHeroFields(p: PatientProfileRow): FieldDef[] {
     { label: 'Sex', value: p.sex ? properCase(p.sex) : null },
     { label: 'Email', value: p.email },
     { label: 'Phone', value: p.phone },
-    { label: 'Delivery address', value: p.address },
+    { label: 'Address', value: p.address },
+    { label: 'Emergency contact', value: p.emergency_contact_name },
+    { label: 'Emergency phone', value: p.emergency_contact_phone },
     { label: 'Registered', value: formatDate(p.registered_at) },
     { label: 'Shopify customer', value: p.shopify_customer_id, mono: true },
     { label: 'LWO contact', value: p.lwo_contact_id, mono: true },
@@ -978,7 +980,7 @@ function WalkInAppointments({
               color: theme.color.ink,
             }}
           >
-            Walk-in appointments
+            Appointments
           </h2>
         </div>
         <span

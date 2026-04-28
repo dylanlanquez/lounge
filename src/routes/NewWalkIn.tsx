@@ -1,7 +1,7 @@
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
-import { Button, Card, Input, Toast } from '../components/index.ts';
+import { ArrivalIntakeSheet, Button, Card, Input, Toast, WaiverSheet } from '../components/index.ts';
 import { PatientSearch } from '../components/PatientSearch/PatientSearch.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -15,6 +15,14 @@ import {
 } from '../lib/queries/patients.ts';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
 import { createWalkInVisit } from '../lib/queries/visits.ts';
+import { walkInServiceLabel } from '../lib/queries/arrivalIntake.ts';
+import {
+  inferServiceTypeFromEventLabel,
+  requiredSectionsForServiceTypes,
+  summariseWaiverFlag,
+  useWaiverSections,
+  usePatientWaiverState,
+} from '../lib/queries/waiver.ts';
 import { supabase } from '../lib/supabase.ts';
 
 type Step = 'find' | 'create' | 'service';
@@ -36,6 +44,25 @@ export function NewWalkIn() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
+
+  // Walk-in arrival flow state. Intake gate runs before lng_walk_ins
+  // is created; the refs the sheet returns are baked into the new row.
+  // After intake submit we either run the waiver step or jump straight
+  // to createWalkInVisit + navigate.
+  const [arrivalStep, setArrivalStep] = useState<'idle' | 'intake' | 'waiver'>('idle');
+  const [arrivalRefs, setArrivalRefs] = useState<{ appointment_ref: string; jb_ref: string | null } | null>(null);
+
+  const { sections: waiverSections } = useWaiverSections();
+  const { latest: patientSignatures } = usePatientWaiverState(patient?.id);
+  const serviceLabel = walkInServiceLabel(serviceType);
+  const requiredWaiverSections = useMemo(() => {
+    if (waiverSections.length === 0) return [];
+    const inferred = inferServiceTypeFromEventLabel(serviceLabel);
+    return requiredSectionsForServiceTypes(inferred ? [inferred] : [], waiverSections);
+  }, [waiverSections, serviceLabel]);
+  const waiverFlag = patient
+    ? summariseWaiverFlag(requiredWaiverSections, patientSignatures)
+    : null;
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -103,7 +130,33 @@ export function NewWalkIn() {
     }
   };
 
-  const submitVisit = async () => {
+  // Receptionist tapped "Mark arrived" on the service step. Open the
+  // intake sheet — same component the schedule arrival flow uses — so
+  // we capture the same compliance fields before lng_walk_ins exists.
+  const beginArrival = () => {
+    if (!patient || !location) return;
+    setError(null);
+    setArrivalStep('intake');
+  };
+
+  // Intake's onSubmitted callback. Patient fill-blanks already ran
+  // inside submitArrivalIntake; the appointment_ref is generated. We
+  // either pivot to the waiver step or finalise straight away.
+  const handleIntakeSubmitted = (refs: { appointment_ref: string; jb_ref: string | null }) => {
+    setArrivalRefs(refs);
+    const needsWaiver = !!waiverFlag && waiverFlag.status !== 'ready';
+    if (needsWaiver) {
+      setArrivalStep('waiver');
+    } else {
+      void finaliseWalkIn(refs);
+    }
+  };
+
+  // Final step: create the walk-in + visit pair with the refs baked in.
+  // Patient_events / lwo_ref / calendar marker are written by
+  // createWalkInVisit. Errors leave arrivalStep on 'waiver' or 'intake'
+  // so the receptionist can retry without re-entering the form.
+  const finaliseWalkIn = async (refs: { appointment_ref: string; jb_ref: string | null }) => {
     if (!patient || !location) return;
     setSubmitting(true);
     setError(null);
@@ -112,7 +165,10 @@ export function NewWalkIn() {
         patient_id: patient.id,
         location_id: location.id,
         service_type: serviceType,
+        appointment_ref: refs.appointment_ref,
+        jb_ref: refs.jb_ref,
       });
+      setArrivalStep('idle');
       navigate(`/visit/${visit_id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
@@ -203,11 +259,41 @@ export function NewWalkIn() {
               serviceType={serviceType}
               onChange={setServiceType}
               onBack={() => setStep('find')}
-              onSubmit={submitVisit}
+              onSubmit={beginArrival}
               submitting={submitting}
             />
           )}
         </Card>
+
+        {patient ? (
+          <ArrivalIntakeSheet
+            open={arrivalStep === 'intake'}
+            onClose={() => setArrivalStep('idle')}
+            patientId={patient.id}
+            // No appointmentId: the lng_walk_ins row doesn't exist yet.
+            // submitArrivalIntake skips the appointment-stamp step and
+            // just generates the ref + fills patient blanks.
+            eventTypeLabel={serviceLabel}
+            onSubmitted={handleIntakeSubmitted}
+          />
+        ) : null}
+
+        {patient && arrivalStep === 'waiver' && arrivalRefs ? (
+          <WaiverSheet
+            open
+            onClose={() => setArrivalStep('idle')}
+            patientId={patient.id}
+            visitId={null}
+            sections={[
+              ...(waiverFlag?.missingSections ?? []),
+              ...(waiverFlag?.staleSections ?? []),
+            ]}
+            patientName={patientFullName(patient)}
+            onAllSigned={() => {
+              if (arrivalRefs) void finaliseWalkIn(arrivalRefs);
+            }}
+          />
+        ) : null}
 
         {error ? (
           <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>

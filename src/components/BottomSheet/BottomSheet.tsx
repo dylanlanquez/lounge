@@ -202,7 +202,13 @@ export function BottomSheet({
           // an open sheet's actions.
           <footer
             style={{
+              // flexShrink:0 keeps the footer at exactly BOTTOM_NAV_HEIGHT
+              // so the top hairline lines up with BottomNav's top hairline.
+              // Without it the column flex would let the footer compress
+              // when the sheet hits its 92dvh cap, leaving a visible
+              // mismatch with the nav behind the dimmed overlay.
               height: BOTTOM_NAV_HEIGHT,
+              flexShrink: 0,
               padding: `0 ${theme.space[5]}px`,
               borderTop: `1px solid ${theme.color.border}`,
               background: theme.color.surface,

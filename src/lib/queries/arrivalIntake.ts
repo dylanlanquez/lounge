@@ -96,7 +96,11 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
 }
 
 export interface ArrivalIntakeInput {
-  appointmentId: string;
+  // Existing booked appointment id, when intake is gating a Schedule
+  // arrival. Omitted for walk-ins — the lng_walk_ins row doesn't exist
+  // yet at intake time, so the parent (NewWalkIn) creates it AFTER
+  // intake submit using the appointment_ref this returns.
+  appointmentId?: string;
   patientId: string;
   patient: ArrivalIntakePatientInput;
   jbRef: string | null; // digits-only, '33' not 'JB33'. NULL when not applicable.
@@ -142,21 +146,26 @@ export async function submitArrivalIntake(
     }
   }
 
-  // ── 2. lng_appointments stamp ───────────────────────────────────────
-  // Read current appointment_ref first; if it's already stamped (e.g. a
-  // duplicate submit), reuse it rather than burning a new sequence
-  // number against the guard trigger.
-  const { data: existing, error: existingErr } = await supabase
-    .from('lng_appointments')
-    .select('appointment_ref')
-    .eq('id', input.appointmentId)
-    .maybeSingle();
-  if (existingErr) {
-    throw new Error(`Could not read appointment: ${existingErr.message}`);
-  }
+  // ── 2. appointment_ref ─────────────────────────────────────────────
+  // For booked appointments we read any existing ref first so a
+  // duplicate submit reuses it rather than burning a new sequence
+  // number against the guard trigger. For walk-ins there is no row to
+  // read from yet, so we just generate a fresh ref and let the caller
+  // (NewWalkIn) write it onto the new lng_walk_ins row.
+  let appointmentRef: string | null = null;
 
-  let appointmentRef: string | null =
-    (existing as { appointment_ref: string | null } | null)?.appointment_ref ?? null;
+  if (input.appointmentId) {
+    const { data: existing, error: existingErr } = await supabase
+      .from('lng_appointments')
+      .select('appointment_ref')
+      .eq('id', input.appointmentId)
+      .maybeSingle();
+    if (existingErr) {
+      throw new Error(`Could not read appointment: ${existingErr.message}`);
+    }
+    appointmentRef =
+      (existing as { appointment_ref: string | null } | null)?.appointment_ref ?? null;
+  }
 
   if (!appointmentRef) {
     const { data: ref, error: refErr } = await supabase.rpc('generate_appointment_ref');
@@ -166,17 +175,21 @@ export async function submitArrivalIntake(
     appointmentRef = ref;
   }
 
-  const apptUpdate: Record<string, string | null> = {
-    appointment_ref: appointmentRef,
-    jb_ref: input.jbRef && input.jbRef.trim() ? input.jbRef.trim() : null,
-  };
+  // 3. Stamp the booked-appointment row, if any. Walk-ins skip this
+  //    step — the parent creates lng_walk_ins with the ref baked in.
+  if (input.appointmentId) {
+    const apptUpdate: Record<string, string | null> = {
+      appointment_ref: appointmentRef,
+      jb_ref: input.jbRef && input.jbRef.trim() ? input.jbRef.trim() : null,
+    };
 
-  const { error: apptErr } = await supabase
-    .from('lng_appointments')
-    .update(apptUpdate)
-    .eq('id', input.appointmentId);
-  if (apptErr) {
-    throw new Error(`Could not save appointment intake: ${apptErr.message}`);
+    const { error: apptErr } = await supabase
+      .from('lng_appointments')
+      .update(apptUpdate)
+      .eq('id', input.appointmentId);
+    if (apptErr) {
+      throw new Error(`Could not save appointment intake: ${apptErr.message}`);
+    }
   }
 
   return { appointment_ref: appointmentRef };
@@ -195,7 +208,7 @@ export interface JbAvailabilityResult {
     customer_name: string | null;
     status: string | null;
     checked_in_at: string | null;
-    source: 'shopify_order' | 'walk_in';
+    source: 'lab_order' | 'walk_in';
   } | null;
 }
 
@@ -224,8 +237,16 @@ export async function checkJbAvailability(jbRef: string): Promise<JbAvailability
     body = {};
   }
   if (!r.ok) {
-    const detail = (body.error as string | undefined) ?? `HTTP ${r.status}`;
-    throw new Error(`JB check failed: ${detail}`);
+    const code = (body.error as string | undefined) ?? `HTTP ${r.status}`;
+    const detail = body.detail as string | undefined;
+    const source = body.source as string | undefined;
+    // Surface the Checkpoint error detail so we can diagnose schema /
+    // permission issues from the toast rather than digging through
+    // function logs every time.
+    const message = detail
+      ? `JB check failed: ${code}${source ? ` (${source})` : ''} — ${detail}`
+      : `JB check failed: ${code}`;
+    throw new Error(message);
   }
   return {
     available: body.available === true,
@@ -242,5 +263,21 @@ export async function checkJbAvailability(jbRef: string): Promise<JbAvailability
 // inside same_day_appliance.
 export function appointmentRequiresJbRef(eventTypeLabel: string | null): boolean {
   if (!eventTypeLabel) return false;
-  return /impression|repair|veneer|aligner|retainer|guard/i.test(eventTypeLabel);
+  return /impression|repair|veneer|aligner|retainer|guard|appliance/i.test(eventTypeLabel);
+}
+
+// Map a walk-in service_type to a display label the intake sheet can
+// read with its existing event-label heuristic. Keeps NewWalkIn from
+// having to duplicate the JB-requirement logic.
+export function walkInServiceLabel(serviceType: string | null): string | null {
+  switch (serviceType) {
+    case 'denture_repair':
+      return 'Denture repair';
+    case 'same_day_appliance':
+      return 'Same-day appliance';
+    case 'click_in_veneers':
+      return 'Click-in veneers';
+    default:
+      return null;
+  }
 }

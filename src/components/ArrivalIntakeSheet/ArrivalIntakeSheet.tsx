@@ -37,16 +37,20 @@ const SEX_OPTIONS = ['Female', 'Male', 'Other', 'Prefer not to say'] as const;
 export interface ArrivalIntakeSheetProps {
   open: boolean;
   onClose: () => void;
-  // The appointment being marked arrived. The sheet writes to its
-  // appointment_ref + jb_ref columns on submit.
-  appointmentId: string;
+  // Booked-appointment id when intake is gating a Schedule arrival.
+  // Omitted for walk-ins — the lng_walk_ins row doesn't exist yet at
+  // intake time, so the parent (NewWalkIn) creates it after submit.
+  appointmentId?: string;
   patientId: string;
   // Used by the JB gate. When the label suggests an impression / repair /
   // veneer / aligner, JB ref is required; otherwise it's hidden.
+  // Walk-ins pass the chosen service type so the JB requirement still
+  // fires for impression-style services.
   eventTypeLabel: string | null;
   // Called after submitArrivalIntake resolves. The parent then runs
-  // any required waiver flow and finally markAppointmentArrived.
-  onSubmitted: (result: { appointment_ref: string }) => void;
+  // any required waiver flow and finally markAppointmentArrived (or,
+  // for walk-ins, createWalkInVisit with these refs baked in).
+  onSubmitted: (result: { appointment_ref: string; jb_ref: string | null }) => void;
 }
 
 interface FormState {
@@ -203,6 +207,7 @@ export function ArrivalIntakeSheet({
     setBusy(true);
     setSubmitError(null);
     try {
+      const jbRef = jbRequired ? form.jb_ref.trim() || null : null;
       const result = await submitArrivalIntake({
         appointmentId,
         patientId,
@@ -218,9 +223,9 @@ export function ArrivalIntakeSheet({
           emergency_contact_name: form.emergency_contact_name,
           emergency_contact_phone: form.emergency_contact_phone,
         },
-        jbRef: jbRequired ? form.jb_ref : null,
+        jbRef,
       });
-      onSubmitted(result);
+      onSubmitted({ appointment_ref: result.appointment_ref, jb_ref: jbRef });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not save intake');
     } finally {

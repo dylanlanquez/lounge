@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  Box,
   CalendarCheck,
   CheckCircle2,
   CheckCircle,
@@ -190,6 +191,16 @@ export function VisitDetail() {
                 {showableRef(patient?.lwo_ref) ? (
                   <MetaPill icon={<Hash size={12} />} tone="arrived" size="sm">
                     {patient!.lwo_ref}
+                  </MetaPill>
+                ) : null}
+                {appointment?.appointment_ref ? (
+                  <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
+                    {appointment.appointment_ref}
+                  </MetaPill>
+                ) : null}
+                {appointment?.jb_ref ? (
+                  <MetaPill icon={<Box size={12} />} tone="neutral" size="sm">
+                    JB{appointment.jb_ref}
                   </MetaPill>
                 ) : null}
                 <MetaPill
