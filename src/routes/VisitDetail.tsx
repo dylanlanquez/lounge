@@ -1,8 +1,9 @@
-import { type FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Plus, ShoppingCart } from 'lucide-react';
-import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
+import { Button, Card, EmptyState, StatusPill, Toast } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
+import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
@@ -13,7 +14,6 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useVisitDetail } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
-  addCartItem,
   formatPence,
   removeCartItem,
   updateCartItemQuantity,
@@ -24,11 +24,10 @@ export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const { visit, patient, deposit, loading } = useVisitDetail(id);
+  const { visit, patient, deposit, appointment, loading } = useVisitDetail(id);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
 
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ name: '', price: '' });
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
@@ -47,27 +46,14 @@ export function VisitDetail() {
   const total = Math.max(0, subtotal - discount - depositPence);
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
 
-  const onAddItem = async (e: FormEvent) => {
-    e.preventDefault();
+  const openPicker = async () => {
     setError(null);
-    const priceFloat = Number(draft.price.replace(/[^\d.]/g, ''));
-    const pence = Math.round(priceFloat * 100);
-    if (!draft.name.trim() || !Number.isFinite(pence) || pence < 0) {
-      setError('Name and price required.');
-      return;
-    }
-    setBusyItem('add');
     try {
       const opened = await ensureOpen();
       if (!opened) throw new Error('Could not open cart');
-      await addCartItem(opened.id, { name: draft.name.trim(), unit_price_pence: pence });
-      setDraft({ name: '', price: '' });
-      setAdding(false);
-      refresh();
+      setPickerOpen(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
-    } finally {
-      setBusyItem(null);
     }
   };
 
@@ -152,8 +138,8 @@ export function VisitDetail() {
                 <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
                   Cart
                 </h2>
-                {!adding && !cartLocked ? (
-                  <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+                {items.length > 0 && !cartLocked ? (
+                  <Button variant="secondary" size="sm" onClick={openPicker}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                       <Plus size={16} /> Add item
                     </span>
@@ -163,14 +149,16 @@ export function VisitDetail() {
 
               {cartLoading ? (
                 <p style={{ color: theme.color.inkMuted }}>Loading cart…</p>
-              ) : items.length === 0 && !adding ? (
+              ) : items.length === 0 ? (
                 <EmptyState
                   icon={<ShoppingCart size={20} />}
                   title="No items yet"
-                  description="Add a custom line item, or wait for the catalogue picker that ships in a future round."
+                  description="Pick from the shared catalogue. Suggestions populate based on the booking type and intake answers."
                   action={
-                    <Button variant="primary" onClick={() => setAdding(true)} disabled={cartLocked}>
-                      Add item
+                    <Button variant="primary" onClick={openPicker} disabled={cartLocked}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                        <Plus size={16} /> Add item
+                      </span>
                     </Button>
                   }
                 />
@@ -180,7 +168,7 @@ export function VisitDetail() {
                     <CartLineItem
                       key={it.id}
                       name={it.name}
-                      description={it.description}
+                      description={cartItemSubtitle(it)}
                       quantity={it.quantity}
                       unitPricePence={it.unit_price_pence}
                       lineTotalPence={it.line_total_pence}
@@ -192,51 +180,6 @@ export function VisitDetail() {
                   ))}
                 </div>
               )}
-
-              {adding ? (
-                <form
-                  onSubmit={onAddItem}
-                  style={{
-                    marginTop: theme.space[4],
-                    padding: theme.space[4],
-                    background: theme.color.bg,
-                    borderRadius: 12,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: theme.space[3],
-                  }}
-                >
-                  <Input
-                    label="Item name"
-                    autoFocus
-                    placeholder="Consultation, Whitening top-up, etc."
-                    value={draft.name}
-                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                  />
-                  <Input
-                    label="Unit price (£)"
-                    inputMode="decimal"
-                    placeholder="45.00"
-                    value={draft.price}
-                    onChange={(e) => setDraft({ ...draft, price: e.target.value })}
-                  />
-                  <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      onClick={() => {
-                        setAdding(false);
-                        setDraft({ name: '', price: '' });
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" variant="primary" loading={busyItem === 'add'}>
-                      Add to cart
-                    </Button>
-                  </div>
-                </form>
-              ) : null}
 
               {items.length > 0 ? (
                 <Totals
@@ -277,8 +220,36 @@ export function VisitDetail() {
           <Toast tone="error" title="Could not save" description={error} duration={6000} onDismiss={() => setError(null)} />
         </div>
       ) : null}
+
+      <CataloguePicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        cartId={cart?.id ?? null}
+        intake={appointment?.intake ?? null}
+        eventTypeLabel={appointment?.event_type_label ?? null}
+        onItemAdded={refresh}
+      />
     </main>
   );
+}
+
+// Compose a one-line subtitle for a cart item using the catalogue
+// snapshot — arch / shade / notes — so the receptionist sees what was
+// configured without opening the row.
+function cartItemSubtitle(item: {
+  description: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  shade: string | null;
+  notes: string | null;
+}): string | null {
+  const parts: string[] = [];
+  if (item.arch === 'upper') parts.push('Upper');
+  else if (item.arch === 'lower') parts.push('Lower');
+  else if (item.arch === 'both') parts.push('Upper and lower');
+  if (item.shade) parts.push(`shade ${item.shade}`);
+  if (item.notes) parts.push(item.notes);
+  if (parts.length > 0) return parts.join(' · ');
+  return item.description;
 }
 
 function Totals({
