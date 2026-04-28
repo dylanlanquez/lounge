@@ -65,10 +65,6 @@ import {
 
 type Layout = 'calendar' | 'list';
 const LAYOUT_KEY = 'lounge.scheduleLayout';
-// Threshold above which we offer the Calendar/List toggle and auto-pick
-// list when the user hasn't expressed a preference. Sparse days don't
-// need the alternate view — calendar always reads cleanly under 4 rows.
-const DENSE_THRESHOLD = 4;
 
 export function Schedule() {
   const { user, loading: authLoading } = useAuth();
@@ -138,8 +134,6 @@ export function Schedule() {
 
   const onToday = selectedDate === todayIso;
   const dayHeading = formatDayHeading(selectedDate);
-  const dense = day.data.length >= DENSE_THRESHOLD;
-  const showLayoutToggle = day.data.length > 0 && dense;
   // Toolbar label follows the selected day's month (not the week's), so it
   // flips Apr→May the moment the receptionist taps a day in the next month
   // (e.g. selecting Fri 1 in a Mon-Sun strip that started in April).
@@ -160,18 +154,28 @@ export function Schedule() {
         {/* Toolbar (cal.com pattern): chevrons + Today on the left, small
             uppercase month-of-selected-day label centred, calendar/list
             view toggle on the right. Walk-in lives in the bottom nav so
-            it doesn't crowd this row. */}
+            it doesn't crowd this row.
+            Three-column grid (1fr auto 1fr) anchors the centre label to
+            the page midline regardless of how wide the left cluster
+            grows when the Today chip appears. */}
         <div
           style={{
-            display: 'flex',
+            display: 'grid',
+            gridTemplateColumns: '1fr auto 1fr',
             alignItems: 'center',
-            justifyContent: 'space-between',
             gap: theme.space[3],
             marginBottom: theme.space[4],
-            flexWrap: 'wrap',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[1],
+              justifySelf: 'start',
+              minWidth: 0,
+            }}
+          >
             <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
               <ChevronLeft size={20} />
             </IconNavButton>
@@ -205,6 +209,7 @@ export function Schedule() {
           <span
             aria-live="polite"
             style={{
+              justifySelf: 'center',
               fontSize: theme.type.size.xs,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.inkMuted,
@@ -216,34 +221,23 @@ export function Schedule() {
             {toolbarLabel}
           </span>
 
-          {/* Right cluster reserves space even when the toggle is hidden so
-              the centre label stays optically centred. */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              minWidth: 80,
-              justifyContent: 'flex-end',
-            }}
-          >
-            {showLayoutToggle ? (
-              <SegmentedControl<Layout>
-                ariaLabel="Day view layout"
-                value={layout}
-                onChange={setLayout}
-                size="sm"
-                options={[
-                  {
-                    value: 'calendar',
-                    label: <CalendarDays size={16} aria-label="Calendar view" />,
-                  },
-                  {
-                    value: 'list',
-                    label: <List size={16} aria-label="List view" />,
-                  },
-                ]}
-              />
-            ) : null}
+          <div style={{ justifySelf: 'end' }}>
+            <SegmentedControl<Layout>
+              ariaLabel="Day view layout"
+              value={layout}
+              onChange={setLayout}
+              size="sm"
+              options={[
+                {
+                  value: 'calendar',
+                  label: <CalendarDays size={16} aria-label="Calendar view" />,
+                },
+                {
+                  value: 'list',
+                  label: <List size={16} aria-label="List view" />,
+                },
+              ]}
+            />
           </div>
         </div>
 
@@ -285,20 +279,25 @@ export function Schedule() {
               fontSize: theme.type.size.sm,
               color: theme.color.inkMuted,
               fontVariantNumeric: 'tabular-nums',
+              // Stale count would lie about the day; suppress until the
+              // refetch settles. Once we have any prior data, holding back
+              // the count for ~150ms feels less janky than flicker.
+              opacity: day.loading && day.hasLoaded ? 0 : 1,
+              transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
             }}
           >
-            {day.loading
-              ? ''
-              : day.data.length === 0
-                ? 'No appointments'
-                : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+            {day.data.length === 0
+              ? 'No appointments'
+              : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
           </span>
         </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>
-          {day.loading ? (
+          {day.loading && !day.hasLoaded ? (
             <SkeletonRows />
-          ) : day.data.length === 0 ? (
+          ) : (
+            <DayReloadingWrapper loading={day.loading}>
+              {day.data.length === 0 ? (
             <EmptyState
               icon={<CalendarOff size={24} />}
               title={onToday ? 'No appointments today' : 'Nothing on this day'}
@@ -354,6 +353,8 @@ export function Schedule() {
                 )}
               </CalendarGrid>
             </div>
+          )}
+            </DayReloadingWrapper>
           )}
         </Card>
 
@@ -796,6 +797,30 @@ function firstNameOf(fullName: string): string {
   const trimmed = fullName.trim();
   const space = trimmed.indexOf(' ');
   return space === -1 ? trimmed : trimmed.slice(0, space);
+}
+
+// Holds the previous day's content visible (dimmed) while a refetch is
+// in flight, so day-switching cross-fades instead of flashing a skeleton.
+// On the very first paint the parent renders a skeleton instead — once
+// hasLoaded is true, this wrapper takes over.
+function DayReloadingWrapper({
+  loading,
+  children,
+}: {
+  loading: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      aria-busy={loading || undefined}
+      style={{
+        opacity: loading ? 0.45 : 1,
+        transition: `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 function SkeletonRows() {
