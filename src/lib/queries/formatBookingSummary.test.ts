@@ -80,16 +80,46 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper and Lower Click-in Veneers');
   });
 
-  it('Virtual Impression Appointment with no intake → event label fallback', () => {
+  it('Virtual Impression with no intake → "Virtual Impression" (Appointment stripped)', () => {
     expect(formatBookingSummary(makeRow('Virtual Impression Appointment', null))).toBe(
-      'Virtual Impression Appointment'
+      'Virtual Impression'
     );
   });
 
-  it('In-person Impression Appointment with empty intake → event label fallback', () => {
+  it('In-person Impression with empty intake → "In-person Impression"', () => {
     expect(formatBookingSummary(makeRow('In-person Impression Appointment', []))).toBe(
-      'In-person Impression Appointment'
+      'In-person Impression'
     );
+  });
+
+  it('Virtual Impression + product → "Virtual Impression · Whitening Trays"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Virtual Impression Appointment', [
+          { question: 'What product is the impression for?', answer: 'Whitening Trays' },
+        ])
+      )
+    ).toBe('Virtual Impression · Whitening Trays');
+  });
+
+  it('In-person Impression + product → "In-person Impression · Retainers"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('In-person Impression Appointment', [
+          { question: 'What product is the impression for?', answer: 'Retainers' },
+        ])
+      )
+    ).toBe('In-person Impression · Retainers');
+  });
+
+  it('Impression event keeps the impression label even when product question is generic', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Virtual Impression Appointment', [
+          { question: 'Service', answer: 'Bleaching trays' },
+        ])
+      )
+    ).toBe('Virtual Impression · Bleaching trays');
   });
 
   it('ignores contact-only intake fields', () => {

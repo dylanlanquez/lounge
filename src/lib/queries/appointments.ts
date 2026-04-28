@@ -247,6 +247,17 @@ export function formatBookingSummary(row: AppointmentRow): string {
   const subjectLabel = subject?.answer.trim() || undefined;
 
   const event = row.event_type_label?.trim() ?? '';
+
+  // Impression appointments are special: the "product" question describes
+  // what's being impressioned (Whitening Trays, Retainers etc.) — but on its
+  // own that reads like a Same-day Appliances booking. Keep "Virtual
+  // Impression" / "In-person Impression" as the primary descriptor.
+  if (/impression/i.test(event)) {
+    const compactEvent = event.replace(/\s*appointment\s*$/i, '').trim();
+    if (subjectLabel) return `${compactEvent} · ${subjectLabel}`;
+    return compactEvent;
+  }
+
   const eventStripped = event.replace(/^(same-day|in-person|virtual)\s+/i, '').trim();
 
   if (subjectLabel && archLabel) return `${archLabel} ${subjectLabel}`;
