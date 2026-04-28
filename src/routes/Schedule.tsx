@@ -183,20 +183,20 @@ export function Schedule() {
     >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
         {/* Header structure (top → bottom):
-            Row 1: month label centred + Today nudge when not on today.
-            Row 2: chevrons flank the WeekStrip (auto / 1fr / auto grid).
-            Row 3: selected-day heading on the left, calendar/list
-                   segmented control on the right.
-            The chevrons live with the strip rather than the toolbar so
-            week-navigation reads as one unit. The view toggle lives
-            with the day heading because it changes how *that day*
-            renders, not the week. */}
+            Row 1: month label centred.
+            Row 2: chevrons flank the WeekStrip (40px / 1fr / 40px grid).
+            Row 3: selected-day heading on the left; "Today" pill (when
+                   not on today's week) + calendar/list segmented
+                   control on the right.
+            The chevrons live with the strip so week-navigation reads
+            as one unit. The view toggle and Today pill live with the
+            day heading because both change what's shown for *this
+            day*. */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: theme.space[3],
             marginBottom: theme.space[3],
           }}
         >
@@ -213,27 +213,6 @@ export function Schedule() {
           >
             {toolbarLabel}
           </span>
-          {!onToday ? (
-            <button
-              type="button"
-              onClick={handleJumpToToday}
-              style={{
-                appearance: 'none',
-                border: 'none',
-                background: 'transparent',
-                color: theme.color.accent,
-                fontFamily: 'inherit',
-                fontSize: theme.type.size.xs,
-                fontWeight: theme.type.weight.semibold,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-                padding: 0,
-                cursor: 'pointer',
-              }}
-            >
-              · Today
-            </button>
-          ) : null}
         </div>
 
         <div
@@ -308,22 +287,34 @@ export function Schedule() {
                 : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
             </span>
           </div>
-          <SegmentedControl<Layout>
-            ariaLabel="Day view layout"
-            value={layout}
-            onChange={setLayout}
-            size="sm"
-            options={[
-              {
-                value: 'calendar',
-                label: <CalendarDays size={16} aria-label="Calendar view" />,
-              },
-              {
-                value: 'list',
-                label: <List size={16} aria-label="List view" />,
-              },
-            ]}
-          />
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              flexShrink: 0,
+            }}
+          >
+            {!onToday ? (
+              <TodayPill onClick={handleJumpToToday} />
+            ) : null}
+            <SegmentedControl<Layout>
+              ariaLabel="Day view layout"
+              value={layout}
+              onChange={setLayout}
+              size="sm"
+              options={[
+                {
+                  value: 'calendar',
+                  label: <CalendarDays size={16} aria-label="Calendar view" />,
+                },
+                {
+                  value: 'list',
+                  label: <List size={16} aria-label="List view" />,
+                },
+              ]}
+            />
+          </div>
         </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>
@@ -802,6 +793,63 @@ export function Schedule() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+// Pill button that jumps the strip back to today's week. Only
+// rendered when the receptionist isn't already on today (the
+// schedule lands on today by default, so this is the way back from
+// any forward-or-back week navigation).
+//
+// Visual: 32px tall to line up with the SegmentedControl it sits
+// beside. Surface fill + 1px border, with a small accent dot to its
+// left so the button reads as live navigation rather than a passive
+// label. Subtle hover-tint (no green halo) on pointer; identical
+// affordance on touch.
+function TodayPill({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Jump to today"
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.background = theme.color.bg;
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.background = theme.color.surface;
+      }}
+      style={{
+        appearance: 'none',
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        color: theme.color.ink,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.medium,
+        height: 32,
+        padding: `0 ${theme.space[3]}px`,
+        borderRadius: theme.radius.pill,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        WebkitTapHighlightColor: 'transparent',
+        flexShrink: 0,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          background: theme.color.accent,
+          display: 'inline-block',
+        }}
+      />
+      Today
+    </button>
   );
 }
 
