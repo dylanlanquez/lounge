@@ -33,7 +33,7 @@ import {
   useTodayAppointments,
 } from '../lib/queries/appointments.ts';
 import { usePastAppointments, useUpcomingAppointments } from '../lib/queries/scheduleViews.ts';
-import { markAppointmentArrived, markVirtualMeetingJoined } from '../lib/queries/visits.ts';
+import { markAppointmentArrived, markVirtualMeetingJoined, reverseNoShow } from '../lib/queries/visits.ts';
 import { supabase } from '../lib/supabase.ts';
 
 type View = 'today' | 'upcoming' | 'past';
@@ -298,8 +298,31 @@ export function Schedule() {
                 }
                 const joinLabel =
                   status === 'arrived' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
+                const showUndoNoShow = isVirtual && status === 'no_show';
                 return (
-                  <div style={{ display: 'flex', gap: theme.space[2] }}>
+                  <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+                    {showUndoNoShow ? (
+                      <Button
+                        variant="tertiary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (!selected) return;
+                          setBusy(true);
+                          try {
+                            await reverseNoShow(selected.id);
+                            setSelected(null);
+                            window.location.reload();
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : 'Could not undo no-show');
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Patient attended after all
+                      </Button>
+                    ) : null}
                     {showNoShow ? (
                       <Button
                         variant="secondary"
@@ -457,7 +480,7 @@ export function Schedule() {
                 : selected.status === 'arrived' && selected.join_url
                   ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
                   : selected.status === 'no_show' && selected.join_url
-                    ? 'Marked as a no-show. You can still re-join the meeting if they turn up late.'
+                    ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended after all" to amend.'
                     : selected.status === 'rescheduled'
                       ? 'This booking was rescheduled in Calendly.'
                       : selected.status === 'cancelled'
