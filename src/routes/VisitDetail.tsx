@@ -15,7 +15,18 @@ import {
   ShoppingCart,
   UserPlus,
 } from 'lucide-react';
-import { Breadcrumb, Button, Card, EmptyState, StatusPill, Toast, WaiverSheet } from '../components/index.ts';
+import {
+  BeforeAfterGallery,
+  Breadcrumb,
+  Button,
+  Card,
+  EmptyState,
+  MarketingGallery,
+  StatusPill,
+  Toast,
+  WaiverSheet,
+} from '../components/index.ts';
+import { usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -46,6 +57,8 @@ export function VisitDetail() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { visit, patient, deposit, appointment, loading } = useVisitDetail(id);
+  const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
+    usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
 
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -310,6 +323,25 @@ export function VisitDetail() {
                 >
                   Take payment {formatPence(total)}
                 </Button>
+              </div>
+            ) : null}
+
+            {patient ? (
+              <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+                <BeforeAfterGallery
+                  patient={patient}
+                  files={galleryFiles}
+                  loading={galleryFilesLoading}
+                  refresh={refreshGalleryFiles}
+                  isMobile={isMobile}
+                />
+                <MarketingGallery
+                  patient={patient}
+                  files={galleryFiles}
+                  loading={galleryFilesLoading}
+                  refresh={refreshGalleryFiles}
+                  isMobile={isMobile}
+                />
               </div>
             ) : null}
 
