@@ -150,6 +150,64 @@ export function heightForDuration(startIso: string, endIso: string, pxPerHour: n
   return Math.max(28, hours * pxPerHour);
 }
 
+// Assigns side-by-side lanes to overlapping appointments. Each input gets
+// `lane` (0-indexed column) and `lanesInGroup` (total columns in this overlap
+// cluster). Non-overlapping appointments get lane=0, lanesInGroup=1 so they
+// render full-width unchanged.
+//
+// Algorithm: sort by start, walk forward grouping by overlap with running
+// max end_at. Within each cluster, greedy lane assignment — first lane whose
+// previous occupant has ended.
+export function assignAppointmentLanes<T extends { start_at: string; end_at: string }>(
+  rows: T[]
+): Array<T & { lane: number; lanesInGroup: number }> {
+  if (rows.length === 0) return [];
+  const sorted = [...rows].sort((a, b) =>
+    a.start_at < b.start_at ? -1 : a.start_at > b.start_at ? 1 : 0
+  );
+
+  type WithLane = T & { lane: number; lanesInGroup: number };
+  const result: WithLane[] = new Array(sorted.length);
+
+  let clusterStart = 0;
+  let clusterEnd = sorted[0]!.end_at;
+  let laneEndsAt: string[] = [];
+
+  const flushCluster = (endIdx: number) => {
+    const total = laneEndsAt.length;
+    for (let k = clusterStart; k < endIdx; k++) {
+      result[k] = { ...result[k]!, lanesInGroup: total };
+    }
+  };
+
+  for (let i = 0; i < sorted.length; i++) {
+    const appt = sorted[i]!;
+    if (i === clusterStart || appt.start_at < clusterEnd) {
+      // Continues current cluster — place into a free lane.
+      let laneIdx = laneEndsAt.findIndex((endAt) => endAt <= appt.start_at);
+      if (laneIdx === -1) {
+        laneIdx = laneEndsAt.length;
+        laneEndsAt.push(appt.end_at);
+      } else {
+        laneEndsAt[laneIdx] = appt.end_at;
+      }
+      result[i] = { ...appt, lane: laneIdx, lanesInGroup: 0 } as WithLane;
+      if (appt.end_at > clusterEnd) clusterEnd = appt.end_at;
+    } else {
+      // Cluster boundary — backfill the previous cluster's lanesInGroup.
+      flushCluster(i);
+      // Start a new cluster.
+      clusterStart = i;
+      clusterEnd = appt.end_at;
+      laneEndsAt = [appt.end_at];
+      result[i] = { ...appt, lane: 0, lanesInGroup: 0 } as WithLane;
+    }
+  }
+  flushCluster(sorted.length);
+
+  return result;
+}
+
 function formatHour(h: number): string {
   if (h === 0) return '12 am';
   if (h === 12) return 'noon';

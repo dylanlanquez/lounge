@@ -13,6 +13,7 @@ import {
 } from '../components/index.ts';
 import {
   CalendarGrid,
+  assignAppointmentLanes,
   offsetForTime,
   heightForDuration,
 } from '../components/CalendarGrid/CalendarGrid.tsx';
@@ -133,7 +134,7 @@ export function Schedule() {
             ) : (
               <div style={{ paddingTop: theme.space[2] }}>
                 <CalendarGrid>
-                  {today.data.map((a) => (
+                  {assignAppointmentLanes(today.data).map((a) => (
                     <AppointmentCard
                       key={a.id}
                       patientName={patientDisplayName(a)}
@@ -144,6 +145,8 @@ export function Schedule() {
                       serviceLabel={a.event_type_label ?? undefined}
                       top={offsetForTime(a.start_at, 8, 80)}
                       height={heightForDuration(a.start_at, a.end_at, 80)}
+                      lane={a.lane}
+                      lanesInGroup={a.lanesInGroup}
                       onClick={() => setSelected(a)}
                     />
                   ))}
