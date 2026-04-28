@@ -253,12 +253,11 @@ export function formatBookingSummary(row: AppointmentRow): string {
 
   // Impression appointments are special: the "product" question describes
   // what's being impressioned (Whitening Trays, Retainers etc.) — but on its
-  // own that reads like a Same-day Appliances booking. Keep "Virtual
-  // Impression" / "In-person Impression" as the primary descriptor.
+  // own that reads like a Same-day Appliances booking. Keep the full event
+  // label as the primary descriptor and use "for {product}" as the suffix.
   if (/impression/i.test(event)) {
-    const compactEvent = event.replace(/\s*appointment\s*$/i, '').trim();
-    if (subjectLabel) return `${compactEvent} · ${subjectLabel}`;
-    return compactEvent;
+    if (subjectLabel) return `${event} for ${subjectLabel}`;
+    return event;
   }
 
   const eventStripped = event.replace(/^(same-day|in-person|virtual)\s+/i, '').trim();
