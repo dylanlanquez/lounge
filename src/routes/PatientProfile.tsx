@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Layers, Pencil } from 'lucide-react';
+import { Info, Layers, Pencil, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -129,21 +129,22 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
 
 function Hero({
   patient,
-  cases,
+  cases: _cases,
   isMobile,
 }: {
   patient: PatientProfileRow;
   cases: PatientCaseRow[];
   isMobile: boolean;
 }) {
-  const status = useMemo(() => {
-    const open = cases.some((c) => !c.is_terminal);
-    return open ? ('arrived' as const) : ('neutral' as const);
-  }, [cases]);
-  const statusLabel = status === 'arrived' ? 'Active' : 'Inactive';
-
+  // The earlier "Active / Inactive" pill mapped to whether the
+  // patient had any non-terminal Meridian case — useful in Meridian,
+  // confusing on the Lounge surface where staff already see a live
+  // visit if one is open. Dropped to keep the hero focused on
+  // identity. The cases list still drives the case-history section
+  // below.
   const fullName = `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Unnamed patient';
   const initials = `${(patient.first_name?.[0] ?? '').toUpperCase()}${(patient.last_name?.[0] ?? '').toUpperCase()}` || '?';
+  const linkedToShopify = !!patient.shopify_customer_id;
 
   return (
     <Card padding="lg">
@@ -204,7 +205,7 @@ function Hero({
                   {patient.internal_ref}
                 </span>
               ) : null}
-              <StatusPill tone={status} size="sm">{statusLabel}</StatusPill>
+              {linkedToShopify ? <ShopifyLinkedPill /> : null}
             </div>
           </div>
         </div>
@@ -237,6 +238,135 @@ function Hero({
 
       <FieldGrid isMobile={isMobile} fields={buildHeroFields(patient)} />
     </Card>
+  );
+}
+
+// "Linked to Shopify & One Click" pill. Tap or focus the (i) icon to
+// reveal a popover explaining where the data comes from and how the
+// patient updates it. Mirrors Meridian's identity-pill pattern so the
+// two surfaces feel like one product.
+function ShopifyLinkedPill() {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+
+  // Click-outside + Escape close. Re-runs the listener every time
+  // `open` toggles so we don't pay for it when the popover is closed.
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <span ref={wrapperRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-label="Linked to Shopify and One Click — show details"
+        style={{
+          appearance: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[1],
+          padding: `2px ${theme.space[2]}px 2px ${theme.space[2]}px`,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          border: 'none',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          letterSpacing: 0.1,
+        }}
+      >
+        <ShoppingBag size={12} aria-hidden />
+        Linked to Shopify &amp; One Click
+        <Info size={12} aria-hidden style={{ opacity: 0.75 }} />
+      </button>
+
+      {open ? (
+        <div
+          role="dialog"
+          aria-label="Shopify and One Click linked account"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            left: 0,
+            zIndex: 30,
+            width: 320,
+            maxWidth: '90vw',
+            padding: theme.space[4],
+            borderRadius: theme.radius.card,
+            background: theme.color.surface,
+            border: `1px solid ${theme.color.border}`,
+            boxShadow: theme.shadow.overlay,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Close"
+            style={{
+              appearance: 'none',
+              position: 'absolute',
+              top: theme.space[2],
+              right: theme.space[2],
+              width: 28,
+              height: 28,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: theme.radius.pill,
+              cursor: 'pointer',
+              color: theme.color.inkSubtle,
+            }}
+          >
+            <X size={14} />
+          </button>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              paddingRight: theme.space[5],
+            }}
+          >
+            Linked to Shopify &amp; One Click
+          </p>
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: 1.55,
+            }}
+          >
+            These details come from the customer&apos;s Shopify &amp; One Click account.
+            They can update them any time in the One Click app or on Shopify
+            (it&apos;s the same account, so a change in one shows up in the other).
+            If anything here is wrong, the customer must update it themselves and
+            it&apos;ll reflect here.
+          </p>
+        </div>
+      ) : null}
+    </span>
   );
 }
 
