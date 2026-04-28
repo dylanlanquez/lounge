@@ -182,65 +182,27 @@ export function Schedule() {
       }}
     >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        {/* Toolbar (cal.com pattern): chevrons + Today on the left, small
-            uppercase month-of-selected-day label centred, calendar/list
-            view toggle on the right. Walk-in lives in the bottom nav so
-            it doesn't crowd this row.
-            Three-column grid (1fr auto 1fr) anchors the centre label to
-            the page midline regardless of how wide the left cluster
-            grows when the Today chip appears. */}
+        {/* Header structure (top → bottom):
+            Row 1: month label centred + Today nudge when not on today.
+            Row 2: chevrons flank the WeekStrip (auto / 1fr / auto grid).
+            Row 3: selected-day heading on the left, calendar/list
+                   segmented control on the right.
+            The chevrons live with the strip rather than the toolbar so
+            week-navigation reads as one unit. The view toggle lives
+            with the day heading because it changes how *that day*
+            renders, not the week. */}
         <div
           style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr auto 1fr',
+            display: 'flex',
             alignItems: 'center',
+            justifyContent: 'center',
             gap: theme.space[3],
-            marginBottom: theme.space[4],
+            marginBottom: theme.space[3],
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: theme.space[1],
-              justifySelf: 'start',
-              minWidth: 0,
-            }}
-          >
-            <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
-              <ChevronLeft size={20} />
-            </IconNavButton>
-            <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
-              <ChevronRight size={20} />
-            </IconNavButton>
-            {!onToday ? (
-              <button
-                type="button"
-                onClick={handleJumpToToday}
-                style={{
-                  appearance: 'none',
-                  border: `1px solid ${theme.color.border}`,
-                  background: theme.color.surface,
-                  color: theme.color.ink,
-                  fontFamily: 'inherit',
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                  padding: `0 ${theme.space[3]}px`,
-                  height: 32,
-                  borderRadius: theme.radius.pill,
-                  cursor: 'pointer',
-                  marginLeft: theme.space[2],
-                }}
-              >
-                Today
-              </button>
-            ) : null}
-          </div>
-
           <span
             aria-live="polite"
             style={{
-              justifySelf: 'center',
               fontSize: theme.type.size.xs,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.inkMuted,
@@ -251,28 +213,41 @@ export function Schedule() {
           >
             {toolbarLabel}
           </span>
-
-          <div style={{ justifySelf: 'end' }}>
-            <SegmentedControl<Layout>
-              ariaLabel="Day view layout"
-              value={layout}
-              onChange={setLayout}
-              size="sm"
-              options={[
-                {
-                  value: 'calendar',
-                  label: <CalendarDays size={16} aria-label="Calendar view" />,
-                },
-                {
-                  value: 'list',
-                  label: <List size={16} aria-label="List view" />,
-                },
-              ]}
-            />
-          </div>
+          {!onToday ? (
+            <button
+              type="button"
+              onClick={handleJumpToToday}
+              style={{
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                color: theme.color.accent,
+                fontFamily: 'inherit',
+                fontSize: theme.type.size.xs,
+                fontWeight: theme.type.weight.semibold,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+                padding: 0,
+                cursor: 'pointer',
+              }}
+            >
+              · Today
+            </button>
+          ) : null}
         </div>
 
-        <div style={{ marginBottom: theme.space[5] }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '40px 1fr 40px',
+            alignItems: 'center',
+            gap: theme.space[2],
+            marginBottom: theme.space[5],
+          }}
+        >
+          <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
+            <ChevronLeft size={20} />
+          </IconNavButton>
           <WeekStrip
             anchorIso={selectedDate}
             selectedIso={selectedDate}
@@ -281,46 +256,74 @@ export function Schedule() {
             onSelect={handleSelectDate}
             loading={weekCounts.loading}
           />
+          <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
+            <ChevronRight size={20} />
+          </IconNavButton>
         </div>
 
-        {/* Selected-day section heading. The view toggle for this section
-            now lives in the toolbar above. */}
+        {/* Selected-day section heading. View toggle on the right. */}
         <div
           style={{
             display: 'flex',
-            alignItems: 'baseline',
-            gap: theme.space[3],
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: theme.space[4],
             marginBottom: theme.space[3],
-            flexWrap: 'wrap',
             minWidth: 0,
           }}
         >
-          <h2
+          <div
             style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: theme.space[3],
+              flexWrap: 'wrap',
+              minWidth: 0,
             }}
           >
-            {dayHeading}
-          </h2>
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-              // Stale count would lie about the day; suppress until the
-              // refetch settles. Once we have any prior data, holding back
-              // the count for ~150ms feels less janky than flicker.
-              opacity: day.loading && day.hasLoaded ? 0 : 1,
-              transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            }}
-          >
-            {day.data.length === 0
-              ? 'No appointments'
-              : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
-          </span>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+              }}
+            >
+              {dayHeading}
+            </h2>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+                // Stale count would lie about the day; suppress until the
+                // refetch settles. Once we have any prior data, holding back
+                // the count for ~150ms feels less janky than flicker.
+                opacity: day.loading && day.hasLoaded ? 0 : 1,
+                transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              }}
+            >
+              {day.data.length === 0
+                ? 'No appointments'
+                : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+            </span>
+          </div>
+          <SegmentedControl<Layout>
+            ariaLabel="Day view layout"
+            value={layout}
+            onChange={setLayout}
+            size="sm"
+            options={[
+              {
+                value: 'calendar',
+                label: <CalendarDays size={16} aria-label="Calendar view" />,
+              },
+              {
+                value: 'list',
+                label: <List size={16} aria-label="List view" />,
+              },
+            ]}
+          />
         </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>
