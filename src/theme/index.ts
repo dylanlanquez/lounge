@@ -13,7 +13,6 @@ export const theme = {
     warn: '#B36815',
     border: 'rgba(14, 20, 20, 0.08)',
     overlay: 'rgba(14, 20, 20, 0.5)',
-    focus: 'rgba(31, 77, 58, 0.32)',
   },
   // Category palette for the appointment-card left bar. Hues span the
   // colour wheel (orange → green → blue → magenta) so the four types are
