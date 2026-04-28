@@ -160,6 +160,14 @@ export function patientDisplayName(row: AppointmentRow): string {
   return `${first} ${last.slice(0, 1)}${last.slice(0, 1) ? '.' : ''}`.trim();
 }
 
+// Full-name version for confirmation surfaces (booking detail sheet).
+export function patientFullDisplayName(row: AppointmentRow): string {
+  const first = (row.patient_first_name ?? '').trim();
+  const last = (row.patient_last_name ?? '').trim();
+  if (!first && !last) return 'Patient';
+  return `${first} ${last}`.trim();
+}
+
 export function staffDisplayName(row: AppointmentRow): string | undefined {
   if (!row.staff_first_name && !row.staff_last_name) return undefined;
   return [row.staff_first_name, row.staff_last_name].filter(Boolean).join(' ');

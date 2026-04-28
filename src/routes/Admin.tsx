@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, Mail, RefreshCw, ShieldAlert, Users } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, FlaskConical, Mail, RefreshCw, RotateCcw, ShieldAlert, Users } from 'lucide-react';
 import {
   Button,
   Card,
@@ -21,6 +21,8 @@ import {
   usePaymentTotals,
   usePendingReceipts,
   retrySendReceipt,
+  useDirtyAppointments,
+  resetTestAppointment,
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
 import {
@@ -32,7 +34,7 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'receipts';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'receipts' | 'testing';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -69,6 +71,7 @@ export function Admin() {
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
               { value: 'failures', label: 'Failures' },
+              { value: 'testing', label: 'Testing' },
             ]}
           />
         </div>
@@ -81,6 +84,8 @@ export function Admin() {
           <ReportsTab />
         ) : tab === 'devices' ? (
           <DevicesTab />
+        ) : tab === 'testing' ? (
+          <TestingTab />
         ) : (
           <FailuresTab />
         )}
@@ -452,6 +457,134 @@ function ReceiptsTab() {
                   </Button>
                 </li>
               ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={5000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TestingTab() {
+  const dirty = useDirtyAppointments();
+  const [resetting, setResetting] = useState<string | null>(null);
+  const [resettingAll, setResettingAll] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const onReset = async (id: string, label: string) => {
+    if (!confirm(`Reset ${label}? This deletes any visit/cart/payments created and flips the appointment back to booked.`)) return;
+    setResetting(id);
+    try {
+      await resetTestAppointment(id);
+      setToast({ tone: 'success', title: `Reset · ${label}` });
+      dirty.refresh();
+    } catch (e) {
+      setToast({ tone: 'error', title: 'Reset failed', description: e instanceof Error ? e.message : 'Unknown error' });
+    } finally {
+      setResetting(null);
+    }
+  };
+
+  const onResetAll = async () => {
+    if (dirty.data.length === 0) return;
+    if (!confirm(`Reset all ${dirty.data.length} dirty appointment(s)? Deletes any visit/cart/payments created during testing and flips each back to booked.`)) return;
+    setResettingAll(true);
+    let ok = 0;
+    let fail = 0;
+    for (const r of dirty.data) {
+      try {
+        await resetTestAppointment(r.id);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    setResettingAll(false);
+    setToast({
+      tone: fail === 0 ? 'success' : 'error',
+      title: `Reset ${ok} appointment(s)`,
+      description: fail > 0 ? `${fail} failed.` : undefined,
+    });
+    dirty.refresh();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <Card padding="lg">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <FlaskConical size={20} /> Testing
+              </span>
+            </h2>
+            <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              Calendly appointments not in their default booked state. Lists anything you've flipped to arrived, in_progress, no_show, or complete while testing — past 14 days through next 60. Reset removes any visit, cart, payments, and receipts created, and flips status back to booked. Patient_events stay (audit history).
+            </p>
+          </div>
+          {dirty.data.length > 0 ? (
+            <Button variant="secondary" loading={resettingAll} onClick={onResetAll}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <RotateCcw size={14} /> Reset all ({dirty.data.length})
+              </span>
+            </Button>
+          ) : null}
+        </div>
+
+        <div style={{ marginTop: theme.space[5] }}>
+          {dirty.loading ? (
+            <Skeleton height={64} />
+          ) : dirty.data.length === 0 ? (
+            <EmptyState
+              icon={<Check size={20} />}
+              title="No dirty appointments"
+              description="Every Calendly appointment is in its default booked state. Nothing to reset."
+            />
+          ) : (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {dirty.data.map((row) => {
+                const name = `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Patient';
+                const when = new Date(row.start_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                return (
+                  <li
+                    key={row.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: theme.space[3],
+                      padding: theme.space[3],
+                      background: theme.color.surface,
+                      border: `1px solid ${theme.color.border}`,
+                      borderRadius: 12,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <StatusPill tone={row.status === 'arrived' ? 'arrived' : row.status === 'no_show' ? 'no_show' : 'neutral'} size="sm">
+                      {row.status.replace('_', ' ')}
+                    </StatusPill>
+                    <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
+                      {name}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 200, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                      {row.event_type_label ?? '—'} · {when}
+                    </span>
+                    <Button
+                      variant="tertiary"
+                      size="sm"
+                      loading={resetting === row.id}
+                      onClick={() => onReset(row.id, name)}
+                    >
+                      Reset
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
