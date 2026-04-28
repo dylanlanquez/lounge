@@ -29,6 +29,7 @@ import {
   eventTypeCategory,
   formatBookingSummary,
   patientDisplayName,
+  patientFullDisplayName,
   staffDisplayName,
   useTodayAppointments,
 } from '../lib/queries/appointments.ts';
@@ -247,7 +248,7 @@ export function Schedule() {
         <BottomSheet
           open={!!selected}
           onClose={() => setSelected(null)}
-          title={patientDisplayName(selected)}
+          title={patientFullDisplayName(selected)}
           description={
             <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
               <span>
