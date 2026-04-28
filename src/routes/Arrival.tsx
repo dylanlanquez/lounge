@@ -23,6 +23,7 @@ import {
   WaiverInline,
 } from '../components/index.ts';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
+import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -421,6 +422,10 @@ export function Arrival() {
       style={{
         minHeight: '100dvh',
         background: theme.color.bg,
+        // Reserve space below the always-visible KioskStatusBar so the
+        // stepper isn't clipped under it. Bottom space mirrors the
+        // sticky action bar height + iOS safe area.
+        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
         paddingBottom: 'calc(96px + env(safe-area-inset-bottom, 0px))',
         position: 'relative',
       }}
@@ -647,7 +652,9 @@ function StepperBar({
     <header
       style={{
         position: 'sticky',
-        top: 0,
+        // Sit immediately below the KioskStatusBar so it never gets
+        // clipped behind the device chrome row.
+        top: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
         zIndex: 20,
         background: theme.color.surface,
         borderBottom: `1px solid ${theme.color.border}`,
