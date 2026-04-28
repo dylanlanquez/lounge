@@ -131,7 +131,7 @@ function DayPill({
     outline: 'none',
     opacity: dimmed ? 0.55 : 1,
     WebkitTapHighlightColor: 'transparent',
-    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+    transition: `background ${theme.motion.duration.base}ms ${theme.motion.easing.spring}, color ${theme.motion.duration.base}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.base}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
   };
 
   const dayNameColor = isSelected

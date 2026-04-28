@@ -6,6 +6,11 @@ import { formatDateIso } from '../calendarMonth.ts';
 interface DayResult {
   data: AppointmentRow[];
   loading: boolean;
+  // True after the first successful fetch. Lets the parent show a
+  // skeleton on the very first paint but keep stale data visible (with
+  // a subtle dim) on every subsequent date change so day-switching feels
+  // instant instead of flashing through a loading state every time.
+  hasLoaded: boolean;
   error: string | null;
 }
 
@@ -80,12 +85,16 @@ function localDayBounds(dateIso: string): { startIso: string; endIso: string } {
 export function useDayAppointments(dateIso: string): DayResult {
   const [data, setData] = useState<AppointmentRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      // NOTE: data is intentionally NOT cleared here. Keeping the previous
+      // day's rows visible while the new fetch is in flight lets the parent
+      // dim them in place rather than flashing a skeleton on every tap.
       const { startIso, endIso } = localDayBounds(dateIso);
       const run = (sel: string) =>
         supabase
@@ -112,17 +121,19 @@ export function useDayAppointments(dateIso: string): DayResult {
           setError(err.message);
         }
         setLoading(false);
+        setHasLoaded(true);
         return;
       }
       setData(mapRows(rows ?? []));
       setLoading(false);
+      setHasLoaded(true);
     })();
     return () => {
       cancelled = true;
     };
   }, [dateIso]);
 
-  return { data, loading, error };
+  return { data, loading, hasLoaded, error };
 }
 
 interface DateRangeCountsResult {
