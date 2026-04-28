@@ -24,7 +24,12 @@ import {
 export interface CataloguePickerProps {
   open: boolean;
   onClose: () => void;
-  cartId: string | null;
+  // For the in-visit picker, cart_id is the live lng_carts row that
+  // gets new lng_cart_items written into it. The Arrival wizard runs
+  // before any visit/cart exists yet, so it passes onStage instead and
+  // collects picks in component state until the final submit.
+  cartId?: string | null;
+  onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
   // Pulled from the patient's appointment so the picker can suggest
   // catalogue rows that fit the booking (intake answers + Calendly
   // event type). Walk-ins pass null intake / event_type_label.
@@ -37,6 +42,7 @@ export function CataloguePicker({
   open,
   onClose,
   cartId,
+  onStage,
   intake,
   eventTypeLabel,
   onItemAdded,
@@ -104,7 +110,8 @@ export function CataloguePicker({
         ) : selected ? (
           <ConfigureForm
             row={selected}
-            cartId={cartId}
+            cartId={cartId ?? null}
+            onStage={onStage}
             onAdded={handleAdded}
             onError={(msg) => setToast({ tone: 'error', title: msg })}
           />
@@ -276,11 +283,13 @@ function Section({
 function ConfigureForm({
   row,
   cartId,
+  onStage,
   onAdded,
   onError,
 }: {
   row: CatalogueRow;
   cartId: string | null;
+  onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
   onAdded: () => void;
   onError: (msg: string) => void;
 }) {
@@ -297,20 +306,30 @@ function ConfigureForm({
   const archForLine: 'upper' | 'lower' | 'both' | null =
     row.arch_match === 'both' ? 'both' : askArch ? arch : null;
 
+  // The picker can run in two modes: "live" (cartId is set, write
+  // directly) and "staging" (onStage is set, hand the pick back to
+  // the parent which holds it in component state until the final
+  // arrival submit creates a cart). Either makes the form usable.
   const canAdd =
-    cartId != null &&
+    (cartId != null || onStage != null) &&
     qty >= 1 &&
     (!askArch || arch !== null);
 
   const submit = async () => {
-    if (!cartId || !canAdd) return;
+    if (!canAdd) return;
+    const opts: CatalogueAddOptions = {
+      arch: archForLine,
+      shade: shade.trim() || null,
+      notes: notes.trim() || null,
+    };
+    if (onStage) {
+      onStage(row, qty, opts);
+      onAdded();
+      return;
+    }
+    if (!cartId) return;
     setBusy(true);
     try {
-      const opts: CatalogueAddOptions = {
-        arch: archForLine,
-        shade: shade.trim() || null,
-        notes: notes.trim() || null,
-      };
       await addCatalogueItemsToCart(cartId, row, qty, opts);
       onAdded();
     } catch (e) {

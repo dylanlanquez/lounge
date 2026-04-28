@@ -56,5 +56,5 @@ export type { SignaturePadProps, SignaturePadHandle } from './SignaturePad/Signa
 export { WaiverSheet } from './WaiverSheet/WaiverSheet.tsx';
 export type { WaiverSheetProps } from './WaiverSheet/WaiverSheet.tsx';
 
-export { ArrivalIntakeSheet } from './ArrivalIntakeSheet/ArrivalIntakeSheet.tsx';
-export type { ArrivalIntakeSheetProps } from './ArrivalIntakeSheet/ArrivalIntakeSheet.tsx';
+export { WaiverInline } from './WaiverInline/WaiverInline.tsx';
+export type { WaiverInlineProps } from './WaiverInline/WaiverInline.tsx';
