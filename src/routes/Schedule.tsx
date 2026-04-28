@@ -28,6 +28,7 @@ import {
   type AppointmentRow,
   eventTypeCategory,
   formatBookingSummary,
+  humaniseStatus,
   patientDisplayName,
   patientFullDisplayName,
   staffDisplayName,
@@ -304,8 +305,7 @@ export function Schedule() {
                   <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                     {showUndoNoShow ? (
                       <Button
-                        variant="tertiary"
-                        size="sm"
+                        variant="secondary"
                         disabled={busy}
                         onClick={async () => {
                           if (!selected) return;
@@ -321,7 +321,7 @@ export function Schedule() {
                           }
                         }}
                       >
-                        Patient attended after all
+                        Patient attended
                       </Button>
                     ) : null}
                     {showNoShow ? (
@@ -413,9 +413,12 @@ export function Schedule() {
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-            <p style={{ margin: 0, color: theme.color.ink }}>
-              Status: <strong>{selected.status}</strong>
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+              <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
+              <StatusPill tone={statusToTone(selected.status)} size="sm">
+                {humaniseStatus(selected.status)}
+              </StatusPill>
+            </div>
 
             {selected.join_url && !isDesktop ? (
               <div
@@ -481,7 +484,7 @@ export function Schedule() {
                 : selected.status === 'arrived' && selected.join_url
                   ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
                   : selected.status === 'no_show' && selected.join_url
-                    ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended after all" to amend.'
+                    ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
                     : selected.status === 'rescheduled'
                       ? 'This booking was rescheduled in Calendly.'
                       : selected.status === 'cancelled'
@@ -566,7 +569,7 @@ export function Schedule() {
                   ) : null}
                 </span>
                 <StatusPill tone={r.status === 'booked' ? 'neutral' : 'arrived'} size="sm">
-                  {r.status.replace(/_/g, ' ')}
+                  {humaniseStatus(r.status)}
                 </StatusPill>
               </button>
             ))}
@@ -698,7 +701,7 @@ function AppointmentList({
                     </p>
                   </div>
                   <StatusPill tone={statusToTone(a.status)} size="sm">
-                    {a.status.replace('_', ' ')}
+                    {humaniseStatus(a.status)}
                   </StatusPill>
                   <ChevronRight size={18} style={{ color: theme.color.inkSubtle }} />
                 </button>

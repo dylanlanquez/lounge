@@ -25,6 +25,7 @@ import {
   resetTestAppointment,
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
+import { humaniseStatus } from '../lib/queries/appointments.ts';
 import {
   useCalendlyDiagnostic,
   runCalendlyBackfill,
@@ -566,7 +567,7 @@ function TestingTab() {
                     }}
                   >
                     <StatusPill tone={row.status === 'arrived' ? 'arrived' : row.status === 'no_show' ? 'no_show' : 'neutral'} size="sm">
-                      {row.status.replace('_', ' ')}
+                      {humaniseStatus(row.status as 'booked' | 'arrived' | 'in_progress' | 'complete' | 'no_show' | 'cancelled' | 'rescheduled')}
                     </StatusPill>
                     <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
                       {name}
