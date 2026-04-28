@@ -1,4 +1,4 @@
-import { type CSSProperties, type KeyboardEvent } from 'react';
+import { type KeyboardEvent } from 'react';
 import { theme } from '../../theme/index.ts';
 import { addDaysIso, getWeekDays } from '../../lib/calendarMonth.ts';
 
@@ -103,46 +103,19 @@ function DayPill({
   onSelect,
   onKeyDown,
 }: DayPillProps) {
+  // iOS-style strip: bare numerals on the page background, with a
+  // hairline-ring around the selected day and an accent-coloured
+  // weekday label. No card, no shadow, no black fill — the strip is
+  // navigation, not the focal point. Numbers stay ink-bold, weekdays
+  // small-caps muted, except the selected one where the weekday
+  // takes the brand accent so the eye lands without weight or
+  // saturation. Past days dim slightly. Today not-selected gets an
+  // accent weekday too so "now" is still legible at a glance.
   const dayOfMonth = Number(dateIso.split('-')[2]);
-  // Past day pills (when not selected) dim to match the faded treatment on
-  // past appointment rows. Selected stays full-strength even when past so
-  // the receptionist's focused day is unambiguous.
   const dimmed = isPast && !isSelected;
-  const styles: CSSProperties = {
-    appearance: 'none',
-    border: 'none',
-    background: isSelected ? theme.color.ink : theme.color.surface,
-    color: isSelected ? theme.color.surface : theme.color.ink,
-    fontFamily: 'inherit',
-    paddingTop: theme.space[2],
-    paddingBottom: theme.space[2],
-    minHeight: 76,
-    borderRadius: 16,
-    boxShadow: isSelected
-      ? theme.shadow.card
-      : `inset 0 0 0 1px ${theme.color.border}`,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    cursor: 'pointer',
-    position: 'relative',
-    outline: 'none',
-    opacity: dimmed ? 0.55 : 1,
-    WebkitTapHighlightColor: 'transparent',
-    transition: `background ${theme.motion.duration.base}ms ${theme.motion.easing.spring}, color ${theme.motion.duration.base}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.base}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
-  };
 
-  const dayNameColor = isSelected
-    ? 'rgba(255, 255, 255, 0.7)'
-    : theme.color.inkSubtle;
-  const dotColor = isSelected
-    ? theme.color.surface
-    : isPast
-      ? theme.color.inkSubtle
-      : theme.color.accent;
-  const todayMark = isToday && !isSelected;
+  const numberColor = dimmed ? theme.color.inkSubtle : theme.color.ink;
+  const weekdayColor = isSelected || isToday ? theme.color.accent : theme.color.inkMuted;
 
   return (
     <button
@@ -154,72 +127,75 @@ function DayPill({
       tabIndex={isSelected ? 0 : -1}
       onClick={() => onSelect(dateIso)}
       onKeyDown={onKeyDown}
-      onMouseEnter={(e) => {
-        if (isSelected) return;
-        (e.currentTarget as HTMLElement).style.boxShadow = `inset 0 0 0 1px ${theme.color.ink}`;
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        color: theme.color.ink,
+        fontFamily: 'inherit',
+        padding: `${theme.space[2]}px ${theme.space[1]}px`,
+        minHeight: 64,
+        borderRadius: 14,
+        // Hairline ring on the selected day. ink at 28% reads as a
+        // confident outline against the cream bg without competing
+        // with the appointment rows below for attention.
+        boxShadow: isSelected
+          ? `inset 0 0 0 1.5px rgba(14, 20, 20, 0.28)`
+          : 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: theme.space[1],
+        cursor: 'pointer',
+        position: 'relative',
+        WebkitTapHighlightColor: 'transparent',
+        transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
-      onMouseLeave={(e) => {
-        if (isSelected) return;
-        (e.currentTarget as HTMLElement).style.boxShadow = `inset 0 0 0 1px ${theme.color.border}`;
-      }}
-      onFocus={(e) => {
-        (e.currentTarget as HTMLElement).style.boxShadow = isSelected
-          ? theme.shadow.card
-          : `inset 0 0 0 1px ${theme.color.ink}`;
-      }}
-      onBlur={(e) => {
-        (e.currentTarget as HTMLElement).style.boxShadow = isSelected
-          ? theme.shadow.card
-          : `inset 0 0 0 1px ${theme.color.border}`;
-      }}
-      style={styles}
     >
-      <span
-        style={{
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: dayNameColor,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-        }}
-      >
-        {weekdayShort}
-      </span>
       <span
         style={{
           fontSize: theme.type.size.lg,
           fontWeight: theme.type.weight.semibold,
           fontVariantNumeric: 'tabular-nums',
           lineHeight: 1,
+          color: numberColor,
         }}
       >
         {dayOfMonth}
       </span>
       <span
+        style={{
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: weekdayColor,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        {weekdayShort}
+      </span>
+      {/* Tiny dot under the weekday when the day has bookings. Quiet
+          enough to read as metadata, not a badge. Hidden when there
+          are none so empty days disappear visually. */}
+      <span
         aria-hidden
         style={{
-          width: 5,
-          height: 5,
+          position: 'absolute',
+          bottom: 4,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 4,
+          height: 4,
           borderRadius: 999,
-          background: count > 0 ? dotColor : 'transparent',
-          marginTop: 2,
+          background:
+            count > 0
+              ? dimmed
+                ? theme.color.inkSubtle
+                : theme.color.accent
+              : 'transparent',
         }}
       />
-      {todayMark ? (
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute',
-            bottom: 6,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: 16,
-            height: 2,
-            borderRadius: 2,
-            background: theme.color.accent,
-          }}
-        />
-      ) : null}
     </button>
   );
 }
