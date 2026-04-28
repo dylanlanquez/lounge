@@ -17,6 +17,7 @@ export interface AppointmentRow {
   event_type_label: string | null;
   staff_account_id: string | null;
   intake: IntakeAnswer[] | null;
+  join_url: string | null;
   patient_first_name: string | null;
   patient_last_name: string | null;
   patient_email: string | null;
@@ -59,7 +60,7 @@ export function useTodayAppointments(): UseTodayAppointmentsResult {
                 'status',
                 'event_type_label',
                 'staff_account_id',
-                ...(withIntake ? ['intake'] : []),
+                ...(withIntake ? ['intake', 'join_url'] : []),
                 'patient:patients ( first_name, last_name, email, phone )',
                 'staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )',
               ].join(', ')
@@ -105,6 +106,7 @@ export function useTodayAppointments(): UseTodayAppointmentsResult {
             event_type_label: raw.event_type_label,
             staff_account_id: raw.staff_account_id,
             intake: raw.intake ?? null,
+            join_url: raw.join_url ?? null,
             patient_first_name: patient?.first_name ?? null,
             patient_last_name: patient?.last_name ?? null,
             patient_email: patient?.email ?? null,
@@ -140,6 +142,7 @@ interface AppointmentRowRaw {
   event_type_label: string | null;
   staff_account_id: string | null;
   intake: IntakeAnswer[] | null;
+  join_url: string | null;
   patient:
     | { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }
     | { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }[]

@@ -165,6 +165,11 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   // event types, not as text_reminder_number. Try both.
   const phoneFromHeader = ((evt.payload as { text_reminder_number?: string } | undefined)?.text_reminder_number ?? '').trim();
   const phone = phoneFromHeader || extractPhoneFromIntake(intake) || null;
+  // Conference URL for virtual events. Calendly puts it in
+  // scheduled_event.location.join_url for Google Meet / Zoom / Teams.
+  const join_url = extractJoinUrl(
+    (evt.payload?.scheduled_event as { location?: unknown } | undefined)?.location
+  );
 
   if (!startAt || !endAt) throw new Error('missing start_time or end_time');
 
@@ -249,6 +254,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       end_at: endAt,
       event_type_label: eventTypeLabel,
       intake,
+      join_url,
       status: 'booked',
     });
   if (apptErr && apptErr.code !== '23505') throw new Error(apptErr.message);
@@ -356,6 +362,20 @@ function extractPhoneFromIntake(
       const t = qa.answer.trim();
       if (t) return t;
     }
+  }
+  return null;
+}
+
+// Pulls a conferencing URL out of Calendly's location object. For
+// google_conference / zoom_conference / etc. the URL lives at
+// `location.join_url`; some shapes embed it as the `location` string when
+// it starts with http(s).
+function extractJoinUrl(loc: unknown): string | null {
+  if (!loc || typeof loc !== 'object') return null;
+  const l = loc as { join_url?: unknown; location?: unknown };
+  if (typeof l.join_url === 'string' && l.join_url.trim()) return l.join_url.trim();
+  if (typeof l.location === 'string' && /^https?:\/\//.test(l.location.trim())) {
+    return l.location.trim();
   }
   return null;
 }
