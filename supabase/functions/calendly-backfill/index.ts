@@ -405,12 +405,13 @@ async function applyInvitee(
     }
     if (Object.keys(patch).length > 0) {
       await supabase.from('lng_appointments').update(patch).eq('id', cur.id);
-      // Emit deposit_paid event when backfilling a deposit onto a row
-      // that didn't have one — keeps the patient timeline in sync.
+      // Emit deposit_paid / deposit_failed event when backfilling a
+      // deposit onto a row that didn't have one — keeps the patient
+      // timeline in sync.
       if (cur.deposit_pence == null && deposit) {
         await supabase.from('patient_events').insert({
           patient_id: nextPatientId,
-          event_type: 'deposit_paid',
+          event_type: deposit.deposit_status === 'paid' ? 'deposit_paid' : 'deposit_failed',
           payload: {
             amount_pence: deposit.deposit_pence,
             currency: deposit.deposit_currency,
@@ -443,7 +444,7 @@ async function applyInvitee(
   if (!apptErr && deposit) {
     await supabase.from('patient_events').insert({
       patient_id,
-      event_type: 'deposit_paid',
+      event_type: deposit.deposit_status === 'paid' ? 'deposit_paid' : 'deposit_failed',
       payload: {
         amount_pence: deposit.deposit_pence,
         currency: deposit.deposit_currency,
@@ -504,6 +505,7 @@ function isPlaceholderEmail(email: string | null | undefined): boolean {
 }
 
 interface ExtractedDeposit {
+  deposit_status: 'paid' | 'failed';
   deposit_pence: number;
   deposit_currency: string;
   deposit_provider: 'paypal' | 'stripe';
@@ -511,11 +513,10 @@ interface ExtractedDeposit {
   deposit_paid_at: string;
 }
 
-// Mirrors the webhook helper. Pulls a deposit record out of the Calendly
-// invitee `payment` object. Returns null when no deposit was charged, the
-// charge failed, or the provider isn't paypal / stripe — the
-// lng_appointments_deposit_shape CHECK constraint rejects unknown providers
-// so silently failing is preferable to a partial insert.
+// Mirrors the webhook helper. Returns null when there's no payment, the
+// amount isn't numeric, or the provider isn't paypal/stripe (would violate
+// the lng_appointments_deposit_shape CHECK constraint). Failed payments
+// are kept with status='failed' so the detail sheet can flag them.
 function extractDeposit(
   payment:
     | {
@@ -529,10 +530,11 @@ function extractDeposit(
     | undefined,
   fallbackPaidAt: string
 ): ExtractedDeposit | null {
-  if (!payment || !payment.successful || typeof payment.amount !== 'number') return null;
+  if (!payment || typeof payment.amount !== 'number') return null;
   const provider = (payment.provider ?? '').toLowerCase();
   if (provider !== 'paypal' && provider !== 'stripe') return null;
   return {
+    deposit_status: payment.successful ? 'paid' : 'failed',
     deposit_pence: Math.round(payment.amount * 100),
     deposit_currency: (payment.currency ?? 'GBP').toUpperCase(),
     deposit_provider: provider,

@@ -38,7 +38,9 @@ export function VisitDetail() {
 
   const subtotal = items.reduce((sum, i) => sum + i.line_total_pence, 0);
   const discount = items.reduce((sum, i) => sum + i.discount_pence, 0);
-  const depositPence = deposit?.pence ?? 0;
+  // Only successful deposits credit the till. A failed deposit is shown
+  // visually elsewhere; the bill still sums to the full subtotal.
+  const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
   // Balance is what the receptionist will collect at the till after the
   // Calendly deposit is applied. Floor at 0 — manual PayPal refund handles
   // the over-deposit case so we never produce a negative charge here.

@@ -64,12 +64,13 @@ export function Pay() {
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
-  // Subtotal = sum of line items. Balance = what the receptionist actually
-  // collects, after subtracting any deposit paid via Calendly. Floor at 0
-  // so a deposit larger than the bill (rare — refund handled manually in
-  // PayPal) doesn't produce a negative charge.
+  // Subtotal = sum of line items. Only PAID deposits credit the bill; a
+  // failed deposit is informational (the receptionist sees a red badge in
+  // the schedule sheet) and the till still collects the full subtotal.
+  // Floor at 0 so a deposit larger than the bill doesn't produce a
+  // negative charge — refund handled manually in PayPal.
   const subtotal = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
-  const depositPence = deposit?.pence ?? 0;
+  const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
   const balanceDue = Math.max(0, subtotal - depositPence);
   // Total is what we ACTUALLY charge — used everywhere downstream (cash,
   // card, BNPL). Keeping the variable name `total` minimises churn on the

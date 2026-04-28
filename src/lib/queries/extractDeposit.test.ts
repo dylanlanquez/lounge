@@ -17,6 +17,7 @@ interface CalendlyPayment {
 }
 
 interface ExtractedDeposit {
+  deposit_status: 'paid' | 'failed';
   deposit_pence: number;
   deposit_currency: string;
   deposit_provider: 'paypal' | 'stripe';
@@ -28,10 +29,11 @@ function extractDeposit(
   payment: CalendlyPayment | null | undefined,
   fallbackPaidAt: string
 ): ExtractedDeposit | null {
-  if (!payment || !payment.successful || typeof payment.amount !== 'number') return null;
+  if (!payment || typeof payment.amount !== 'number') return null;
   const provider = (payment.provider ?? '').toLowerCase();
   if (provider !== 'paypal' && provider !== 'stripe') return null;
   return {
+    deposit_status: payment.successful ? 'paid' : 'failed',
     deposit_pence: Math.round(payment.amount * 100),
     deposit_currency: (payment.currency ?? 'GBP').toUpperCase(),
     deposit_provider: provider,
@@ -48,9 +50,25 @@ describe('extractDeposit', () => {
     expect(extractDeposit(undefined, NOW)).toBeNull();
   });
 
-  it('returns null when payment.successful is not true', () => {
-    expect(extractDeposit({ amount: 25, provider: 'paypal', successful: false }, NOW)).toBeNull();
-    expect(extractDeposit({ amount: 25, provider: 'paypal' }, NOW)).toBeNull();
+  it('captures failed payments with status="failed"', () => {
+    const result = extractDeposit(
+      { amount: 25, provider: 'paypal', successful: false, external_id: 'PAYID-X' },
+      NOW
+    );
+    expect(result).toEqual({
+      deposit_status: 'failed',
+      deposit_pence: 2500,
+      deposit_currency: 'GBP',
+      deposit_provider: 'paypal',
+      deposit_external_id: 'PAYID-X',
+      deposit_paid_at: NOW,
+    });
+  });
+
+  it('treats missing successful flag as failed (defensive)', () => {
+    expect(
+      extractDeposit({ amount: 25, provider: 'paypal' }, NOW)?.deposit_status
+    ).toBe('failed');
   });
 
   it('returns null when amount is not a number', () => {
@@ -72,6 +90,7 @@ describe('extractDeposit', () => {
       NOW
     );
     expect(result).toEqual({
+      deposit_status: 'paid',
       deposit_pence: 2500,
       deposit_currency: 'GBP',
       deposit_provider: 'paypal',
@@ -86,6 +105,7 @@ describe('extractDeposit', () => {
       NOW
     );
     expect(result).toEqual({
+      deposit_status: 'paid',
       deposit_pence: 5000,
       deposit_currency: 'GBP',
       deposit_provider: 'stripe',

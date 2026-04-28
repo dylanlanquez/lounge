@@ -10,6 +10,7 @@ import {
   List,
   Monitor,
   Video,
+  X,
 } from 'lucide-react';
 import {
   BottomSheet,
@@ -603,22 +604,12 @@ export function Schedule() {
                   </StatusPill>
                 </div>
 
-                {selected.deposit_pence != null && selected.deposit_pence > 0 ? (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: theme.space[2],
-                    color: theme.color.ink,
-                    fontSize: theme.type.size.sm,
-                  }}
-                >
-                  <Check size={16} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
-                  <span>
-                    {formatGbp(selected.deposit_pence)} deposit paid
-                    {selected.deposit_provider ? ` · ${capitalise(selected.deposit_provider)}` : ''}
-                  </span>
-                </div>
+                {selected.deposit_pence != null && selected.deposit_status ? (
+                <DepositLine
+                  status={selected.deposit_status}
+                  amountPence={selected.deposit_pence}
+                  provider={selected.deposit_provider}
+                />
               ) : null}
               </div>
 
@@ -924,6 +915,59 @@ function formatTime12h(d: Date): string {
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
   return `${hh}${mm}${ampm}`;
+}
+
+// Solid badge + label that surfaces a Calendly deposit on the booking
+// detail sheet. Filled green circle with a white tick when paid; filled
+// red circle with a white cross when the payment failed (Calendly attempt
+// recorded, money not collected — receptionist needs to chase).
+function DepositLine({
+  status,
+  amountPence,
+  provider,
+}: {
+  status: 'paid' | 'failed';
+  amountPence: number;
+  provider: 'paypal' | 'stripe' | null;
+}) {
+  const isPaid = status === 'paid';
+  const badgeColor = isPaid ? theme.color.accent : theme.color.alert;
+  const labelColor = isPaid ? theme.color.ink : theme.color.alert;
+  const labelWeight = isPaid ? theme.type.weight.medium : theme.type.weight.semibold;
+  const text = isPaid
+    ? `${formatGbp(amountPence)} deposit paid${provider ? ` · ${capitalise(provider)}` : ''}`
+    : `Deposit ${formatGbp(amountPence)} failed${provider ? ` · ${capitalise(provider)}` : ''} — chase before checkout`;
+  return (
+    <div
+      role={isPaid ? undefined : 'alert'}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        fontSize: theme.type.size.sm,
+        color: labelColor,
+        fontWeight: labelWeight,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 20,
+          height: 20,
+          borderRadius: 999,
+          background: badgeColor,
+          color: theme.color.surface,
+          flexShrink: 0,
+        }}
+      >
+        {isPaid ? <Check size={13} strokeWidth={3} /> : <X size={13} strokeWidth={3} />}
+      </span>
+      <span>{text}</span>
+    </div>
+  );
 }
 
 // Compact GBP formatter: "£25" / "£25.50". Uses Intl so the receptionist

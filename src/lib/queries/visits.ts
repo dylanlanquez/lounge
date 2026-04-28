@@ -287,10 +287,15 @@ export async function markAppointmentArrived(appointmentId: string): Promise<{ v
 // so the Pay screen can deduct it from the bill. Null on walk-ins (no
 // underlying appointment) and on Calendly bookings whose event type
 // doesn't take a deposit.
+//
+// status = 'paid'   ready to credit at checkout
+// status = 'failed' attempt recorded but not collected — the till must NOT
+//                   credit it; receptionist should chase.
 export interface AppointmentDeposit {
   pence: number;
   currency: string;
   provider: 'paypal' | 'stripe';
+  status: 'paid' | 'failed';
 }
 
 interface VisitDetailResult {
@@ -349,7 +354,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
         if (visitRow.appointment_id) {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
-            .select('deposit_pence, deposit_currency, deposit_provider')
+            .select('deposit_pence, deposit_currency, deposit_provider, deposit_status')
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
           if (!cancelled && !apptErr && appt) {
@@ -357,12 +362,19 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               deposit_pence: number | null;
               deposit_currency: string | null;
               deposit_provider: 'paypal' | 'stripe' | null;
+              deposit_status: 'paid' | 'failed' | null;
             };
-            if (a.deposit_pence != null && a.deposit_pence > 0 && a.deposit_provider) {
+            if (
+              a.deposit_pence != null &&
+              a.deposit_pence > 0 &&
+              a.deposit_provider &&
+              a.deposit_status
+            ) {
               setDeposit({
                 pence: a.deposit_pence,
                 currency: a.deposit_currency ?? 'GBP',
                 provider: a.deposit_provider,
+                status: a.deposit_status,
               });
             } else {
               setDeposit(null);
