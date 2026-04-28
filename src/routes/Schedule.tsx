@@ -16,11 +16,11 @@ import {
   Button,
   Card,
   EmptyState,
-  MonthGrid,
   SegmentedControl,
   Skeleton,
   StatusPill,
   Toast,
+  WeekStrip,
 } from '../components/index.ts';
 import {
   CalendarGrid,
@@ -37,8 +37,9 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { useNow } from '../lib/useNow.ts';
 import {
-  monthLabel,
-  shiftMonth,
+  addDaysIso,
+  formatWeekLabel,
+  getWeekDays,
   todayIso as computeTodayIso,
 } from '../lib/calendarMonth.ts';
 import {
@@ -52,7 +53,7 @@ import {
   patientFullDisplayName,
   staffDisplayName,
 } from '../lib/queries/appointments.ts';
-import { useDayAppointments, useMonthCounts } from '../lib/queries/scheduleViews.ts';
+import { useDayAppointments, useDateRangeCounts } from '../lib/queries/scheduleViews.ts';
 import {
   markAppointmentArrived,
   markNoShow,
@@ -78,11 +79,6 @@ export function Schedule() {
   const todayIso = computeTodayIso(now);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
-  const [viewMonth, setViewMonth] = useState<{ year: number; month: number }>(() => {
-    const d = new Date();
-    return { year: d.getFullYear(), month: d.getMonth() };
-  });
-
   const [layout, setLayout] = useState<Layout>(() => {
     if (typeof window === 'undefined') return 'calendar';
     const saved = window.localStorage.getItem(LAYOUT_KEY);
@@ -98,7 +94,11 @@ export function Schedule() {
   const [pickingNoShowReason, setPickingNoShowReason] = useState(false);
 
   const day = useDayAppointments(selectedDate);
-  const monthCounts = useMonthCounts(viewMonth.year, viewMonth.month);
+  // Week-of-selected counts power the dots under each day pill.
+  const weekDays = getWeekDays(selectedDate);
+  const weekStartIso = weekDays[0]!;
+  const weekEndIso = weekDays[6]!;
+  const weekCounts = useDateRangeCounts(weekStartIso, weekEndIso);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -126,30 +126,21 @@ export function Schedule() {
 
   const handleSelectDate = (dateIso: string) => {
     setSelectedDate(dateIso);
-    // If the user tapped a previous/next-month padding cell, slide the
-    // visible month so the selected day is in view.
-    const [yStr, mStr] = dateIso.split('-');
-    const y = Number(yStr);
-    const m = Number(mStr) - 1;
-    if (y !== viewMonth.year || m !== viewMonth.month) {
-      setViewMonth({ year: y, month: m });
-    }
   };
 
-  const handleShiftMonth = (delta: number) => {
-    setViewMonth((prev) => shiftMonth(prev.year, prev.month, delta));
+  const handleShiftWeek = (delta: number) => {
+    setSelectedDate((prev) => addDaysIso(prev, delta * 7));
   };
 
   const handleJumpToToday = () => {
     setSelectedDate(todayIso);
-    const d = new Date();
-    setViewMonth({ year: d.getFullYear(), month: d.getMonth() });
   };
 
   const onToday = selectedDate === todayIso;
   const dayHeading = formatDayHeading(selectedDate);
   const dense = day.data.length >= DENSE_THRESHOLD;
   const showLayoutToggle = day.data.length > 0 && dense;
+  const weekLabel = formatWeekLabel(weekStartIso, weekEndIso);
 
   return (
     <main
@@ -162,7 +153,7 @@ export function Schedule() {
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
         <TopBar variant="home" />
 
-        {/* Single-row header: month nav left, walk-in right. */}
+        {/* Single-row header: week label + nav on the left, walk-in on the right. */}
         <div
           style={{
             display: 'flex',
@@ -174,9 +165,6 @@ export function Schedule() {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
-            <IconNavButton ariaLabel="Previous month" onClick={() => handleShiftMonth(-1)}>
-              <ChevronLeft size={20} />
-            </IconNavButton>
             <h1
               style={{
                 margin: 0,
@@ -186,11 +174,8 @@ export function Schedule() {
                 whiteSpace: 'nowrap',
               }}
             >
-              {monthLabel(viewMonth.year, viewMonth.month)}
+              {weekLabel}
             </h1>
-            <IconNavButton ariaLabel="Next month" onClick={() => handleShiftMonth(1)}>
-              <ChevronRight size={20} />
-            </IconNavButton>
             {!onToday ? (
               <button
                 type="button"
@@ -203,7 +188,7 @@ export function Schedule() {
                   fontFamily: 'inherit',
                   fontSize: theme.type.size.sm,
                   fontWeight: theme.type.weight.medium,
-                  padding: `${theme.space[1]}px ${theme.space[3]}px`,
+                  padding: `0 ${theme.space[3]}px`,
                   height: 32,
                   borderRadius: theme.radius.pill,
                   cursor: 'pointer',
@@ -215,29 +200,36 @@ export function Schedule() {
             ) : null}
           </div>
 
-          <Button
-            variant="secondary"
-            size={isMobile ? 'sm' : 'md'}
-            onClick={() => navigate('/walk-in/new')}
-          >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Plus size={16} /> {isMobile ? 'Walk-in' : 'New walk-in'}
-            </span>
-          </Button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+            <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
+              <ChevronLeft size={20} />
+            </IconNavButton>
+            <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
+              <ChevronRight size={20} />
+            </IconNavButton>
+            <Button
+              variant="secondary"
+              size={isMobile ? 'sm' : 'md'}
+              onClick={() => navigate('/walk-in/new')}
+              style={{ marginLeft: theme.space[2] }}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <Plus size={16} /> {isMobile ? 'Walk-in' : 'New walk-in'}
+              </span>
+            </Button>
+          </div>
         </div>
 
-        {/* Month grid. Card wraps it for the same surface treatment as the day timeline. */}
-        <Card padding="md" style={{ marginBottom: theme.space[4] }}>
-          <MonthGrid
-            year={viewMonth.year}
-            month={viewMonth.month}
+        <div style={{ marginBottom: theme.space[5] }}>
+          <WeekStrip
+            anchorIso={selectedDate}
             selectedIso={selectedDate}
             todayIso={todayIso}
-            counts={monthCounts.counts}
+            counts={weekCounts.counts}
             onSelect={handleSelectDate}
-            loading={monthCounts.loading}
+            loading={weekCounts.loading}
           />
-        </Card>
+        </div>
 
         {/* Selected-day heading + optional layout toggle. */}
         <div
@@ -897,3 +889,4 @@ function formatDayHeading(dateIso: string): string {
   const d = new Date(`${dateIso}T00:00:00`);
   return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 }
+

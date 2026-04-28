@@ -11,37 +11,6 @@ export function todayIso(now: Date = new Date()): string {
   return formatDateIso(now);
 }
 
-export interface MonthGridCell {
-  dateIso: string;
-  dayOfMonth: number;
-  isCurrentMonth: boolean;
-}
-
-// Six-row × seven-column grid for the given month, Monday-first.
-// Always 42 cells so the calendar height never jumps between months.
-// Padding days from the previous and next month carry their real dateIso
-// so the cell can still be tapped and the month nav advances accordingly.
-export function getMonthGridDays(year: number, month: number): MonthGridCell[] {
-  const firstOfMonth = new Date(year, month, 1);
-  // JS getDay is 0=Sun..6=Sat. Monday-first offset: 0=Mon..6=Sun.
-  const offset = (firstOfMonth.getDay() + 6) % 7;
-  const gridStart = new Date(year, month, 1 - offset);
-  const out: MonthGridCell[] = [];
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(
-      gridStart.getFullYear(),
-      gridStart.getMonth(),
-      gridStart.getDate() + i
-    );
-    out.push({
-      dateIso: formatDateIso(d),
-      dayOfMonth: d.getDate(),
-      isCurrentMonth: d.getMonth() === month,
-    });
-  }
-  return out;
-}
-
 export function monthLabel(year: number, month: number): string {
   return new Date(year, month, 1).toLocaleDateString('en-GB', {
     month: 'long',
@@ -60,47 +29,48 @@ export function shiftMonth(
   return { year: d.getFullYear(), month: d.getMonth() };
 }
 
-export function isSameMonth(year: number, month: number, dateIso: string): boolean {
-  const [y, m] = dateIso.split('-');
-  return Number(y) === year && Number(m) - 1 === month;
+// Adds n calendar days to an ISO date string, returning a new ISO string.
+// Negative deltas walk backwards. Always works in local time so it doesn't
+// drift across DST boundaries.
+export function addDaysIso(dateIso: string, delta: number): string {
+  const d = new Date(`${dateIso}T00:00:00`);
+  d.setDate(d.getDate() + delta);
+  return formatDateIso(d);
 }
 
-// Keyboard-navigation arithmetic for the 6×7 (=42) month grid.
-// Returns the destination cell index for the pressed key, or null when the
-// key isn't a navigation key or the move would leave the visible grid.
-// Keeping this pure makes the focus-shifting logic in <MonthGrid> trivial
-// to unit-test without rendering the DOM.
-export const MONTH_GRID_SIZE = 42;
-export const MONTH_GRID_COLS = 7;
-export function nextGridIndex(
-  current: number,
-  key: string,
-  size: number = MONTH_GRID_SIZE,
-  cols: number = MONTH_GRID_COLS
-): number | null {
-  let next: number;
-  switch (key) {
-    case 'ArrowLeft':
-      next = current - 1;
-      break;
-    case 'ArrowRight':
-      next = current + 1;
-      break;
-    case 'ArrowUp':
-      next = current - cols;
-      break;
-    case 'ArrowDown':
-      next = current + cols;
-      break;
-    case 'Home':
-      next = current - (current % cols);
-      break;
-    case 'End':
-      next = current - (current % cols) + (cols - 1);
-      break;
-    default:
-      return null;
+// Monday-anchored start of the week containing the given date.
+// e.g. for "2026-04-28" (Tuesday) → "2026-04-27" (Monday).
+export function getWeekStartIso(dateIso: string): string {
+  const d = new Date(`${dateIso}T00:00:00`);
+  const offset = (d.getDay() + 6) % 7; // 0=Sun..6=Sat → 0=Mon..6=Sun
+  d.setDate(d.getDate() - offset);
+  return formatDateIso(d);
+}
+
+// Seven consecutive ISO dates starting from the Monday of the given date's week.
+export function getWeekDays(dateIso: string): string[] {
+  const start = getWeekStartIso(dateIso);
+  return [0, 1, 2, 3, 4, 5, 6].map((i) => addDaysIso(start, i));
+}
+
+// Header label for a visible week range.
+// - "April 2026" when both ends fall in the same month
+// - "April-May 2026" when the week straddles a month boundary
+// - "Dec 2025-Jan 2026" when it also crosses a year boundary
+export function formatWeekLabel(startIso: string, endIso: string): string {
+  const s = new Date(`${startIso}T00:00:00`);
+  const e = new Date(`${endIso}T00:00:00`);
+  const sameYear = s.getFullYear() === e.getFullYear();
+  const sameMonth = sameYear && s.getMonth() === e.getMonth();
+  if (sameMonth) {
+    return s.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   }
-  if (next < 0 || next >= size) return null;
-  return next;
+  if (sameYear) {
+    const sMonth = s.toLocaleDateString('en-GB', { month: 'long' });
+    const eMonth = e.toLocaleDateString('en-GB', { month: 'long' });
+    return `${sMonth}-${eMonth} ${e.getFullYear()}`;
+  }
+  const sLabel = s.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  const eLabel = e.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  return `${sLabel}-${eLabel}`;
 }
