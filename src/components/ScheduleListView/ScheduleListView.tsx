@@ -72,6 +72,10 @@ function ListRow({ row, onPick, now }: { row: AppointmentRow; onPick: () => void
   const tone = statusToTone(row.status);
   const isLate = row.status === 'booked' && isBookingLate(row.start_at, now);
   const lateMin = isLate ? minutesPastStart(row.start_at, now) : 0;
+  // Terminal-and-uneventful: fade so the eye lands on rows that still
+  // need attention. Mirror AppointmentCard's rule.
+  const faded =
+    row.status === 'complete' || row.status === 'cancelled' || row.status === 'rescheduled';
   // Apply category bar only on booked rows (matches AppointmentCard:
   // status colour takes over once the visit is in progress). Late rows
   // override with alert red so the receptionist can scan for them.
@@ -98,7 +102,8 @@ function ListRow({ row, onPick, now }: { row: AppointmentRow; onPick: () => void
           alignItems: 'stretch',
           minHeight: 64,
           overflow: 'hidden',
-          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          opacity: faded ? 0.65 : 1,
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
         onMouseEnter={(e) => {
           (e.currentTarget as HTMLElement).style.borderColor = theme.color.accent;

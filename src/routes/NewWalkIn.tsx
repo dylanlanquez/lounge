@@ -4,6 +4,7 @@ import { ChevronRight } from 'lucide-react';
 import { Button, Card, Input, Toast } from '../components/index.ts';
 import { PatientSearch } from '../components/PatientSearch/PatientSearch.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -33,6 +34,7 @@ export function NewWalkIn() {
   const [serviceType, setServiceType] = useState<string>('denture_repair');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useIsMobile(640);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -122,7 +124,8 @@ export function NewWalkIn() {
       style={{
         minHeight: '100dvh',
         background: theme.color.bg,
-        padding: useIsMobile(640) ? theme.space[4] : theme.space[6],
+        padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
       <div style={{ maxWidth: 520, margin: '0 auto' }}>
@@ -131,7 +134,7 @@ export function NewWalkIn() {
         <h1
           style={{
             margin: 0,
-            fontSize: useIsMobile(640) ? theme.type.size.xl : theme.type.size.xxl,
+            fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
             fontWeight: theme.type.weight.semibold,
             letterSpacing: theme.type.tracking.tight,
             marginBottom: theme.space[2],

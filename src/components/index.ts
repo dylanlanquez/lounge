@@ -47,3 +47,5 @@ export type { KeyboardAwareScrollProps } from './KeyboardAwareScroll/KeyboardAwa
 
 export { WeekStrip } from './WeekStrip/WeekStrip.tsx';
 export type { WeekStripProps } from './WeekStrip/WeekStrip.tsx';
+
+export { BottomNav, BOTTOM_NAV_HEIGHT, shouldShowBottomNav } from './BottomNav/BottomNav.tsx';

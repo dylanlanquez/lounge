@@ -83,6 +83,9 @@ export function AppointmentCard({
   const isInteractive = Boolean(onClick);
   const lanePct = 100 / lanesInGroup;
   const showLate = status === 'booked' && typeof lateMinutes === 'number' && lateMinutes > 0;
+  // Terminal-and-uneventful statuses fade so the eye lands on the active rows.
+  // no_show stays at full strength because its alert colour is the signal.
+  const faded = status === 'complete' || status === 'cancelled' || status === 'rescheduled';
   // Sit above the now-indicator line; below the now-time pill.
   const styles: CSSProperties = {
     position: 'absolute',
@@ -96,8 +99,9 @@ export function AppointmentCard({
     overflow: 'hidden',
     display: 'flex',
     cursor: isInteractive ? 'pointer' : 'default',
-    transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+    transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
     textDecoration: status === 'cancelled' ? 'line-through' : 'none',
+    opacity: faded ? 0.65 : 1,
     zIndex: 1,
   };
   const effectiveBarColor = showLate

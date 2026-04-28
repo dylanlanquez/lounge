@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Calendar, CreditCard, ShoppingCart, User } from 'lucide-react';
 import { Avatar, Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -33,6 +34,8 @@ export function PatientTimeline() {
     };
   }, [id]);
 
+  const isMobile = useIsMobile(640);
+
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
@@ -42,10 +45,15 @@ export function PatientTimeline() {
   const totalSpent = payments
     .filter((p) => p.status === 'succeeded')
     .reduce((s, p) => s + p.amount_pence, 0);
-
-  const isMobile = useIsMobile(640);
   return (
-    <main style={{ minHeight: '100dvh', background: theme.color.bg, padding: isMobile ? theme.space[4] : theme.space[6] }}>
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
+      }}
+    >
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
         <TopBar variant="subpage" />
 

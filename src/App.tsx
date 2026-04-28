@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './lib/auth.tsx';
 import { theme } from './theme/index.ts';
+import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 
 const SignIn = lazy(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })));
 const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })));
@@ -49,6 +50,7 @@ export function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
+      <BottomNav />
     </AuthProvider>
   );
 }
