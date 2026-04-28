@@ -92,7 +92,7 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
   const navigate = useNavigate();
   const name = patient ? `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() : 'Patient';
   return (
-    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[5]}px` }}>
+    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[6]}px` }}>
       <Breadcrumb
         items={[
           { label: 'Patients', onClick: () => navigate('/patients') },
