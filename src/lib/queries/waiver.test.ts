@@ -111,11 +111,17 @@ describe('inferServiceTypeFromEventLabel', () => {
 
   it('maps appliance-related labels to same_day_appliance', () => {
     expect(inferServiceTypeFromEventLabel('Same-day Appliance')).toBe('same_day_appliance');
-    expect(inferServiceTypeFromEventLabel('In-person Impression Appointment')).toBe(
-      'same_day_appliance'
-    );
     expect(inferServiceTypeFromEventLabel('Whitening trays')).toBe('same_day_appliance');
     expect(inferServiceTypeFromEventLabel('Night guard fitting')).toBe('same_day_appliance');
+  });
+
+  it('maps impression labels to impression_appointment (own waiver bucket)', () => {
+    expect(inferServiceTypeFromEventLabel('In-person Impression Appointment')).toBe(
+      'impression_appointment'
+    );
+    expect(inferServiceTypeFromEventLabel('Virtual Impression Appointment')).toBe(
+      'impression_appointment'
+    );
   });
 
   it('maps click-in-veneers labels to click_in_veneers', () => {
