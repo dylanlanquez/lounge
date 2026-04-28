@@ -58,3 +58,5 @@ export type { WaiverSheetProps } from './WaiverSheet/WaiverSheet.tsx';
 
 export { WaiverInline } from './WaiverInline/WaiverInline.tsx';
 export type { WaiverInlineProps } from './WaiverInline/WaiverInline.tsx';
+
+export { BeforeAfterGallery, MarketingGallery } from './PhotoGallery/PhotoGallery.tsx';
