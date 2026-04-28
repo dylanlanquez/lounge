@@ -117,8 +117,8 @@ function NowIndicator({ offset }: { offset: number }) {
 
   return (
     <>
-      {/* Line — sits behind appointment cards (zIndex 0). Cards (zIndex 1)
-          naturally cover it, so it never appears to slice through a booking. */}
+      {/* Full-width line across the slot column, drawn over the top of
+          appointment cards but at low opacity so the cards remain readable. */}
       <div
         style={{
           position: 'absolute',
@@ -127,13 +127,13 @@ function NowIndicator({ offset }: { offset: number }) {
           right: 0,
           height: 1,
           background: theme.color.accent,
-          opacity: 0.6,
+          opacity: 0.35,
           pointerEvents: 'none',
-          zIndex: 0,
+          zIndex: 5,
         }}
       />
-      {/* Time pill anchored to the left edge of the slot column. Sits above
-          everything (zIndex 4) so the receptionist can always see "now". */}
+      {/* Time pill anchored to the left edge of the slot column. Solid
+          (no opacity) so the current clock time is always legible. */}
       <div
         style={{
           position: 'absolute',
@@ -149,7 +149,7 @@ function NowIndicator({ offset }: { offset: number }) {
           letterSpacing: theme.type.tracking.wide,
           boxShadow: theme.shadow.card,
           pointerEvents: 'none',
-          zIndex: 4,
+          zIndex: 6,
         }}
       >
         {label}
