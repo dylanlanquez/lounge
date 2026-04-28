@@ -37,8 +37,8 @@ import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { useNow } from '../lib/useNow.ts';
 import {
   addDaysIso,
-  formatWeekLabel,
   getWeekDays,
+  monthLabel,
   todayIso as computeTodayIso,
 } from '../lib/calendarMonth.ts';
 import {
@@ -140,7 +140,12 @@ export function Schedule() {
   const dayHeading = formatDayHeading(selectedDate);
   const dense = day.data.length >= DENSE_THRESHOLD;
   const showLayoutToggle = day.data.length > 0 && dense;
-  const weekLabel = formatWeekLabel(weekStartIso, weekEndIso);
+  // Toolbar label follows the selected day's month (not the week's), so it
+  // flips Apr→May the moment the receptionist taps a day in the next month
+  // (e.g. selecting Fri 1 in a Mon-Sun strip that started in April).
+  const selectedYear = Number(selectedDate.slice(0, 4));
+  const selectedMonth = Number(selectedDate.slice(5, 7)) - 1;
+  const toolbarLabel = monthLabel(selectedYear, selectedMonth);
 
   return (
     <main
@@ -152,8 +157,10 @@ export function Schedule() {
       }}
     >
       <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        {/* Single-row header: week label + Today chip on the left, week nav on the right.
-            Walk-in lives in the bottom nav so it stays one tap away on every page. */}
+        {/* Toolbar (cal.com pattern): chevrons + Today on the left, small
+            uppercase month-of-selected-day label centred, calendar/list
+            view toggle on the right. Walk-in lives in the bottom nav so
+            it doesn't crowd this row. */}
         <div
           style={{
             display: 'flex',
@@ -164,18 +171,13 @@ export function Schedule() {
             flexWrap: 'wrap',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
-                fontWeight: theme.type.weight.semibold,
-                letterSpacing: theme.type.tracking.tight,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {weekLabel}
-            </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
+            <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
+              <ChevronLeft size={20} />
+            </IconNavButton>
+            <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
+              <ChevronRight size={20} />
+            </IconNavButton>
             {!onToday ? (
               <button
                 type="button"
@@ -200,13 +202,48 @@ export function Schedule() {
             ) : null}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-            <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
-              <ChevronLeft size={20} />
-            </IconNavButton>
-            <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
-              <ChevronRight size={20} />
-            </IconNavButton>
+          <span
+            aria-live="polite"
+            style={{
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {toolbarLabel}
+          </span>
+
+          {/* Right cluster reserves space even when the toggle is hidden so
+              the centre label stays optically centred. */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              minWidth: 80,
+              justifyContent: 'flex-end',
+            }}
+          >
+            {showLayoutToggle ? (
+              <SegmentedControl<Layout>
+                ariaLabel="Day view layout"
+                value={layout}
+                onChange={setLayout}
+                size="sm"
+                options={[
+                  {
+                    value: 'calendar',
+                    label: <CalendarDays size={16} aria-label="Calendar view" />,
+                  },
+                  {
+                    value: 'list',
+                    label: <List size={16} aria-label="List view" />,
+                  },
+                ]}
+              />
+            ) : null}
           </div>
         </div>
 
@@ -221,60 +258,41 @@ export function Schedule() {
           />
         </div>
 
-        {/* Selected-day heading + optional layout toggle. */}
+        {/* Selected-day section heading. The view toggle for this section
+            now lives in the toolbar above. */}
         <div
           style={{
             display: 'flex',
             alignItems: 'baseline',
-            justifyContent: 'space-between',
             gap: theme.space[3],
             marginBottom: theme.space[3],
             flexWrap: 'wrap',
+            minWidth: 0,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[3], minWidth: 0 }}>
-            <h2
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-              }}
-            >
-              {dayHeading}
-            </h2>
-            <span
-              style={{
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {day.loading
-                ? ''
-                : day.data.length === 0
-                  ? 'No appointments'
-                  : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
-            </span>
-          </div>
-          {showLayoutToggle ? (
-            <SegmentedControl<Layout>
-              ariaLabel="Day view layout"
-              value={layout}
-              onChange={setLayout}
-              size="sm"
-              options={[
-                {
-                  value: 'calendar',
-                  label: <CalendarDays size={16} aria-label="Calendar view" />,
-                },
-                {
-                  value: 'list',
-                  label: <List size={16} aria-label="List view" />,
-                },
-              ]}
-            />
-          ) : null}
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            {dayHeading}
+          </h2>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {day.loading
+              ? ''
+              : day.data.length === 0
+                ? 'No appointments'
+                : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+          </span>
         </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   addDaysIso,
   formatDateIso,
-  formatWeekLabel,
   getWeekDays,
   getWeekStartIso,
   monthLabel,
@@ -130,24 +129,3 @@ describe('getWeekDays', () => {
   });
 });
 
-describe('formatWeekLabel', () => {
-  it('returns "Month YYYY" when the week sits in one month', () => {
-    // 6-12 April 2026: all April
-    expect(formatWeekLabel('2026-04-06', '2026-04-12')).toBe('April 2026');
-  });
-
-  it('joins months with a hyphen when the week straddles two', () => {
-    // 27 April-3 May 2026
-    expect(formatWeekLabel('2026-04-27', '2026-05-03')).toBe('April-May 2026');
-  });
-
-  it('joins short month + year on each side when crossing a year boundary', () => {
-    // 29 Dec 2025-4 Jan 2026
-    expect(formatWeekLabel('2025-12-29', '2026-01-04')).toBe('Dec 2025-Jan 2026');
-  });
-
-  it('handles January-spanning weeks where same-year branch is taken', () => {
-    // Jan 2026 only — same month
-    expect(formatWeekLabel('2026-01-05', '2026-01-11')).toBe('January 2026');
-  });
-});
