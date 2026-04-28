@@ -24,7 +24,15 @@ export interface ArrivalIntakePatientInput {
   sex?: string | null;
   email?: string | null;
   phone?: string | null;
-  address?: string | null;
+  // Structured address — these mirror Meridian's portal_ship_* columns.
+  // The legacy single-line `patients.address` field is no longer
+  // written by the intake gate; new patients fill the structured set
+  // and existing patients keep whatever was synced from Shopify.
+  portal_ship_line1?: string | null;
+  portal_ship_line2?: string | null;
+  portal_ship_city?: string | null;
+  portal_ship_postcode?: string | null;
+  portal_ship_country_code?: string | null;
   allergies?: string | null;
   emergency_contact_name?: string | null;
   emergency_contact_phone?: string | null;
@@ -37,14 +45,18 @@ export interface ArrivalIntakeSnapshot {
   sex: string | null;
   email: string | null;
   phone: string | null;
-  address: string | null;
+  portal_ship_line1: string | null;
+  portal_ship_line2: string | null;
+  portal_ship_city: string | null;
+  portal_ship_postcode: string | null;
+  portal_ship_country_code: string | null;
   allergies: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
 }
 
 const INTAKE_PATIENT_COLUMNS =
-  'first_name, last_name, date_of_birth, sex, email, phone, address, allergies, emergency_contact_name, emergency_contact_phone';
+  'first_name, last_name, date_of_birth, sex, email, phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, allergies, emergency_contact_name, emergency_contact_phone';
 
 // Reads the patient columns the intake sheet needs. Tolerates a missing
 // emergency_contact_* column (pre-migration deploys) by retrying with
@@ -60,7 +72,7 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
     if (error.code === '42703') {
       const { data: legacy, error: legacyErr } = await supabase
         .from('patients')
-        .select('first_name, last_name, date_of_birth, sex, email, phone, address, allergies')
+        .select('first_name, last_name, date_of_birth, sex, email, phone, allergies')
         .eq('id', patientId)
         .maybeSingle();
       if (legacyErr) throw new Error(legacyErr.message);
@@ -72,7 +84,11 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
         sex: row.sex ?? null,
         email: row.email ?? null,
         phone: row.phone ?? null,
-        address: row.address ?? null,
+        portal_ship_line1: null,
+        portal_ship_line2: null,
+        portal_ship_city: null,
+        portal_ship_postcode: null,
+        portal_ship_country_code: null,
         allergies: row.allergies ?? null,
         emergency_contact_name: null,
         emergency_contact_phone: null,
@@ -88,7 +104,11 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
     sex: row.sex ?? null,
     email: row.email ?? null,
     phone: row.phone ?? null,
-    address: row.address ?? null,
+    portal_ship_line1: row.portal_ship_line1 ?? null,
+    portal_ship_line2: row.portal_ship_line2 ?? null,
+    portal_ship_city: row.portal_ship_city ?? null,
+    portal_ship_postcode: row.portal_ship_postcode ?? null,
+    portal_ship_country_code: row.portal_ship_country_code ?? null,
     allergies: row.allergies ?? null,
     emergency_contact_name: row.emergency_contact_name ?? null,
     emergency_contact_phone: row.emergency_contact_phone ?? null,
@@ -131,7 +151,11 @@ export async function submitArrivalIntake(
   setIfBlank('sex', input.patient.sex);
   setIfBlank('email', input.patient.email);
   setIfBlank('phone', input.patient.phone);
-  setIfBlank('address', input.patient.address);
+  setIfBlank('portal_ship_line1', input.patient.portal_ship_line1);
+  setIfBlank('portal_ship_line2', input.patient.portal_ship_line2);
+  setIfBlank('portal_ship_city', input.patient.portal_ship_city);
+  setIfBlank('portal_ship_postcode', input.patient.portal_ship_postcode);
+  setIfBlank('portal_ship_country_code', input.patient.portal_ship_country_code);
   setIfBlank('allergies', input.patient.allergies);
   setIfBlank('emergency_contact_name', input.patient.emergency_contact_name);
   setIfBlank('emergency_contact_phone', input.patient.emergency_contact_phone);

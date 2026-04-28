@@ -36,12 +36,21 @@ export interface PatientProfileRow {
   avatar_data: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
+  // Structured address mirrored from Meridian's portal_ship_* columns
+  // (populated by Shopify sync + the One Click portal). The legacy
+  // single-line `address` field is no longer surfaced — receptionists
+  // and the arrival intake gate read/write the structured fields.
+  portal_ship_line1: string | null;
+  portal_ship_line2: string | null;
+  portal_ship_city: string | null;
+  portal_ship_postcode: string | null;
+  portal_ship_country_code: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
 
 const PATIENT_PROFILE_COLUMNS =
-  'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, sex, address, registered_at, shopify_customer_id, lwo_contact_id, lwo_ref, referred_by, insurance, allergies, communication_preferences, notes, avatar_data, emergency_contact_name, emergency_contact_phone, created_at, updated_at';
+  'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, sex, address, registered_at, shopify_customer_id, lwo_contact_id, lwo_ref, referred_by, insurance, allergies, communication_preferences, notes, avatar_data, emergency_contact_name, emergency_contact_phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, created_at, updated_at';
 
 interface ProfileResult {
   data: PatientProfileRow | null;
@@ -95,6 +104,11 @@ export function usePatientProfile(id: string | null | undefined): ProfileResult 
               avatar_data: null,
               emergency_contact_name: null,
               emergency_contact_phone: null,
+              portal_ship_line1: null,
+              portal_ship_line2: null,
+              portal_ship_city: null,
+              portal_ship_postcode: null,
+              portal_ship_country_code: null,
               created_at: null,
               updated_at: null,
             } as PatientProfileRow);

@@ -247,7 +247,11 @@ function buildHeroFields(p: PatientProfileRow): FieldDef[] {
     { label: 'Sex', value: p.sex ? properCase(p.sex) : null },
     { label: 'Email', value: p.email },
     { label: 'Phone', value: p.phone },
-    { label: 'Address', value: p.address },
+    { label: 'Address line 1', value: p.portal_ship_line1 },
+    { label: 'Address line 2', value: p.portal_ship_line2 },
+    { label: 'City', value: p.portal_ship_city },
+    { label: 'Postcode', value: p.portal_ship_postcode },
+    { label: 'Country', value: p.portal_ship_country_code },
     { label: 'Emergency contact', value: p.emergency_contact_name },
     { label: 'Emergency phone', value: p.emergency_contact_phone },
     { label: 'Registered', value: formatDate(p.registered_at) },
@@ -293,12 +297,12 @@ function FieldGrid({ fields, isMobile }: { fields: FieldDef[]; isMobile: boolean
                 fontFamily: f.mono ? monoStack : 'inherit',
                 fontWeight: theme.type.weight.medium,
                 color: empty ? theme.color.inkSubtle : theme.color.ink,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                // Allow long values (emails, addresses) to wrap rather
+                // than ellipsis-truncate. wordBreak handles single
+                // unbroken tokens like long email locals.
+                wordBreak: 'break-word',
                 lineHeight: 1.4,
               }}
-              title={empty ? undefined : f.value!}
             >
               {empty ? '—' : f.value}
             </div>
