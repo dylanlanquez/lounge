@@ -322,19 +322,22 @@ function FabTab({ label, active, onClick }: { label: string; active: boolean; on
           width: FAB_SIZE,
           height: FAB_SIZE,
           borderRadius: theme.radius.pill,
-          background: theme.color.accent,
+          // Graphite (theme's `consult` category tone) sits forward
+          // enough to be the dominant action without the forest-green
+          // shouting at staff every time they glance at the surface.
+          background: theme.color.category.consult,
           color: theme.color.surface,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          // Tinted shadow in the brand accent gives the FAB a soft
-          // glow rather than a heavy grey drop.
+          // Soft, neutral shadow — about half the previous depth so the
+          // circle reads as raised but not theatrical.
           boxShadow:
-            '0 14px 32px rgba(31, 77, 58, 0.32), 0 4px 10px rgba(31, 77, 58, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.18)',
+            '0 6px 16px rgba(14, 20, 20, 0.14), 0 2px 4px rgba(14, 20, 20, 0.08)',
           transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
       >
-        <Plus size={28} strokeWidth={2.4} />
+        <Plus size={26} strokeWidth={2.4} />
       </span>
       <span>{label}</span>
     </button>
