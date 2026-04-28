@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { CalendarOff, ChevronRight, Plus } from 'lucide-react';
 import {
@@ -13,11 +13,13 @@ import {
 } from '../components/index.ts';
 import {
   CalendarGrid,
-  assignAppointmentLanes,
+  layoutAppointments,
   offsetForTime,
   heightForDuration,
 } from '../components/CalendarGrid/CalendarGrid.tsx';
 import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
+import { ClusterCard } from '../components/ClusterCard/ClusterCard.tsx';
+import { ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
@@ -33,19 +35,43 @@ import { markAppointmentArrived } from '../lib/queries/visits.ts';
 import { supabase } from '../lib/supabase.ts';
 
 type View = 'today' | 'upcoming' | 'past';
+type Layout = 'calendar' | 'list';
+
+const LAYOUT_KEY = 'lounge.scheduleLayout';
 
 export function Schedule() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const [view, setView] = useState<View>('today');
+  const [layout, setLayout] = useState<Layout>(() => {
+    if (typeof window === 'undefined') return 'calendar';
+    const saved = window.localStorage.getItem(LAYOUT_KEY);
+    return saved === 'list' || saved === 'calendar' ? saved : 'calendar';
+  });
   const [selected, setSelected] = useState<AppointmentRow | null>(null);
+  const [clusterRows, setClusterRows] = useState<AppointmentRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const today = useTodayAppointments();
   const upcoming = useUpcomingAppointments(14);
   const past = usePastAppointments(30);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LAYOUT_KEY, layout);
+    }
+  }, [layout]);
+
+  // Auto-switch to list when today is dense and the user hasn't picked yet.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(LAYOUT_KEY);
+    if (!saved && today.data.length > 8) {
+      setLayout('list');
+    }
+  }, [today.data.length]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -121,6 +147,19 @@ export function Schedule() {
           />
         </div>
 
+        {view === 'today' && today.data.length > 0 ? (
+          <div style={{ marginBottom: theme.space[4], display: 'flex', justifyContent: 'flex-end' }}>
+            <SegmentedControl<Layout>
+              value={layout}
+              onChange={setLayout}
+              options={[
+                { value: 'calendar', label: 'Calendar' },
+                { value: 'list', label: 'List' },
+              ]}
+            />
+          </div>
+        ) : null}
+
         <Card padding={isMobile ? 'sm' : 'md'}>
           {view === 'today' ? (
             today.loading ? (
@@ -131,25 +170,40 @@ export function Schedule() {
                 title="No appointments today"
                 description="Tap the New walk-in button above when someone arrives, or wait for Calendly bookings to land."
               />
+            ) : layout === 'list' ? (
+              <ScheduleListView rows={today.data} onPick={setSelected} />
             ) : (
               <div style={{ paddingTop: theme.space[2] }}>
                 <CalendarGrid>
-                  {assignAppointmentLanes(today.data).map((a) => (
-                    <AppointmentCard
-                      key={a.id}
-                      patientName={patientDisplayName(a)}
-                      startAt={a.start_at}
-                      endAt={a.end_at}
-                      status={a.status}
-                      staffName={staffDisplayName(a)}
-                      serviceLabel={a.event_type_label ?? undefined}
-                      top={offsetForTime(a.start_at, 8, 80)}
-                      height={heightForDuration(a.start_at, a.end_at, 80)}
-                      lane={a.lane}
-                      lanesInGroup={a.lanesInGroup}
-                      onClick={() => setSelected(a)}
-                    />
-                  ))}
+                  {layoutAppointments(today.data).map((item) =>
+                    item.kind === 'card' ? (
+                      <AppointmentCard
+                        key={item.data.id}
+                        patientName={patientDisplayName(item.data)}
+                        startAt={item.data.start_at}
+                        endAt={item.data.end_at}
+                        status={item.data.status}
+                        staffName={staffDisplayName(item.data)}
+                        serviceLabel={item.data.event_type_label ?? undefined}
+                        top={offsetForTime(item.data.start_at, 8, 80)}
+                        height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
+                        lane={item.lane}
+                        lanesInGroup={item.lanesInGroup}
+                        onClick={() => setSelected(item.data)}
+                      />
+                    ) : (
+                      <ClusterCard
+                        key={item.key}
+                        count={item.rows.length}
+                        startAt={item.startAt}
+                        endAt={item.endAt}
+                        firstNames={item.rows.map((r) => firstNameOf(patientDisplayName(r)))}
+                        top={offsetForTime(item.startAt, 8, 80)}
+                        height={heightForDuration(item.startAt, item.endAt, 80)}
+                        onClick={() => setClusterRows(item.rows)}
+                      />
+                    )
+                  )}
                 </CalendarGrid>
               </div>
             )
@@ -272,6 +326,88 @@ export function Schedule() {
         </BottomSheet>
       ) : null}
 
+      {clusterRows ? (
+        <BottomSheet
+          open={!!clusterRows}
+          onClose={() => setClusterRows(null)}
+          title={`${clusterRows.length} appointments`}
+          description={`${formatRange(clusterRows[0]!.start_at, clusterRows[clusterRows.length - 1]!.end_at)} · tap one to open`}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            {clusterRows.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => {
+                  setClusterRows(null);
+                  setSelected(r);
+                }}
+                style={{
+                  appearance: 'none',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: theme.space[3],
+                  background: theme.color.surface,
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: 12,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                  minHeight: 56,
+                }}
+              >
+                <span
+                  style={{
+                    width: 80,
+                    flexShrink: 0,
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.semibold,
+                    fontVariantNumeric: 'tabular-nums',
+                    color: theme.color.ink,
+                  }}
+                >
+                  {formatRange(r.start_at, r.end_at)}
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontSize: theme.type.size.sm,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.ink,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {patientDisplayName(r)}
+                  </span>
+                  {r.event_type_label ? (
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: theme.type.size.xs,
+                        color: theme.color.inkMuted,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        marginTop: 2,
+                      }}
+                    >
+                      {r.event_type_label}
+                    </span>
+                  ) : null}
+                </span>
+                <StatusPill tone={r.status === 'booked' ? 'neutral' : 'arrived'} size="sm">
+                  {r.status.replace(/_/g, ' ')}
+                </StatusPill>
+              </button>
+            ))}
+          </div>
+        </BottomSheet>
+      ) : null}
+
       {error ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
           <Toast tone="error" title="Could not update" description={error} onDismiss={() => setError(null)} />
@@ -279,6 +415,12 @@ export function Schedule() {
       ) : null}
     </main>
   );
+}
+
+function firstNameOf(fullName: string): string {
+  const trimmed = fullName.trim();
+  const space = trimmed.indexOf(' ');
+  return space === -1 ? trimmed : trimmed.slice(0, space);
 }
 
 function SkeletonRows() {

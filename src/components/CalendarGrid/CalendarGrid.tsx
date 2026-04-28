@@ -147,65 +147,93 @@ export function heightForDuration(startIso: string, endIso: string, pxPerHour: n
   const start = new Date(startIso).getTime();
   const end = new Date(endIso).getTime();
   const hours = (end - start) / (1000 * 60 * 60);
-  return Math.max(28, hours * pxPerHour);
+  // Min 56px so a 30-min appointment in a half-width lane still fits the
+  // patient name + time without clipping. The visual bar still represents
+  // the true duration; the card just doesn't compress further.
+  return Math.max(56, hours * pxPerHour);
 }
 
-// Assigns side-by-side lanes to overlapping appointments. Each input gets
-// `lane` (0-indexed column) and `lanesInGroup` (total columns in this overlap
-// cluster). Non-overlapping appointments get lane=0, lanesInGroup=1 so they
-// render full-width unchanged.
+// Threshold above which an overlap cluster collapses into a single
+// ClusterCard. ≤ this number renders as side-by-side lanes.
 //
-// Algorithm: sort by start, walk forward grouping by overlap with running
-// max end_at. Within each cluster, greedy lane assignment — first lane whose
-// previous occupant has ended.
-export function assignAppointmentLanes<T extends { start_at: string; end_at: string }>(
+// Why 2: at half-width on a tablet the patient name still reads clearly
+// (~280px). At 1/3 width it cramps. Cluster cards scale to any count.
+export const LANE_CAP = 2;
+
+export type LayoutItem<T> =
+  | { kind: 'card'; data: T; lane: number; lanesInGroup: number }
+  | { kind: 'cluster'; rows: T[]; startAt: string; endAt: string; key: string };
+
+// Lays out appointments for the calendar grid. Non-overlapping rows render as
+// full-width cards. 2-overlap renders as side-by-side lanes. 3+ overlap
+// collapses into a single cluster card spanning the union time range — the
+// caller renders it with onClick → expand into a sheet.
+//
+// Algorithm: sort by start, walk forward grouping by overlap (running max
+// end_at). For each cluster: if size ≤ LANE_CAP greedy-assign lanes; else
+// emit one cluster item.
+export function layoutAppointments<T extends { id: string; start_at: string; end_at: string }>(
   rows: T[]
-): Array<T & { lane: number; lanesInGroup: number }> {
+): Array<LayoutItem<T>> {
   if (rows.length === 0) return [];
   const sorted = [...rows].sort((a, b) =>
     a.start_at < b.start_at ? -1 : a.start_at > b.start_at ? 1 : 0
   );
 
-  type WithLane = T & { lane: number; lanesInGroup: number };
-  const result: WithLane[] = new Array(sorted.length);
-
+  const out: Array<LayoutItem<T>> = [];
   let clusterStart = 0;
   let clusterEnd = sorted[0]!.end_at;
-  let laneEndsAt: string[] = [];
 
-  const flushCluster = (endIdx: number) => {
-    const total = laneEndsAt.length;
-    for (let k = clusterStart; k < endIdx; k++) {
-      result[k] = { ...result[k]!, lanesInGroup: total };
+  const emitCluster = (endIdx: number) => {
+    const cluster = sorted.slice(clusterStart, endIdx);
+    if (cluster.length === 0) return;
+    if (cluster.length <= LANE_CAP) {
+      const laneEndsAt: string[] = [];
+      const sized: Array<{ row: T; lane: number }> = [];
+      for (const row of cluster) {
+        let laneIdx = laneEndsAt.findIndex((endAt) => endAt <= row.start_at);
+        if (laneIdx === -1) {
+          laneIdx = laneEndsAt.length;
+          laneEndsAt.push(row.end_at);
+        } else {
+          laneEndsAt[laneIdx] = row.end_at;
+        }
+        sized.push({ row, lane: laneIdx });
+      }
+      const lanesInGroup = laneEndsAt.length;
+      for (const { row, lane } of sized) {
+        out.push({ kind: 'card', data: row, lane, lanesInGroup });
+      }
+    } else {
+      let earliest = cluster[0]!.start_at;
+      let latest = cluster[0]!.end_at;
+      for (const r of cluster) {
+        if (r.start_at < earliest) earliest = r.start_at;
+        if (r.end_at > latest) latest = r.end_at;
+      }
+      out.push({
+        kind: 'cluster',
+        rows: cluster,
+        startAt: earliest,
+        endAt: latest,
+        key: `cluster-${cluster.map((r) => r.id).join('-')}`,
+      });
     }
   };
 
   for (let i = 0; i < sorted.length; i++) {
     const appt = sorted[i]!;
     if (i === clusterStart || appt.start_at < clusterEnd) {
-      // Continues current cluster — place into a free lane.
-      let laneIdx = laneEndsAt.findIndex((endAt) => endAt <= appt.start_at);
-      if (laneIdx === -1) {
-        laneIdx = laneEndsAt.length;
-        laneEndsAt.push(appt.end_at);
-      } else {
-        laneEndsAt[laneIdx] = appt.end_at;
-      }
-      result[i] = { ...appt, lane: laneIdx, lanesInGroup: 0 } as WithLane;
       if (appt.end_at > clusterEnd) clusterEnd = appt.end_at;
     } else {
-      // Cluster boundary — backfill the previous cluster's lanesInGroup.
-      flushCluster(i);
-      // Start a new cluster.
+      emitCluster(i);
       clusterStart = i;
       clusterEnd = appt.end_at;
-      laneEndsAt = [appt.end_at];
-      result[i] = { ...appt, lane: 0, lanesInGroup: 0 } as WithLane;
     }
   }
-  flushCluster(sorted.length);
+  emitCluster(sorted.length);
 
-  return result;
+  return out;
 }
 
 function formatHour(h: number): string {
