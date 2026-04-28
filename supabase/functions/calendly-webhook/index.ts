@@ -155,7 +155,8 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   const eventUri = evt.payload?.scheduled_event?.uri;
   const startAt = evt.payload?.scheduled_event?.start_time;
   const endAt = evt.payload?.scheduled_event?.end_time;
-  const email = evt.payload?.email?.toLowerCase().trim() ?? null;
+  const rawEmail = evt.payload?.email?.toLowerCase().trim() ?? null;
+  const email = isPlaceholderEmail(rawEmail) ? null : rawEmail;
   const firstName = evt.payload?.first_name ?? splitName(evt.payload?.name).first;
   const lastName = evt.payload?.last_name ?? splitName(evt.payload?.name).last;
   const eventTypeLabel = evt.payload?.scheduled_event?.name ?? null;
@@ -316,6 +317,28 @@ function splitName(name: string | undefined): { first: string; last: string } {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return { first: parts[0]!, last: '' };
   return { first: parts[0]!, last: parts.slice(1).join(' ') };
+}
+
+// Mirror of src/lib/identity.ts::isPlaceholderEmail. Keep both in sync —
+// the vitest suite under src/lib/identity.test.ts is source-of-truth.
+const PLACEHOLDER_LOCAL_RE =
+  /^(no[\-_.]?email|none|noaddress|no[\-_.]?reply|donotreply|do[\-_.]?not[\-_.]?reply|unknown|na|n\/a)$/;
+const PLACEHOLDER_DOMAINS = new Set([
+  'noemail.com',
+  'noaddress.com',
+  'example.com',
+  'test.com',
+  'invalid.com',
+]);
+function isPlaceholderEmail(email: string | null | undefined): boolean {
+  if (!email) return true;
+  const trimmed = email.toLowerCase().trim();
+  if (!trimmed || !trimmed.includes('@')) return true;
+  const [local, domain] = trimmed.split('@');
+  if (!local || !domain) return true;
+  if (PLACEHOLDER_LOCAL_RE.test(local)) return true;
+  if (PLACEHOLDER_DOMAINS.has(domain)) return true;
+  return false;
 }
 
 async function resolveDefaultAccountId(supabase: SupabaseClient, location_id: string): Promise<string> {
