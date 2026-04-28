@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './lib/auth.tsx';
 import { theme } from './theme/index.ts';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
+import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
 
 const SignIn = lazy(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })));
 const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })));
@@ -34,6 +35,7 @@ function RouteFallback() {
 export function App() {
   return (
     <AuthProvider>
+      <KioskStatusBar />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<Navigate to="/schedule" replace />} />

@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
+import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
@@ -155,6 +156,7 @@ export function Pay() {
           minHeight: '100dvh',
           background: theme.color.bg,
           padding: isMobile ? theme.space[4] : theme.space[6],
+          paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${isMobile ? theme.space[4] : theme.space[6]}px + env(safe-area-inset-top, 0px))`,
           paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
         }}
       >
@@ -178,6 +180,7 @@ export function Pay() {
         minHeight: '100dvh',
         background: theme.color.bg,
         padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${isMobile ? theme.space[4] : theme.space[6]}px + env(safe-area-inset-top, 0px))`,
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
