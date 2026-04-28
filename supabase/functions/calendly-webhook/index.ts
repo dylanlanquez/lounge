@@ -159,6 +159,8 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   const firstName = evt.payload?.first_name ?? splitName(evt.payload?.name).first;
   const lastName = evt.payload?.last_name ?? splitName(evt.payload?.name).last;
   const eventTypeLabel = evt.payload?.scheduled_event?.name ?? null;
+  const intake = evt.payload?.questions_and_answers ?? null;
+  const phone = ((evt.payload as { text_reminder_number?: string } | undefined)?.text_reminder_number ?? '').trim() || null;
 
   if (!startAt || !endAt) throw new Error('missing start_time or end_time');
 
@@ -191,18 +193,18 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       .maybeSingle();
     if (existing) {
       patient_id = (existing as { id: string }).id;
-      // fill-blanks merge: only set name fields if currently null. Use a SQL
-      // expression via update with COALESCE-like behaviour by reading first.
+      // fill-blanks merge: only set fields if currently null. Read first,
+      // patch only the missing ones — never overwrite existing values.
       const { data: cur } = await supabase
         .from('patients')
-        .select('first_name, last_name')
+        .select('first_name, last_name, phone')
         .eq('id', patient_id)
         .maybeSingle();
       const patch: Record<string, string> = {};
-      if (cur && (cur as { first_name: string | null }).first_name == null && firstName)
-        patch.first_name = firstName;
-      if (cur && (cur as { last_name: string | null }).last_name == null && lastName)
-        patch.last_name = lastName;
+      const curRow = cur as { first_name: string | null; last_name: string | null; phone: string | null } | null;
+      if (curRow && curRow.first_name == null && firstName) patch.first_name = firstName;
+      if (curRow && curRow.last_name == null && lastName) patch.last_name = lastName;
+      if (curRow && curRow.phone == null && phone) patch.phone = phone;
       if (Object.keys(patch).length > 0) {
         await supabase.from('patients').update(patch).eq('id', patient_id);
       }
@@ -217,6 +219,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
         first_name: firstName || 'Patient',
         last_name: lastName || '',
         email,
+        phone,
       })
       .select('id')
       .single();
@@ -241,6 +244,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       start_at: startAt,
       end_at: endAt,
       event_type_label: eventTypeLabel,
+      intake,
       status: 'booked',
     });
   if (apptErr && apptErr.code !== '23505') throw new Error(apptErr.message);
