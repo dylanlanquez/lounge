@@ -198,6 +198,37 @@ describe('formatBookingSummary', () => {
       )
     ).toBe('Upper and Lower Retainer');
   });
+
+  it('comma-joins multi-select repair-type answers', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Denture Repairs', [
+          { question: 'Repair Type', answer: 'Broken Tooth/Teeth\nRelining (Upper or Lower)' },
+        ])
+      )
+    ).toBe('Broken Tooth/Teeth, Relining (Upper or Lower)');
+  });
+
+  it('comma-joins multi-select appliances with arch', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Same-day Appliances', [
+          { question: 'Appliance', answer: 'Retainer\nNight Guard' },
+          { question: 'Which Arch?', answer: 'Top' },
+        ])
+      )
+    ).toBe('Upper Retainer, Night Guard');
+  });
+
+  it('strips empty lines and extra whitespace from multi-select', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Denture Repairs', [
+          { question: 'Repair Type', answer: '  Cracked Denture\n\n  Snapped Denture  \n' },
+        ])
+      )
+    ).toBe('Cracked Denture, Snapped Denture');
+  });
 });
 
 describe('eventTypeCategory', () => {

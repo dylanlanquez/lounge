@@ -236,6 +236,19 @@ export function eventTypeCategory(
 // Combines arch + appliance/repair into "Upper Missing Tooth Retainer";
 // strips event-type prefixes ("Same-day ", "In-person ", "Virtual ") so the
 // final string stays compact and clinical.
+// Calendly multi-select answers come back as newline-separated values
+// (e.g. "Broken Tooth/Teeth\nRelining (Upper or Lower)"). Render them as
+// a comma-joined natural-English list.
+function joinMultiSelect(answer: string | undefined | null): string | undefined {
+  if (!answer) return undefined;
+  const parts = answer
+    .split(/\r?\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return parts.join(', ');
+}
+
 export function formatBookingSummary(row: AppointmentRow): string {
   const answers = filterCareIntake(row.intake);
   // Match arch by question label first; if no question matches, fall back to
@@ -247,7 +260,7 @@ export function formatBookingSummary(row: AppointmentRow): string {
     (a) => SUBJECT_QUESTION.test(a.question ?? '') && (!arch || a !== arch)
   );
   const archLabel = arch ? archToAnatomy(arch.answer) : undefined;
-  const subjectLabel = subject?.answer.trim() || undefined;
+  const subjectLabel = joinMultiSelect(subject?.answer);
 
   const event = row.event_type_label?.trim() ?? '';
 
@@ -266,7 +279,10 @@ export function formatBookingSummary(row: AppointmentRow): string {
   if (subjectLabel) return subjectLabel;
   if (archLabel && eventStripped) return `${archLabel} ${eventStripped}`;
   if (answers.length > 0) {
-    return answers.map((a) => a.answer.trim()).filter(Boolean).join(' · ');
+    return answers
+      .map((a) => joinMultiSelect(a.answer))
+      .filter((s): s is string => !!s)
+      .join(' · ');
   }
   return event;
 }
