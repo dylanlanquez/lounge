@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 
 export interface PatientFileRow {
@@ -13,50 +12,6 @@ export interface PatientFileRow {
   status: 'active' | 'archived' | 'pending' | 'pending_review';
   is_delivery: boolean;
   uploaded_at: string;
-}
-
-export interface FileLabelRow {
-  id: string;
-  key: string;
-  display_name: string | null;
-  sort_order: number | null;
-}
-
-interface ListResult {
-  data: PatientFileRow[];
-  loading: boolean;
-  error: string | null;
-  refresh: () => void;
-}
-
-export function usePatientFiles(patientId: string | undefined): ListResult {
-  const [data, setData] = useState<PatientFileRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    if (!patientId) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data: rows, error: err } = await supabase
-        .from('patient_files')
-        .select('*')
-        .eq('patient_id', patientId)
-        .eq('status', 'active')
-        .order('uploaded_at', { ascending: false });
-      if (cancelled) return;
-      if (err) setError(err.message);
-      setData((rows ?? []) as PatientFileRow[]);
-      setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [patientId, tick]);
-
-  return { data, loading, error, refresh: () => setTick((t) => t + 1) };
 }
 
 export async function getOrCreateLabel(key: string, displayName: string): Promise<string> {
@@ -86,7 +41,7 @@ export async function uploadPatientFile(args: {
   const labelId = await getOrCreateLabel(args.labelKey, args.labelDisplayName);
 
   // Storage path: patient_<slug>/<label>_<uid>.<ext>
-  const slug = args.patientName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '');
+  const slug = args.patientName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
   const ext = args.file.name.split('.').pop()?.toLowerCase() ?? 'bin';
   const uid = crypto.randomUUID().slice(0, 8);
   const path = `patient_${slug}/${args.labelKey}_${uid}.${ext}`;
