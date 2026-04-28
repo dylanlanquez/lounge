@@ -577,7 +577,7 @@ function AppointmentList({
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {a.event_type_label ?? 'Appointment'}
+                      {formatBookingSummary(a) || 'Appointment'}
                       {staffDisplayName(a) ? ` · ${staffDisplayName(a)}` : ''}
                     </p>
                   </div>
