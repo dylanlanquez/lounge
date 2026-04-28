@@ -1,11 +1,12 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CalendarDays, Plus, Users } from 'lucide-react';
+import { Plus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { CalendarIcon } from '../Icons/CalendarIcon.tsx';
 import { ToothIcon } from '../Icons/ToothIcon.tsx';
 
 // Returns true when the bottom nav should render. Pulled out as a named
@@ -91,7 +92,7 @@ export function BottomNav() {
           <li>
             <NavTab
               label="Schedule"
-              icon={<CalendarDays size={22} />}
+              icon={<CalendarIcon size={22} />}
               active={isSchedule}
               onClick={onSchedule}
             />
