@@ -448,9 +448,9 @@ function WaiverCard({
 }) {
   const wrapStyle = (border: string): React.CSSProperties => ({
     display: 'flex',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: theme.space[3],
-    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+    padding: `${theme.space[4]}px ${theme.space[4]}px`,
     marginBottom: theme.space[5],
     borderRadius: theme.radius.input,
     background: theme.color.surface,
@@ -470,7 +470,7 @@ function WaiverCard({
   if (schemaError) {
     return (
       <div role="alert" style={wrapStyle(theme.color.alert)}>
-        <AlertTriangle size={18} color={theme.color.alert} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <WaiverBadge tone="alert" icon={<AlertTriangle size={22} />} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.alert }}>
             Waiver unavailable
@@ -490,7 +490,7 @@ function WaiverCard({
     // explicit about it instead of failing silent.
     return (
       <div role="alert" style={wrapStyle(theme.color.warn)}>
-        <AlertTriangle size={18} color={theme.color.warn} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <WaiverBadge tone="warn" icon={<AlertTriangle size={22} />} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.warn }}>
             Waiver not configured
@@ -510,7 +510,7 @@ function WaiverCard({
   if (requiredCount === 0) {
     return (
       <div style={wrapStyle(theme.color.border)}>
-        <CheckCircle2 size={16} color={theme.color.inkSubtle} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <WaiverBadge tone="muted" icon={<CheckCircle2 size={22} />} />
         <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
           No waiver required for this visit.
         </span>
@@ -521,13 +521,13 @@ function WaiverCard({
   if (flag.status === 'ready') {
     return (
       <div style={wrapStyle(theme.color.border)}>
-        <CheckCircle2 size={16} color={theme.color.accent} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+        <WaiverBadge tone="accent" icon={<CheckCircle2 size={22} />} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
             Waiver signed and up to date
           </p>
           <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            Every required section is current. Print and view-signed land in the next phase.
+            Every required section is current.
           </p>
         </div>
       </div>
@@ -545,7 +545,7 @@ function WaiverCard({
 
   return (
     <div role="alert" style={wrapStyle(theme.color.alert)}>
-      <AlertTriangle size={18} color={theme.color.alert} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+      <WaiverBadge tone="alert" icon={<AlertTriangle size={22} />} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.alert }}>
           {title}
@@ -558,6 +558,38 @@ function WaiverCard({
         {ctaLabel}
       </Button>
     </div>
+  );
+}
+
+// Circular icon badge used by the WaiverCard header. Tinted background
+// gives the leading icon enough visual weight to read as a status badge
+// rather than a punctuation glyph next to the title.
+type WaiverBadgeTone = 'accent' | 'alert' | 'warn' | 'muted';
+function WaiverBadge({ tone, icon }: { tone: WaiverBadgeTone; icon: React.ReactNode }) {
+  const palette: Record<WaiverBadgeTone, { bg: string; fg: string }> = {
+    accent: { bg: theme.color.accentBg, fg: theme.color.accent },
+    alert: { bg: 'rgba(184, 58, 42, 0.10)', fg: theme.color.alert },
+    warn: { bg: 'rgba(179, 104, 21, 0.10)', fg: theme.color.warn },
+    muted: { bg: theme.color.bg, fg: theme.color.inkSubtle },
+  };
+  const { bg, fg } = palette[tone];
+  return (
+    <span
+      aria-hidden
+      style={{
+        flexShrink: 0,
+        width: 40,
+        height: 40,
+        borderRadius: '50%',
+        background: bg,
+        color: fg,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {icon}
+    </span>
   );
 }
 
