@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 
 export interface BottomSheetProps {
@@ -13,6 +13,11 @@ export interface BottomSheetProps {
   // If false, no close button shown and clicking the backdrop does not dismiss.
   // Used for "must answer" sheets like the BNPL helper pre-flight.
   dismissable?: boolean;
+  // When provided, renders a chevron-left icon button on the left of the
+  // header. Used when the sheet has internal navigation — e.g. drilling
+  // from a cluster list into one of its rows — so the receptionist can
+  // pop back without dismissing the sheet entirely.
+  onBack?: () => void;
 }
 
 export function BottomSheet({
@@ -23,6 +28,7 @@ export function BottomSheet({
   children,
   footer,
   dismissable = true,
+  onBack,
 }: BottomSheetProps) {
   useEffect(() => {
     if (!open) return;
@@ -90,15 +96,39 @@ export function BottomSheet({
           />
         </div>
 
-        {(title || description || dismissable) && (
+        {(title || description || dismissable || onBack) && (
           <header
             style={{
               padding: `${theme.space[5]}px ${theme.space[6]}px ${theme.space[3]}px`,
               display: 'flex',
               alignItems: 'flex-start',
-              gap: theme.space[4],
+              gap: theme.space[3],
             }}
           >
+            {onBack ? (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                style={{
+                  appearance: 'none',
+                  border: 'none',
+                  background: 'transparent',
+                  color: theme.color.ink,
+                  cursor: 'pointer',
+                  padding: theme.space[2],
+                  marginTop: -theme.space[2],
+                  marginLeft: -theme.space[2],
+                  borderRadius: theme.radius.pill,
+                  flexShrink: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <ChevronLeft size={22} />
+              </button>
+            ) : null}
             <div style={{ flex: 1, minWidth: 0 }}>
               {title ? (
                 <h2

@@ -117,6 +117,7 @@ export function Schedule() {
 
   const closeSheet = () => {
     setSelected(null);
+    setClusterRows(null);
     setPickingNoShowReason(false);
   };
 
@@ -370,15 +371,32 @@ export function Schedule() {
         </p>
       </div>
 
-      {selected ? (
+      {selected || clusterRows ? (
         <BottomSheet
-          open={!!selected}
+          open={true}
           onClose={closeSheet}
-          title={pickingNoShowReason ? 'Why was this a no-show?' : patientFullDisplayName(selected)}
+          // Header back chevron unifies the two pop-back affordances:
+          //   - In reason picker → back to the patient detail
+          //   - In a cluster-driven detail → back to the cluster list
+          // Otherwise no back button — close-X is the only escape.
+          onBack={
+            pickingNoShowReason
+              ? () => setPickingNoShowReason(false)
+              : selected && clusterRows
+                ? () => setSelected(null)
+                : undefined
+          }
+          title={
+            pickingNoShowReason
+              ? 'Why was this a no-show?'
+              : selected
+                ? patientFullDisplayName(selected)
+                : `${clusterRows!.length} appointments`
+          }
           description={
             pickingNoShowReason ? (
               <span>Pick the reason. We log it against the appointment so reports show no-show causes.</span>
-            ) : (
+            ) : selected ? (
               <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
                 <span>
                   {formatRange(selected.start_at, selected.end_at)}
@@ -390,16 +408,12 @@ export function Schedule() {
                   </span>
                 ) : null}
               </span>
+            ) : (
+              <span>{formatClusterRange(clusterRows!)}</span>
             )
           }
           footer={
-            pickingNoShowReason ? (
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <Button variant="tertiary" disabled={busy} onClick={() => setPickingNoShowReason(false)}>
-                  Back
-                </Button>
-              </div>
-            ) : (
+            pickingNoShowReason ? null : !selected ? null : (
               <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
                 <Button
                   variant="tertiary"
@@ -529,7 +543,7 @@ export function Schedule() {
             )
           }
         >
-          {pickingNoShowReason ? (
+          {pickingNoShowReason && selected ? (
             <NoShowReasonPicker
               busy={busy}
               onPick={async (reason) => {
@@ -552,7 +566,30 @@ export function Schedule() {
                 }
               }}
             />
-          ) : (
+          ) : !selected && clusterRows ? (
+            <ul
+              style={{
+                listStyle: 'none',
+                margin: 0,
+                padding: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[2],
+              }}
+            >
+              {clusterRows.map((r) => (
+                <ScheduleListRow
+                  key={r.id}
+                  row={r}
+                  now={now}
+                  // Keep clusterRows set so the BottomSheet stays mounted
+                  // and morphs into detail mode in place — no second
+                  // popup.
+                  onPick={() => setSelected(r)}
+                />
+              ))}
+            </ul>
+          ) : selected ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
                 <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
@@ -658,39 +695,7 @@ export function Schedule() {
                           : ''}
               </p>
             </div>
-          )}
-        </BottomSheet>
-      ) : null}
-
-      {clusterRows ? (
-        <BottomSheet
-          open={!!clusterRows}
-          onClose={() => setClusterRows(null)}
-          title={`${clusterRows.length} appointments`}
-          description={formatClusterRange(clusterRows)}
-        >
-          <ul
-            style={{
-              listStyle: 'none',
-              margin: 0,
-              padding: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: theme.space[2],
-            }}
-          >
-            {clusterRows.map((r) => (
-              <ScheduleListRow
-                key={r.id}
-                row={r}
-                now={now}
-                onPick={() => {
-                  setClusterRows(null);
-                  setSelected(r);
-                }}
-              />
-            ))}
-          </ul>
+          ) : null}
         </BottomSheet>
       ) : null}
 
