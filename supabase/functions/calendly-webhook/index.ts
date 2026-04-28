@@ -145,9 +145,46 @@ interface CalendlyEvent {
     };
     cancel_url?: string;
     reschedule_url?: string;
+    payment?: {
+      external_id?: string;
+      provider?: string;
+      amount?: number;
+      currency?: string;
+      terms?: string;
+      successful?: boolean;
+    } | null;
     [k: string]: unknown;
   };
   [k: string]: unknown;
+}
+
+interface ExtractedDeposit {
+  deposit_pence: number;
+  deposit_currency: string;
+  deposit_provider: 'paypal' | 'stripe';
+  deposit_external_id: string | null;
+  deposit_paid_at: string;
+}
+
+// Pull a deposit record out of Calendly's `payload.payment` object. Returns
+// null when no deposit was charged, the charge failed, or the provider
+// isn't one of the two Calendly supports — we never silently accept an
+// unknown provider (would violate the lng_appointments_deposit_shape
+// CHECK constraint).
+function extractDeposit(
+  payment: CalendlyEvent['payload'] extends { payment?: infer P } ? P : never,
+  fallbackPaidAt: string
+): ExtractedDeposit | null {
+  if (!payment || !payment.successful || typeof payment.amount !== 'number') return null;
+  const provider = (payment.provider ?? '').toLowerCase();
+  if (provider !== 'paypal' && provider !== 'stripe') return null;
+  return {
+    deposit_pence: Math.round(payment.amount * 100),
+    deposit_currency: (payment.currency ?? 'GBP').toUpperCase(),
+    deposit_provider: provider,
+    deposit_external_id: payment.external_id ?? null,
+    deposit_paid_at: fallbackPaidAt,
+  };
 }
 
 async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent) {
@@ -169,6 +206,12 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   // scheduled_event.location.join_url for Google Meet / Zoom / Teams.
   const join_url = extractJoinUrl(
     (evt.payload?.scheduled_event as { location?: unknown } | undefined)?.location
+  );
+
+  // Deposit captured at booking time (PayPal / Stripe via Calendly).
+  const deposit = extractDeposit(
+    evt.payload?.payment,
+    evt.created_at ?? new Date().toISOString()
   );
 
   if (!startAt || !endAt) throw new Error('missing start_time or end_time');
@@ -256,6 +299,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       intake,
       join_url,
       status: 'booked',
+      ...(deposit ?? {}),
     });
   if (apptErr && apptErr.code !== '23505') throw new Error(apptErr.message);
 
@@ -264,6 +308,22 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
     event_type: 'appointment_booked',
     payload: { source: 'calendly', start_at: startAt, calendly_invitee_uri: inviteeUri },
   });
+
+  // Patient timeline gets its own deposit_paid event so reports + the
+  // patient view can show "£25 deposit on PayPal" alongside the booking.
+  if (deposit) {
+    await supabase.from('patient_events').insert({
+      patient_id,
+      event_type: 'deposit_paid',
+      payload: {
+        amount_pence: deposit.deposit_pence,
+        currency: deposit.deposit_currency,
+        provider: deposit.deposit_provider,
+        external_id: deposit.deposit_external_id,
+        calendly_invitee_uri: inviteeUri,
+      },
+    });
+  }
 }
 
 async function handleInviteeCanceled(supabase: SupabaseClient, evt: CalendlyEvent) {
