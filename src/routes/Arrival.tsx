@@ -9,6 +9,7 @@ import {
   Loader2,
   Minus,
   Package,
+  Pencil,
   Plus,
   ShieldCheck,
   ShoppingBag,
@@ -103,6 +104,11 @@ interface PatientLite {
   first_name: string;
   last_name: string;
   location_id: string | null;
+  // Truthy when this patient was synced from Shopify / has a One Click
+  // online ordering profile. Edits to identity fields propagate there
+  // too, which we tell the patient explicitly so they aren't
+  // surprised by a profile sync on their next online visit.
+  shopify_customer_id: string | null;
 }
 
 interface StagedItem {
@@ -188,6 +194,20 @@ export function Arrival() {
   const [jbError, setJbError] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [itemsConfirmed, setItemsConfirmed] = useState(false);
+  // Fields the patient has tapped the pencil on. These bypass the
+  // fill-blanks rule at submit time — whatever's in the form gets
+  // written, overwriting what's on file. Bypassing only happens for
+  // the explicit edit gesture, not for typing in initially-blank
+  // inputs (those still flow through fill-blanks).
+  const [editingFields, setEditingFields] = useState<Set<keyof FormState>>(new Set());
+
+  const beginEditField = (key: keyof FormState) => {
+    setEditingFields((s) => {
+      const next = new Set(s);
+      next.add(key);
+      return next;
+    });
+  };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -235,7 +255,7 @@ export function Arrival() {
           setAppointment(a);
           const { data: p } = await supabase
             .from('patients')
-            .select('id, first_name, last_name, location_id')
+            .select('id, first_name, last_name, location_id, shopify_customer_id')
             .eq('id', a.patient_id)
             .maybeSingle();
           if (cancelled) return;
@@ -247,7 +267,7 @@ export function Arrival() {
         } else {
           const { data: p, error: pe } = await supabase
             .from('patients')
-            .select('id, first_name, last_name, location_id')
+            .select('id, first_name, last_name, location_id, shopify_customer_id')
             .eq('id', id)
             .maybeSingle();
           if (pe || !p) throw new Error(pe?.message ?? 'Patient not found');
@@ -375,6 +395,33 @@ export function Arrival() {
     setSubmitting(true);
     setError(null);
     try {
+      // Filter the editingFields set down to keys that exist on the
+      // patient input shape (drop jb_ref etc which aren't patient
+      // columns). The cast is safe because FormState's patient-row
+      // keys overlap exactly with ArrivalIntakePatientInput.
+      const editedKeys = new Set(
+        Array.from(editingFields).filter((k) =>
+          [
+            'first_name',
+            'last_name',
+            'date_of_birth',
+            'sex',
+            'email',
+            'phone',
+            'portal_ship_line1',
+            'portal_ship_line2',
+            'portal_ship_city',
+            'portal_ship_postcode',
+            'portal_ship_country_code',
+            'allergies',
+            'emergency_contact_name',
+            'emergency_contact_phone',
+          ].includes(k as string)
+        )
+      ) as Set<keyof typeof form & string> as unknown as Set<
+        Parameters<typeof submitArrivalIntake>[0]['editedKeys'] extends Set<infer K> ? K : never
+      >;
+
       const intakeResult = await submitArrivalIntake({
         appointmentId: mode === 'appointment' ? appointment!.id : undefined,
         patientId: patient.id,
@@ -395,6 +442,7 @@ export function Arrival() {
           emergency_contact_phone: form.emergency_contact_phone,
         },
         jbRef: jbRequired ? jbRef.trim() || null : null,
+        editedKeys,
       });
 
       let visitId: string;
@@ -530,6 +578,9 @@ export function Arrival() {
             onConfirmItems={setItemsConfirmed}
             missing={customerMissing}
             isMobile={isMobile}
+            editingFields={editingFields}
+            onBeginEdit={beginEditField}
+            linkedToShopify={!!patient.shopify_customer_id}
           />
         ) : step === 'consent' ? (
           <ConsentStep
@@ -1319,6 +1370,9 @@ function CustomerStep({
   onConfirmItems,
   missing: _missing,
   isMobile,
+  editingFields,
+  onBeginEdit,
+  linkedToShopify,
 }: {
   patient: PatientLite;
   snapshot: ArrivalIntakeSnapshot;
@@ -1329,7 +1383,11 @@ function CustomerStep({
   onConfirmItems: (v: boolean) => void;
   missing: string[];
   isMobile: boolean;
+  editingFields: Set<keyof FormState>;
+  onBeginEdit: (key: keyof FormState) => void;
+  linkedToShopify: boolean;
 }) {
+  const isEditing = (k: keyof FormState) => editingFields.has(k);
   const itemsLine = stagedItems.length === 0
     ? 'No items added yet'
     : stagedItems
@@ -1386,18 +1444,53 @@ function CustomerStep({
 
       <section>
         <SectionHeading title="Your details" sub="Just the missing pieces. Anything we already have is shown below." />
+
+        {linkedToShopify ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: theme.space[3],
+              padding: `${theme.space[3]}px ${theme.space[4]}px`,
+              borderRadius: theme.radius.input,
+              background: theme.color.accentBg,
+              border: `1px solid ${theme.color.accent}`,
+              marginBottom: theme.space[4],
+            }}
+          >
+            <span style={{ display: 'inline-flex', color: theme.color.accent, marginTop: 2, flexShrink: 0 }}>
+              <ShoppingBag size={18} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.accent,
+                }}
+              >
+                Linked to your Lounge online account
+              </p>
+              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
+                Anything you change here also updates your One Click profile on lounge.venneir.com — the same details we use for online ordering and shipping.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         <FormGrid isMobile={isMobile}>
-          <FieldRow label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} />
-          <FieldRow label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} />
-          <FieldRow label="Date of birth" current={snapshot.date_of_birth} value={form.date_of_birth} onChange={(v) => onUpdate('date_of_birth', v)} type="date" />
-          <SexRow current={snapshot.sex} value={form.sex} onChange={(v) => onUpdate('sex', v)} />
-          <FieldRow label="Address line 1" current={snapshot.portal_ship_line1} value={form.portal_ship_line1} onChange={(v) => onUpdate('portal_ship_line1', v)} fullSpan />
-          <FieldRow label="Address line 2" current={snapshot.portal_ship_line2} value={form.portal_ship_line2} onChange={(v) => onUpdate('portal_ship_line2', v)} fullSpan />
-          <FieldRow label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} />
-          <FieldRow label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} />
-          <FieldRow label="Country" helper="ISO code, e.g. GB" current={snapshot.portal_ship_country_code} value={form.portal_ship_country_code} onChange={(v) => onUpdate('portal_ship_country_code', v)} fullSpan />
-          <FieldRow label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" />
-          <FieldRow label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" />
+          <FieldRow label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
+          <FieldRow label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
+          <FieldRow label="Date of birth" current={snapshot.date_of_birth} value={form.date_of_birth} onChange={(v) => onUpdate('date_of_birth', v)} type="date" editing={isEditing('date_of_birth')} onBeginEdit={() => onBeginEdit('date_of_birth')} />
+          <SexRow current={snapshot.sex} value={form.sex} onChange={(v) => onUpdate('sex', v)} editing={isEditing('sex')} onBeginEdit={() => onBeginEdit('sex')} />
+          <FieldRow label="Address line 1" current={snapshot.portal_ship_line1} value={form.portal_ship_line1} onChange={(v) => onUpdate('portal_ship_line1', v)} fullSpan editing={isEditing('portal_ship_line1')} onBeginEdit={() => onBeginEdit('portal_ship_line1')} />
+          <FieldRow label="Address line 2" current={snapshot.portal_ship_line2} value={form.portal_ship_line2} onChange={(v) => onUpdate('portal_ship_line2', v)} fullSpan editing={isEditing('portal_ship_line2')} onBeginEdit={() => onBeginEdit('portal_ship_line2')} />
+          <FieldRow label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
+          <FieldRow label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
+          <FieldRow label="Country" helper="ISO code, e.g. GB" current={snapshot.portal_ship_country_code} value={form.portal_ship_country_code} onChange={(v) => onUpdate('portal_ship_country_code', v)} fullSpan editing={isEditing('portal_ship_country_code')} onBeginEdit={() => onBeginEdit('portal_ship_country_code')} />
+          <FieldRow label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
+          <FieldRow label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
           <FieldRow
             label="Allergies & sensitivities"
             helper="Write 'None known' if not applicable."
@@ -1408,8 +1501,8 @@ function CustomerStep({
             fullSpan
             alwaysEditable
           />
-          <FieldRow label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} />
-          <FieldRow label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" />
+          <FieldRow label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
+          <FieldRow label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
         </FormGrid>
       </section>
     </div>
@@ -1761,6 +1854,8 @@ function FieldRow({
   multiline = false,
   alwaysEditable = false,
   fullSpan = false,
+  editing = false,
+  onBeginEdit,
 }: {
   label: string;
   current: string | null;
@@ -1771,13 +1866,19 @@ function FieldRow({
   multiline?: boolean;
   alwaysEditable?: boolean;
   fullSpan?: boolean;
+  editing?: boolean;
+  onBeginEdit?: () => void;
 }) {
-  const onFile = !alwaysEditable && current !== null && current !== '';
+  const onFile = !alwaysEditable && current !== null && current !== '' && !editing;
   const wrapper: CSSProperties = fullSpan ? { gridColumn: '1 / -1' } : {};
   if (onFile) {
     return (
       <div style={wrapper}>
-        <OnFileCard label={label} value={formatOnFileValue(label, current!)} />
+        <OnFileCard
+          label={label}
+          value={formatOnFileValue(label, current!)}
+          onEdit={onBeginEdit}
+        />
       </div>
     );
   }
@@ -1807,15 +1908,20 @@ function SexRow({
   current,
   value,
   onChange,
+  editing = false,
+  onBeginEdit,
 }: {
   current: string | null;
   value: string;
   onChange: (v: string) => void;
+  editing?: boolean;
+  onBeginEdit?: () => void;
 }) {
-  if (current !== null && current !== '') {
+  const showOnFile = current !== null && current !== '' && !editing;
+  if (showOnFile) {
     return (
       <div>
-        <OnFileCard label="Sex" value={current} />
+        <OnFileCard label="Sex" value={current!} onEdit={onBeginEdit} />
       </div>
     );
   }
@@ -1839,16 +1945,26 @@ function SexRow({
 // On-file pair card. The patient sees a soft white tile per field
 // they don't have to fill in — small sentence-case label, large bold
 // value, framed with a subtle border so each pair is unambiguously
-// one block. Replaces the previous label-stacked-on-value-with-no-frame
-// pattern that bled adjacent rows together visually.
-function OnFileCard({ label, value }: { label: string; value: string }) {
+// one block. Pencil button in the top-right swaps the tile to edit
+// mode so the patient can correct anything wrong on file.
+function OnFileCard({
+  label,
+  value,
+  onEdit,
+}: {
+  label: string;
+  value: string;
+  onEdit?: () => void;
+}) {
   return (
     <div
       style={{
+        position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         gap: theme.space[2],
         padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        paddingRight: onEdit ? 56 : theme.space[4],
         borderRadius: theme.radius.input,
         background: theme.color.surface,
         border: `1px solid ${theme.color.border}`,
@@ -1876,6 +1992,40 @@ function OnFileCard({ label, value }: { label: string; value: string }) {
       >
         {value}
       </span>
+      {onEdit ? (
+        <button
+          type="button"
+          onClick={onEdit}
+          aria-label={`Edit ${label.toLowerCase()}`}
+          style={{
+            position: 'absolute',
+            top: theme.space[2],
+            right: theme.space[2],
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            padding: theme.space[2],
+            color: theme.color.inkSubtle,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: theme.radius.pill,
+            fontFamily: 'inherit',
+            transition: `color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.color = theme.color.ink;
+            (e.currentTarget as HTMLElement).style.background = theme.color.bg;
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.color = theme.color.inkSubtle;
+            (e.currentTarget as HTMLElement).style.background = 'transparent';
+          }}
+        >
+          <Pencil size={16} />
+        </button>
+      ) : null}
     </div>
   );
 }

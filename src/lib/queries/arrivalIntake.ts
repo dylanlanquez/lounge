@@ -124,6 +124,11 @@ export interface ArrivalIntakeInput {
   patientId: string;
   patient: ArrivalIntakePatientInput;
   jbRef: string | null; // digits-only, '33' not 'JB33'. NULL when not applicable.
+  // Patient-row keys the receptionist or patient explicitly edited via
+  // the on-file pencil. These bypass the fill-blanks rule and overwrite
+  // whatever's currently on the row. Anything not in this set still
+  // follows fill-blanks (only writes when the column is null).
+  editedKeys?: Set<keyof ArrivalIntakePatientInput>;
 }
 
 export interface ArrivalIntakeResult {
@@ -133,37 +138,50 @@ export interface ArrivalIntakeResult {
 export async function submitArrivalIntake(
   input: ArrivalIntakeInput
 ): Promise<ArrivalIntakeResult> {
-  // ── 1. patients fill-blanks ────────────────────────────────────────
+  // ── 1. patients fill-blanks (and explicit overrides) ─────────────
+  // Default behaviour: only write fields that are null on the patients
+  // row (the brief's fill-blanks rule). Exception: keys in editedKeys
+  // were touched explicitly via the pencil edit gesture, so the
+  // patient's intent is to overwrite — those write unconditionally.
   const snapshot = await readIntakeSnapshot(input.patientId);
-  const fillable: Record<string, string> = {};
+  const writes: Record<string, string> = {};
+  const editedKeys = input.editedKeys ?? new Set<keyof ArrivalIntakePatientInput>();
 
-  const setIfBlank = (key: keyof ArrivalIntakeSnapshot, value: string | null | undefined) => {
+  const stage = (
+    key: keyof ArrivalIntakeSnapshot & keyof ArrivalIntakePatientInput,
+    value: string | null | undefined
+  ) => {
     const current = snapshot[key];
     const trimmed = typeof value === 'string' ? value.trim() : null;
-    if ((current === null || current === '') && trimmed) {
-      fillable[key] = trimmed;
+    if (!trimmed) return;
+    if (editedKeys.has(key)) {
+      writes[key] = trimmed;
+      return;
+    }
+    if (current === null || current === '') {
+      writes[key] = trimmed;
     }
   };
 
-  setIfBlank('first_name', input.patient.first_name);
-  setIfBlank('last_name', input.patient.last_name);
-  setIfBlank('date_of_birth', input.patient.date_of_birth);
-  setIfBlank('sex', input.patient.sex);
-  setIfBlank('email', input.patient.email);
-  setIfBlank('phone', input.patient.phone);
-  setIfBlank('portal_ship_line1', input.patient.portal_ship_line1);
-  setIfBlank('portal_ship_line2', input.patient.portal_ship_line2);
-  setIfBlank('portal_ship_city', input.patient.portal_ship_city);
-  setIfBlank('portal_ship_postcode', input.patient.portal_ship_postcode);
-  setIfBlank('portal_ship_country_code', input.patient.portal_ship_country_code);
-  setIfBlank('allergies', input.patient.allergies);
-  setIfBlank('emergency_contact_name', input.patient.emergency_contact_name);
-  setIfBlank('emergency_contact_phone', input.patient.emergency_contact_phone);
+  stage('first_name', input.patient.first_name);
+  stage('last_name', input.patient.last_name);
+  stage('date_of_birth', input.patient.date_of_birth);
+  stage('sex', input.patient.sex);
+  stage('email', input.patient.email);
+  stage('phone', input.patient.phone);
+  stage('portal_ship_line1', input.patient.portal_ship_line1);
+  stage('portal_ship_line2', input.patient.portal_ship_line2);
+  stage('portal_ship_city', input.patient.portal_ship_city);
+  stage('portal_ship_postcode', input.patient.portal_ship_postcode);
+  stage('portal_ship_country_code', input.patient.portal_ship_country_code);
+  stage('allergies', input.patient.allergies);
+  stage('emergency_contact_name', input.patient.emergency_contact_name);
+  stage('emergency_contact_phone', input.patient.emergency_contact_phone);
 
-  if (Object.keys(fillable).length > 0) {
+  if (Object.keys(writes).length > 0) {
     const { error: patientErr } = await supabase
       .from('patients')
-      .update(fillable)
+      .update(writes)
       .eq('id', input.patientId);
     if (patientErr) {
       throw new Error(`Could not save patient details: ${patientErr.message}`);
