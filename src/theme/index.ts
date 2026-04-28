@@ -76,9 +76,11 @@ export const theme = {
     pill: 999,
   },
   shadow: {
-    card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
-    raised: '0 6px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04)',
-    overlay: '0 24px 48px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.06)',
+    // Subtle two-layer drop shadow — soft outer (lifts off the cream bg)
+    // plus a tight inner (defines the edge). Visible but quiet.
+    card: '0 4px 12px rgba(14, 20, 20, 0.05), 0 1px 2px rgba(14, 20, 20, 0.04)',
+    raised: '0 12px 32px rgba(14, 20, 20, 0.08), 0 2px 8px rgba(14, 20, 20, 0.04)',
+    overlay: '0 24px 48px rgba(14, 20, 20, 0.12), 0 8px 16px rgba(14, 20, 20, 0.06)',
   },
   motion: {
     duration: {
