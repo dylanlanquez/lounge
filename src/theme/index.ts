@@ -8,6 +8,9 @@ export const theme = {
     accent: '#1F4D3A',
     accentBg: '#E8F5EC',
     alert: '#B83A2A',
+    // Amber for medium-urgency states that aren't full alert (e.g.
+    // battery at 25% — warn but not yet critical).
+    warn: '#B36815',
     border: 'rgba(14, 20, 20, 0.08)',
     overlay: 'rgba(14, 20, 20, 0.5)',
     focus: 'rgba(31, 77, 58, 0.32)',

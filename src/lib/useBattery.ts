@@ -78,11 +78,12 @@ export function useBattery(): BatteryState {
 export type BatteryTone = 'ok' | 'low' | 'critical';
 
 // Maps a battery percentage (0-100, integer) to a visual urgency tone.
-// Thresholds chosen for kiosk usage: receptionists need ~20% lead time
-// to plug in, so 'low' kicks in at 20% and 'critical' at 10%.
+// Thresholds match Apple's iOS conventions so receptionists see a
+// familiar pattern: amber at 25% (lead time to plug in), red at 10%
+// (act-now critical).
 export function batteryTone(percent: number | null): BatteryTone {
   if (percent === null) return 'ok';
   if (percent <= 10) return 'critical';
-  if (percent <= 20) return 'low';
+  if (percent <= 25) return 'low';
   return 'ok';
 }
