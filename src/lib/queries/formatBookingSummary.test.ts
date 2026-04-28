@@ -245,7 +245,7 @@ describe('properCase', () => {
     ['AMANDA SOLANKE', 'Amanda Solanke'],
     ['MARK WRIGLEY', 'Mark Wrigley'],
     ['DARREN WINTER', 'Darren Winter'],
-    ['Micheal DPD', 'Micheal DPD'],          // short all-caps preserved
+    ['Micheal DPD', 'Micheal Dpd'],          // short all-caps surnames are SHOUTED data, fix them
     ['McDonald', 'McDonald'],                 // mixed-case preserved
     ['mary-jane', 'Mary-Jane'],
     ["o'brien", "O'Brien"],
