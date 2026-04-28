@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   Box,
   CheckCircle2,
   ClipboardList,
+  Loader2,
   Minus,
   Package,
   Plus,
@@ -328,8 +329,7 @@ export function Arrival() {
     else if (step === 'consent' && consentReady) setStep('start');
   };
 
-  const runJbCheck = async () => {
-    const raw = jbRef.trim();
+  const runJbCheck = async (raw: string) => {
     if (!raw) return;
     setJbChecking(true);
     setJbError(null);
@@ -342,6 +342,27 @@ export function Arrival() {
       setJbChecking(false);
     }
   };
+
+  // Debounced auto-check. Fires 400ms after the receptionist stops
+  // typing in the JB input, mirroring Meridian's checkpoint-lookup
+  // pattern. No manual "Check availability" button — the indicator
+  // next to the input is the affordance.
+  const jbDebounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!jbRequired) return;
+    const trimmed = jbRef.trim();
+    if (!trimmed) return;
+    // Skip if we already have a fresh result for this exact value.
+    if (jbCheck && jbCheck.digits === trimmed) return;
+
+    if (jbDebounceRef.current) window.clearTimeout(jbDebounceRef.current);
+    jbDebounceRef.current = window.setTimeout(() => {
+      void runJbCheck(trimmed);
+    }, 400);
+    return () => {
+      if (jbDebounceRef.current) window.clearTimeout(jbDebounceRef.current);
+    };
+  }, [jbRef, jbRequired, jbCheck]);
 
   const stagedTotalPence = useMemo(
     () => stagedItems.reduce((sum, it) => sum + totalForQtyPence(it.catalogue, it.qty), 0),
@@ -495,7 +516,6 @@ export function Arrival() {
             jbCheck={jbCheck}
             jbChecking={jbChecking}
             jbError={jbError}
-            onRunJbCheck={runJbCheck}
             notes={notes}
             onChangeNotes={setNotes}
           />
@@ -586,6 +606,10 @@ export function Arrival() {
         @keyframes lng-arrival-fade {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes lng-arrival-spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
         }
       `}</style>
     </main>
@@ -877,7 +901,6 @@ function ServiceStep({
   jbCheck,
   jbChecking,
   jbError,
-  onRunJbCheck,
   notes,
   onChangeNotes,
 }: {
@@ -898,29 +921,36 @@ function ServiceStep({
   jbCheck: JbAvailabilityResult | null;
   jbChecking: boolean;
   jbError: string | null;
-  onRunJbCheck: () => void;
   notes: string;
   onChangeNotes: (v: string) => void;
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-      <StaffOnlyBanner subtitle={`Add the items ${patient.first_name} needs today, set the JB, then hand the device over.`} />
-
-      <h1
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.xl,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.tight,
-          color: theme.color.ink,
-        }}
-      >
-        Service details
-      </h1>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+      <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+        <StaffOnlyBanner subtitle={`Set up ${patient.first_name}'s appointment, then hand the device over.`} />
+        <h1
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xxl,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+            lineHeight: 1.1,
+          }}
+        >
+          Service details
+        </h1>
+      </header>
 
       {mode === 'walk_in' ? (
-        <FieldGroup label="Service type">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[2] }}>
+        <Section title="Service type" sub="Pick what's being worked on today.">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: theme.space[2],
+            }}
+          >
             {SERVICE_OPTIONS.map((o) => {
               const selected = serviceType === o.id;
               return (
@@ -928,79 +958,71 @@ function ServiceStep({
                   key={o.id}
                   type="button"
                   onClick={() => onChangeServiceType(o.id)}
-                  style={pillButton(selected)}
+                  style={selectChipStyle(selected)}
                 >
                   {o.label}
                 </button>
               );
             })}
           </div>
-        </FieldGroup>
+        </Section>
       ) : appointment?.event_type_label ? (
-        <FieldGroup label="Booking">
+        <Section title="Booking">
           <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink }}>
             {appointment.event_type_label}
           </p>
-        </FieldGroup>
+        </Section>
       ) : null}
 
       {jbRequired ? (
-        <FieldGroup label="Job box" helper="Number on the box where the impression sits. We check Checkpoint to make sure it isn't taken.">
-          <div style={{ display: 'flex', gap: theme.space[3], alignItems: 'flex-end' }}>
-            <Input
-              label="JB"
-              placeholder="00"
-              value={jbRef}
-              onChange={(e) => onChangeJbRef(e.currentTarget.value)}
-              inputMode="numeric"
-              fullWidth={false}
-              style={{ width: 160 }}
-            />
-            <Button variant="secondary" disabled={jbChecking || jbRef.trim() === ''} loading={jbChecking} onClick={onRunJbCheck}>
-              {jbChecking ? 'Checking…' : 'Check availability'}
-            </Button>
-          </div>
-          {jbError ? <Banner tone="alert">{jbError}</Banner> : null}
-          {jbCheck ? (
-            jbCheck.available ? (
-              <Banner tone="ok">
-                <CheckCircle2 size={16} /> {jbCheck.formatted} is free.
-              </Banner>
-            ) : (
-              <Banner tone="alert">
-                <AlertTriangle size={16} />
-                {jbCheck.formatted} is taken
-                {jbCheck.conflict?.customer_name ? ` by ${jbCheck.conflict.customer_name}` : ''}
-                {jbCheck.conflict?.order_name ? ` (${jbCheck.conflict.order_name})` : ''}. Pick a different box.
-              </Banner>
-            )
-          ) : null}
-        </FieldGroup>
+        <Section
+          title="Job box"
+          sub="The number on the box where the impression sits. We check Checkpoint as you type."
+        >
+          <JbBoxInput
+            value={jbRef}
+            onChange={onChangeJbRef}
+            checking={jbChecking}
+            check={jbCheck}
+            error={jbError}
+          />
+        </Section>
       ) : null}
 
-      <FieldGroup label="Items">
+      <Section
+        title="Items"
+        sub={stagedItems.length === 0 ? 'What are we doing today?' : undefined}
+        action={
+          stagedItems.length > 0 ? (
+            <button type="button" onClick={onOpenPicker} style={subtleLinkStyle}>
+              <Plus size={14} /> Add another
+            </button>
+          ) : null
+        }
+      >
         {stagedItems.length === 0 ? (
-          <button
-            type="button"
-            onClick={onOpenPicker}
-            style={{
-              appearance: 'none',
-              border: `1px dashed ${theme.color.border}`,
-              borderRadius: theme.radius.card,
-              background: 'transparent',
-              padding: theme.space[6],
-              color: theme.color.inkMuted,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.sm,
-              cursor: 'pointer',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: theme.space[2],
-            }}
-          >
-            <Package size={24} />
-            <span>Add the first item</span>
+          <button type="button" onClick={onOpenPicker} style={emptyItemsStyle}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 56,
+                height: 56,
+                borderRadius: theme.radius.pill,
+                background: theme.color.accentBg,
+                color: theme.color.accent,
+                marginBottom: theme.space[3],
+              }}
+            >
+              <Package size={24} />
+            </span>
+            <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+              Choose products
+            </span>
+            <span style={{ marginTop: theme.space[1], fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              Pick from the catalogue. The patient sees the list before they sign.
+            </span>
           </button>
         ) : (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -1013,44 +1035,37 @@ function ServiceStep({
                 onRemove={() => onRemoveItem(it.key)}
               />
             ))}
-            <li>
-              <button
-                type="button"
-                onClick={onOpenPicker}
-                style={{
-                  width: '100%',
-                  appearance: 'none',
-                  border: `1px dashed ${theme.color.border}`,
-                  borderRadius: theme.radius.input,
-                  background: 'transparent',
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  color: theme.color.inkMuted,
-                  fontFamily: 'inherit',
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: theme.space[1],
-                }}
-              >
-                <Plus size={16} /> Add another product
-              </button>
-            </li>
           </ul>
         )}
         {stagedItems.length > 0 ? (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: theme.space[3], padding: `${theme.space[3]}px ${theme.space[4]}px`, background: theme.color.bg, borderRadius: theme.radius.input }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: theme.space[4],
+              padding: `${theme.space[3]}px ${theme.space[4]}px`,
+              background: theme.color.bg,
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+            }}
+          >
             <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>Total</span>
-            <span style={{ fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
+            <span
+              style={{
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
               {formatPence(stagedTotalPence)}
             </span>
           </div>
         ) : null}
-      </FieldGroup>
+      </Section>
 
-      <FieldGroup label="Additional notes" helper="Special requirements, technician notes — staff only.">
+      <Section title="Notes" sub="Special requirements, technician notes — staff only.">
         <textarea
           value={notes}
           onChange={(e) => onChangeNotes(e.currentTarget.value)}
@@ -1058,9 +1073,236 @@ function ServiceStep({
           placeholder="Anything the lab or clinician should know"
           style={textareaStyle}
         />
-      </FieldGroup>
+      </Section>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section — proper h2 heading + optional sub + optional right-aligned
+// action. Replaces the all-caps eyebrow label pattern that read as
+// institutional and hid the hierarchy.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Section({
+  title,
+  sub,
+  action,
+  children,
+}: {
+  title: string;
+  sub?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+            }}
+          >
+            {title}
+          </h2>
+          {sub ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              {sub}
+            </p>
+          ) : null}
+        </div>
+        {action ? <div>{action}</div> : null}
+      </header>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+// JB box input with inline async status. Auto-checks 400ms after the
+// last keystroke (debounced in the parent), so the receptionist never
+// has to tap a "Check" button. The right side shows a spinner while
+// checking, a green tick when free, an alert tone when taken — the
+// Meridian checkpoint-lookup pattern, condensed.
+function JbBoxInput({
+  value,
+  onChange,
+  checking,
+  check,
+  error,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  checking: boolean;
+  check: JbAvailabilityResult | null;
+  error: string | null;
+}) {
+  const trimmed = value.trim();
+  const showStatus = trimmed.length > 0 || checking;
+  const taken = check && !check.available;
+  const free = check && check.available && check.digits === trimmed;
+
+  const fieldStyle: CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    height: theme.layout.inputHeight,
+    background: theme.color.surface,
+    borderRadius: theme.radius.input,
+    paddingLeft: theme.space[5],
+    paddingRight: theme.space[3],
+    boxShadow: error || taken
+      ? `inset 0 0 0 1px ${theme.color.alert}`
+      : free
+        ? `inset 0 0 0 1px ${theme.color.accent}`
+        : `inset 0 0 0 1px ${theme.color.border}`,
+    transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+    gap: theme.space[3],
+    maxWidth: 280,
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <div style={fieldStyle}>
+        <span
+          aria-hidden
+          style={{
+            fontSize: theme.type.size.base,
+            color: theme.color.inkMuted,
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          JB
+        </span>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          inputMode="numeric"
+          placeholder="33"
+          aria-label="Job box number"
+          style={{
+            flex: 1,
+            border: 'none',
+            background: 'transparent',
+            outline: 'none',
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.base,
+            color: theme.color.ink,
+            minWidth: 0,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        />
+        {showStatus ? <JbStatusIndicator checking={checking} taken={!!taken} free={!!free} /> : null}
+      </div>
+
+      {taken ? (
+        <div
+          role="alert"
+          style={{
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            border: `1px solid ${theme.color.alert}`,
+            background: 'rgba(184, 58, 42, 0.06)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: theme.space[3],
+          }}
+        >
+          <AlertTriangle size={18} color={theme.color.alert} style={{ flexShrink: 0, marginTop: 2 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.alert }}>
+              {check!.formatted} is taken
+            </p>
+            <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink }}>
+              {check!.conflict?.customer_name ?? 'Another patient'}
+              {check!.conflict?.order_name ? ` · ${check!.conflict.order_name}` : ''}
+              . Pick a different box.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {error ? (
+        <p
+          role="alert"
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.alert,
+          }}
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function JbStatusIndicator({
+  checking,
+  taken,
+  free,
+}: {
+  checking: boolean;
+  taken: boolean;
+  free: boolean;
+}) {
+  if (checking) {
+    return (
+      <span
+        aria-label="Checking availability"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[1],
+          color: theme.color.inkMuted,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        <Loader2 size={16} style={{ animation: 'lng-arrival-spin 900ms linear infinite' }} />
+        <span>Checking…</span>
+      </span>
+    );
+  }
+  if (taken) {
+    return (
+      <span aria-label="Taken" style={{ color: theme.color.alert, display: 'inline-flex' }}>
+        <X size={20} strokeWidth={2.4} />
+      </span>
+    );
+  }
+  if (free) {
+    return (
+      <span
+        aria-label="Available"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[1],
+          color: theme.color.accent,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+        }}
+      >
+        <CheckCircle2 size={18} strokeWidth={2.4} />
+        <span>Free</span>
+      </span>
+    );
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1596,37 +1838,6 @@ function SexRow({
   );
 }
 
-function FieldGroup({
-  label,
-  helper,
-  children,
-}: {
-  label: string;
-  helper?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      <p
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkSubtle,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-        }}
-      >
-        {label}
-      </p>
-      {helper ? (
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{helper}</p>
-      ) : null}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>{children}</div>
-    </section>
-  );
-}
-
 function SectionHeading({ title, sub }: { title: string; sub?: string }) {
   return (
     <header style={{ marginBottom: theme.space[4] }}>
@@ -1712,32 +1923,6 @@ function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
   );
 }
 
-function Banner({ tone, children }: { tone: 'ok' | 'alert'; children: React.ReactNode }) {
-  const palette =
-    tone === 'ok'
-      ? { fg: theme.color.accent, bg: theme.color.accentBg, border: theme.color.accent }
-      : { fg: theme.color.alert, bg: 'rgba(184, 58, 42, 0.06)', border: theme.color.alert };
-  return (
-    <p
-      role={tone === 'alert' ? 'alert' : undefined}
-      style={{
-        margin: `${theme.space[2]}px 0 0`,
-        padding: theme.space[3],
-        borderRadius: theme.radius.input,
-        border: `1px solid ${palette.border}`,
-        background: palette.bg,
-        color: palette.fg,
-        fontSize: theme.type.size.sm,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: theme.space[2],
-      }}
-    >
-      {children}
-    </p>
-  );
-}
-
 function capitalise(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
 }
@@ -1757,6 +1942,56 @@ function pillButton(selected: boolean): CSSProperties {
     fontFamily: 'inherit',
   };
 }
+
+// Selectable chip used by the service-type grid. Reads as a card-like
+// affordance — taller, slightly more prominent than a pill — so it
+// holds its weight in a 4-up grid without looking like a chiclet.
+function selectChipStyle(selected: boolean): CSSProperties {
+  return {
+    appearance: 'none',
+    border: `1px solid ${selected ? theme.color.ink : theme.color.border}`,
+    background: selected ? theme.color.ink : theme.color.surface,
+    color: selected ? theme.color.surface : theme.color.ink,
+    borderRadius: theme.radius.input,
+    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+    fontSize: theme.type.size.base,
+    fontWeight: theme.type.weight.semibold,
+    cursor: 'pointer',
+    textAlign: 'left',
+    fontFamily: 'inherit',
+    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+  };
+}
+
+const subtleLinkStyle: CSSProperties = {
+  appearance: 'none',
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: theme.space[1],
+  fontFamily: 'inherit',
+  fontSize: theme.type.size.sm,
+  fontWeight: theme.type.weight.semibold,
+  color: theme.color.ink,
+  padding: 0,
+};
+
+const emptyItemsStyle: CSSProperties = {
+  width: '100%',
+  appearance: 'none',
+  border: `1px dashed ${theme.color.border}`,
+  borderRadius: theme.radius.card,
+  background: theme.color.surface,
+  padding: `${theme.space[8]}px ${theme.space[6]}px`,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  textAlign: 'center',
+};
 
 const qtyButton: CSSProperties = {
   appearance: 'none',
