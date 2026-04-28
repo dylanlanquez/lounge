@@ -1,7 +1,17 @@
 import { type CSSProperties, type ReactNode } from 'react';
 import { theme } from '../../theme/index.ts';
 
-export type StatusTone = 'neutral' | 'arrived' | 'in_progress' | 'complete' | 'no_show' | 'cancelled';
+export type StatusTone =
+  | 'neutral'
+  | 'arrived'
+  | 'in_progress'
+  | 'complete'
+  | 'no_show'
+  | 'cancelled'
+  // Subtle outlined pill used for "not yet done" affordances on the
+  // In Clinic board (waiver pending, payment pending). Reads as quiet
+  // background information, never alarming.
+  | 'pending';
 
 export interface StatusPillProps {
   tone: StatusTone;
@@ -40,6 +50,11 @@ const TONE_STYLES: Record<StatusTone, CSSProperties> = {
     background: 'transparent',
     color: theme.color.inkSubtle,
     textDecoration: 'line-through',
+    boxShadow: `inset 0 0 0 1px ${theme.color.border}`,
+  },
+  pending: {
+    background: 'transparent',
+    color: theme.color.inkMuted,
     boxShadow: `inset 0 0 0 1px ${theme.color.border}`,
   },
 };
