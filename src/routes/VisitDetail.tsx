@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Plus, ShoppingCart } from 'lucide-react';
-import { Button, Card, EmptyState, StatusPill, Toast } from '../components/index.ts';
+import { AlertTriangle, CheckCircle2, Plus, ShoppingCart } from 'lucide-react';
+import { Button, Card, EmptyState, StatusPill, Toast, WaiverSheet } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
@@ -19,6 +19,15 @@ import {
   updateCartItemQuantity,
   useCart,
 } from '../lib/queries/carts.ts';
+import {
+  inferServiceTypeFromEventLabel,
+  requiredSectionsForServiceTypes,
+  sectionSignatureState,
+  summariseWaiverFlag,
+  useWaiverSections,
+  usePatientWaiverState,
+  type WaiverSection,
+} from '../lib/queries/waiver.ts';
 
 export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
@@ -30,7 +39,39 @@ export function VisitDetail() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [waiverOpen, setWaiverOpen] = useState(false);
   const isMobile = useIsMobile(640);
+
+  // Waiver state. Required sections are derived from the cart's
+  // service_types when items exist (post-arrival truth) and fall back to
+  // the appointment's event-type label for an empty cart (pre-arrival
+  // inference). 'general' is always included.
+  const { sections: waiverSections } = useWaiverSections();
+  const { latest: patientSignatures, refresh: refreshSignatures } = usePatientWaiverState(
+    patient?.id ?? null
+  );
+  const requiredSections = useMemo<WaiverSection[]>(() => {
+    if (waiverSections.length === 0) return [];
+    if (items.length > 0) {
+      return requiredSectionsForServiceTypes(
+        items.map((it) => it.service_type),
+        waiverSections
+      );
+    }
+    const inferred = inferServiceTypeFromEventLabel(appointment?.event_type_label ?? null);
+    return requiredSectionsForServiceTypes(inferred ? [inferred] : [], waiverSections);
+  }, [appointment?.event_type_label, items, waiverSections]);
+  const waiverFlag = useMemo(
+    () => summariseWaiverFlag(requiredSections, patientSignatures),
+    [requiredSections, patientSignatures]
+  );
+  const sectionsToSign = useMemo<WaiverSection[]>(
+    () =>
+      requiredSections.filter(
+        (s) => sectionSignatureState(s, patientSignatures) !== 'current'
+      ),
+    [requiredSections, patientSignatures]
+  );
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -133,6 +174,12 @@ export function VisitDetail() {
               </div>
             </div>
 
+            <WaiverBanner
+              flag={waiverFlag}
+              hasRequired={requiredSections.length > 0}
+              onOpen={() => setWaiverOpen(true)}
+            />
+
             <Card padding="lg">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: theme.space[4] }}>
                 <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
@@ -229,8 +276,120 @@ export function VisitDetail() {
         eventTypeLabel={appointment?.event_type_label ?? null}
         onItemAdded={refresh}
       />
+
+      <WaiverSheet
+        open={waiverOpen}
+        onClose={() => setWaiverOpen(false)}
+        patientId={patient?.id ?? null}
+        visitId={visit?.id ?? null}
+        sections={sectionsToSign}
+        patientName={patient ? patientFullName(patient) : 'Patient'}
+        onAllSigned={refreshSignatures}
+      />
     </main>
   );
+}
+
+function WaiverBanner({
+  flag,
+  hasRequired,
+  onOpen,
+}: {
+  flag: ReturnType<typeof summariseWaiverFlag>;
+  hasRequired: boolean;
+  onOpen: () => void;
+}) {
+  // No banner shown until we know what's required. Pre-migration this
+  // means hasRequired is false and we render nothing — never crash on a
+  // missing waiver schema.
+  if (!hasRequired) return null;
+
+  if (flag.status === 'ready') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          marginBottom: theme.space[5],
+          borderRadius: theme.radius.input,
+          background: theme.color.surface,
+          border: `1px solid ${theme.color.border}`,
+          color: theme.color.inkMuted,
+          fontSize: theme.type.size.sm,
+        }}
+      >
+        <CheckCircle2 size={16} color={theme.color.accent} aria-hidden />
+        Waiver signed and up to date.
+      </div>
+    );
+  }
+
+  const title =
+    flag.status === 'stale'
+      ? 'Waiver needs re-signing'
+      : flag.status === 'partial'
+        ? 'Waiver partially signed'
+        : 'Waiver needed';
+  const body = composeBannerBody(flag);
+
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        marginBottom: theme.space[5],
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.alert}`,
+      }}
+    >
+      <AlertTriangle size={18} color={theme.color.alert} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.alert,
+          }}
+        >
+          {title}
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+          }}
+        >
+          {body}
+        </p>
+      </div>
+      <Button variant="primary" size="sm" onClick={onOpen}>
+        Sign waiver
+      </Button>
+    </div>
+  );
+}
+
+function composeBannerBody(flag: ReturnType<typeof summariseWaiverFlag>): string {
+  const parts: string[] = [];
+  if (flag.missingSections.length > 0) {
+    parts.push(
+      `Missing: ${flag.missingSections.map((s) => s.title).join(', ')}`
+    );
+  }
+  if (flag.staleSections.length > 0) {
+    parts.push(
+      `Re-sign: ${flag.staleSections.map((s) => s.title).join(', ')}`
+    );
+  }
+  return parts.join(' · ');
 }
 
 // Compose a one-line subtitle for a cart item using the catalogue

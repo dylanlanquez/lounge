@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 
 // One row in lng_waiver_sections. Admin-editable.
@@ -69,12 +69,15 @@ interface PatientWaiverStateResult {
   latest: Map<string, WaiverSignatureSummary>;
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 export function usePatientWaiverState(patientId: string | null | undefined): PatientWaiverStateResult {
   const [latest, setLatest] = useState<Map<string, WaiverSignatureSummary>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!patientId) {
@@ -111,9 +114,9 @@ export function usePatientWaiverState(patientId: string | null | undefined): Pat
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, tick]);
 
-  return { latest, loading, error };
+  return { latest, loading, error, refresh };
 }
 
 // ---------- Pure section-resolution helpers ----------
@@ -222,17 +225,21 @@ export interface SignWaiverInput {
   visit_id: string | null;
   section: WaiverSection;
   signature_svg: string;
-  witnessed_by: string | null;
 }
 
 export async function signWaiver(input: SignWaiverInput): Promise<void> {
+  // Resolve the signed-in receptionist's accounts.id via the standard
+  // RPC (the auth user id is *not* the same as accounts.id; witnessed_by
+  // references the latter). null is acceptable when no staff is signed
+  // in — e.g. patient self-sign on a kiosk in future.
+  const { data: accountId } = await supabase.rpc('auth_account_id');
   const { error } = await supabase.from('lng_waiver_signatures').insert({
     patient_id: input.patient_id,
     visit_id: input.visit_id,
     section_key: input.section.key,
     section_version: input.section.version,
     signature_svg: input.signature_svg,
-    witnessed_by: input.witnessed_by,
+    witnessed_by: (accountId as string | null) ?? null,
     // Snapshot the terms at sign time so future audit can reproduce the
     // exact agreement even if the section row is later edited.
     terms_snapshot: input.section.terms,
