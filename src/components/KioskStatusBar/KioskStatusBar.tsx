@@ -1,4 +1,4 @@
-import { Settings, Zap } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
@@ -9,12 +9,12 @@ import { theme } from '../../theme/index.ts';
 // underneath the fixed bar.
 export const KIOSK_STATUS_BAR_HEIGHT = 32;
 
-// Always-visible top strip — left cluster shows the faint Lounge logo
-// + wall-clock date and time; right cluster shows admin (settings),
-// network signal, and battery. Lives outside any route so it
-// persists through navigation. Critical in kiosk mode where the
-// system status bar is hidden — the receptionist has no other way to
-// see battery / connectivity / time.
+// Always-visible top strip. Left side carries the faint Lounge
+// watermark; right side is the system tray — Settings, Wi-Fi,
+// battery, then date and time. Keeping the time right-aligned brings
+// it closer to where staff naturally glance for status (next to the
+// device chrome) and frees the left edge for the brand mark. Lives
+// outside any route so it persists through navigation.
 export function KioskStatusBar() {
   const now = useNow(60_000);
   const { level, charging, supported: batterySupported } = useBattery();
@@ -49,16 +49,8 @@ export function KioskStatusBar() {
         color: theme.color.ink,
       }}
     >
-      <span
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          letterSpacing: theme.type.tracking.normal,
-        }}
-      >
-        {/* Faint logo — visual anchor for the brand without competing
-            with the time. 0.4 opacity reads as a subtle watermark. */}
+      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+        {/* Faint logo as a watermark on the left edge. */}
         <img
           src="/lounge-logo.png"
           alt=""
@@ -71,13 +63,9 @@ export function KioskStatusBar() {
             flexShrink: 0,
           }}
         />
-        <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-          {date}
-        </span>
-        <span style={{ fontWeight: theme.type.weight.semibold }}>{time}</span>
       </span>
 
-      {/* Right cluster: Settings · Wi-Fi · Battery (left to right) */}
+      {/* Right cluster: Settings · Wi-Fi · Battery · Date · Time */}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
         <button
           type="button"
@@ -111,6 +99,23 @@ export function KioskStatusBar() {
         {batterySupported && percent !== null ? (
           <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
         ) : null}
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'baseline',
+            gap: theme.space[2],
+            // 1px hairline separator before the date so the system
+            // tray and the wall-clock don't bleed into one another.
+            paddingLeft: theme.space[3],
+            borderLeft: `1px solid ${theme.color.border}`,
+            marginLeft: theme.space[1],
+          }}
+        >
+          <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+            {date}
+          </span>
+          <span style={{ fontWeight: theme.type.weight.semibold }}>{time}</span>
+        </span>
       </span>
 
       <StatusBarKeyframes />
@@ -144,8 +149,6 @@ function NetworkIndicator({
         ? theme.color.warn
         : theme.color.alert;
 
-  // Aria + tooltip text. iOS doesn't expose Wi-Fi SSID to browsers, so
-  // the best we can show is the connection bucket + estimated Mbps.
   const label = !online
     ? 'Offline'
     : !supported
@@ -191,10 +194,6 @@ function effectiveTypeLabel(et: EffectiveType): string {
   }
 }
 
-// Four ascending vertical bars. `count` filled in, the rest drawn at
-// 25% opacity so receptionists see the ladder, not a guessing game.
-// `dimmed` further drops the filled bars to 60% — used when the
-// Network Information API is absent and we're showing a placeholder.
 function SignalBars({ count, dimmed, colour }: { count: 0 | 1 | 2 | 3 | 4; dimmed: boolean; colour: string }) {
   const widths = [3, 3, 3, 3];
   const heights = [4, 7, 10, 13];
@@ -233,11 +232,11 @@ function SignalBars({ count, dimmed, colour }: { count: 0 | 1 | 2 | 3 | 4; dimme
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Battery indicator — percent + custom glyph. When charging we render
-// a separate, prominent lightning bolt to the LEFT of the percentage
-// (the previous in-glyph bolt blended into the green fill on the
-// iPad, which hid the charging state). The bolt also pulses subtly
-// so it reads as live, not static art.
+// Battery indicator — percent + custom glyph. When charging the
+// lightning bolt sits INSIDE the battery body, drawn directly into
+// the SVG so it's pixel-aligned with the fill and clearly visible
+// against the green at every level. The bolt's opacity pulses so it
+// reads as live, not static art.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BatteryIndicator({
@@ -276,31 +275,35 @@ function BatteryIndicator({
             : theme.type.weight.medium,
       }}
     >
-      {charging ? (
-        <Zap
-          size={13}
-          fill={theme.color.accent}
-          color={theme.color.accent}
-          strokeWidth={1.5}
-          aria-hidden
-          style={{
-            animation: 'lng-bolt-pulse 1.6s ease-in-out infinite',
-            flexShrink: 0,
-          }}
-        />
-      ) : null}
       <span>{percent}%</span>
-      <BatteryGlyph percent={percent} fillColor={fillColor} />
+      <BatteryGlyph percent={percent} fillColor={fillColor} charging={charging} />
     </span>
   );
 }
 
-function BatteryGlyph({ percent, fillColor }: { percent: number; fillColor: string }) {
-  const bodyW = 22;
-  const bodyH = 11;
-  const innerW = 18;
-  const innerH = 7;
+function BatteryGlyph({
+  percent,
+  fillColor,
+  charging,
+}: {
+  percent: number;
+  fillColor: string;
+  charging: boolean;
+}) {
+  // Body: 26 wide × 12 high. Slightly larger than before so the
+  // charging bolt has room to read inside without crowding the fill.
+  const bodyW = 26;
+  const bodyH = 12;
+  const innerW = 22;
+  const innerH = 8;
   const fillW = Math.max(1, Math.round((percent / 100) * innerW));
+  // Compact lightning bolt drawn as an SVG path. Coordinates are
+  // tuned to fit a 7×10 box; we translate it so it centres on the
+  // body. Solid surface-coloured fill so it stands clear against the
+  // green / red / amber fill underneath.
+  const boltCx = bodyW / 2;
+  const boltCy = bodyH / 2;
+  const boltScale = 1;
   return (
     <svg
       width={bodyW + 3}
@@ -309,6 +312,7 @@ function BatteryGlyph({ percent, fillColor }: { percent: number; fillColor: stri
       aria-hidden
       style={{ display: 'inline-block', flexShrink: 0 }}
     >
+      {/* Body outline */}
       <rect
         x={0.5}
         y={0.5}
@@ -321,6 +325,7 @@ function BatteryGlyph({ percent, fillColor }: { percent: number; fillColor: stri
         strokeOpacity={0.4}
         strokeWidth={1}
       />
+      {/* Terminal nub */}
       <rect
         x={bodyW}
         y={(bodyH - 5) / 2}
@@ -330,17 +335,48 @@ function BatteryGlyph({ percent, fillColor }: { percent: number; fillColor: stri
         fill={theme.color.ink}
         fillOpacity={0.4}
       />
-      <rect x={2} y={2} width={fillW} height={innerH} rx={1} fill={fillColor} />
+      {/* Fill — full width when charging, percent-scaled otherwise */}
+      <rect
+        x={2}
+        y={2}
+        width={charging ? innerW : fillW}
+        height={innerH}
+        rx={1}
+        fill={fillColor}
+      />
+      {/* Charging bolt, centred inside the body. The path is drawn
+          around (0,0) so the translate puts the centre on the body
+          centre; scale lets us tune size without recomputing coords. */}
+      {charging ? (
+        <g
+          className="lng-status-bolt"
+          transform={`translate(${boltCx} ${boltCy}) scale(${boltScale})`}
+        >
+          <path
+            d="M 1 -5 L -3 1 L 0 1 L -1 5 L 3 -1 L 0 -1 Z"
+            fill={theme.color.surface}
+            stroke={theme.color.surface}
+            strokeWidth={0.4}
+            strokeLinejoin="round"
+          />
+        </g>
+      ) : null}
     </svg>
   );
 }
 
 function StatusBarKeyframes() {
+  // Pulse the charging bolt's opacity so it reads as live without the
+  // jitter a transform-scale would introduce. Targets the bolt group
+  // class so nothing else gets caught.
   return (
     <style>{`
       @keyframes lng-bolt-pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50%      { opacity: 0.55; transform: scale(0.92); }
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.55; }
+      }
+      .lng-status-bolt {
+        animation: lng-bolt-pulse 1.6s ease-in-out infinite;
       }
     `}</style>
   );
