@@ -35,10 +35,14 @@ export const BOTTOM_NAV_HEIGHT = 88;
 const PILL_HEIGHT = 68;
 const PILL_BOTTOM_GAP = 10;
 const PILL_MAX_WIDTH = 600;
-// FAB diameter. Pulled up to extend above the pill's top edge by half
-// of itself, so the bottom half sits inside the pill flow.
-const FAB_SIZE = 64;
-const FAB_LIFT = 28; // px the circle rises above the pill's top edge
+// FAB diameter. Pulled up to extend above the pill's top edge by a
+// modest amount — enough to read as the dominant action without
+// dominating the surface. Dylan's repeated feedback was that
+// previous sizes (64/28) and (56/24) felt too loud; this one keeps
+// the lifted-pill silhouette but trims the circle so the eye lands
+// on page content first.
+const FAB_SIZE = 52;
+const FAB_LIFT = 16;
 
 // FAB-docked bottom navigation: 4 standard tab items + a centred raised
 // action button (Walk-in) that extends above the nav. Pattern lifted from
@@ -330,14 +334,13 @@ function FabTab({ label, active, onClick }: { label: string; active: boolean; on
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          // Soft, neutral shadow — about half the previous depth so the
-          // circle reads as raised but not theatrical.
-          boxShadow:
-            '0 6px 16px rgba(14, 20, 20, 0.14), 0 2px 4px rgba(14, 20, 20, 0.08)',
+          // Whisper-soft shadow — just enough to pull the circle off
+          // the glassy pill background. No glow, no theatre.
+          boxShadow: '0 4px 10px rgba(14, 20, 20, 0.10)',
           transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
       >
-        <Plus size={26} strokeWidth={2.4} />
+        <Plus size={22} strokeWidth={2.2} />
       </span>
       <span>{label}</span>
     </button>
