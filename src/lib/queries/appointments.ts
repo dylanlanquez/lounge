@@ -38,23 +38,38 @@ export interface AppointmentRow {
   staff_last_name: string | null;
 }
 
-// Title-cases a name. Lowercase words → "Amanda". All-caps words longer
-// than 3 chars → "Amanda" (catches "AMANDA SOLANKE"). Short all-caps stays
-// (preserves acronyms like "DPD"). Mixed-case stays (preserves "McDonald").
-// Splits on whitespace, hyphens, and apostrophes so "o'brien" → "O'Brien"
-// and "mary-jane" → "Mary-Jane".
+// Title-cases a name. Lowercase words → "Amanda". All-caps words of any
+// length ≥ 2 → "Amanda" / "Doe" (catches both "AMANDA SOLANKE" and
+// "JOHN DOE"). Single-letter tokens stay uppercase — they're initials
+// (e.g. "A V Sinfield"). Mixed-case is preserved (so "McDonald" /
+// "O'Brien" survive). Splits on whitespace, hyphens, and apostrophes
+// so "mary-jane" → "Mary-Jane".
+//
+// Honorifics (Mr/Mrs/Miss/Ms/Dr/Prof) are recognised regardless of
+// case so source data like "MRS A V SINFIELD" lands as "Mrs A V
+// Sinfield" instead of leaking the SHOUTING through.
+const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'prof']);
+
 export function properCase(name: string | null | undefined): string {
   if (!name) return '';
   return name
     .split(/(\s+|-|’|')/)
     .map((part) => {
       if (!part || /^[\s\-'’]+$/.test(part)) return part;
-      const isAllLower = part.toLowerCase() === part;
+      const lower = part.toLowerCase();
+      // Strip a trailing dot for the honorific check ("Mrs." → "mrs")
+      // so common written forms still match. Re-apply the dot at the end.
+      const dotted = lower.endsWith('.');
+      const stem = dotted ? lower.slice(0, -1) : lower;
+      if (HONORIFICS.has(stem)) {
+        return stem.charAt(0).toUpperCase() + stem.slice(1) + (dotted ? '.' : '');
+      }
+      // Single-letter tokens are initials — keep them uppercase.
+      if (part.length === 1) return part.toUpperCase();
+      const isAllLower = lower === part;
       const isAllUpper = part.toUpperCase() === part;
       if (isAllLower) return part.charAt(0).toUpperCase() + part.slice(1);
-      if (isAllUpper && part.length > 3) {
-        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
-      }
+      if (isAllUpper) return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
       return part;
     })
     .join('');
