@@ -112,7 +112,7 @@ export function AppointmentCard({
     >
       <div
         style={{
-          width: 4,
+          width: 6,
           background: effectiveBarColor,
           flexShrink: 0,
         }}

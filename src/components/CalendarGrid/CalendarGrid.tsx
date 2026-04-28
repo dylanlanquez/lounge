@@ -34,6 +34,8 @@ export function CalendarGrid({
   const isToday = !isoDate || isoDate === todayIso();
   const nowOffset = useNowOffset(startHour, pxPerHour, isToday);
 
+  const showNow = showNowIndicator && nowOffset !== null;
+
   return (
     <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
       {/* Time axis */}
@@ -54,6 +56,8 @@ export function CalendarGrid({
             {formatHour(h)}
           </div>
         ))}
+        {/* Now-time pill — lives on the time axis so it never overlaps cards. */}
+        {showNow ? <NowPill offset={nowOffset!} /> : null}
       </div>
 
       {/* Slots column */}
@@ -98,16 +102,32 @@ export function CalendarGrid({
         {/* Children (appointment cards) */}
         {children}
 
-        {/* Now-indicator */}
-        {showNowIndicator && nowOffset !== null ? (
-          <NowIndicator offset={nowOffset} />
-        ) : null}
+        {/* Now-line — full-width across slot column at low opacity. */}
+        {showNow ? <NowLine offset={nowOffset!} /> : null}
       </div>
     </div>
   );
 }
 
-function NowIndicator({ offset }: { offset: number }) {
+function NowLine({ offset }: { offset: number }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: offset,
+        left: 0,
+        right: 0,
+        height: 1,
+        background: theme.color.accent,
+        opacity: 0.35,
+        pointerEvents: 'none',
+        zIndex: 5,
+      }}
+    />
+  );
+}
+
+function NowPill({ offset }: { offset: number }) {
   const now = new Date();
   const h = now.getHours();
   const m = now.getMinutes();
@@ -115,46 +135,29 @@ function NowIndicator({ offset }: { offset: number }) {
   const ampm = h < 12 ? 'am' : 'pm';
   const label = `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
 
+  // Anchor to the right edge of the time-axis column so the pill ends just
+  // before the slot column starts — never overlaps appointment cards.
   return (
-    <>
-      {/* Full-width line across the slot column, drawn over the top of
-          appointment cards but at low opacity so the cards remain readable. */}
-      <div
-        style={{
-          position: 'absolute',
-          top: offset,
-          left: 0,
-          right: 0,
-          height: 1,
-          background: theme.color.accent,
-          opacity: 0.35,
-          pointerEvents: 'none',
-          zIndex: 5,
-        }}
-      />
-      {/* Time pill anchored to the left edge of the slot column. Solid
-          (no opacity) so the current clock time is always legible. */}
-      <div
-        style={{
-          position: 'absolute',
-          top: offset - 10,
-          left: -4,
-          padding: '2px 8px',
-          background: theme.color.accent,
-          color: theme.color.surface,
-          borderRadius: 999,
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: theme.type.tracking.wide,
-          boxShadow: theme.shadow.card,
-          pointerEvents: 'none',
-          zIndex: 6,
-        }}
-      >
-        {label}
-      </div>
-    </>
+    <div
+      style={{
+        position: 'absolute',
+        top: offset - 10,
+        right: 4,
+        padding: '2px 8px',
+        background: theme.color.accent,
+        color: theme.color.surface,
+        borderRadius: 999,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: theme.type.tracking.wide,
+        boxShadow: theme.shadow.card,
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </div>
   );
 }
 
