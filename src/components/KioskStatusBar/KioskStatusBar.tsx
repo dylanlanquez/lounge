@@ -90,6 +90,7 @@ export function KioskStatusBar() {
         >
           <Settings size={15} />
         </button>
+        <Divider />
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}
@@ -99,16 +100,12 @@ export function KioskStatusBar() {
         {batterySupported && percent !== null ? (
           <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
         ) : null}
+        <Divider />
         <span
           style={{
             display: 'inline-flex',
             alignItems: 'baseline',
             gap: theme.space[2],
-            // 1px hairline separator before the date so the system
-            // tray and the wall-clock don't bleed into one another.
-            paddingLeft: theme.space[3],
-            borderLeft: `1px solid ${theme.color.border}`,
-            marginLeft: theme.space[1],
           }}
         >
           <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
@@ -362,6 +359,24 @@ function BatteryGlyph({
         </g>
       ) : null}
     </svg>
+  );
+}
+
+// 1px hairline divider used to separate the three groups inside the
+// system tray (Settings · Wi-Fi+Battery · Date+Time). Renders at the
+// same colour as the bottom border of the bar so it reads as part of
+// the chrome, not a content element.
+function Divider() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 1,
+        height: 16,
+        background: theme.color.border,
+        flexShrink: 0,
+      }}
+    />
   );
 }
 
