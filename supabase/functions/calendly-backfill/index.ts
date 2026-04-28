@@ -171,6 +171,8 @@ Deno.serve(async (req) => {
         first_name?: string;
         last_name?: string;
         name?: string;
+        text_reminder_number?: string;
+        questions_and_answers?: Array<{ question: string; answer: string }>;
       }>;
       for (const inv of invitees) {
         try {
@@ -225,7 +227,15 @@ Deno.serve(async (req) => {
 async function applyInvitee(
   supabase: SupabaseClient,
   evt: { uri: string; name: string; start_time: string; end_time: string },
-  inv: { uri: string; email: string; first_name?: string; last_name?: string; name?: string }
+  inv: {
+    uri: string;
+    email: string;
+    first_name?: string;
+    last_name?: string;
+    name?: string;
+    text_reminder_number?: string;
+    questions_and_answers?: Array<{ question: string; answer: string }>;
+  }
 ): Promise<'applied' | 'skipped'> {
   // Default location
   const { data: locRow } = await supabase
@@ -242,23 +252,26 @@ async function applyInvitee(
   const firstName = inv.first_name ?? splitName(inv.name).first;
   const lastName = inv.last_name ?? splitName(inv.name).last;
   const email = inv.email?.toLowerCase().trim();
+  const phone = (inv.text_reminder_number ?? '').trim() || null;
+  const intake = inv.questions_and_answers ?? null;
 
   // Identity resolve
   let patient_id: string | null = null;
   if (email) {
     const { data: ex } = await supabase
       .from('patients')
-      .select('id, first_name, last_name')
+      .select('id, first_name, last_name, phone')
       .eq('location_id', location_id)
       .ilike('email', email)
       .maybeSingle();
     if (ex) {
       patient_id = (ex as { id: string }).id;
-      // Fill-blanks: only fill name fields if currently null (never overwrite).
-      const cur = ex as { first_name: string | null; last_name: string | null };
+      // Fill-blanks: only fill fields if currently null (never overwrite).
+      const cur = ex as { first_name: string | null; last_name: string | null; phone: string | null };
       const patch: Record<string, string> = {};
       if (cur.first_name == null && firstName) patch.first_name = firstName;
       if (cur.last_name == null && lastName) patch.last_name = lastName;
+      if (cur.phone == null && phone) patch.phone = phone;
       if (Object.keys(patch).length > 0) {
         await supabase.from('patients').update(patch).eq('id', patient_id);
       }
@@ -274,11 +287,33 @@ async function applyInvitee(
         first_name: firstName || 'Patient',
         last_name: lastName || '',
         email,
+        phone,
       })
       .select('id')
       .single();
     if (createErr || !created) throw new Error(createErr?.message ?? 'create patient failed');
     patient_id = (created as { id: string }).id;
+  }
+
+  // Look for an existing row first. If present, fill in intake +
+  // event_type_label only when those are currently null — never clobber
+  // a manually-edited status or staff_account_id.
+  const { data: existingAppt } = await supabase
+    .from('lng_appointments')
+    .select('id, intake, event_type_label')
+    .eq('calendly_invitee_uri', inv.uri)
+    .maybeSingle();
+
+  if (existingAppt) {
+    const cur = existingAppt as { id: string; intake: unknown; event_type_label: string | null };
+    const patch: Record<string, unknown> = {};
+    if (cur.intake == null && intake != null) patch.intake = intake;
+    if (cur.event_type_label == null && evt.name) patch.event_type_label = evt.name;
+    if (Object.keys(patch).length > 0) {
+      await supabase.from('lng_appointments').update(patch).eq('id', cur.id);
+      return 'applied';
+    }
+    return 'skipped';
   }
 
   const { error: apptErr } = await supabase.from('lng_appointments').insert({
@@ -290,10 +325,11 @@ async function applyInvitee(
     start_at: evt.start_time,
     end_at: evt.end_time,
     event_type_label: evt.name,
+    intake,
     status: 'booked',
   });
-  // 23505 == unique violation on calendly_invitee_uri (already imported). Treat
-  // as a skip — backfill is idempotent by design.
+  // 23505 == unique violation on calendly_invitee_uri. Shouldn't normally
+  // hit since we checked above, but keep the safety net.
   if (apptErr) {
     if (apptErr.code === '23505') return 'skipped';
     throw new Error(apptErr.message);

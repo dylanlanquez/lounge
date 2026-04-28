@@ -17,12 +17,13 @@ interface RawRow {
   status: AppointmentRow['status'];
   event_type_label: string | null;
   staff_account_id: string | null;
+  intake: AppointmentRow['intake'];
   patient: { first_name: string | null; last_name: string | null }[] | { first_name: string | null; last_name: string | null } | null;
   staff: { first_name: string | null; last_name: string | null }[] | { first_name: string | null; last_name: string | null } | null;
 }
 
 const SELECT = `
-  id, patient_id, location_id, start_at, end_at, status, event_type_label, staff_account_id,
+  id, patient_id, location_id, start_at, end_at, status, event_type_label, staff_account_id, intake,
   patient:patients ( first_name, last_name ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
 `;
@@ -41,6 +42,7 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       status: raw.status,
       event_type_label: raw.event_type_label,
       staff_account_id: raw.staff_account_id,
+      intake: raw.intake,
       patient_first_name: patient?.first_name ?? null,
       patient_last_name: patient?.last_name ?? null,
       staff_first_name: staff?.first_name ?? null,

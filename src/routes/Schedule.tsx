@@ -26,6 +26,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type AppointmentRow,
+  filterCareIntake,
   patientDisplayName,
   staffDisplayName,
   useTodayAppointments,
@@ -309,10 +310,62 @@ export function Schedule() {
             </div>
           }
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
             <p style={{ margin: 0, color: theme.color.ink }}>
               Status: <strong>{selected.status}</strong>
             </p>
+
+            {filterCareIntake(selected.intake).length > 0 ? (
+              <div
+                style={{
+                  padding: theme.space[3],
+                  background: theme.color.accentBg,
+                  border: `1px solid ${theme.color.accent}`,
+                  borderRadius: 12,
+                }}
+              >
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkMuted,
+                    fontWeight: theme.type.weight.medium,
+                    textTransform: 'uppercase',
+                    letterSpacing: theme.type.tracking.wide,
+                    marginBottom: theme.space[2],
+                  }}
+                >
+                  Booking details
+                </p>
+                <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: `${theme.space[1]}px ${theme.space[3]}px` }}>
+                  {filterCareIntake(selected.intake).map((qa, i) => (
+                    <div key={i} style={{ display: 'contents' }}>
+                      <dt
+                        style={{
+                          fontSize: theme.type.size.sm,
+                          color: theme.color.inkMuted,
+                          fontWeight: theme.type.weight.medium,
+                          margin: 0,
+                        }}
+                      >
+                        {qa.question}
+                      </dt>
+                      <dd
+                        style={{
+                          fontSize: theme.type.size.sm,
+                          color: theme.color.ink,
+                          fontWeight: theme.type.weight.semibold,
+                          margin: 0,
+                        }}
+                      >
+                        {qa.answer}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ) : null}
+
             <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
               {selected.status === 'booked'
                 ? 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'

@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
 
+export interface IntakeAnswer {
+  question: string;
+  answer: string;
+}
+
 export interface AppointmentRow {
   id: string;
   patient_id: string;
@@ -11,6 +16,7 @@ export interface AppointmentRow {
   status: AppointmentStatus;
   event_type_label: string | null;
   staff_account_id: string | null;
+  intake: IntakeAnswer[] | null;
   patient_first_name: string | null;
   patient_last_name: string | null;
   staff_first_name: string | null;
@@ -50,6 +56,7 @@ export function useTodayAppointments(): UseTodayAppointmentsResult {
             status,
             event_type_label,
             staff_account_id,
+            intake,
             patient:patients ( first_name, last_name ),
             staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
           `
@@ -85,6 +92,7 @@ export function useTodayAppointments(): UseTodayAppointmentsResult {
             status: raw.status,
             event_type_label: raw.event_type_label,
             staff_account_id: raw.staff_account_id,
+            intake: raw.intake,
             patient_first_name: patient?.first_name ?? null,
             patient_last_name: patient?.last_name ?? null,
             staff_first_name: staff?.first_name ?? null,
@@ -117,6 +125,7 @@ interface AppointmentRowRaw {
   status: AppointmentStatus;
   event_type_label: string | null;
   staff_account_id: string | null;
+  intake: IntakeAnswer[] | null;
   patient:
     | { first_name: string | null; last_name: string | null }
     | { first_name: string | null; last_name: string | null }[]
@@ -137,4 +146,29 @@ export function patientDisplayName(row: AppointmentRow): string {
 export function staffDisplayName(row: AppointmentRow): string | undefined {
   if (!row.staff_first_name && !row.staff_last_name) return undefined;
   return [row.staff_first_name, row.staff_last_name].filter(Boolean).join(' ');
+}
+
+// One-line summary of Calendly intake answers for compact list rows.
+// Returns the answer values joined with ' · '; questions that look like
+// generic contact fields (number, email, time zone) are filtered out.
+export function intakeSummary(row: AppointmentRow): string | undefined {
+  const filtered = filterCareIntake(row.intake);
+  if (!filtered || filtered.length === 0) return undefined;
+  return filtered.map((a) => a.answer.trim()).filter(Boolean).join(' · ');
+}
+
+const INTAKE_SKIP_PATTERNS = [
+  /^contact\s*number/i,
+  /^phone/i,
+  /^mobile/i,
+  /^email/i,
+  /\btime\s*zone\b/i,
+];
+
+export function filterCareIntake(intake: IntakeAnswer[] | null | undefined): IntakeAnswer[] {
+  if (!intake) return [];
+  return intake.filter((a) => {
+    if (!a || typeof a.answer !== 'string' || a.answer.trim() === '') return false;
+    return !INTAKE_SKIP_PATTERNS.some((re) => re.test(a.question ?? ''));
+  });
 }
