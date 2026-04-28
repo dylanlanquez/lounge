@@ -645,36 +645,55 @@ export function Schedule() {
               ) : null}
 
               {formatBookingSummary(selected) ? (
-                // Plain block — no card / no accent fill — so it doesn't
-                // compete with the virtual-appointment notice above when
-                // both are present on mobile. The uppercase label is
-                // enough visual cue on its own.
-                <div>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.xs,
-                      color: theme.color.inkMuted,
-                      fontWeight: theme.type.weight.medium,
-                      textTransform: 'uppercase',
-                      letterSpacing: theme.type.tracking.wide,
-                      marginBottom: theme.space[1],
-                    }}
-                  >
-                    Booking details
-                  </p>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.lg,
-                      fontWeight: theme.type.weight.semibold,
-                      color: theme.color.ink,
-                      lineHeight: theme.type.leading.snug,
-                    }}
-                  >
-                    {formatBookingSummary(selected)}
-                  </p>
-                </div>
+                (() => {
+                  // When the virtual-appointment notice above is also
+                  // showing (mobile virtual booking), quiet down this
+                  // card so the actionable notice keeps the visual
+                  // high ground. Otherwise show the full accent card
+                  // — booking details ARE the primary info on every
+                  // other path.
+                  const sharingSpaceWithVirtualNotice =
+                    !!selected.join_url && !isDesktop;
+                  return (
+                    <div
+                      style={{
+                        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                        background: sharingSpaceWithVirtualNotice
+                          ? 'rgba(232, 245, 236, 0.4)'
+                          : theme.color.accentBg,
+                        border: sharingSpaceWithVirtualNotice
+                          ? `1px solid ${theme.color.border}`
+                          : `1px solid ${theme.color.accent}`,
+                        borderRadius: 12,
+                      }}
+                    >
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: theme.type.size.xs,
+                          color: theme.color.inkMuted,
+                          fontWeight: theme.type.weight.medium,
+                          textTransform: 'uppercase',
+                          letterSpacing: theme.type.tracking.wide,
+                          marginBottom: theme.space[1],
+                        }}
+                      >
+                        Booking details
+                      </p>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: theme.type.size.lg,
+                          fontWeight: theme.type.weight.semibold,
+                          color: theme.color.ink,
+                          lineHeight: theme.type.leading.snug,
+                        }}
+                      >
+                        {formatBookingSummary(selected)}
+                      </p>
+                    </div>
+                  );
+                })()
               ) : null}
 
               <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
