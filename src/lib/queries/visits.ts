@@ -100,6 +100,31 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
   return { visit_id: visit.id, walk_in_id: walkIn.id, lwo_ref: lwoRef };
 }
 
+// Reverses a no-show flag — used when a virtual patient turns up late
+// after staff already marked them no_show. Flips status back to
+// 'arrived' and records a no_show_reversed patient_event so the timeline
+// preserves the full audit trail (booked → no_show → reversed).
+export async function reverseNoShow(appointmentId: string): Promise<void> {
+  const { data: appt, error } = await supabase
+    .from('lng_appointments')
+    .update({ status: 'arrived' })
+    .eq('id', appointmentId)
+    .select('id, patient_id')
+    .single();
+  if (error || !appt) throw new Error(error?.message ?? 'Could not undo no-show');
+
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+  await supabase.from('patient_events').insert({
+    patient_id: appt.patient_id,
+    event_type: 'no_show_reversed',
+    payload: {
+      appointment_id: appt.id,
+      staff_account_id: accountId ?? null,
+      reversed_at: new Date().toISOString(),
+    },
+  });
+}
+
 // Records that staff joined a virtual meeting. Flips the appointment to
 // 'arrived' (re-uses the existing status — virtual attendance is still
 // "the patient turned up") and writes a patient_events row so the
