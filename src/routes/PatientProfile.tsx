@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react';
-import { Navigate, Link, useNavigate, useParams } from 'react-router-dom';
-import { ChevronRight, Download, FileText, Image as ImageIcon, Layers, Paperclip, Pencil, Pin } from 'lucide-react';
-import { Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
-import { TopBar } from '../components/TopBar/TopBar.tsx';
+import { useEffect, useMemo, useState } from 'react';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Download, FileText, Image as ImageIcon, Layers, Paperclip, Pencil, Pin } from 'lucide-react';
+import { Breadcrumb, Card, EmptyState, PatientFileViewer, Skeleton, StatusPill } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -59,8 +58,6 @@ export function PatientProfile() {
       }}
     >
       <div style={{ maxWidth: 960, margin: '0 auto' }}>
-        <TopBar variant="subpage" backTo="/patients" />
-
         <Breadcrumbs patient={patient} />
 
         {patientError ? (
@@ -76,7 +73,13 @@ export function PatientProfile() {
             <Hero patient={patient} cases={cases} isMobile={isMobile} />
             <NotesAndFlags patient={patient} />
             <PatientFiles files={files} loading={filesLoading} isMobile={isMobile} />
-            <WalkInAppointments visits={visits} loading={visitsLoading} isMobile={isMobile} />
+            <WalkInAppointments
+              visits={visits}
+              loading={visitsLoading}
+              isMobile={isMobile}
+              patientId={patient.id}
+              patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
+            />
             <CaseHistory cases={cases} loading={casesLoading} />
           </div>
         )}
@@ -86,25 +89,17 @@ export function PatientProfile() {
 }
 
 function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
+  const navigate = useNavigate();
   const name = patient ? `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() : 'Patient';
   return (
-    <nav
-      aria-label="Breadcrumb"
-      style={{
-        margin: `${theme.space[3]}px 0 ${theme.space[5]}px`,
-        fontSize: theme.type.size.sm,
-        color: theme.color.inkMuted,
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[1],
-      }}
-    >
-      <Link to="/patients" style={{ color: theme.color.inkMuted, textDecoration: 'none' }}>
-        Patients
-      </Link>
-      <ChevronRight size={14} aria-hidden />
-      <span style={{ color: theme.color.ink }}>{name}</span>
-    </nav>
+    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[5]}px` }}>
+      <Breadcrumb
+        items={[
+          { label: 'Patients', onClick: () => navigate('/patients') },
+          { label: name },
+        ]}
+      />
+    </div>
   );
 }
 
@@ -415,16 +410,28 @@ function PatientFiles({
   loading: boolean;
   isMobile: boolean;
 }) {
-  // Map: label_key → latest entry. files come ordered by uploaded_at desc.
-  const latestByKey = useMemo(() => {
-    const map = new Map<string, PatientFileEntry>();
+  // Group every entry per label_key. The viewer modal needs the full
+  // version history; the slot tile only needs the headline. files
+  // come ordered by uploaded_at desc, so the first matching entry per
+  // key is the most recent — which is also the one with the highest
+  // active version (Meridian appends).
+  const groupedByKey = useMemo(() => {
+    const map = new Map<string, PatientFileEntry[]>();
     for (const f of files) {
       if (!f.label_key) continue;
-      if (!map.has(f.label_key)) map.set(f.label_key, f);
+      const arr = map.get(f.label_key) ?? [];
+      arr.push(f);
+      map.set(f.label_key, arr);
     }
     return map;
   }, [files]);
-  const presentCount = latestByKey.size;
+  const presentCount = useMemo(
+    () => Array.from(groupedByKey.values()).filter((list) => list.some((f) => f.status === 'active')).length,
+    [groupedByKey]
+  );
+
+  const [openSlot, setOpenSlot] = useState<{ key: string; label: string } | null>(null);
+  const openEntries = openSlot ? groupedByKey.get(openSlot.key) ?? [] : [];
 
   return (
     <Card padding="lg">
@@ -487,37 +494,45 @@ function PatientFiles({
           }}
         >
           {PATIENT_FILE_SLOTS.map((slot) => {
-            const entry = latestByKey.get(slot.key) ?? null;
-            return <FileSlot key={slot.key} slotLabel={slot.label} hint={slot.acceptHint} entry={entry} />;
+            const entries = groupedByKey.get(slot.key) ?? [];
+            const headline = entries.find((e) => e.status === 'active') ?? entries[0] ?? null;
+            return (
+              <FileSlot
+                key={slot.key}
+                slotLabel={slot.label}
+                entry={headline}
+                versionCount={entries.length}
+                onOpen={() => setOpenSlot({ key: slot.key, label: slot.label })}
+              />
+            );
           })}
         </div>
       )}
+
+      <PatientFileViewer
+        open={openSlot !== null}
+        onClose={() => setOpenSlot(null)}
+        slotLabel={openSlot?.label ?? ''}
+        entries={openEntries}
+      />
     </Card>
   );
 }
 
 function FileSlot({
   slotLabel,
-  hint,
   entry,
+  versionCount,
+  onOpen,
 }: {
   slotLabel: string;
-  hint: string;
   entry: PatientFileEntry | null;
+  versionCount: number;
+  onOpen: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-
-  const open = async () => {
-    if (!entry) return;
-    setBusy(true);
-    try {
-      const url = await signedUrlFor(entry.file_url, 300);
-      if (url) window.open(url, '_blank');
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  // Empty placeholder. View-only — Lounge does not upload patient files
+  // (Meridian / customer portal own that surface). Render a quiet
+  // "No file" cell so the grid stays uniform.
   if (!entry) {
     return (
       <div
@@ -534,29 +549,22 @@ function FileSlot({
           justifyContent: 'center',
           textAlign: 'center',
           color: theme.color.inkSubtle,
-          opacity: 0.7,
           gap: theme.space[2],
-          cursor: 'not-allowed',
         }}
-        title="Upload available in a follow-up phase"
       >
         <FileText size={20} />
         <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
-          Upload {slotLabel}
+          {slotLabel}
         </span>
-        <span style={{ fontSize: theme.type.size.xs }}>Click to add the first version</span>
-        <span style={{ fontSize: theme.type.size.xs }}>{hint}</span>
+        <span style={{ fontSize: theme.type.size.xs }}>No file on record</span>
       </div>
     );
   }
 
-  const isImage = entry.mime_type?.startsWith('image/');
-
   return (
     <button
       type="button"
-      onClick={open}
-      disabled={busy}
+      onClick={onOpen}
       style={{
         appearance: 'none',
         textAlign: 'left',
@@ -565,7 +573,7 @@ function FileSlot({
         borderRadius: theme.radius.card,
         border: `1px solid ${theme.color.border}`,
         background: theme.color.surface,
-        cursor: busy ? 'wait' : 'pointer',
+        cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -587,23 +595,13 @@ function FileSlot({
           alignItems: 'center',
           justifyContent: 'center',
           boxShadow: theme.shadow.card,
+          zIndex: 1,
         }}
         aria-hidden
       >
         <Pin size={14} />
       </div>
-      <div
-        style={{
-          flex: 1,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: theme.color.bg,
-          color: theme.color.inkSubtle,
-        }}
-      >
-        {isImage ? <ImageIcon size={32} aria-hidden /> : <FileText size={32} aria-hidden />}
-      </div>
+      <SlotPreview entry={entry} />
       <div
         style={{
           padding: theme.space[3],
@@ -622,7 +620,11 @@ function FileSlot({
             whiteSpace: 'nowrap',
           }}
         >
-          {slotLabel} <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.regular }}>· v1</span>
+          {slotLabel}{' '}
+          <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.regular }}>
+            · v{entry.version ?? '?'}
+            {versionCount > 1 ? ` of ${versionCount}` : ''}
+          </span>
         </p>
         <p
           style={{
@@ -641,6 +643,57 @@ function FileSlot({
   );
 }
 
+// Inline preview for the slot tile. Resolves a signed URL on mount —
+// the original file for image MIME, the cached thumbnail_path PNG for
+// 3D files (STL/OBJ/PLY). Falls back to the icon glyph when nothing
+// renderable is available.
+function SlotPreview({ entry }: { entry: PatientFileEntry }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const isImage = entry.mime_type?.startsWith('image/');
+  const previewPath = isImage ? entry.file_url : entry.thumbnail_path;
+
+  useEffect(() => {
+    let cancelled = false;
+    setUrl(null);
+    if (!previewPath) return;
+    (async () => {
+      const signed = await signedUrlFor(previewPath, 300);
+      if (cancelled) return;
+      setUrl(signed);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [previewPath]);
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: theme.color.bg,
+        color: theme.color.inkSubtle,
+        overflow: 'hidden',
+      }}
+    >
+      {url ? (
+        <img
+          src={url}
+          alt=""
+          aria-hidden
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : isImage ? (
+        <ImageIcon size={32} aria-hidden />
+      ) : (
+        <FileText size={32} aria-hidden />
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Walk-in appointments table — per-visit row.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -649,12 +702,21 @@ function WalkInAppointments({
   visits,
   loading,
   isMobile,
+  patientId,
+  patientName,
 }: {
   visits: PatientVisitRow[];
   loading: boolean;
   isMobile: boolean;
+  patientId: string;
+  patientName: string;
 }) {
   const navigate = useNavigate();
+  // Tell the visit page where the user came from. VisitDetail's
+  // breadcrumb uses this to render "Patients › Name › Visit" instead
+  // of "Schedule › Visit", so back-navigation lands on this profile.
+  const openVisit = (id: string) =>
+    navigate(`/visit/${id}`, { state: { from: 'patient', patientId, patientName } });
   return (
     <Card padding="lg">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -692,12 +754,12 @@ function WalkInAppointments({
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
           {visits.map((v) => (
             <li key={v.id}>
-              <VisitRowMobile visit={v} onClick={() => navigate(`/visit/${v.id}`)} />
+              <VisitRowMobile visit={v} onClick={() => openVisit(v.id)} />
             </li>
           ))}
         </ul>
       ) : (
-        <VisitsTable visits={visits} onRowClick={(v) => navigate(`/visit/${v.id}`)} />
+        <VisitsTable visits={visits} onRowClick={(v) => openVisit(v.id)} />
       )}
     </Card>
   );

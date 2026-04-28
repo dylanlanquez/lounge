@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Plus, ShoppingCart } from 'lucide-react';
-import { Button, Card, EmptyState, StatusPill, Toast, WaiverSheet } from '../components/index.ts';
+import { Breadcrumb, Button, Card, EmptyState, StatusPill, Toast, WaiverSheet } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
-import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { VisitFiles } from '../components/VisitFiles/VisitFiles.tsx';
@@ -137,7 +136,7 @@ export function VisitDetail() {
       }}
     >
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <TopBar variant="subpage" backTo="/schedule" />
+        <VisitBreadcrumbs visit={visit} patient={patient} />
 
         {loading ? (
           <p style={{ color: theme.color.inkMuted }}>Loading visit…</p>
@@ -287,6 +286,78 @@ export function VisitDetail() {
         onAllSigned={refreshSignatures}
       />
     </main>
+  );
+}
+
+// Renders the breadcrumb trail at the top of the visit page. The path
+// depends on how the receptionist arrived: from a patient profile we
+// show "Patients › Name › Visit"; from the schedule (default) we show
+// "Schedule › Visit". The entry hint comes through router state set
+// by the caller (see PatientProfile.openVisit). When state is missing
+// — direct URL paste, browser refresh — we fall back to the schedule
+// trail so the leftmost crumb still navigates somewhere sensible.
+interface VisitEntryState {
+  from?: 'patient' | 'schedule' | 'in_clinic';
+  patientId?: string;
+  patientName?: string;
+}
+
+function VisitBreadcrumbs({
+  visit,
+  patient,
+}: {
+  visit: { opened_at: string } | null;
+  patient: { id: string; first_name: string; last_name: string } | null;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const entry = (location.state as VisitEntryState | null) ?? {};
+
+  const visitLabel = visit
+    ? `Visit, ${new Date(visit.opened_at).toLocaleString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`
+    : 'Visit';
+
+  const items = (() => {
+    if (entry.from === 'patient' && entry.patientId) {
+      return [
+        { label: 'Patients', onClick: () => navigate('/patients') },
+        {
+          label: entry.patientName ?? 'Patient',
+          onClick: () => navigate(`/patient/${entry.patientId}`),
+        },
+        { label: visitLabel },
+      ];
+    }
+    if (entry.from === 'in_clinic') {
+      return [
+        { label: 'In clinic', onClick: () => navigate('/in-clinic') },
+        { label: visitLabel },
+      ];
+    }
+    // 'schedule' or no hint — default trail.
+    if (patient) {
+      const name = `${patient.first_name} ${patient.last_name}`.trim() || 'Patient';
+      return [
+        { label: 'Schedule', onClick: () => navigate('/schedule') },
+        { label: name, onClick: () => navigate(`/patient/${patient.id}`) },
+        { label: visitLabel },
+      ];
+    }
+    return [
+      { label: 'Schedule', onClick: () => navigate('/schedule') },
+      { label: visitLabel },
+    ];
+  })();
+
+  return (
+    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[5]}px` }}>
+      <Breadcrumb items={items} />
+    </div>
   );
 }
 

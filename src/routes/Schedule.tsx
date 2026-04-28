@@ -494,7 +494,7 @@ export function Schedule() {
                             try {
                               const { visit_id } = await reverseNoShow(selected.id);
                               if (visit_id && !isVirtual) {
-                                navigate(`/visit/${visit_id}`);
+                                navigate(`/visit/${visit_id}`, { state: { from: 'schedule' } });
                               } else {
                                 setSelected(null);
                                 window.location.reload();
@@ -560,7 +560,7 @@ export function Schedule() {
                             setBusy(true);
                             try {
                               const { visit_id } = await markAppointmentArrived(selected.id);
-                              navigate(`/visit/${visit_id}`);
+                              navigate(`/visit/${visit_id}`, { state: { from: 'schedule' } });
                             } catch (e) {
                               setError(e instanceof Error ? e.message : 'Could not mark arrived');
                             } finally {
