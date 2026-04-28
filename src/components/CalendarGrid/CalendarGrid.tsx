@@ -173,14 +173,18 @@ export function offsetForTime(iso: string, startHour: number, pxPerHour: number)
   return ((minutes - startMinutes) / 60) * pxPerHour;
 }
 
+// 6px of breathing room subtracted from each card so back-to-back
+// appointments don't visually slam into the next hour line. The card still
+// represents the duration to scale; we just stop it short of the boundary.
+const CARD_BOTTOM_GAP = 6;
+
 export function heightForDuration(startIso: string, endIso: string, pxPerHour: number): number {
   const start = new Date(startIso).getTime();
   const end = new Date(endIso).getTime();
   const hours = (end - start) / (1000 * 60 * 60);
   // Min 56px so a 30-min appointment in a half-width lane still fits the
-  // patient name + time without clipping. The visual bar still represents
-  // the true duration; the card just doesn't compress further.
-  return Math.max(56, hours * pxPerHour);
+  // patient name + time without clipping.
+  return Math.max(56, hours * pxPerHour - CARD_BOTTOM_GAP);
 }
 
 // Threshold above which an overlap cluster collapses into a single
