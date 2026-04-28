@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import type { CatalogueRow } from './catalogue.ts';
 
 export interface CartRow {
   id: string;
@@ -24,6 +25,25 @@ export interface CartItemRow {
   discount_pence: number;
   line_total_pence: number;
   sort_order: number;
+  // Snapshot fields populated when the row came from the catalogue
+  // picker. Free-form ad-hoc rows leave these null.
+  catalogue_id: string | null;
+  catalogue_code: string | null;
+  service_type: string | null;
+  product_key: string | null;
+  repair_variant: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  shade: string | null;
+  notes: string | null;
+}
+
+// Per-instance line input. The picker passes one of these per "tick" of
+// quantity. extras pricing is applied by the caller (addCatalogueItemsToCart)
+// — the picker just declares the catalogue row and options.
+export interface CatalogueAddOptions {
+  arch?: 'upper' | 'lower' | 'both' | null;
+  shade?: string | null;
+  notes?: string | null;
 }
 
 interface UseCartResult {
@@ -127,6 +147,51 @@ export async function addCartItem(
     .single();
   if (error || !data) throw new Error(error?.message ?? 'Add item failed');
   return data as CartItemRow;
+}
+
+// Inserts N rows for a catalogue pick — one per instance — so volume
+// pricing is per-line and no window-function trigger is needed. The
+// first instance charges the catalogue's unit_price; every subsequent
+// instance charges extra_unit_price (or unit_price again if the
+// catalogue has no extras price).
+//
+// Each row carries the full catalogue snapshot (code, name, service_type,
+// product_key, repair_variant, arch_match collapsed to the per-line
+// `arch` value, shade, notes) so post-checkout edits to lwo_catalogue
+// can never alter the receipt.
+export async function addCatalogueItemsToCart(
+  cartId: string,
+  catalogue: CatalogueRow,
+  qty: number,
+  options: CatalogueAddOptions
+): Promise<CartItemRow[]> {
+  if (qty <= 0) return [];
+  const unit = Math.round(catalogue.unit_price * 100);
+  const extra =
+    catalogue.extra_unit_price != null ? Math.round(catalogue.extra_unit_price * 100) : unit;
+  const baseSnapshot = {
+    cart_id: cartId,
+    sku: catalogue.code,
+    name: catalogue.name,
+    description: catalogue.description,
+    quantity: 1,
+    discount_pence: 0,
+    catalogue_id: catalogue.id,
+    catalogue_code: catalogue.code,
+    service_type: catalogue.service_type,
+    product_key: catalogue.product_key,
+    repair_variant: catalogue.repair_variant,
+    arch: options.arch ?? null,
+    shade: options.shade ?? null,
+    notes: options.notes ?? null,
+  };
+  const rows = [];
+  for (let i = 0; i < qty; i++) {
+    rows.push({ ...baseSnapshot, unit_price_pence: i === 0 ? unit : extra });
+  }
+  const { data, error } = await supabase.from('lng_cart_items').insert(rows).select('*');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CartItemRow[];
 }
 
 export async function updateCartItemQuantity(itemId: string, quantity: number): Promise<void> {

@@ -298,10 +298,19 @@ export interface AppointmentDeposit {
   status: 'paid' | 'failed';
 }
 
+// Appointment context the visit page passes through to the catalogue
+// picker so it can suggest matching products. Walk-ins (no appointment)
+// pass null; the picker just shows the full catalogue.
+export interface VisitAppointmentContext {
+  event_type_label: string | null;
+  intake: Array<{ question: string; answer: string }> | null;
+}
+
 interface VisitDetailResult {
   visit: VisitRow | null;
   patient: PatientRow | null;
   deposit: AppointmentDeposit | null;
+  appointment: VisitAppointmentContext | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -311,6 +320,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
   const [visit, setVisit] = useState<VisitRow | null>(null);
   const [patient, setPatient] = useState<PatientRow | null>(null);
   const [deposit, setDeposit] = useState<AppointmentDeposit | null>(null);
+  const [appointment, setAppointment] = useState<VisitAppointmentContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -354,16 +364,24 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
         if (visitRow.appointment_id) {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
-            .select('deposit_pence, deposit_currency, deposit_provider, deposit_status')
+            .select(
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status'
+            )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
           if (!cancelled && !apptErr && appt) {
             const a = appt as {
+              event_type_label: string | null;
+              intake: Array<{ question: string; answer: string }> | null;
               deposit_pence: number | null;
               deposit_currency: string | null;
               deposit_provider: 'paypal' | 'stripe' | null;
               deposit_status: 'paid' | 'failed' | null;
             };
+            setAppointment({
+              event_type_label: a.event_type_label,
+              intake: a.intake,
+            });
             if (
               a.deposit_pence != null &&
               a.deposit_pence > 0 &&
@@ -381,6 +399,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
             }
           }
         } else {
+          setAppointment(null);
           setDeposit(null);
         }
       }
@@ -391,5 +410,5 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
     };
   }, [visitId, tick]);
 
-  return { visit, patient, deposit, loading, error, refresh };
+  return { visit, patient, deposit, appointment, loading, error, refresh };
 }
