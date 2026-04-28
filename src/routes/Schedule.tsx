@@ -26,6 +26,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type AppointmentRow,
+  eventTypeCategory,
   formatBookingSummary,
   patientDisplayName,
   staffDisplayName,
@@ -190,6 +191,7 @@ export function Schedule() {
                         height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
                         lane={item.lane}
                         lanesInGroup={item.lanesInGroup}
+                        barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
                         onClick={() => setSelected(item.data)}
                       />
                     ) : (
