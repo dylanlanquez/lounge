@@ -14,6 +14,7 @@ const PatientProfile = lazy(() => import('./routes/PatientProfile.tsx').then((m)
 const Patients = lazy(() => import('./routes/Patients.tsx').then((m) => ({ default: m.Patients })));
 const InClinic = lazy(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })));
 const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })));
+const Arrival = lazy(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })));
 const NotFound = lazy(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })));
 
 function RouteFallback() {
@@ -50,6 +51,8 @@ export function App() {
           <Route path="/patients" element={<Patients />} />
           <Route path="/in-clinic" element={<InClinic />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/arrival/appointment/:id" element={<Arrival />} />
+          <Route path="/arrival/walk-in/:id" element={<Arrival />} />
           {/* old aliases */}
           <Route path="/today" element={<Navigate to="/schedule" replace />} />
           <Route path="/dashboard" element={<Navigate to="/schedule" replace />} />

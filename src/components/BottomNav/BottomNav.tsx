@@ -15,6 +15,10 @@ import { ToothIcon } from '../Icons/ToothIcon.tsx';
 export function shouldShowBottomNav(pathname: string, signedIn: boolean): boolean {
   if (!signedIn) return false;
   if (pathname === '/sign-in') return false;
+  // Arrival wizard takes over the full surface so the patient doesn't
+  // tap out mid-flow (the iPad is handed across the desk for the
+  // customer-facing steps).
+  if (pathname.startsWith('/arrival/')) return false;
   return true;
 }
 
