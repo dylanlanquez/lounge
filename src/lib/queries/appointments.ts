@@ -186,3 +186,44 @@ export function filterCareIntake(intake: IntakeAnswer[] | null | undefined): Int
     return !INTAKE_SKIP_PATTERNS.some((re) => re.test(a.question ?? ''));
   });
 }
+
+const ARCH_QUESTION = /\barch\b/i;
+const SUBJECT_QUESTION = /\b(appliance|repair[\s_]*type|treatment)\b/i;
+
+// Map "Top" / "Bottom" / "Both" answers to anatomical labels.
+// Multi-select values like "Top, Bottom" or "Upper and Lower" collapse to
+// "Upper and Lower". Unknown values pass through with first-letter cap.
+export function archToAnatomy(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const v = raw.toLowerCase().trim();
+  if (!v) return undefined;
+  const hasTop = /\b(top|upper)\b/.test(v);
+  const hasBottom = /\b(bottom|lower)\b/.test(v);
+  if ((hasTop && hasBottom) || /\bboth\b/.test(v) || /\bfull\b/.test(v)) return 'Upper and Lower';
+  if (hasTop) return 'Upper';
+  if (hasBottom) return 'Lower';
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+// One-line, human-readable summary of the appointment for cards and sheets.
+// Combines arch + appliance/repair into "Upper Missing Tooth Retainer";
+// strips event-type prefixes ("Same-day ", "In-person ", "Virtual ") so the
+// final string stays compact and clinical.
+export function formatBookingSummary(row: AppointmentRow): string {
+  const answers = filterCareIntake(row.intake);
+  const arch = answers.find((a) => ARCH_QUESTION.test(a.question ?? ''));
+  const subject = answers.find((a) => SUBJECT_QUESTION.test(a.question ?? ''));
+  const archLabel = arch ? archToAnatomy(arch.answer) : undefined;
+  const subjectLabel = subject?.answer.trim() || undefined;
+
+  const event = row.event_type_label?.trim() ?? '';
+  const eventStripped = event.replace(/^(same-day|in-person|virtual)\s+/i, '').trim();
+
+  if (subjectLabel && archLabel) return `${archLabel} ${subjectLabel}`;
+  if (subjectLabel) return subjectLabel;
+  if (archLabel && eventStripped) return `${archLabel} ${eventStripped}`;
+  if (answers.length > 0) {
+    return answers.map((a) => a.answer.trim()).filter(Boolean).join(' · ');
+  }
+  return event;
+}
