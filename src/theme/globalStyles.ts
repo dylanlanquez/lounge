@@ -7,6 +7,12 @@ export function applyGlobalStyles(): void {
   style.textContent = `
     *, *::before, *::after { box-sizing: border-box; }
     html, body, #root { margin: 0; padding: 0; height: 100%; background: ${theme.color.bg}; }
+    /* Kill the iOS / iPadOS rubber-band over-scroll. Without this, the
+       fixed kiosk status bar and bottom nav drift up/down when the user
+       pulls past the top or bottom of the page — they're meant to be
+       anchored. Supported on iOS 16+ and Chrome 63+, so universal on
+       any tablet shipping in the last few years. */
+    html, body { overscroll-behavior: none; }
     body {
       font-family: ${theme.type.family};
       font-size: ${theme.type.size.base}px;

@@ -19,6 +19,11 @@ export function KioskStatusBar() {
   const online = useOnline();
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  // Compact date — full "Tuesday, 28 April 2026" overflows on portrait
+  // tablet. "Tue 28 Apr" + the time reads cleanly inside the 32px bar
+  // and gives the receptionist constant temporal context (the page
+  // heading sometimes scrolls out of view).
+  const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   const percent = level === null ? null : Math.round(level * 100);
   const tone = batteryTone(percent);
 
@@ -47,11 +52,16 @@ export function KioskStatusBar() {
     >
       <span
         style={{
-          fontWeight: theme.type.weight.semibold,
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: theme.space[2],
           letterSpacing: theme.type.tracking.normal,
         }}
       >
-        {time}
+        <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+          {date}
+        </span>
+        <span style={{ fontWeight: theme.type.weight.semibold }}>{time}</span>
       </span>
 
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
