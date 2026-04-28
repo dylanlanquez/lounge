@@ -274,82 +274,105 @@ export function Schedule() {
                   Patient timeline <ChevronRight size={16} />
                 </span>
               </Button>
-              {selected.status === 'booked' ? (
-                <div style={{ display: 'flex', gap: theme.space[2] }}>
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={async () => {
-                      if (!selected) return;
-                      setBusy(true);
-                      try {
-                        await supabase.from('lng_appointments').update({ status: 'no_show' }).eq('id', selected.id);
-                        setSelected(null);
-                        window.location.reload();
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Could not update');
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    No-show
-                  </Button>
-                  {selected.join_url ? (
-                    isDesktop ? (
-                      <Button
-                        variant="primary"
-                        loading={busy}
-                        onClick={async () => {
-                          if (!selected || !selected.join_url) return;
-                          // Open immediately so the click counts as a user
-                          // gesture (browsers block window.open from awaited
-                          // code paths), then record attendance in the DB.
-                          window.open(selected.join_url, '_blank', 'noopener,noreferrer');
-                          setBusy(true);
-                          try {
-                            await markVirtualMeetingJoined(selected.id);
-                            setSelected(null);
-                            window.location.reload();
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : 'Could not record join');
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                          <Video size={16} /> Join meeting
-                        </span>
-                      </Button>
-                    ) : null
-                  ) : (
+              {(() => {
+                const isVirtual = !!selected.join_url;
+                // Virtual: No-show stays available even after Join — staff
+                // may join the call and then realise the patient never
+                // showed up, and need to flip it to no-show.
+                const canAct =
+                  selected.status === 'booked' ||
+                  (isVirtual && selected.status === 'arrived');
+                if (!canAct) {
+                  return (
+                    <Button variant="secondary" onClick={() => setSelected(null)}>
+                      Close
+                    </Button>
+                  );
+                }
+                return (
+                  <div style={{ display: 'flex', gap: theme.space[2] }}>
                     <Button
-                      variant="primary"
-                      showArrow
-                      loading={busy}
+                      variant="secondary"
+                      disabled={busy}
                       onClick={async () => {
                         if (!selected) return;
                         setBusy(true);
                         try {
-                          const { visit_id } = await markAppointmentArrived(selected.id);
-                          navigate(`/visit/${visit_id}`);
+                          await supabase.from('lng_appointments').update({ status: 'no_show' }).eq('id', selected.id);
+                          if (selected.patient_id) {
+                            await supabase.from('patient_events').insert({
+                              patient_id: selected.patient_id,
+                              event_type: 'no_show',
+                              payload: { appointment_id: selected.id, was_virtual: isVirtual, joined_before_no_show: selected.status === 'arrived' },
+                            });
+                          }
+                          setSelected(null);
+                          window.location.reload();
                         } catch (e) {
-                          setError(e instanceof Error ? e.message : 'Could not mark arrived');
+                          setError(e instanceof Error ? e.message : 'Could not update');
                         } finally {
                           setBusy(false);
                         }
                       }}
                     >
-                      Mark as arrived
+                      No-show
                     </Button>
-                  )}
-                </div>
-              ) : (
-                <Button variant="secondary" onClick={() => setSelected(null)}>
-                  Close
-                </Button>
-              )}
+                    {isVirtual ? (
+                      isDesktop ? (
+                        <Button
+                          variant="primary"
+                          loading={busy}
+                          onClick={async () => {
+                            if (!selected || !selected.join_url) return;
+                            // Open immediately so the click counts as a user
+                            // gesture (browsers block window.open from awaited
+                            // code paths), then record attendance.
+                            window.open(selected.join_url, '_blank', 'noopener,noreferrer');
+                            // Re-join after a previous join: just open the
+                            // URL, no need to re-record (status already
+                            // 'arrived').
+                            if (selected.status === 'arrived') return;
+                            setBusy(true);
+                            try {
+                              await markVirtualMeetingJoined(selected.id);
+                              setSelected(null);
+                              window.location.reload();
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : 'Could not record join');
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <Video size={16} /> {selected.status === 'arrived' ? 'Re-join meeting' : 'Join meeting'}
+                          </span>
+                        </Button>
+                      ) : null
+                    ) : (
+                      <Button
+                        variant="primary"
+                        showArrow
+                        loading={busy}
+                        onClick={async () => {
+                          if (!selected) return;
+                          setBusy(true);
+                          try {
+                            const { visit_id } = await markAppointmentArrived(selected.id);
+                            navigate(`/visit/${visit_id}`);
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : 'Could not mark arrived');
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Mark as arrived
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           }
         >
@@ -419,11 +442,13 @@ export function Schedule() {
                 ? selected.join_url
                   ? 'Tap Join meeting on a desktop when the call begins. Mark no-show 15 min after the start time if they have not connected.'
                   : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
-                : selected.status === 'rescheduled'
-                  ? 'This booking was rescheduled in Calendly.'
-                  : selected.status === 'cancelled'
-                    ? 'This booking was cancelled in Calendly.'
-                    : ''}
+                : selected.status === 'arrived' && selected.join_url
+                  ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
+                  : selected.status === 'rescheduled'
+                    ? 'This booking was rescheduled in Calendly.'
+                    : selected.status === 'cancelled'
+                      ? 'This booking was cancelled in Calendly.'
+                      : ''}
             </p>
           </div>
         </BottomSheet>
