@@ -166,17 +166,18 @@ function NowPill({ offset }: { offset: number }) {
 
 // Helpers
 
+// 6px breathing room above and below each card so back-to-back
+// appointments don't visually slam into the hour gridlines. The card
+// represents the duration to scale; we just inset it inside the slot.
+const CARD_TOP_GAP = 6;
+const CARD_BOTTOM_GAP = 6;
+
 export function offsetForTime(iso: string, startHour: number, pxPerHour: number): number {
   const d = new Date(iso);
   const minutes = d.getHours() * 60 + d.getMinutes();
   const startMinutes = startHour * 60;
-  return ((minutes - startMinutes) / 60) * pxPerHour;
+  return ((minutes - startMinutes) / 60) * pxPerHour + CARD_TOP_GAP;
 }
-
-// 6px of breathing room subtracted from each card so back-to-back
-// appointments don't visually slam into the next hour line. The card still
-// represents the duration to scale; we just stop it short of the boundary.
-const CARD_BOTTOM_GAP = 6;
 
 export function heightForDuration(startIso: string, endIso: string, pxPerHour: number): number {
   const start = new Date(startIso).getTime();
@@ -184,7 +185,7 @@ export function heightForDuration(startIso: string, endIso: string, pxPerHour: n
   const hours = (end - start) / (1000 * 60 * 60);
   // Min 56px so a 30-min appointment in a half-width lane still fits the
   // patient name + time without clipping.
-  return Math.max(56, hours * pxPerHour - CARD_BOTTOM_GAP);
+  return Math.max(56, hours * pxPerHour - CARD_TOP_GAP - CARD_BOTTOM_GAP);
 }
 
 // Threshold above which an overlap cluster collapses into a single
