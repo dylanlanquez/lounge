@@ -641,7 +641,10 @@ function AppointmentList({
             {date}
           </p>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            {group.map((a) => (
+            {group.map((a) => {
+              const barColor =
+                a.status === 'booked' ? theme.category[eventTypeCategory(a.event_type_label)] : undefined;
+              return (
               <li key={a.id}>
                 <button
                   type="button"
@@ -651,16 +654,28 @@ function AppointmentList({
                     border: `1px solid ${theme.color.border}`,
                     background: theme.color.surface,
                     borderRadius: 12,
-                    padding: theme.space[3],
+                    padding: 0,
                     width: '100%',
                     textAlign: 'left',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: theme.space[3],
+                    alignItems: 'stretch',
+                    overflow: 'hidden',
                   }}
                 >
+                  {barColor ? (
+                    <div style={{ width: 6, background: barColor, flexShrink: 0 }} aria-hidden />
+                  ) : null}
+                  <div
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: theme.space[3],
+                      padding: theme.space[3],
+                    }}
+                  >
                   <div
                     style={{
                       width: 64,
@@ -704,9 +719,11 @@ function AppointmentList({
                     {humaniseStatus(a.status)}
                   </StatusPill>
                   <ChevronRight size={18} style={{ color: theme.color.inkSubtle }} />
+                  </div>
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       ))}

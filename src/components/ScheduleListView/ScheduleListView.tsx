@@ -3,6 +3,7 @@ import { StatusPill } from '../StatusPill/StatusPill.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   type AppointmentRow,
+  eventTypeCategory,
   formatBookingSummary,
   humaniseStatus,
   patientDisplayName,
@@ -55,6 +56,10 @@ function Section({ label, rows, onPick }: { label: string; rows: AppointmentRow[
 
 function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
   const tone = statusToTone(row.status);
+  // Apply category bar only on booked rows (matches AppointmentCard:
+  // status colour takes over once the visit is in progress).
+  const barColor =
+    row.status === 'booked' ? theme.category[eventTypeCategory(row.event_type_label)] : undefined;
   return (
     <li>
       <button
@@ -64,15 +69,15 @@ function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
           appearance: 'none',
           width: '100%',
           textAlign: 'left',
-          padding: theme.space[4],
+          padding: 0,
           background: theme.color.surface,
           border: `1px solid ${theme.color.border}`,
           borderRadius: 14,
           cursor: 'pointer',
           display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[4],
+          alignItems: 'stretch',
           minHeight: 64,
+          overflow: 'hidden',
           transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
         onMouseEnter={(e) => {
@@ -82,6 +87,10 @@ function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
           (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
         }}
       >
+        {barColor ? (
+          <div style={{ width: 6, background: barColor, flexShrink: 0 }} aria-hidden />
+        ) : null}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: theme.space[4], padding: theme.space[4] }}>
         <div style={{ width: 80, flexShrink: 0 }}>
           <p
             style={{
@@ -136,6 +145,7 @@ function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
           {humaniseStatus(row.status)}
         </StatusPill>
         <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
+        </div>
       </button>
     </li>
   );
