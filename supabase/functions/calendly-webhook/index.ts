@@ -174,6 +174,12 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   if (locErr || !locRow) throw new Error('no Venneir lab location found');
   const location_id = (locRow as { id: string }).id;
 
+  // Resolve a default account_id for the location. patients.account_id is a
+  // legacy NOT NULL FK in Meridian's schema. Webhooks have no auth.uid(), so
+  // we pick the first active member of this location (any role) as the
+  // default 'owning' account for Calendly-sourced patients.
+  const default_account_id = await resolveDefaultAccountId(supabase, location_id);
+
   // Identity-resolve patient: email + location, then phone, then create.
   let patient_id: string | null = null;
   if (email) {
@@ -206,6 +212,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
     const { data: created, error: createErr } = await supabase
       .from('patients')
       .insert({
+        account_id: default_account_id,
         location_id,
         first_name: firstName || 'Patient',
         last_name: lastName || '',
@@ -305,6 +312,22 @@ function splitName(name: string | undefined): { first: string; last: string } {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return { first: parts[0]!, last: '' };
   return { first: parts[0]!, last: parts.slice(1).join(' ') };
+}
+
+async function resolveDefaultAccountId(supabase: SupabaseClient, location_id: string): Promise<string> {
+  // Pick the longest-tenured active member of this location as the default
+  // owner for Calendly-imported patients. Receptionists or admins both fine.
+  const { data: rows, error } = await supabase
+    .from('location_members')
+    .select('account_id, joined_at')
+    .eq('location_id', location_id)
+    .is('removed_at', null)
+    .order('joined_at', { ascending: true })
+    .limit(1);
+  if (error || !rows || rows.length === 0) {
+    throw new Error(`no active location_members for location ${location_id} — cannot pick default account_id`);
+  }
+  return (rows[0] as { account_id: string }).account_id;
 }
 
 async function logFailure(

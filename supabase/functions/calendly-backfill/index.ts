@@ -224,9 +224,11 @@ async function applyInvitee(
     }
   }
   if (!patient_id) {
+    const account_id = await resolveDefaultAccountId(supabase, location_id);
     const { data: created, error: createErr } = await supabase
       .from('patients')
       .insert({
+        account_id,
         location_id,
         first_name: firstName || 'Patient',
         last_name: lastName || '',
@@ -274,6 +276,20 @@ async function calendly(method: 'GET' | 'POST' | 'DELETE', path: string, body?: 
     parsed = {};
   }
   return { ok: r.ok, body: parsed };
+}
+
+async function resolveDefaultAccountId(supabase: SupabaseClient, location_id: string): Promise<string> {
+  const { data: rows, error } = await supabase
+    .from('location_members')
+    .select('account_id, joined_at')
+    .eq('location_id', location_id)
+    .is('removed_at', null)
+    .order('joined_at', { ascending: true })
+    .limit(1);
+  if (error || !rows || rows.length === 0) {
+    throw new Error(`no active location_members for location ${location_id} — cannot pick default account_id`);
+  }
+  return (rows[0] as { account_id: string }).account_id;
 }
 
 function splitName(name?: string): { first: string; last: string } {
