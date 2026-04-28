@@ -225,6 +225,102 @@ export function summariseWaiverFlag(
   return { status: 'partial', missingSections: missing, staleSections: stale };
 }
 
+// ---------- Admin: list / upsert all sections (active + inactive) ----------
+
+interface AdminSectionsResult {
+  sections: WaiverSection[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+// Admin variant of useWaiverSections — returns inactive sections too so
+// legal can re-enable them, and is refreshable after edits land.
+export function useAdminWaiverSections(): AdminSectionsResult {
+  const [sections, setSections] = useState<WaiverSection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error: err } = await supabase
+        .from('lng_waiver_sections')
+        .select('key, title, terms, version, applies_to_service_type, sort_order, active')
+        .order('sort_order', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setSections([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+      setSections((data ?? []) as WaiverSection[]);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  return { sections, loading, error, refresh };
+}
+
+export interface WaiverSectionDraft {
+  key: string;
+  title: string;
+  terms: string[];
+  version: string;
+  applies_to_service_type: 'denture_repair' | 'same_day_appliance' | 'click_in_veneers' | null;
+  sort_order: number;
+  active: boolean;
+}
+
+// Upsert a section. key is the primary key — pass the same key to update,
+// a new key to insert. Existing signatures are unaffected (terms_snapshot
+// captured the text at sign time).
+export async function upsertWaiverSection(draft: WaiverSectionDraft): Promise<void> {
+  const cleaned = draft.terms.map((t) => t.trim()).filter((t) => t.length > 0);
+  const { error } = await supabase
+    .from('lng_waiver_sections')
+    .upsert(
+      {
+        key: draft.key.trim(),
+        title: draft.title.trim(),
+        terms: cleaned,
+        version: draft.version.trim(),
+        applies_to_service_type: draft.applies_to_service_type,
+        sort_order: draft.sort_order,
+        active: draft.active,
+      },
+      { onConflict: 'key' }
+    );
+  if (error) throw new Error(error.message);
+}
+
+// Suggest the next version string given the current one. Format:
+// 'YYYY-MM-DD-vN'. If today's date already appears, increment the suffix;
+// otherwise reset to v1 under today's date. Falls back to today + v1 when
+// the current version doesn't match the convention.
+export function suggestNextVersion(current: string, today: Date = new Date()): string {
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+  const m = current.match(/^(\d{4}-\d{2}-\d{2})-v(\d+)$/);
+  if (m && m[1] === todayStr) {
+    const n = parseInt(m[2]!, 10) || 1;
+    return `${todayStr}-v${n + 1}`;
+  }
+  return `${todayStr}-v1`;
+}
+
 // ---------- Sign a waiver (used by phase A2) ----------
 
 export interface SignWaiverInput {

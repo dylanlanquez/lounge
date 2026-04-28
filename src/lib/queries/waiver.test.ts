@@ -3,6 +3,7 @@ import {
   inferServiceTypeFromEventLabel,
   requiredSectionsForServiceTypes,
   sectionSignatureState,
+  suggestNextVersion,
   summariseWaiverFlag,
   type WaiverSection,
   type WaiverSignatureSummary,
@@ -198,5 +199,24 @@ describe('summariseWaiverFlag', () => {
     expect(out.status).toBe('partial');
     expect(out.staleSections.map((s) => s.key)).toEqual(['denture']);
     expect(out.missingSections).toHaveLength(0);
+  });
+});
+
+describe('suggestNextVersion', () => {
+  it('increments the suffix when current version is from today', () => {
+    const today = new Date('2026-04-28T10:00:00Z');
+    expect(suggestNextVersion('2026-04-28-v1', today)).toBe('2026-04-28-v2');
+    expect(suggestNextVersion('2026-04-28-v9', today)).toBe('2026-04-28-v10');
+  });
+
+  it('resets to v1 under today when current version is from a previous day', () => {
+    const today = new Date('2026-04-28T10:00:00Z');
+    expect(suggestNextVersion('2026-04-15-v3', today)).toBe('2026-04-28-v1');
+  });
+
+  it('falls back to today + v1 for empty or non-conforming strings', () => {
+    const today = new Date('2026-04-28T10:00:00Z');
+    expect(suggestNextVersion('', today)).toBe('2026-04-28-v1');
+    expect(suggestNextVersion('arbitrary', today)).toBe('2026-04-28-v1');
   });
 });

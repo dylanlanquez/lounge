@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -44,9 +44,16 @@ import {
   useCatalogueAll,
   type ArchMatch,
 } from '../lib/queries/catalogue.ts';
+import {
+  suggestNextVersion,
+  upsertWaiverSection,
+  useAdminWaiverSections,
+  type WaiverSection,
+  type WaiverSectionDraft,
+} from '../lib/queries/waiver.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -86,6 +93,7 @@ export function Admin() {
             options={[
               { value: 'calendly', label: 'Calendly' },
               { value: 'catalogue', label: 'Catalogue' },
+              { value: 'waivers', label: 'Waivers' },
               { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
@@ -99,6 +107,8 @@ export function Admin() {
           <CalendlyTab />
         ) : tab === 'catalogue' ? (
           <CatalogueTab />
+        ) : tab === 'waivers' ? (
+          <WaiversTab />
         ) : tab === 'receipts' ? (
           <ReceiptsTab />
         ) : tab === 'reports' ? (
@@ -1443,4 +1453,559 @@ function CatalogueThumbnail({
       )}
     </div>
   );
+}
+
+// ---------- Waivers tab ----------
+//
+// CRUD over lng_waiver_sections so legal can edit terms / bump versions
+// without writing SQL. Per-section versioning means bumping a version
+// invalidates every existing signature against that section on the
+// patient's next visit — that's by design (a "needs re-signing" banner
+// will fire at the BottomSheet). terms_snapshot on lng_waiver_signatures
+// preserves the exact text agreed to before the bump.
+
+function WaiversTab() {
+  const { sections, loading, error, refresh } = useAdminWaiverSections();
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const onSave = async (draft: WaiverSectionDraft) => {
+    try {
+      await upsertWaiverSection(draft);
+      setEditingKey(null);
+      setAdding(false);
+      refresh();
+      setToast({ tone: 'success', title: 'Saved.' });
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Save failed',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  return (
+    <Card padding="lg">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <FileSignature size={20} /> Waiver sections
+            </span>
+          </h2>
+          <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+            Edit the terms patients sign at arrival. Each section has its own version. Bumping a version flips every existing signature on that section to "needs re-signing" on the next visit. <strong>The exact text shown at sign time is preserved on the signature row</strong>, so prior agreements remain auditable.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Plus size={16} /> Add section
+          </span>
+        </Button>
+      </div>
+
+      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[5]}px 0` }} />
+
+      {error ? (
+        <p style={{ color: theme.color.alert, margin: 0 }}>Could not load sections: {error}</p>
+      ) : loading ? (
+        <Skeleton height={120} radius={12} />
+      ) : adding ? (
+        <WaiverSectionEditor
+          initial={emptyWaiverDraft()}
+          isNew
+          existingKeys={sections.map((s) => s.key)}
+          onSave={onSave}
+          onCancel={() => setAdding(false)}
+        />
+      ) : sections.length === 0 ? (
+        <EmptyState
+          icon={<FileSignature size={20} />}
+          title="No sections yet"
+          description="Tap Add section to seed the waiver."
+        />
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          {sections.map((s) =>
+            editingKey === s.key ? (
+              <li key={s.key}>
+                <WaiverSectionEditor
+                  initial={waiverDraftFromSection(s)}
+                  isNew={false}
+                  existingKeys={sections.map((x) => x.key)}
+                  onSave={onSave}
+                  onCancel={() => setEditingKey(null)}
+                />
+              </li>
+            ) : (
+              <WaiverSectionDisplay key={s.key} section={s} onEdit={() => setEditingKey(s.key)} />
+            )
+          )}
+        </ul>
+      )}
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function WaiverSectionDisplay({ section, onEdit }: { section: WaiverSection; onEdit: () => void }) {
+  const scope = serviceTypeScope(section.applies_to_service_type);
+  return (
+    <li
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: 14,
+        padding: theme.space[4],
+        background: section.active ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
+        opacity: section.active ? 1 : 0.65,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], flexWrap: 'wrap' }}>
+            <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+              {section.title}
+            </span>
+            <span style={{ fontSize: theme.type.size.xs, fontFamily: 'ui-monospace, monospace', color: theme.color.inkSubtle }}>
+              {section.key}
+            </span>
+            {!section.active ? (
+              <StatusPill tone="cancelled" size="sm">Inactive</StatusPill>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], marginTop: theme.space[2], flexWrap: 'wrap', fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+            <span>Version <strong style={{ color: theme.color.ink, fontFamily: 'ui-monospace, monospace' }}>{section.version}</strong></span>
+            <span>·</span>
+            <span>Scope: {scope}</span>
+            <span>·</span>
+            <span>Sort {section.sort_order}</span>
+            <span>·</span>
+            <span>{section.terms.length} {section.terms.length === 1 ? 'paragraph' : 'paragraphs'}</span>
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onEdit}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Pencil size={14} /> Edit
+          </span>
+        </Button>
+      </div>
+
+      <ol
+        style={{
+          margin: `${theme.space[4]}px 0 0`,
+          padding: `0 0 0 ${theme.space[5]}px`,
+          color: theme.color.inkMuted,
+          fontSize: theme.type.size.sm,
+          lineHeight: theme.type.leading.relaxed,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+        }}
+      >
+        {section.terms.map((t, i) => (
+          <li key={i}>{t}</li>
+        ))}
+      </ol>
+    </li>
+  );
+}
+
+function WaiverSectionEditor({
+  initial,
+  isNew,
+  existingKeys,
+  onSave,
+  onCancel,
+}: {
+  initial: WaiverDraftState;
+  isNew: boolean;
+  existingKeys: string[];
+  onSave: (draft: WaiverSectionDraft) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<WaiverDraftState>(initial);
+  const [busy, setBusy] = useState(false);
+  const set = <K extends keyof WaiverDraftState>(k: K, v: WaiverDraftState[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const termsChanged =
+    JSON.stringify(initial.terms) !== JSON.stringify(draft.terms) ||
+    initial.title !== draft.title;
+  const versionChanged = initial.version !== draft.version;
+  const needsBump = !isNew && termsChanged && !versionChanged;
+  const suggested = suggestNextVersion(initial.version || draft.version);
+
+  // Validation
+  const trimmedKey = draft.key.trim();
+  const keyError = isNew
+    ? !trimmedKey
+      ? 'Key required'
+      : !/^[a-z0-9_]+$/.test(trimmedKey)
+        ? 'Lowercase letters, numbers, underscores only'
+        : existingKeys.includes(trimmedKey)
+          ? 'Key already exists'
+          : null
+    : null;
+  const titleError = !draft.title.trim() ? 'Title required' : null;
+  const versionError = !draft.version.trim() ? 'Version required' : null;
+  const termsError = draft.terms.every((t) => !t.trim()) ? 'At least one paragraph' : null;
+  const hasError = !!(keyError || titleError || versionError || termsError);
+
+  const submit = async () => {
+    if (hasError) return;
+    if (needsBump) {
+      const ok = confirm(
+        `You changed the terms but not the version. Existing signatures will keep counting as current — patients won't be asked to re-sign.\n\nSuggested new version: ${suggested}\n\nClick OK to save anyway. Cancel to bump the version first.`
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      await onSave({
+        key: trimmedKey,
+        title: draft.title.trim(),
+        terms: draft.terms,
+        version: draft.version.trim(),
+        applies_to_service_type: draft.applies_to_service_type,
+        sort_order: draft.sort_order,
+        active: draft.active,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateTerm = (i: number, value: string) =>
+    setDraft((d) => ({ ...d, terms: d.terms.map((t, idx) => (idx === i ? value : t)) }));
+
+  const removeTerm = (i: number) =>
+    setDraft((d) => ({ ...d, terms: d.terms.filter((_, idx) => idx !== i) }));
+
+  const addTerm = () => setDraft((d) => ({ ...d, terms: [...d.terms, ''] }));
+
+  const moveTerm = (i: number, dir: -1 | 1) => {
+    setDraft((d) => {
+      const next = [...d.terms];
+      const j = i + dir;
+      if (j < 0 || j >= next.length) return d;
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return { ...d, terms: next };
+    });
+  };
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.color.ink}`,
+        borderRadius: 14,
+        padding: theme.space[4],
+        background: theme.color.surface,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[4],
+      }}
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        {isNew ? (
+          <Input
+            label="Section key (immutable)"
+            value={draft.key}
+            onChange={(e) => set('key', e.target.value)}
+            placeholder="e.g. emergency_consent"
+            error={keyError ?? undefined}
+          />
+        ) : (
+          <div>
+            <span
+              style={{
+                display: 'block',
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                marginBottom: theme.space[1],
+              }}
+            >
+              Section key
+            </span>
+            <code
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                height: theme.layout.inputHeight,
+                padding: `0 ${theme.space[3]}px`,
+                background: theme.color.bg,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+              }}
+            >
+              {draft.key}
+            </code>
+          </div>
+        )}
+        <Input
+          label="Title (shown to patient)"
+          value={draft.title}
+          onChange={(e) => set('title', e.target.value)}
+          placeholder="e.g. Privacy and consent"
+          error={titleError ?? undefined}
+        />
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: theme.space[2] }}>
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+            Terms (one paragraph per row)
+          </span>
+          {termsError ? (
+            <span style={{ fontSize: theme.type.size.xs, color: theme.color.alert }}>{termsError}</span>
+          ) : null}
+        </div>
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {draft.terms.map((term, i) => (
+            <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[2] }}>
+              <span
+                aria-hidden
+                style={{
+                  flexShrink: 0,
+                  width: 24,
+                  textAlign: 'right',
+                  paddingTop: 10,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkSubtle,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {i + 1}.
+              </span>
+              <textarea
+                value={term}
+                onChange={(e) => updateTerm(i, e.target.value)}
+                rows={Math.max(2, Math.ceil(term.length / 80))}
+                style={{
+                  flex: 1,
+                  resize: 'vertical',
+                  minHeight: 56,
+                  padding: theme.space[3],
+                  fontFamily: 'inherit',
+                  fontSize: theme.type.size.sm,
+                  lineHeight: theme.type.leading.relaxed,
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  background: theme.color.surface,
+                  color: theme.color.ink,
+                }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+                <IconButton ariaLabel="Move up" disabled={i === 0} onClick={() => moveTerm(i, -1)}>
+                  <ArrowUp size={14} />
+                </IconButton>
+                <IconButton ariaLabel="Move down" disabled={i === draft.terms.length - 1} onClick={() => moveTerm(i, 1)}>
+                  <ArrowDown size={14} />
+                </IconButton>
+                <IconButton ariaLabel="Remove paragraph" disabled={draft.terms.length <= 1} onClick={() => removeTerm(i)}>
+                  <Trash2 size={14} />
+                </IconButton>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <Button variant="tertiary" size="sm" onClick={addTerm} style={{ marginTop: theme.space[2] }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Plus size={14} /> Add paragraph
+          </span>
+        </Button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: theme.space[3], alignItems: 'end' }}>
+        <Input
+          label="Version"
+          value={draft.version}
+          onChange={(e) => set('version', e.target.value)}
+          placeholder="2026-04-28-v1"
+          error={versionError ?? undefined}
+        />
+        <Button
+          variant="tertiary"
+          size="sm"
+          onClick={() => set('version', suggested)}
+          disabled={draft.version === suggested}
+        >
+          Bump to {suggested}
+        </Button>
+      </div>
+      {needsBump ? (
+        <p
+          style={{
+            margin: 0,
+            padding: theme.space[3],
+            background: 'rgba(245, 158, 11, 0.08)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: theme.radius.input,
+            fontSize: theme.type.size.xs,
+            color: theme.color.ink,
+          }}
+        >
+          <strong>Heads up:</strong> you've changed the wording but kept the version. Existing signatures will keep counting as current — patients won't be asked to re-sign. Bump the version if this is a legally-meaningful change.
+        </p>
+      ) : null}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+            Applies to
+          </span>
+          <select
+            value={draft.applies_to_service_type ?? ''}
+            onChange={(e) => set('applies_to_service_type', (e.target.value || null) as WaiverSectionDraft['applies_to_service_type'])}
+            style={{
+              height: theme.layout.inputHeight,
+              padding: `0 ${theme.space[3]}px`,
+              fontSize: theme.type.size.base,
+              fontFamily: 'inherit',
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              background: theme.color.surface,
+            }}
+          >
+            <option value="">Every patient (e.g. GDPR)</option>
+            <option value="denture_repair">Denture repair</option>
+            <option value="same_day_appliance">Same-day appliance</option>
+            <option value="click_in_veneers">Click-in veneers</option>
+          </select>
+        </label>
+        <Input
+          label="Sort order"
+          inputMode="numeric"
+          value={String(draft.sort_order)}
+          onChange={(e) => set('sort_order', parseInt(e.target.value, 10) || 0)}
+        />
+      </div>
+
+      <label
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          fontSize: theme.type.size.sm,
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={draft.active}
+          onChange={(e) => set('active', e.target.checked)}
+          style={{ width: 18, height: 18 }}
+        />
+        Active (shown to patients)
+      </label>
+
+      <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end' }}>
+        <Button variant="tertiary" onClick={onCancel} disabled={busy}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <X size={16} /> Cancel
+          </span>
+        </Button>
+        <Button variant="primary" onClick={submit} loading={busy} disabled={hasError}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Check size={16} /> Save
+          </span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function IconButton({
+  children,
+  onClick,
+  ariaLabel,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  ariaLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      style={{
+        appearance: 'none',
+        width: 28,
+        height: 28,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: 6,
+        background: theme.color.surface,
+        color: disabled ? theme.color.inkSubtle : theme.color.inkMuted,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.4 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+interface WaiverDraftState {
+  key: string;
+  title: string;
+  terms: string[];
+  version: string;
+  applies_to_service_type: 'denture_repair' | 'same_day_appliance' | 'click_in_veneers' | null;
+  sort_order: number;
+  active: boolean;
+}
+
+function emptyWaiverDraft(): WaiverDraftState {
+  return {
+    key: '',
+    title: '',
+    terms: [''],
+    version: suggestNextVersion(''),
+    applies_to_service_type: null,
+    sort_order: 100,
+    active: true,
+  };
+}
+
+function waiverDraftFromSection(s: WaiverSection): WaiverDraftState {
+  return {
+    key: s.key,
+    title: s.title,
+    terms: [...s.terms],
+    version: s.version,
+    applies_to_service_type: s.applies_to_service_type,
+    sort_order: s.sort_order,
+    active: s.active,
+  };
+}
+
+function serviceTypeScope(s: WaiverSection['applies_to_service_type']): string {
+  if (s === null) return 'Every patient';
+  if (s === 'denture_repair') return 'Denture repair';
+  if (s === 'same_day_appliance') return 'Same-day appliance';
+  if (s === 'click_in_veneers') return 'Click-in veneers';
+  return s;
 }
