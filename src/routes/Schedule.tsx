@@ -45,6 +45,7 @@ import {
   type AppointmentRow,
   eventTypeCategory,
   formatBookingSummary,
+  formatLateDuration,
   humaniseStatus,
   isAppointmentDimmed,
   isBookingLate,
@@ -613,7 +614,7 @@ export function Schedule() {
                 >
                   <AlertTriangle size={20} color={theme.color.alert} aria-hidden style={{ flexShrink: 0 }} />
                   <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-                    <strong>{minutesPastStart(selected.start_at, now)} min late.</strong>{' '}
+                    <strong>{formatLateDuration(minutesPastStart(selected.start_at, now))} late.</strong>{' '}
                     {selected.join_url
                       ? 'If they have not connected, tap No-show.'
                       : 'If they have not turned up, tap No-show.'}

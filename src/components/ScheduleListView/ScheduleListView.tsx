@@ -5,6 +5,7 @@ import {
   type AppointmentRow,
   eventTypeCategory,
   formatBookingSummary,
+  formatLateDuration,
   humaniseStatus,
   isAppointmentDimmed,
   isBookingLate,
@@ -189,7 +190,7 @@ export function ScheduleListRow({
               whiteSpace: 'nowrap',
             }}
           >
-            {lateMin} min late
+            {formatLateDuration(lateMin)} late
           </span>
         ) : null}
         <StatusPill tone={tone} size="sm">

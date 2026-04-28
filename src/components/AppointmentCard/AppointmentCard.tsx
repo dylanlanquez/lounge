@@ -1,6 +1,7 @@
 import { type CSSProperties } from 'react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
+import { formatLateDuration } from '../../lib/queries/appointments.ts';
 
 export interface AppointmentCardProps {
   patientName: string;
@@ -176,7 +177,7 @@ export function AppointmentCard({
           {showLate ? (
             <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
               {' · '}
-              {lateMinutes} min late
+              {formatLateDuration(lateMinutes!)} late
             </span>
           ) : null}
         </p>
