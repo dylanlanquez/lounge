@@ -198,12 +198,21 @@ export function useDirtyAppointments() {
 // Reverts a single appointment back to its pristine 'booked' state and
 // removes any visit / cart / payments created during testing. Tries to
 // honour the schema's restrict-on-delete by deleting children before
-// parents. Patient_events are left in place — they're audit history.
+// parents.
+//
+// Patient timeline cleanup: events emitted during the test flow get
+// deleted too (visit_arrived, no_show, no_show_reversed,
+// virtual_meeting_joined matched on payload.appointment_id; visit_closed
+// matched on payload.visit_id). Calendly-side events (appointment_booked,
+// deposit_paid / deposit_failed) are NOT deleted — they predate the test
+// and represent real Calendly history.
 export async function resetTestAppointment(appointmentId: string): Promise<void> {
   const { data: visits } = await supabase
     .from('lng_visits')
     .select('id')
     .eq('appointment_id', appointmentId);
+  const visitIds = ((visits ?? []) as Array<{ id: string }>).map((v) => v.id);
+
   for (const v of (visits ?? []) as Array<{ id: string }>) {
     const { data: carts } = await supabase
       .from('lng_carts')
@@ -225,7 +234,40 @@ export async function resetTestAppointment(appointmentId: string): Promise<void>
     }
     await supabase.from('lng_visits').delete().eq('id', v.id);
   }
-  await supabase.from('lng_appointments').update({ status: 'booked' }).eq('id', appointmentId);
+
+  // Reset the appointment shell: status back to booked, cancel_reason
+  // cleared (no_show writes one). Deposit fields are intentionally left
+  // alone — those were captured at booking time, not during the test.
+  await supabase
+    .from('lng_appointments')
+    .update({ status: 'booked', cancel_reason: null })
+    .eq('id', appointmentId);
+
+  // Wipe test-flow patient_events. Two passes:
+  //   1. Events keyed on appointment_id in their payload — every
+  //      mark-arrived / no-show / undo / join action emits one.
+  //   2. visit_closed events keyed on visit_id (no appointment_id in
+  //      that payload), one per visit we just deleted.
+  const APPT_EVENT_TYPES = [
+    'visit_arrived',
+    'no_show',
+    'no_show_reversed',
+    'virtual_meeting_joined',
+  ];
+  for (const type of APPT_EVENT_TYPES) {
+    await supabase
+      .from('patient_events')
+      .delete()
+      .eq('event_type', type)
+      .eq('payload->>appointment_id', appointmentId);
+  }
+  for (const visitId of visitIds) {
+    await supabase
+      .from('patient_events')
+      .delete()
+      .eq('event_type', 'visit_closed')
+      .eq('payload->>visit_id', visitId);
+  }
 }
 
 // Aggregates payments by day for the last N days. Falls back to client-side
