@@ -100,6 +100,52 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
   return { visit_id: visit.id, walk_in_id: walkIn.id, lwo_ref: lwoRef };
 }
 
+// The reasons a receptionist can pick when flipping an appointment to
+// no_show. Persisted to lng_appointments.cancel_reason and echoed in the
+// patient_events.no_show payload so reports can break no-shows down by
+// cause without re-reading the appointments row.
+export type NoShowReason = 'did_not_turn_up' | 'patient_cancelled_late' | 'clinic_cancelled' | 'other';
+
+export const NO_SHOW_REASONS: { value: NoShowReason; label: string }[] = [
+  { value: 'did_not_turn_up', label: 'Did not turn up' },
+  { value: 'patient_cancelled_late', label: 'Patient cancelled late' },
+  { value: 'clinic_cancelled', label: 'Clinic cancelled' },
+  { value: 'other', label: 'Other' },
+];
+
+export interface MarkNoShowContext {
+  patientId: string | null;
+  wasVirtual: boolean;
+  joinedBeforeNoShow: boolean;
+}
+
+// Flips an appointment to no_show, stamping the reason on
+// lng_appointments.cancel_reason and emitting a patient_events row so the
+// timeline + reports both have the cause.
+export async function markNoShow(
+  appointmentId: string,
+  reason: NoShowReason,
+  context: MarkNoShowContext
+): Promise<void> {
+  const { error } = await supabase
+    .from('lng_appointments')
+    .update({ status: 'no_show', cancel_reason: reason })
+    .eq('id', appointmentId);
+  if (error) throw new Error(error.message);
+
+  if (!context.patientId) return;
+  await supabase.from('patient_events').insert({
+    patient_id: context.patientId,
+    event_type: 'no_show',
+    payload: {
+      appointment_id: appointmentId,
+      reason,
+      was_virtual: context.wasVirtual,
+      joined_before_no_show: context.joinedBeforeNoShow,
+    },
+  });
+}
+
 // Reverses a no-show flag. Patient turned up late after staff already
 // flipped them — flip status back to 'arrived' and record a
 // no_show_reversed event so the timeline preserves the full

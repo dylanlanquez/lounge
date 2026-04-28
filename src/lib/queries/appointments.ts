@@ -182,6 +182,25 @@ export function patientDisplayName(row: AppointmentRow): string {
   return `${first} ${last.slice(0, 1)}${last.slice(0, 1) ? '.' : ''}`.trim();
 }
 
+// Threshold (minutes past start_at) at which a booked appointment is
+// flagged as late and the receptionist is nudged to mark it no-show.
+export const NO_SHOW_LATE_THRESHOLD_MIN = 15;
+
+// Whole minutes elapsed since an appointment's start_at. Negative when the
+// appointment is still in the future. Floor'd so a 14:59 elapsed shows as 14.
+export function minutesPastStart(startIso: string, now: Date | number): number {
+  const start = new Date(startIso).getTime();
+  const t = typeof now === 'number' ? now : now.getTime();
+  return Math.floor((t - start) / 60_000);
+}
+
+// True when a booked row has crossed the late threshold. Caller is responsible
+// for gating on status === 'booked' — a no-show'd or arrived row shouldn't be
+// flagged again.
+export function isBookingLate(startIso: string, now: Date | number): boolean {
+  return minutesPastStart(startIso, now) >= NO_SHOW_LATE_THRESHOLD_MIN;
+}
+
 // Human-readable label for an appointment status. Backed-end enums like
 // 'no_show' / 'in_progress' are not for the receptionist to see.
 export function humaniseStatus(status: AppointmentRow['status']): string {
