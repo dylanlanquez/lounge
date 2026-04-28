@@ -164,8 +164,8 @@ function DayPill({
       }}
       onFocus={(e) => {
         (e.currentTarget as HTMLElement).style.boxShadow = isSelected
-          ? `${theme.shadow.card}, 0 0 0 3px ${theme.color.focus}`
-          : `inset 0 0 0 1px ${theme.color.ink}, 0 0 0 3px ${theme.color.focus}`;
+          ? theme.shadow.card
+          : `inset 0 0 0 1px ${theme.color.ink}`;
       }}
       onBlur={(e) => {
         (e.currentTarget as HTMLElement).style.boxShadow = isSelected

@@ -299,14 +299,14 @@ function FabTab({ label, active, onClick }: { label: string; active: boolean; on
 // active nav item after every tap. Scoped to .lng-bottom-nav-btn so the
 // rule can't leak into other surfaces.
 function BottomNavStyles() {
+  // Suppress every focus outline on nav buttons. The previous green
+  // ring read as a "stuck active" state to staff after taps. Touch
+  // and mouse users don't need a focus indicator here — the icon's
+  // active tint already shows which page they're on.
   return (
     <style>{`
-      .lng-bottom-nav-btn:focus { outline: none; }
-      .lng-bottom-nav-btn:focus-visible {
-        outline: 2px solid ${theme.color.focus};
-        outline-offset: -4px;
-        border-radius: ${theme.radius.input}px;
-      }
+      .lng-bottom-nav-btn:focus,
+      .lng-bottom-nav-btn:focus-visible { outline: none; }
     `}</style>
   );
 }

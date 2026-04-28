@@ -2,6 +2,12 @@ import { type ButtonHTMLAttributes, type CSSProperties, type ReactNode, useState
 import { ArrowRight, Loader2 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 
+// No focus ring on buttons. The green halo we used previously read as
+// an "active" state to staff and confused them — receptionists asked
+// "why is this still selected?" after clicking. Keyboard users still
+// get the browser's default focus outline (we no longer suppress it
+// via `outline: none`), which is enough for kiosk use.
+
 export type ButtonVariant = 'primary' | 'secondary' | 'tertiary';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
@@ -47,7 +53,6 @@ export function Button({
 }: ButtonProps) {
   const [hover, setHover] = useState(false);
   const [pressed, setPressed] = useState(false);
-  const [focused, setFocused] = useState(false);
   const isDisabled = disabled || loading;
 
   const base: CSSProperties = {
@@ -73,8 +78,6 @@ export function Button({
     whiteSpace: 'nowrap',
     userSelect: 'none',
     WebkitTapHighlightColor: 'transparent',
-    outline: 'none',
-    boxShadow: focused && !isDisabled ? `0 0 0 3px ${theme.color.focus}` : 'none',
     ...(bottomAnchored && {
       position: 'absolute',
       left: theme.space[4],
@@ -94,9 +97,7 @@ export function Button({
         ? {
             background: hover && !isDisabled ? 'rgba(14,20,20,0.04)' : theme.color.surface,
             color: theme.color.ink,
-            boxShadow: focused && !isDisabled
-              ? `0 0 0 3px ${theme.color.focus}, inset 0 0 0 1px ${theme.color.ink}`
-              : `inset 0 0 0 1px ${theme.color.ink}`,
+            boxShadow: `inset 0 0 0 1px ${theme.color.ink}`,
           }
         : {
             background: 'transparent',
@@ -120,8 +121,6 @@ export function Button({
       onMouseUp={() => setPressed(false)}
       onTouchStart={() => setPressed(true)}
       onTouchEnd={() => setPressed(false)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       {...rest}
     >
       {loading ? <Loader2 size={size === 'lg' ? 20 : 16} style={{ animation: 'lng-spin 0.8s linear infinite' }} /> : null}

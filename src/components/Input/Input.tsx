@@ -40,10 +40,13 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     borderRadius: theme.radius.input,
     paddingLeft: leadingIcon ? theme.space[4] : theme.space[5],
     paddingRight: trailingIcon || isPassword ? theme.space[4] : theme.space[5],
+    // Quiet 1px border in normal state. Focus tightens to a darker
+    // ink ring so the field reads as live without the green halo.
+    // Error always wins regardless of focus.
     boxShadow: error
-      ? `inset 0 0 0 1px ${theme.color.alert}, 0 0 0 ${focused ? 3 : 0}px ${theme.color.alert}33`
+      ? `inset 0 0 0 1px ${theme.color.alert}`
       : focused
-        ? `inset 0 0 0 1px ${theme.color.accent}, 0 0 0 3px ${theme.color.focus}`
+        ? `inset 0 0 0 1px ${theme.color.ink}`
         : `inset 0 0 0 1px ${theme.color.border}`,
     transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
     gap: theme.space[3],
