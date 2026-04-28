@@ -1,8 +1,9 @@
 import { Navigate, useNavigate } from 'react-router-dom';
-import { ChevronRight, Stethoscope } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
+import { ToothIcon } from '../components/Icons/ToothIcon.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -75,7 +76,7 @@ export function InClinic() {
         ) : data.length === 0 ? (
           <Card padding="lg">
             <EmptyState
-              icon={<Stethoscope size={24} />}
+              icon={<ToothIcon size={24} />}
               title="No one in clinic right now"
               description="Visits show up here as soon as you mark someone as arrived or start a walk-in."
             />
