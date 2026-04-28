@@ -796,16 +796,18 @@ export function Schedule() {
   );
 }
 
-// Pill button that jumps the strip back to today's week. Only
-// rendered when the receptionist isn't already on today (the
-// schedule lands on today by default, so this is the way back from
-// any forward-or-back week navigation).
+// Pill button that returns the strip to this week. Only rendered
+// when the receptionist has navigated off today (the schedule lands
+// on today by default).
 //
-// Visual: 32px tall to line up with the SegmentedControl it sits
-// beside. Surface fill + 1px border, with a small accent dot to its
-// left so the button reads as live navigation rather than a passive
-// label. Subtle hover-tint (no green halo) on pointer; identical
-// affordance on touch.
+// Wording: "Jump to today" reads unambiguously as an action. An
+// earlier version used a leading accent dot + "Today" — but the dot
+// looked like a status badge ("this is today"), which was the
+// opposite of what it does. Dropped the dot and led with a verb so
+// the button is action-shaped, not status-shaped.
+//
+// Visual: 32px tall to line up with the SegmentedControl beside it.
+// Surface fill + 1px border. Hover tints to bg; no green halo.
 function TodayPill({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -827,7 +829,7 @@ function TodayPill({ onClick }: { onClick: () => void }) {
         fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.medium,
         height: 32,
-        padding: `0 ${theme.space[3]}px`,
+        padding: `0 ${theme.space[4]}px`,
         borderRadius: theme.radius.pill,
         cursor: 'pointer',
         display: 'inline-flex',
@@ -836,19 +838,10 @@ function TodayPill({ onClick }: { onClick: () => void }) {
         transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         WebkitTapHighlightColor: 'transparent',
         flexShrink: 0,
+        whiteSpace: 'nowrap',
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          background: theme.color.accent,
-          display: 'inline-block',
-        }}
-      />
-      Today
+      Jump to today
     </button>
   );
 }
