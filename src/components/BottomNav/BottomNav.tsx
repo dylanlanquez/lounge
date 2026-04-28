@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Plus, Users } from 'lucide-react';
+import { UserPlus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { Avatar } from '../Avatar/Avatar.tsx';
@@ -23,36 +23,21 @@ export function shouldShowBottomNav(pathname: string, signedIn: boolean): boolea
 }
 
 // Height the nav reserves for content. Pages add this as bottom padding so
-// nothing hides under the floating pill. Includes the pill's height, the
-// gap below it, and breathing room for the FAB that hangs above it. The
-// BottomSheet footer also reads from this constant so its top hairline
-// stays vertically consistent with the system's bottom rhythm.
+// nothing hides under the floating pill.
 export const BOTTOM_NAV_HEIGHT = 88;
 
-// Internal — the actual visible pill height. Slightly slimmer than
-// BOTTOM_NAV_HEIGHT so pages have a touch of free space between their
-// content and the pill, which makes the floating effect read.
+// Internal — the actual visible pill height.
 const PILL_HEIGHT = 68;
 const PILL_BOTTOM_GAP = 10;
 const PILL_MAX_WIDTH = 600;
-// FAB diameter. Pulled up to extend above the pill's top edge by a
-// modest amount — enough to read as the dominant action without
-// dominating the surface. Dylan's repeated feedback was that
-// previous sizes (64/28) and (56/24) felt too loud; this one keeps
-// the lifted-pill silhouette but trims the circle so the eye lands
-// on page content first.
-const FAB_SIZE = 52;
-const FAB_LIFT = 16;
 
-// FAB-docked bottom navigation: 4 standard tab items + a centred raised
-// action button (Walk-in) that extends above the nav. Pattern lifted from
-// Material Design 3, adapted to Lounge's flat hairline aesthetic. The
-// FAB's ink fill matches the existing primary-button colour so it reads
-// as the dominant action of the surface, distinct from the muted nav
-// items either side of it.
+// Floating-pill bottom nav: 5 equal nav tabs.
 //
-// Order, left to right:
-//   Schedule | Patients | (FAB Walk-in) | In clinic | Profile
+//   Schedule | Patients | Walk-in | In clinic | Profile
+//
+// Walk-in is just another tab. An earlier design lifted Walk-in
+// into a raised circular FAB; staff feedback was that it dominated
+// the surface, so it's been folded back into the regular grid.
 //
 // Sign out lives inside the Profile sheet — the receptionist signs out
 // from there, freeing a slot on the bar. Admin moves to the kiosk top
@@ -152,7 +137,12 @@ export function BottomNav() {
               />
             </li>
             <li style={{ display: 'flex' }}>
-              <FabTab label="Walk-in" active={isWalkIn} onClick={onWalkIn} />
+              <NavTab
+                label="Walk-in"
+                icon={<UserPlus size={22} />}
+                active={isWalkIn}
+                onClick={onWalkIn}
+              />
             </li>
             <li style={{ display: 'flex' }}>
               <NavTab
@@ -283,89 +273,16 @@ function NavTab({ label, icon, active, onClick }: NavTabProps) {
   );
 }
 
-// Centred, raised floating action button. The circle extends ABOVE the
-// pill's top edge by FAB_LIFT pixels — overflow is allowed because the
-// outer pill has no overflow:hidden. The accent fill (Lounge's forest
-// green) gives the action a confident colour against the cream page
-// without relying on stark ink for prominence.
-function FabTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="lng-bottom-nav-btn lng-bottom-nav-fab"
-      aria-current={active ? 'page' : undefined}
-      aria-label={label}
-      onClick={onClick}
-      style={{
-        appearance: 'none',
-        border: 'none',
-        background: 'transparent',
-        width: '100%',
-        height: '100%',
-        padding: `${theme.space[2]}px ${theme.space[1]}px ${theme.space[2]}px`,
-        color: active ? theme.color.ink : theme.color.inkMuted,
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.xs,
-        fontWeight: theme.type.weight.semibold,
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        gap: 4,
-        outline: 'none',
-        WebkitTapHighlightColor: 'transparent',
-        position: 'relative',
-      }}
-    >
-      <span
-        aria-hidden
-        className="lng-bottom-nav-fab-circle"
-        style={{
-          marginTop: -FAB_LIFT,
-          width: FAB_SIZE,
-          height: FAB_SIZE,
-          borderRadius: theme.radius.pill,
-          // Graphite (theme's `consult` category tone) sits forward
-          // enough to be the dominant action without the forest-green
-          // shouting at staff every time they glance at the surface.
-          background: theme.category.consult,
-          color: theme.color.surface,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          // Whisper-soft shadow — just enough to pull the circle off
-          // the glassy pill background. No glow, no theatre.
-          boxShadow: '0 4px 10px rgba(14, 20, 20, 0.10)',
-          transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        }}
-      >
-        <Plus size={22} strokeWidth={2.2} />
-      </span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-// :focus-visible only matches when the browser thinks focus came from a
-// keyboard (Tab / arrow / Enter), not after a mouse click or touch tap.
-// Pre-:focus-visible we ran an onFocus handler that drew the ring on every
-// kind of focus, including post-click — which left a sticky border on the
-// active nav item after every tap. Scoped to .lng-bottom-nav-btn so the
-// rule can't leak into other surfaces.
+// Suppress every focus outline on nav buttons. The previous green
+// ring read as a "stuck active" state to staff after taps. Touch
+// and mouse users don't need a focus indicator here — the icon's
+// active tint already shows which page they're on. Scoped to
+// .lng-bottom-nav-btn so the rule can't leak into other surfaces.
 function BottomNavStyles() {
-  // Suppress every focus outline on nav buttons. The previous green
-  // ring read as a "stuck active" state to staff after taps. Touch
-  // and mouse users don't need a focus indicator here — the icon's
-  // active tint already shows which page they're on. The FAB grows
-  // a little on press for a tactile cue.
   return (
     <style>{`
       .lng-bottom-nav-btn:focus,
       .lng-bottom-nav-btn:focus-visible { outline: none; }
-      .lng-bottom-nav-fab:active .lng-bottom-nav-fab-circle {
-        transform: scale(0.96);
-      }
     `}</style>
   );
 }
