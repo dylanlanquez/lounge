@@ -19,6 +19,10 @@ export interface AppointmentCardProps {
   // Optional event-type accent for the left bar. Only applies when
   // status='booked' — once the patient arrives the status color takes over.
   barColor?: string;
+  // Minutes past start_at. Set on booked rows that have crossed the late
+  // threshold so the card flags the receptionist to mark a no-show. Ignored
+  // on every status other than 'booked'.
+  lateMinutes?: number | null;
   onClick?: () => void;
 }
 
@@ -73,10 +77,12 @@ export function AppointmentCard({
   lane = 0,
   lanesInGroup = 1,
   barColor,
+  lateMinutes,
   onClick,
 }: AppointmentCardProps) {
   const isInteractive = Boolean(onClick);
   const lanePct = 100 / lanesInGroup;
+  const showLate = status === 'booked' && typeof lateMinutes === 'number' && lateMinutes > 0;
   // Sit above the now-indicator line; below the now-time pill.
   const styles: CSSProperties = {
     position: 'absolute',
@@ -94,7 +100,11 @@ export function AppointmentCard({
     textDecoration: status === 'cancelled' ? 'line-through' : 'none',
     zIndex: 1,
   };
-  const effectiveBarColor = status === 'booked' && barColor ? barColor : BAR_COLOR[status];
+  const effectiveBarColor = showLate
+    ? theme.color.alert
+    : status === 'booked' && barColor
+      ? barColor
+      : BAR_COLOR[status];
 
   return (
     <div
@@ -156,6 +166,12 @@ export function AppointmentCard({
         >
           {formatTime(startAt)}
           {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
+          {showLate ? (
+            <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+              {' · '}
+              {lateMinutes} min late
+            </span>
+          ) : null}
         </p>
       </div>
     </div>

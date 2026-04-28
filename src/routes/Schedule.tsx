@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { CalendarOff, ChevronRight, Monitor, Plus, Video } from 'lucide-react';
+import { AlertTriangle, CalendarOff, ChevronRight, Monitor, Plus, Video } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -24,19 +24,28 @@ import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
+import { useNow } from '../lib/useNow.ts';
 import {
   type AppointmentRow,
   eventTypeCategory,
   formatBookingSummary,
   humaniseStatus,
+  isBookingLate,
+  minutesPastStart,
   patientDisplayName,
   patientFullDisplayName,
   staffDisplayName,
   useTodayAppointments,
 } from '../lib/queries/appointments.ts';
 import { usePastAppointments, useUpcomingAppointments } from '../lib/queries/scheduleViews.ts';
-import { markAppointmentArrived, markVirtualMeetingJoined, reverseNoShow } from '../lib/queries/visits.ts';
-import { supabase } from '../lib/supabase.ts';
+import {
+  markAppointmentArrived,
+  markNoShow,
+  markVirtualMeetingJoined,
+  type NoShowReason,
+  NO_SHOW_REASONS,
+  reverseNoShow,
+} from '../lib/queries/visits.ts';
 
 type View = 'today' | 'upcoming' | 'past';
 type Layout = 'calendar' | 'list';
@@ -58,10 +67,19 @@ export function Schedule() {
   const [clusterRows, setClusterRows] = useState<AppointmentRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // True when staff has tapped "No-show" inside the BottomSheet and we're
+  // waiting for them to pick a reason. Cleared on cancel or successful submit.
+  const [pickingNoShowReason, setPickingNoShowReason] = useState(false);
+  const now = useNow();
 
   const today = useTodayAppointments();
   const upcoming = useUpcomingAppointments(14);
   const past = usePastAppointments(30);
+
+  const closeSheet = () => {
+    setSelected(null);
+    setPickingNoShowReason(false);
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -195,6 +213,11 @@ export function Schedule() {
                         lane={item.lane}
                         lanesInGroup={item.lanesInGroup}
                         barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
+                        lateMinutes={
+                          item.data.status === 'booked' && isBookingLate(item.data.start_at, now)
+                            ? minutesPastStart(item.data.start_at, now)
+                            : null
+                        }
                         onClick={() => setSelected(item.data)}
                       />
                     ) : (
@@ -248,22 +271,33 @@ export function Schedule() {
       {selected ? (
         <BottomSheet
           open={!!selected}
-          onClose={() => setSelected(null)}
-          title={patientFullDisplayName(selected)}
+          onClose={closeSheet}
+          title={pickingNoShowReason ? 'Why was this a no-show?' : patientFullDisplayName(selected)}
           description={
-            <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-              <span>
-                {formatRange(selected.start_at, selected.end_at)}
-                {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
-              </span>
-              {selected.patient_email || selected.patient_phone ? (
-                <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-                  {[selected.patient_email, selected.patient_phone].filter(Boolean).join(' · ')}
+            pickingNoShowReason ? (
+              <span>Pick the reason. We log it against the appointment so reports show no-show causes.</span>
+            ) : (
+              <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+                <span>
+                  {formatRange(selected.start_at, selected.end_at)}
+                  {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
                 </span>
-              ) : null}
-            </span>
+                {selected.patient_email || selected.patient_phone ? (
+                  <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
+                    {[selected.patient_email, selected.patient_phone].filter(Boolean).join(' · ')}
+                  </span>
+                ) : null}
+              </span>
+            )
           }
           footer={
+            pickingNoShowReason ? (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button variant="tertiary" disabled={busy} onClick={() => setPickingNoShowReason(false)}>
+                  Back
+                </Button>
+              </div>
+            ) : (
             <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
               <Button
                 variant="tertiary"
@@ -296,7 +330,7 @@ export function Schedule() {
                   !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
                 if (showCloseOnly) {
                   return (
-                    <Button variant="secondary" onClick={() => setSelected(null)}>
+                    <Button variant="secondary" onClick={closeSheet}>
                       Close
                     </Button>
                   );
@@ -340,32 +374,19 @@ export function Schedule() {
                       </Button>
                     ) : null}
                     {showNoShow ? (
-                      <Button
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={async () => {
-                          if (!selected) return;
-                          setBusy(true);
-                          try {
-                            await supabase.from('lng_appointments').update({ status: 'no_show' }).eq('id', selected.id);
-                            if (selected.patient_id) {
-                              await supabase.from('patient_events').insert({
-                                patient_id: selected.patient_id,
-                                event_type: 'no_show',
-                                payload: { appointment_id: selected.id, was_virtual: isVirtual, joined_before_no_show: status === 'arrived' },
-                              });
-                            }
-                            setSelected(null);
-                            window.location.reload();
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : 'Could not update');
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        No-show
-                      </Button>
+                      (() => {
+                        const late =
+                          status === 'booked' && isBookingLate(selected.start_at, now);
+                        return (
+                          <Button
+                            variant={late ? 'primary' : 'secondary'}
+                            disabled={busy}
+                            onClick={() => setPickingNoShowReason(true)}
+                          >
+                            No-show
+                          </Button>
+                        );
+                      })()
                     ) : null}
                     {showVirtualJoin ? (
                       isDesktop ? (
@@ -425,8 +446,33 @@ export function Schedule() {
                 );
               })()}
             </div>
+            )
           }
         >
+          {pickingNoShowReason ? (
+            <NoShowReasonPicker
+              busy={busy}
+              onPick={async (reason) => {
+                if (!selected) return;
+                const isVirtual = !!selected.join_url;
+                setBusy(true);
+                try {
+                  await markNoShow(selected.id, reason, {
+                    patientId: selected.patient_id,
+                    wasVirtual: isVirtual,
+                    joinedBeforeNoShow: selected.status === 'arrived',
+                  });
+                  setPickingNoShowReason(false);
+                  setSelected(null);
+                  window.location.reload();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Could not mark no-show');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            />
+          ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
               <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
@@ -434,6 +480,29 @@ export function Schedule() {
                 {humaniseStatus(selected.status)}
               </StatusPill>
             </div>
+
+            {selected.status === 'booked' && isBookingLate(selected.start_at, now) ? (
+              <div
+                style={{
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                  background: 'rgba(184, 58, 42, 0.08)',
+                  border: `1px solid ${theme.color.alert}`,
+                  borderRadius: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                  color: theme.color.ink,
+                }}
+              >
+                <AlertTriangle size={20} color={theme.color.alert} aria-hidden style={{ flexShrink: 0 }} />
+                <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
+                  <strong>{minutesPastStart(selected.start_at, now)} min late.</strong>{' '}
+                  {selected.join_url
+                    ? 'If they have not connected, tap No-show.'
+                    : 'If they have not turned up, tap No-show.'}
+                </p>
+              </div>
+            ) : null}
 
             {selected.join_url && !isDesktop ? (
               <div
@@ -509,6 +578,7 @@ export function Schedule() {
                         : ''}
             </p>
           </div>
+          )}
         </BottomSheet>
       ) : null}
 
@@ -752,6 +822,58 @@ function AppointmentList({
       <Button variant="tertiary" size="sm" onClick={() => navigate('/walk-in/new')}>
         Or create a walk-in
       </Button>
+    </div>
+  );
+}
+
+function NoShowReasonPicker({
+  busy,
+  onPick,
+}: {
+  busy: boolean;
+  onPick: (reason: NoShowReason) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      {NO_SHOW_REASONS.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          disabled={busy}
+          onClick={() => onPick(opt.value)}
+          style={{
+            appearance: 'none',
+            width: '100%',
+            textAlign: 'left',
+            padding: `${theme.space[4]}px ${theme.space[5]}px`,
+            background: theme.color.surface,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: 14,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.ink,
+            cursor: busy ? 'not-allowed' : 'pointer',
+            opacity: busy ? 0.5 : 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+            minHeight: theme.layout.minTouchTarget,
+            transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          }}
+          onMouseEnter={(e) => {
+            if (busy) return;
+            (e.currentTarget as HTMLElement).style.borderColor = theme.color.ink;
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
+          }}
+        >
+          <span>{opt.label}</span>
+          <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
+        </button>
+      ))}
     </div>
   );
 }

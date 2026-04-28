@@ -6,9 +6,12 @@ import {
   eventTypeCategory,
   formatBookingSummary,
   humaniseStatus,
+  isBookingLate,
+  minutesPastStart,
   patientDisplayName,
   staffDisplayName,
 } from '../../lib/queries/appointments.ts';
+import { useNow } from '../../lib/useNow.ts';
 
 export interface ScheduleListViewProps {
   rows: AppointmentRow[];
@@ -16,6 +19,7 @@ export interface ScheduleListViewProps {
 }
 
 export function ScheduleListView({ rows, onPick }: ScheduleListViewProps) {
+  const now = useNow();
   const sorted = [...rows].sort((a, b) =>
     a.start_at < b.start_at ? -1 : a.start_at > b.start_at ? 1 : 0
   );
@@ -24,13 +28,23 @@ export function ScheduleListView({ rows, onPick }: ScheduleListViewProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-      {morning.length > 0 ? <Section label="Morning" rows={morning} onPick={onPick} /> : null}
-      {afternoon.length > 0 ? <Section label="Afternoon" rows={afternoon} onPick={onPick} /> : null}
+      {morning.length > 0 ? <Section label="Morning" rows={morning} onPick={onPick} now={now} /> : null}
+      {afternoon.length > 0 ? <Section label="Afternoon" rows={afternoon} onPick={onPick} now={now} /> : null}
     </div>
   );
 }
 
-function Section({ label, rows, onPick }: { label: string; rows: AppointmentRow[]; onPick: (r: AppointmentRow) => void }) {
+function Section({
+  label,
+  rows,
+  onPick,
+  now,
+}: {
+  label: string;
+  rows: AppointmentRow[];
+  onPick: (r: AppointmentRow) => void;
+  now: Date;
+}) {
   return (
     <div>
       <p
@@ -47,19 +61,25 @@ function Section({ label, rows, onPick }: { label: string; rows: AppointmentRow[
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
         {rows.map((r) => (
-          <ListRow key={r.id} row={r} onPick={() => onPick(r)} />
+          <ListRow key={r.id} row={r} onPick={() => onPick(r)} now={now} />
         ))}
       </ul>
     </div>
   );
 }
 
-function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
+function ListRow({ row, onPick, now }: { row: AppointmentRow; onPick: () => void; now: Date }) {
   const tone = statusToTone(row.status);
+  const isLate = row.status === 'booked' && isBookingLate(row.start_at, now);
+  const lateMin = isLate ? minutesPastStart(row.start_at, now) : 0;
   // Apply category bar only on booked rows (matches AppointmentCard:
-  // status colour takes over once the visit is in progress).
-  const barColor =
-    row.status === 'booked' ? theme.category[eventTypeCategory(row.event_type_label)] : undefined;
+  // status colour takes over once the visit is in progress). Late rows
+  // override with alert red so the receptionist can scan for them.
+  const barColor = isLate
+    ? theme.color.alert
+    : row.status === 'booked'
+      ? theme.category[eventTypeCategory(row.event_type_label)]
+      : undefined;
   return (
     <li>
       <button
@@ -141,6 +161,19 @@ function ListRow({ row, onPick }: { row: AppointmentRow; onPick: () => void }) {
             {[formatBookingSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
           </p>
         </div>
+        {isLate ? (
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.alert,
+              fontVariantNumeric: 'tabular-nums',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {lateMin} min late
+          </span>
+        ) : null}
         <StatusPill tone={tone} size="sm">
           {humaniseStatus(row.status)}
         </StatusPill>
