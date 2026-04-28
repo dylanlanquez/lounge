@@ -29,7 +29,7 @@ import {
 } from '../components/CalendarGrid/CalendarGrid.tsx';
 import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ClusterCard } from '../components/ClusterCard/ClusterCard.tsx';
-import { ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
+import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
@@ -669,78 +669,28 @@ export function Schedule() {
           title={`${clusterRows.length} appointments`}
           description={formatClusterRange(clusterRows)}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
             {clusterRows.map((r) => (
-              <button
+              <ScheduleListRow
                 key={r.id}
-                type="button"
-                onClick={() => {
+                row={r}
+                now={now}
+                onPick={() => {
                   setClusterRows(null);
                   setSelected(r);
                 }}
-                style={{
-                  appearance: 'none',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: theme.space[3],
-                  background: theme.color.surface,
-                  border: `1px solid ${theme.color.border}`,
-                  borderRadius: 12,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[3],
-                  minHeight: 56,
-                }}
-              >
-                <span
-                  style={{
-                    width: 80,
-                    flexShrink: 0,
-                    fontSize: theme.type.size.sm,
-                    fontWeight: theme.type.weight.semibold,
-                    fontVariantNumeric: 'tabular-nums',
-                    color: theme.color.ink,
-                  }}
-                >
-                  {new Date(r.start_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                </span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span
-                    style={{
-                      display: 'block',
-                      fontSize: theme.type.size.sm,
-                      fontWeight: theme.type.weight.semibold,
-                      color: theme.color.ink,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {patientDisplayName(r)}
-                  </span>
-                  {formatBookingSummary(r) ? (
-                    <span
-                      style={{
-                        display: 'block',
-                        fontSize: theme.type.size.xs,
-                        color: theme.color.inkMuted,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        marginTop: 2,
-                      }}
-                    >
-                      {formatBookingSummary(r)}
-                    </span>
-                  ) : null}
-                </span>
-                <StatusPill tone={r.status === 'booked' ? 'neutral' : 'arrived'} size="sm">
-                  {humaniseStatus(r.status)}
-                </StatusPill>
-              </button>
+              />
             ))}
-          </div>
+          </ul>
         </BottomSheet>
       ) : null}
 
@@ -916,9 +866,19 @@ function formatClusterRange(rows: AppointmentRow[]): string {
   const s = new Date(earliestStart);
   const e = new Date(latestEnd);
   const day = s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  const sTime = s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const eTime = e.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${day}, ${sTime} to ${eTime}. Pick one to open.`;
+  return `${day} · ${formatTime12h(s)} to ${formatTime12h(e)}`;
+}
+
+// 12-hour time, lowercase am/pm, no leading zero on the hour. Mirrors the
+// formatter in ScheduleListView so the cluster sheet header reads in the
+// same style as the rows below it.
+function formatTime12h(d: Date): string {
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
+  const ampm = h < 12 ? 'am' : 'pm';
+  return `${hh}${mm}${ampm}`;
 }
 
 // Date heading shown above the day's timeline. e.g. "Tuesday 28 April".
