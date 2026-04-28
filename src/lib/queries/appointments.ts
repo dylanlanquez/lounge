@@ -44,26 +44,36 @@ export function useTodayAppointments(): UseTodayAppointmentsResult {
         end.setHours(23, 59, 59, 999);
 
         // RLS scopes this query to the receptionist's location.
-        const { data: rows, error: err } = await supabase
-          .from('lng_appointments')
-          .select(
-            `
-            id,
-            patient_id,
-            location_id,
-            start_at,
-            end_at,
-            status,
-            event_type_label,
-            staff_account_id,
-            intake,
-            patient:patients ( first_name, last_name ),
-            staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
-          `
-          )
-          .gte('start_at', start.toISOString())
-          .lte('start_at', end.toISOString())
-          .order('start_at', { ascending: true });
+        const fetchToday = (withIntake: boolean) =>
+          supabase
+            .from('lng_appointments')
+            .select(
+              [
+                'id',
+                'patient_id',
+                'location_id',
+                'start_at',
+                'end_at',
+                'status',
+                'event_type_label',
+                'staff_account_id',
+                ...(withIntake ? ['intake'] : []),
+                'patient:patients ( first_name, last_name )',
+                'staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )',
+              ].join(', ')
+            )
+            .gte('start_at', start.toISOString())
+            .lte('start_at', end.toISOString())
+            .order('start_at', { ascending: true });
+
+        let { data: rows, error: err } = await fetchToday(true);
+        // 42703 = undefined_column. Frontend deployed before schema migration
+        // landed: degrade gracefully without intake instead of blanking the page.
+        if (err && err.code === '42703') {
+          const fallback = await fetchToday(false);
+          rows = fallback.data;
+          err = fallback.error;
+        }
 
         if (cancelled) return;
         if (err) {
@@ -92,7 +102,7 @@ export function useTodayAppointments(): UseTodayAppointmentsResult {
             status: raw.status,
             event_type_label: raw.event_type_label,
             staff_account_id: raw.staff_account_id,
-            intake: raw.intake,
+            intake: raw.intake ?? null,
             patient_first_name: patient?.first_name ?? null,
             patient_last_name: patient?.last_name ?? null,
             staff_first_name: staff?.first_name ?? null,
