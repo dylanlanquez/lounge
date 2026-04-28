@@ -115,4 +115,56 @@ describe('formatBookingSummary', () => {
   it('returns empty string when nothing usable', () => {
     expect(formatBookingSummary(makeRow(null, null))).toBe('');
   });
+
+  it('matches arch when question is "Upper or Lower?"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Same-day Appliances', [
+          { question: 'Appliance', answer: 'Night Guard' },
+          { question: 'Upper or Lower?', answer: 'Top' },
+        ])
+      )
+    ).toBe('Upper Night Guard');
+  });
+
+  it('matches arch when question is "Top or Bottom?"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Same-day Click-in Veneers', [{ question: 'Top or Bottom?', answer: 'Bottom' }])
+      )
+    ).toBe('Lower Click-in Veneers');
+  });
+
+  it('matches arch when question is "Which jaw?"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Same-day Appliances', [
+          { question: 'Appliance', answer: 'Sports guard' },
+          { question: 'Which jaw?', answer: 'Both' },
+        ])
+      )
+    ).toBe('Upper and Lower Sports guard');
+  });
+
+  it('falls back to answer-pattern arch detection when question is unrecognised', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Same-day Appliances', [
+          { question: 'Appliance type', answer: 'Retainer' },
+          { question: 'Anything else?', answer: 'Top' }, // unrecognised question, but answer is clearly arch
+        ])
+      )
+    ).toBe('Upper Retainer');
+  });
+
+  it('handles multi-line "Top\\nBottom" answers as Upper and Lower', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Same-day Appliances', [
+          { question: 'Appliance', answer: 'Retainer' },
+          { question: 'Which Arch?', answer: 'Top\nBottom' },
+        ])
+      )
+    ).toBe('Upper and Lower Retainer');
+  });
 });

@@ -187,8 +187,17 @@ export function filterCareIntake(intake: IntakeAnswer[] | null | undefined): Int
   });
 }
 
-const ARCH_QUESTION = /\barch\b/i;
-const SUBJECT_QUESTION = /\b(appliance|repair[\s_]*type|treatment)\b/i;
+// Question-label patterns. Broad enough to catch Calendly variations:
+//   "Arch", "Which Arch?", "Upper or Lower?", "Top or Bottom?", "Which jaw?"
+const ARCH_QUESTION =
+  /\b(arch|jaw|upper\s*or\s*lower|top\s*or\s*bottom|which\s+side)\b/i;
+const SUBJECT_QUESTION = /\b(appliance|repair[\s_]*type|treatment|product|service)\b/i;
+
+// Answer-only fallback: if no question label matched ARCH_QUESTION but an
+// answer is clearly an arch indicator (Top / Bottom / Upper / Lower / Both /
+// Full mouth, possibly multi-select with newlines), treat it as the arch.
+const ARCH_ANSWER_RE =
+  /^(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower)(\s*[,;\n]+\s*(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower))*\s*$/i;
 
 // Map "Top" / "Bottom" / "Both" answers to anatomical labels.
 // Multi-select values like "Top, Bottom" or "Upper and Lower" collapse to
@@ -211,8 +220,14 @@ export function archToAnatomy(raw: string | null | undefined): string | undefine
 // final string stays compact and clinical.
 export function formatBookingSummary(row: AppointmentRow): string {
   const answers = filterCareIntake(row.intake);
-  const arch = answers.find((a) => ARCH_QUESTION.test(a.question ?? ''));
-  const subject = answers.find((a) => SUBJECT_QUESTION.test(a.question ?? ''));
+  // Match arch by question label first; if no question matches, fall back to
+  // any answer that is itself a recognisable arch indicator.
+  const arch =
+    answers.find((a) => ARCH_QUESTION.test(a.question ?? '')) ??
+    answers.find((a) => ARCH_ANSWER_RE.test(a.answer ?? ''));
+  const subject = answers.find(
+    (a) => SUBJECT_QUESTION.test(a.question ?? '') && (!arch || a !== arch)
+  );
   const archLabel = arch ? archToAnatomy(arch.answer) : undefined;
   const subjectLabel = subject?.answer.trim() || undefined;
 
