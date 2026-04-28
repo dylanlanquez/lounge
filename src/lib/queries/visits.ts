@@ -60,31 +60,34 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
     .single();
   if (visitErr || !visit) throw new Error(visitErr?.message ?? 'Could not create visit');
 
-  // Stamp lwo_ref on the patient if not already set. UPDATE … WHERE lwo_ref IS NULL
-  // makes it idempotent under a race; the patients_guard_lwo_ref trigger refuses
-  // to overwrite a non-null lwo_ref.
-  const { data: stampRows } = await supabase
-    .from('patients')
-    .update({ lwo_ref: '__GENERATE__' }) // placeholder — see SQL function below
-    .eq('id', input.patient_id)
-    .is('lwo_ref', null)
-    .select('lwo_ref');
-
+  // Stamp lwo_ref on the patient if not already set. Single-step:
+  // generate the ref via RPC, then UPDATE only where lwo_ref is still
+  // null. If the WHERE matches, we stamped it; if not, the patient
+  // already had a ref (or another arrival raced ahead) and we read
+  // the existing value back. The unique index on patients.lwo_ref +
+  // patients_guard_lwo_ref keep this safe under contention.
+  //
+  // Previous versions of this function used a '__GENERATE__'
+  // placeholder string as a sentinel. That was unsafe — the unique
+  // index would reject a second walk-in setting the same placeholder
+  // while the first was still mid-flight, leaving rows stuck and
+  // every subsequent arrival 409'ing on the unique constraint.
   let lwoRef: string | null = null;
-  if (Array.isArray(stampRows) && stampRows.length > 0) {
-    // The placeholder will be replaced by an RPC call to generate_lwo_ref().
-    // Two-step: read the generated value back.
-    const { data: ref } = await supabase.rpc('generate_lwo_ref');
-    if (typeof ref === 'string') {
-      await supabase.from('patients').update({ lwo_ref: ref }).eq('id', input.patient_id).is('lwo_ref', null);
+  const { data: ref } = await supabase.rpc('generate_lwo_ref');
+  if (typeof ref === 'string') {
+    const { data: stampRows } = await supabase
+      .from('patients')
+      .update({ lwo_ref: ref })
+      .eq('id', input.patient_id)
+      .is('lwo_ref', null)
+      .select('lwo_ref');
+    if (Array.isArray(stampRows) && stampRows.length > 0) {
       lwoRef = ref;
     }
-    // Reset placeholder if generation failed (kept under guard trigger anyway).
-    if (!ref) {
-      await supabase.from('patients').update({ lwo_ref: null }).eq('id', input.patient_id).eq('lwo_ref', '__GENERATE__');
-    }
-  } else {
-    // Patient already had an lwo_ref. Read it.
+  }
+  if (lwoRef === null) {
+    // Patient already had an lwo_ref OR generation failed. Either way
+    // read what's there so the patient_events payload below is honest.
     const { data: existing } = await supabase
       .from('patients')
       .select('lwo_ref')
