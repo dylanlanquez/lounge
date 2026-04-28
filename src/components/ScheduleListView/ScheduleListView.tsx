@@ -62,14 +62,26 @@ function Section({
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
         {rows.map((r) => (
-          <ListRow key={r.id} row={r} onPick={() => onPick(r)} now={now} />
+          <ScheduleListRow key={r.id} row={r} onPick={() => onPick(r)} now={now} />
         ))}
       </ul>
     </div>
   );
 }
 
-function ListRow({ row, onPick, now }: { row: AppointmentRow; onPick: () => void; now: Date }) {
+// Shared list-row used by ScheduleListView and the cluster BottomSheet so
+// both surfaces share the same category bar / time / duration / patient /
+// status / chevron treatment plus the dim and late-nudge rules.
+// Renders `<li>` so the parent should always wrap in `<ul>` for semantics.
+export function ScheduleListRow({
+  row,
+  onPick,
+  now,
+}: {
+  row: AppointmentRow;
+  onPick: () => void;
+  now: Date;
+}) {
   const tone = statusToTone(row.status);
   const slotEnded = new Date(row.end_at).getTime() <= now.getTime();
   // Late nudge only fires while the slot is still running. After end_at the
