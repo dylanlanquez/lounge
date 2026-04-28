@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react';
 import { Mail } from 'lucide-react';
 import { Navigate } from 'react-router-dom';
 import { Button, Card, Input, Toast } from '../components/index.ts';
+import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 
@@ -50,6 +51,7 @@ export function SignIn() {
         alignItems: 'center',
         justifyContent: 'center',
         padding: theme.space[6],
+        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${theme.space[6]}px + env(safe-area-inset-top, 0px))`,
         position: 'relative',
       }}
     >

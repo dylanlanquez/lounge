@@ -31,6 +31,7 @@ import { AppointmentCard } from '../components/AppointmentCard/AppointmentCard.t
 import { ClusterCard } from '../components/ClusterCard/ClusterCard.tsx';
 import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
+import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
@@ -149,6 +150,7 @@ export function Schedule() {
         minHeight: '100dvh',
         background: theme.color.bg,
         padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${isMobile ? theme.space[4] : theme.space[6]}px + env(safe-area-inset-top, 0px))`,
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
