@@ -253,8 +253,11 @@ async function applyInvitee(
   const lastName = inv.last_name ?? splitName(inv.name).last;
   const rawEmail = inv.email?.toLowerCase().trim();
   const email = isPlaceholderEmail(rawEmail) ? null : (rawEmail ?? null);
-  const phone = (inv.text_reminder_number ?? '').trim() || null;
   const intake = inv.questions_and_answers ?? null;
+  // Calendly's "Contact Number" is captured as a custom question on most
+  // event types, not as text_reminder_number. Try both.
+  const phoneFromHeader = (inv.text_reminder_number ?? '').trim();
+  const phone = phoneFromHeader || extractPhoneFromIntake(intake) || null;
 
   // Identity resolve. Skip placeholder emails (noemail@gmail.com etc.) so
   // multiple invitees sharing a stub email don't all collapse onto one
@@ -325,11 +328,11 @@ async function applyInvitee(
 
     const { data: linkedPat } = await supabase
       .from('patients')
-      .select('email, first_name, last_name')
+      .select('email, first_name, last_name, phone')
       .eq('id', cur.patient_id)
       .maybeSingle();
     const lp = linkedPat as
-      | { email: string | null; first_name: string | null; last_name: string | null }
+      | { email: string | null; first_name: string | null; last_name: string | null; phone: string | null }
       | null;
     const linkedName = `${lp?.first_name ?? ''} ${lp?.last_name ?? ''}`.trim().toLowerCase();
     const inviteeName = `${firstName ?? ''} ${lastName ?? ''}`.trim().toLowerCase();
@@ -351,6 +354,18 @@ async function applyInvitee(
         .single();
       if (!createErr && created) {
         nextPatientId = (created as { id: string }).id;
+      }
+    } else if (lp) {
+      // Correctly-matched existing patient — fill blanks (phone is the
+      // common one; we now also extract it from intake's Contact Number
+      // question, so older rows with null phone can be backfilled).
+      const patientPatch: Record<string, string> = {};
+      if (lp.phone == null && phone) patientPatch.phone = phone;
+      if (lp.email == null && email) patientPatch.email = email;
+      if (lp.first_name == null && firstName) patientPatch.first_name = firstName;
+      if (lp.last_name == null && lastName) patientPatch.last_name = lastName;
+      if (Object.keys(patientPatch).length > 0) {
+        await supabase.from('patients').update(patientPatch).eq('id', cur.patient_id);
       }
     }
 
@@ -424,6 +439,22 @@ function isPlaceholderEmail(email: string | null | undefined): boolean {
   if (PLACEHOLDER_LOCAL_RE.test(local)) return true;
   if (PLACEHOLDER_DOMAINS.has(domain)) return true;
   return false;
+}
+
+const PHONE_QUESTION_RE = /\b(contact|phone|mobile|tel(ephone)?|cell)\s*(number|#|no)?\b/i;
+function extractPhoneFromIntake(
+  intake: Array<{ question?: string | null; answer?: string | null }> | null | undefined
+): string | null {
+  if (!intake) return null;
+  for (const qa of intake) {
+    if (!qa) continue;
+    if (typeof qa.question !== 'string' || typeof qa.answer !== 'string') continue;
+    if (PHONE_QUESTION_RE.test(qa.question)) {
+      const t = qa.answer.trim();
+      if (t) return t;
+    }
+  }
+  return null;
 }
 
 async function resolveDefaultAccountId(supabase: SupabaseClient, location_id: string): Promise<string> {
