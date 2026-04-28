@@ -159,6 +159,7 @@ interface CalendlyEvent {
 }
 
 interface ExtractedDeposit {
+  deposit_status: 'paid' | 'failed';
   deposit_pence: number;
   deposit_currency: string;
   deposit_provider: 'paypal' | 'stripe';
@@ -167,18 +168,21 @@ interface ExtractedDeposit {
 }
 
 // Pull a deposit record out of Calendly's `payload.payment` object. Returns
-// null when no deposit was charged, the charge failed, or the provider
-// isn't one of the two Calendly supports — we never silently accept an
-// unknown provider (would violate the lng_appointments_deposit_shape
-// CHECK constraint).
+// null when there's no payment field, the amount isn't numeric, or the
+// provider isn't one Calendly supports (paypal / stripe) — those would
+// violate the lng_appointments_deposit_shape CHECK constraint.
+//
+// Failed payments are kept (status='failed') so the receptionist sees a
+// red badge on the detail sheet and knows to chase before checkout.
 function extractDeposit(
   payment: CalendlyEvent['payload'] extends { payment?: infer P } ? P : never,
   fallbackPaidAt: string
 ): ExtractedDeposit | null {
-  if (!payment || !payment.successful || typeof payment.amount !== 'number') return null;
+  if (!payment || typeof payment.amount !== 'number') return null;
   const provider = (payment.provider ?? '').toLowerCase();
   if (provider !== 'paypal' && provider !== 'stripe') return null;
   return {
+    deposit_status: payment.successful ? 'paid' : 'failed',
     deposit_pence: Math.round(payment.amount * 100),
     deposit_currency: (payment.currency ?? 'GBP').toUpperCase(),
     deposit_provider: provider,
@@ -309,12 +313,12 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
     payload: { source: 'calendly', start_at: startAt, calendly_invitee_uri: inviteeUri },
   });
 
-  // Patient timeline gets its own deposit_paid event so reports + the
-  // patient view can show "£25 deposit on PayPal" alongside the booking.
+  // Patient timeline gets its own deposit_paid / deposit_failed event so
+  // reports + the patient view show the attempt alongside the booking.
   if (deposit) {
     await supabase.from('patient_events').insert({
       patient_id,
-      event_type: 'deposit_paid',
+      event_type: deposit.deposit_status === 'paid' ? 'deposit_paid' : 'deposit_failed',
       payload: {
         amount_pence: deposit.deposit_pence,
         currency: deposit.deposit_currency,

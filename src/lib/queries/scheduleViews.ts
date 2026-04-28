@@ -28,6 +28,7 @@ interface RawRow {
   deposit_pence?: number | null;
   deposit_currency?: string | null;
   deposit_provider?: 'paypal' | 'stripe' | null;
+  deposit_status?: 'paid' | 'failed' | null;
   patient:
     | { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }
     | { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }[]
@@ -40,7 +41,7 @@ interface RawRow {
 
 const SELECT_WITH_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, event_type_label, staff_account_id, intake, join_url,
-  deposit_pence, deposit_currency, deposit_provider,
+  deposit_pence, deposit_currency, deposit_provider, deposit_status,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
 `;
@@ -69,6 +70,7 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       deposit_pence: raw.deposit_pence ?? null,
       deposit_currency: raw.deposit_currency ?? null,
       deposit_provider: raw.deposit_provider ?? null,
+      deposit_status: raw.deposit_status ?? null,
       patient_first_name: patient?.first_name ?? null,
       patient_last_name: patient?.last_name ?? null,
       patient_email: patient?.email ?? null,

@@ -19,6 +19,7 @@ const makeRow = (
   deposit_pence: null,
   deposit_currency: null,
   deposit_provider: null,
+  deposit_status: null,
   patient_first_name: null,
   patient_last_name: null,
   patient_email: null,
