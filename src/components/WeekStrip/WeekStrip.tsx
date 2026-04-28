@@ -104,6 +104,10 @@ function DayPill({
   onKeyDown,
 }: DayPillProps) {
   const dayOfMonth = Number(dateIso.split('-')[2]);
+  // Past day pills (when not selected) dim to match the faded treatment on
+  // past appointment rows. Selected stays full-strength even when past so
+  // the receptionist's focused day is unambiguous.
+  const dimmed = isPast && !isSelected;
   const styles: CSSProperties = {
     appearance: 'none',
     border: 'none',
@@ -125,8 +129,9 @@ function DayPill({
     cursor: 'pointer',
     position: 'relative',
     outline: 'none',
+    opacity: dimmed ? 0.55 : 1,
     WebkitTapHighlightColor: 'transparent',
-    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
   };
 
   const dayNameColor = isSelected
