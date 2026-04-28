@@ -100,7 +100,7 @@ export function BottomSheet({
         {(title || description || dismissable || onBack) && (
           <header
             style={{
-              padding: `${theme.space[5]}px ${theme.space[6]}px ${theme.space[3]}px`,
+              padding: `${theme.space[4]}px ${theme.space[6]}px ${theme.space[3]}px`,
               display: 'flex',
               alignItems: 'flex-start',
               gap: theme.space[3],
@@ -118,8 +118,13 @@ export function BottomSheet({
                   color: theme.color.ink,
                   cursor: 'pointer',
                   padding: theme.space[2],
-                  marginTop: -theme.space[2],
                   marginLeft: -theme.space[2],
+                  // Centre the chevron icon on the H2 title's first-line
+                  // optical centre. Title is xl (28px) at default leading
+                  // ≈ 34px; subtracting the icon height (22px) and the
+                  // button's vertical padding (16px) leaves 4px of nudge
+                  // to bring the icon centre down onto the title centre.
+                  marginTop: 4,
                   borderRadius: theme.radius.pill,
                   flexShrink: 0,
                   display: 'inline-flex',
