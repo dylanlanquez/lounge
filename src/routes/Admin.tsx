@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, FlaskConical, Mail, RefreshCw, RotateCcw, ShieldAlert, Users } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarCheck, Check, CreditCard, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Users, X } from 'lucide-react';
 import {
   Button,
   Card,
   EmptyState,
+  Input,
   SegmentedControl,
   Skeleton,
   StatusPill,
@@ -34,9 +35,16 @@ import {
   type VerifyResult,
 } from '../lib/queries/calendlyDiagnostic.ts';
 import { formatPence } from '../lib/queries/carts.ts';
+import {
+  type CatalogueRow,
+  setCatalogueActive,
+  upsertCatalogueRow,
+  useCatalogueAll,
+  type ArchMatch,
+} from '../lib/queries/catalogue.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'receipts' | 'testing';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -75,6 +83,7 @@ export function Admin() {
             onChange={setTab}
             options={[
               { value: 'calendly', label: 'Calendly' },
+              { value: 'catalogue', label: 'Catalogue' },
               { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
@@ -86,6 +95,8 @@ export function Admin() {
 
         {tab === 'calendly' ? (
           <CalendlyTab />
+        ) : tab === 'catalogue' ? (
+          <CatalogueTab />
         ) : tab === 'receipts' ? (
           <ReceiptsTab />
         ) : tab === 'reports' ? (
@@ -823,4 +834,461 @@ function Tile({ icon, label, value }: { icon?: React.ReactNode; label: string; v
 
 function severityToTone(s: SystemFailureRow['severity']) {
   return s === 'critical' || s === 'error' ? 'no_show' : s === 'warning' ? 'in_progress' : 'neutral';
+}
+
+// ---------- Catalogue tab ----------
+//
+// Shared with Checkpoint via the lwo_catalogue table. Edits here land in the
+// same row Checkpoint reads, so prices and SKUs never drift between the two
+// surfaces. Active=false is the soft-delete (line items reference catalogue
+// rows by id, never hard-delete).
+
+function CatalogueTab() {
+  const { rows, loading, error, refresh } = useCatalogueAll();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const grouped = groupByCategory(rows);
+
+  const onSave = async (draft: CatalogueDraft) => {
+    try {
+      await upsertCatalogueRow({
+        id: draft.id,
+        code: draft.code.trim(),
+        category: draft.category.trim(),
+        name: draft.name.trim(),
+        description: draft.description.trim() || null,
+        unit_price: parseFloat(draft.unit_price) || 0,
+        extra_unit_price: draft.extra_unit_price.trim() ? parseFloat(draft.extra_unit_price) : null,
+        unit_label: draft.unit_label.trim() || null,
+        service_type: draft.service_type.trim() || null,
+        product_key: draft.product_key.trim() || null,
+        repair_variant: draft.repair_variant.trim() || null,
+        arch_match: draft.arch_match,
+        sort_order: parseInt(draft.sort_order, 10) || 0,
+        active: draft.active,
+      });
+      setEditingId(null);
+      setAdding(false);
+      refresh();
+      setToast({ tone: 'success', title: draft.id ? 'Saved.' : 'Added.' });
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Save failed',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const onToggleActive = async (row: CatalogueRow) => {
+    try {
+      await setCatalogueActive(row.id, !row.active);
+      refresh();
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not toggle active',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  return (
+    <Card padding="md">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          marginBottom: theme.space[4],
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+            }}
+          >
+            Product catalogue
+          </h2>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+            }}
+          >
+            Shared with Checkpoint. Edits land in <code>lwo_catalogue</code>; line-item prices snapshot at insert.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Plus size={16} /> Add product
+          </span>
+        </Button>
+      </div>
+
+      {error ? (
+        <p style={{ color: theme.color.alert, margin: 0 }}>Could not load catalogue: {error}</p>
+      ) : loading ? (
+        <Skeleton height={120} radius={12} />
+      ) : adding ? (
+        <CatalogueRowEditor
+          initial={emptyDraft()}
+          onSave={onSave}
+          onCancel={() => setAdding(false)}
+        />
+      ) : grouped.length === 0 ? (
+        <EmptyState
+          icon={<Package size={24} />}
+          title="No products yet"
+          description="Tap Add product to seed the catalogue."
+        />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          {grouped.map(([category, catRows]) => (
+            <div key={category}>
+              <h3
+                style={{
+                  margin: `0 0 ${theme.space[2]}px`,
+                  fontSize: theme.type.size.xs,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.inkSubtle,
+                  textTransform: 'uppercase',
+                  letterSpacing: theme.type.tracking.wide,
+                }}
+              >
+                {category}
+              </h3>
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {catRows.map((row) =>
+                  editingId === row.id ? (
+                    <li key={row.id}>
+                      <CatalogueRowEditor
+                        initial={draftFromRow(row)}
+                        onSave={onSave}
+                        onCancel={() => setEditingId(null)}
+                      />
+                    </li>
+                  ) : (
+                    <CatalogueRowDisplay
+                      key={row.id}
+                      row={row}
+                      onEdit={() => setEditingId(row.id)}
+                      onToggleActive={() => onToggleActive(row)}
+                    />
+                  )
+                )}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+interface CatalogueDraft {
+  id?: string;
+  code: string;
+  category: string;
+  name: string;
+  description: string;
+  unit_price: string; // pounds, edited as text so the user can type "25.50"
+  extra_unit_price: string;
+  unit_label: string;
+  service_type: string;
+  product_key: string;
+  repair_variant: string;
+  arch_match: ArchMatch;
+  sort_order: string;
+  active: boolean;
+}
+
+function emptyDraft(): CatalogueDraft {
+  return {
+    code: '',
+    category: '',
+    name: '',
+    description: '',
+    unit_price: '',
+    extra_unit_price: '',
+    unit_label: '',
+    service_type: '',
+    product_key: '',
+    repair_variant: '',
+    arch_match: 'any',
+    sort_order: '0',
+    active: true,
+  };
+}
+
+function draftFromRow(row: CatalogueRow): CatalogueDraft {
+  return {
+    id: row.id,
+    code: row.code,
+    category: row.category,
+    name: row.name,
+    description: row.description ?? '',
+    unit_price: row.unit_price.toFixed(2),
+    extra_unit_price: row.extra_unit_price != null ? row.extra_unit_price.toFixed(2) : '',
+    unit_label: row.unit_label ?? '',
+    service_type: row.service_type ?? '',
+    product_key: row.product_key ?? '',
+    repair_variant: row.repair_variant ?? '',
+    arch_match: row.arch_match,
+    sort_order: String(row.sort_order),
+    active: row.active,
+  };
+}
+
+function CatalogueRowDisplay({
+  row,
+  onEdit,
+  onToggleActive,
+}: {
+  row: CatalogueRow;
+  onEdit: () => void;
+  onToggleActive: () => void;
+}) {
+  return (
+    <li
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: 14,
+        padding: theme.space[4],
+        background: row.active ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        opacity: row.active ? 1 : 0.7,
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: theme.type.weight.semibold, fontSize: theme.type.size.base, color: theme.color.ink }}>
+            {row.name}
+          </span>
+          <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.xs, fontFamily: 'monospace' }}>{row.code}</span>
+          {!row.active ? (
+            <StatusPill tone="cancelled" size="sm">
+              Inactive
+            </StatusPill>
+          ) : null}
+        </div>
+        {row.description ? (
+          <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+            {row.description}
+          </p>
+        ) : null}
+        <p
+          style={{
+            margin: `${theme.space[2]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            fontVariantNumeric: 'tabular-nums',
+            color: theme.color.ink,
+          }}
+        >
+          £{row.unit_price.toFixed(2)}
+          {row.extra_unit_price != null ? ` (extras £${row.extra_unit_price.toFixed(2)})` : ''}
+          {row.unit_label ? ` · ${row.unit_label}` : ''}
+        </p>
+        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+          {[
+            row.service_type,
+            row.product_key,
+            row.repair_variant,
+            row.arch_match !== 'any' ? `arch=${row.arch_match}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || 'no match rules'}
+        </p>
+      </div>
+      <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
+        <Button variant="tertiary" size="sm" onClick={onToggleActive}>
+          {row.active ? 'Deactivate' : 'Reactivate'}
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onEdit}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Pencil size={14} /> Edit
+          </span>
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function CatalogueRowEditor({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: CatalogueDraft;
+  onSave: (draft: CatalogueDraft) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<CatalogueDraft>(initial);
+  const [busy, setBusy] = useState(false);
+  const set = <K extends keyof CatalogueDraft>(k: K, v: CatalogueDraft[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+
+  const submit = async () => {
+    if (!draft.code.trim() || !draft.name.trim() || !draft.category.trim()) return;
+    setBusy(true);
+    try {
+      await onSave(draft);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.color.ink}`,
+        borderRadius: 14,
+        padding: theme.space[4],
+        background: theme.color.surface,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
+      }}
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        <Input label="Code (unique)" value={draft.code} onChange={(e) => set('code', e.target.value)} />
+        <Input label="Category" value={draft.category} onChange={(e) => set('category', e.target.value)} />
+      </div>
+      <Input label="Name" value={draft.name} onChange={(e) => set('name', e.target.value)} />
+      <Input
+        label="Description"
+        value={draft.description}
+        onChange={(e) => set('description', e.target.value)}
+      />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: theme.space[3] }}>
+        <Input
+          label="Unit price (£)"
+          inputMode="decimal"
+          value={draft.unit_price}
+          onChange={(e) => set('unit_price', e.target.value)}
+        />
+        <Input
+          label="Extras price (£)"
+          inputMode="decimal"
+          value={draft.extra_unit_price}
+          onChange={(e) => set('extra_unit_price', e.target.value)}
+          placeholder="optional"
+        />
+        <Input
+          label="Unit label"
+          value={draft.unit_label}
+          onChange={(e) => set('unit_label', e.target.value)}
+          placeholder="e.g. per tooth"
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        <Input
+          label="Service type"
+          value={draft.service_type}
+          onChange={(e) => set('service_type', e.target.value)}
+          placeholder="denture_repair / same_day_appliance / click_in_veneers"
+        />
+        <Input
+          label="Product key"
+          value={draft.product_key}
+          onChange={(e) => set('product_key', e.target.value)}
+          placeholder="e.g. retainer, night_guard"
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        <Input
+          label="Repair variant"
+          value={draft.repair_variant}
+          onChange={(e) => set('repair_variant', e.target.value)}
+          placeholder="e.g. Snapped denture"
+        />
+        <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+            Arch match
+          </span>
+          <select
+            value={draft.arch_match}
+            onChange={(e) => set('arch_match', e.target.value as ArchMatch)}
+            style={{
+              height: theme.layout.inputHeight,
+              padding: `0 ${theme.space[3]}px`,
+              fontSize: theme.type.size.base,
+              fontFamily: 'inherit',
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              background: theme.color.surface,
+            }}
+          >
+            <option value="any">any (wildcard)</option>
+            <option value="single">single (upper or lower)</option>
+            <option value="both">both arches</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+        <Input
+          label="Sort order"
+          inputMode="numeric"
+          value={draft.sort_order}
+          onChange={(e) => set('sort_order', e.target.value)}
+          style={{ maxWidth: 140 }}
+        />
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            fontSize: theme.type.size.sm,
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={draft.active}
+            onChange={(e) => set('active', e.target.checked)}
+            style={{ width: 18, height: 18 }}
+          />
+          Active (visible to receptionist)
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', marginTop: theme.space[2] }}>
+        <Button variant="tertiary" onClick={onCancel} disabled={busy}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <X size={16} /> Cancel
+          </span>
+        </Button>
+        <Button variant="primary" onClick={submit} loading={busy}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Check size={16} /> {draft.id ? 'Save' : 'Add'}
+          </span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function groupByCategory(rows: CatalogueRow[]): Array<[string, CatalogueRow[]]> {
+  const map = new Map<string, CatalogueRow[]>();
+  for (const r of rows) {
+    const list = map.get(r.category) ?? [];
+    list.push(r);
+    map.set(r.category, list);
+  }
+  return [...map.entries()];
 }
