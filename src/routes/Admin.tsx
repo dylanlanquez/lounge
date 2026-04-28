@@ -37,7 +37,9 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import {
   type CatalogueRow,
+  deleteCatalogueImage,
   setCatalogueActive,
+  uploadCatalogueImage,
   upsertCatalogueRow,
   useCatalogueAll,
   type ArchMatch,
@@ -862,6 +864,7 @@ function CatalogueTab() {
         unit_price: parseFloat(draft.unit_price) || 0,
         extra_unit_price: draft.extra_unit_price.trim() ? parseFloat(draft.extra_unit_price) : null,
         unit_label: draft.unit_label.trim() || null,
+        image_url: draft.image_url,
         service_type: draft.service_type.trim() || null,
         product_key: draft.product_key.trim() || null,
         repair_variant: draft.repair_variant.trim() || null,
@@ -1009,6 +1012,7 @@ interface CatalogueDraft {
   unit_price: string; // pounds, edited as text so the user can type "25.50"
   extra_unit_price: string;
   unit_label: string;
+  image_url: string | null;
   service_type: string;
   product_key: string;
   repair_variant: string;
@@ -1026,6 +1030,7 @@ function emptyDraft(): CatalogueDraft {
     unit_price: '',
     extra_unit_price: '',
     unit_label: '',
+    image_url: null,
     service_type: '',
     product_key: '',
     repair_variant: '',
@@ -1045,6 +1050,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     unit_price: row.unit_price.toFixed(2),
     extra_unit_price: row.extra_unit_price != null ? row.extra_unit_price.toFixed(2) : '',
     unit_label: row.unit_label ?? '',
+    image_url: row.image_url,
     service_type: row.service_type ?? '',
     product_key: row.product_key ?? '',
     repair_variant: row.repair_variant ?? '',
@@ -1076,6 +1082,7 @@ function CatalogueRowDisplay({
         opacity: row.active ? 1 : 0.7,
       }}
     >
+      <CatalogueThumbnail src={row.image_url} alt={row.name} size={56} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], flexWrap: 'wrap' }}>
           <span style={{ fontWeight: theme.type.weight.semibold, fontSize: theme.type.size.base, color: theme.color.ink }}>
@@ -1141,6 +1148,8 @@ function CatalogueRowEditor({
 }) {
   const [draft, setDraft] = useState<CatalogueDraft>(initial);
   const [busy, setBusy] = useState(false);
+  const [imgBusy, setImgBusy] = useState(false);
+  const [imgError, setImgError] = useState<string | null>(null);
   const set = <K extends keyof CatalogueDraft>(k: K, v: CatalogueDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
@@ -1151,6 +1160,37 @@ function CatalogueRowEditor({
       await onSave(draft);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onImageFile = async (file: File | null) => {
+    setImgError(null);
+    if (!file) return;
+    if (!draft.code.trim()) {
+      setImgError('Set a code first — the file is named after it.');
+      return;
+    }
+    setImgBusy(true);
+    try {
+      const url = await uploadCatalogueImage(file, draft.code);
+      set('image_url', url);
+    } catch (e) {
+      setImgError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setImgBusy(false);
+    }
+  };
+
+  const onRemoveImage = async () => {
+    setImgError(null);
+    setImgBusy(true);
+    try {
+      if (draft.code.trim()) await deleteCatalogueImage(draft.code);
+      set('image_url', null);
+    } catch (e) {
+      setImgError(e instanceof Error ? e.message : 'Remove failed');
+    } finally {
+      setImgBusy(false);
     }
   };
 
@@ -1166,6 +1206,70 @@ function CatalogueRowEditor({
         gap: theme.space[3],
       }}
     >
+      <div style={{ display: 'flex', gap: theme.space[4], alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <CatalogueThumbnail src={draft.image_url} alt={draft.name || draft.code} size={96} />
+        <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Image
+          </p>
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            <label>
+              <input
+                type="file"
+                accept="image/*"
+                disabled={imgBusy}
+                onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
+                style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+              />
+              <span
+                role="button"
+                tabIndex={0}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: `0 ${theme.space[3]}px`,
+                  height: 36,
+                  borderRadius: theme.radius.pill,
+                  border: `1px solid ${theme.color.ink}`,
+                  background: theme.color.surface,
+                  color: theme.color.ink,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  cursor: imgBusy ? 'not-allowed' : 'pointer',
+                  opacity: imgBusy ? 0.5 : 1,
+                }}
+              >
+                <Plus size={14} /> {draft.image_url ? 'Replace image' : 'Upload image'}
+              </span>
+            </label>
+            {draft.image_url ? (
+              <Button variant="tertiary" size="sm" onClick={onRemoveImage} disabled={imgBusy}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <X size={14} /> Remove
+                </span>
+              </Button>
+            ) : null}
+          </div>
+          {imgError ? (
+            <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.xs }}>{imgError}</p>
+          ) : (
+            <p style={{ margin: 0, color: theme.color.inkSubtle, fontSize: theme.type.size.xs }}>
+              PNG / JPG. Stored as <code>{draft.code || '<code>'}.&lt;ext&gt;</code> in catalogue-images.
+            </p>
+          )}
+        </div>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
         <Input label="Code (unique)" value={draft.code} onChange={(e) => set('code', e.target.value)} />
         <Input label="Category" value={draft.category} onChange={(e) => set('category', e.target.value)} />
@@ -1291,4 +1395,52 @@ function groupByCategory(rows: CatalogueRow[]): Array<[string, CatalogueRow[]]> 
     map.set(r.category, list);
   }
   return [...map.entries()];
+}
+
+// Square thumbnail with a rounded clip + subtle border. Falls back to a
+// Package glyph on a tinted background when there's no image — keeps
+// every catalogue row visually balanced regardless of image state.
+function CatalogueThumbnail({
+  src,
+  alt,
+  size,
+}: {
+  src: string | null;
+  alt: string;
+  size: number;
+}) {
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        width: size,
+        height: size,
+        borderRadius: 12,
+        overflow: 'hidden',
+        background: src ? theme.color.surface : 'rgba(14, 20, 20, 0.04)',
+        border: `1px solid ${theme.color.border}`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: theme.color.inkSubtle,
+      }}
+    >
+      {src ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          onError={(e) => {
+            // Hide the <img> if it fails to load; the surrounding tile's
+            // tinted background + Package glyph (rendered alongside) takes
+            // over. Cheap fallback that survives a stale URL.
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <Package size={Math.round(size * 0.4)} aria-hidden />
+      )}
+    </div>
+  );
 }
