@@ -12,16 +12,16 @@ export const theme = {
     overlay: 'rgba(14, 20, 20, 0.5)',
     focus: 'rgba(31, 77, 58, 0.32)',
   },
-  // Category palette for the appointment-card left bar. Spans the colour
-  // wheel (orange → green → blue → red → neutral) so the receptionist can
-  // identify the type at a glance. Saturation kept moderate so the
-  // calendar still feels grown-up — these are bars, not full backgrounds.
-  // Only applied to status='booked'; status colours take over post-arrival.
+  // Category palette for the appointment-card left bar. Hues span the
+  // colour wheel (orange → green → blue → magenta) so the four types are
+  // unambiguous at a glance. Saturation moderate, lightness consistent —
+  // applied only to a 6px bar (not the card body) so the calendar still
+  // reads as grown-up. Status colours take over post-arrival.
   category: {
-    repair: '#9A6234',     // sienna — denture repairs
+    repair: '#B36815',     // amber — denture repairs
     sameDay: '#1F4D3A',    // forest green (accent) — click-in veneers
-    appliance: '#2D4A78',  // denim blue — same-day appliances
-    impression: '#7A3D4A', // burgundy — impression appointments
+    appliance: '#1E5BA8',  // clear blue — same-day appliances
+    impression: '#8C2A5A', // magenta — impression appointments
     consult: '#4A4F55',    // graphite — anything else
   },
   type: {
