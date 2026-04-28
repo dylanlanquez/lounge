@@ -106,13 +106,18 @@ function CalendlyTab() {
       return;
     }
     const skippedNote = res.skipped && res.skipped > 0 ? ` · ${res.skipped} already imported` : '';
+    const pages = res.pages ?? [];
+    const pageNote = pages.length > 0
+      ? ` · ${pages.length} page(s), latest event ${pages[0]?.first ? new Date(pages[0].first).toLocaleDateString('en-GB') : '—'}`
+      : '';
     setToast({
       tone: 'success',
       title: `Pulled ${res.received ?? 0} events, applied ${res.applied ?? 0}${skippedNote}.`,
-      description:
+      description: `${pageNote}${
         (res.errors?.length ?? 0) > 0
-          ? `${res.errors!.length} error(s). Reload Schedule to see new appointments.`
-          : 'Reload Schedule to see new appointments.',
+          ? `. ${res.errors!.length} error(s).`
+          : '.'
+      } Reload Schedule to see new appointments.`,
     });
     d.refresh();
   };

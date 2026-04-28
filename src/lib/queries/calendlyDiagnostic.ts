@@ -70,6 +70,7 @@ export interface BackfillResult {
   received?: number;
   applied?: number;
   skipped?: number;
+  pages?: Array<{ page: number; count: number; first?: string; last?: string }>;
   errors?: string[];
   error?: string;
 }
@@ -120,6 +121,7 @@ export async function runCalendlyBackfill(): Promise<BackfillResult> {
       received: body.received as number,
       applied: body.applied as number,
       skipped: body.skipped as number,
+      pages: body.pages as BackfillResult['pages'],
       errors: body.errors as string[] | undefined,
     };
   } catch (e: unknown) {

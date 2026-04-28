@@ -111,22 +111,33 @@ Deno.serve(async (req) => {
   const until = body.until ?? new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
 
   // Step 2: paginate scheduled_events
-  let pageToken: string | undefined = undefined;
+  // Pagination strategy:
+  //   - Sort descending: future events come first. If pagination ever stalls
+  //     mid-sweep, we lose past events (which are less critical) before
+  //     future ones (the priority).
+  //   - Prefer pagination.next_page (full URL, already-encoded) when present.
+  //     Falls back to next_page_token + manual encode. The URLSearchParams
+  //     encoding of a base64 page_token can otherwise mangle '+' / '=' chars.
   let totalReceived = 0;
   let totalApplied = 0;
   let totalSkipped = 0;
   const errors: string[] = [];
+  const pageDiagnostics: Array<{ page: number; count: number; first?: string; last?: string }> = [];
+
+  let nextRequestPath: string | null = (() => {
+    const u = new URL('https://api.calendly.com/scheduled_events');
+    u.searchParams.set('user', userUri);
+    u.searchParams.set('min_start_time', since);
+    u.searchParams.set('max_start_time', until);
+    u.searchParams.set('count', '100');
+    u.searchParams.set('status', 'active');
+    u.searchParams.set('sort', 'start_time:desc');
+    return u.pathname + u.search;
+  })();
 
   for (let i = 0; i < 50; i++) {
-    const url = new URL('https://api.calendly.com/scheduled_events');
-    url.searchParams.set('user', userUri);
-    url.searchParams.set('min_start_time', since);
-    url.searchParams.set('max_start_time', until);
-    url.searchParams.set('count', '100');
-    url.searchParams.set('status', 'active');
-    if (pageToken) url.searchParams.set('page_token', pageToken);
-
-    const events = await calendly('GET', url.pathname + url.search);
+    if (!nextRequestPath) break;
+    const events = await calendly('GET', nextRequestPath);
     if (!events.ok) {
       errors.push(`scheduled_events page ${i}: ${JSON.stringify(events.body)}`);
       break;
@@ -139,6 +150,12 @@ Deno.serve(async (req) => {
       event_type: string;
     }>;
     totalReceived += collection.length;
+    pageDiagnostics.push({
+      page: i,
+      count: collection.length,
+      first: collection[0]?.start_time,
+      last: collection[collection.length - 1]?.start_time,
+    });
 
     // For each event, fetch invitees and synthesise an invitee.created.
     for (const evt of collection) {
@@ -166,8 +183,31 @@ Deno.serve(async (req) => {
       }
     }
 
-    pageToken = events.body?.pagination?.next_page_token;
-    if (!pageToken) break;
+    // Compute next page request. Calendly returns both pagination.next_page
+    // (full URL) and pagination.next_page_token. Prefer the URL form.
+    const pag = events.body?.pagination as
+      | { next_page?: string | null; next_page_token?: string | null }
+      | undefined;
+    if (pag?.next_page) {
+      try {
+        const u = new URL(pag.next_page);
+        nextRequestPath = u.pathname + u.search;
+      } catch {
+        nextRequestPath = null;
+      }
+    } else if (pag?.next_page_token) {
+      const u = new URL('https://api.calendly.com/scheduled_events');
+      u.searchParams.set('user', userUri);
+      u.searchParams.set('min_start_time', since);
+      u.searchParams.set('max_start_time', until);
+      u.searchParams.set('count', '100');
+      u.searchParams.set('status', 'active');
+      u.searchParams.set('sort', 'start_time:desc');
+      u.searchParams.set('page_token', pag.next_page_token);
+      nextRequestPath = u.pathname + u.search;
+    } else {
+      nextRequestPath = null;
+    }
   }
 
   return jsonResponse(200, {
@@ -177,6 +217,7 @@ Deno.serve(async (req) => {
     received: totalReceived,
     applied: totalApplied,
     skipped: totalSkipped,
+    pages: pageDiagnostics,
     errors,
   });
 });
