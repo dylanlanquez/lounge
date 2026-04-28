@@ -2,6 +2,7 @@ import { type ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { BOTTOM_NAV_HEIGHT } from '../BottomNav/BottomNav.tsx';
 
 export interface BottomSheetProps {
   open: boolean;
@@ -189,14 +190,22 @@ export function BottomSheet({
         </div>
 
         {footer ? (
+          // Footer height locks to the BottomNav height so the sheet's
+          // top-of-footer hairline lines up with the nav's top hairline
+          // across the dimmed margins — the bottom band of the page reads
+          // as one continuous strip whether you're looking at the nav or
+          // an open sheet's actions.
           <footer
             style={{
-              padding: theme.space[5],
+              height: BOTTOM_NAV_HEIGHT,
+              padding: `0 ${theme.space[5]}px`,
               borderTop: `1px solid ${theme.color.border}`,
               background: theme.color.surface,
+              display: 'flex',
+              alignItems: 'center',
             }}
           >
-            {footer}
+            <div style={{ width: '100%' }}>{footer}</div>
           </footer>
         ) : null}
       </div>
