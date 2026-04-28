@@ -92,6 +92,32 @@ export function isBookingLate(startIso: string, now: Date | number): boolean {
   return minutesPastStart(startIso, now) >= NO_SHOW_LATE_THRESHOLD_MIN;
 }
 
+// Human-readable late-by string. Scales gracefully from minutes → hours →
+// days so the UI doesn't render "1092 mins late" on a row from yesterday.
+//   < 60 min      → "5 mins" / "1 min"
+//   < 24 hr       → "1 hr" / "1 hr 30 mins"
+//   1+ days       → "2 days" / "2 days 5 hr 30 mins"
+// Negative or zero inputs return "0 mins" — caller shouldn't normally pass
+// these (the late nudge is gated on >= 15) but we handle it safely.
+export function formatLateDuration(totalMinutes: number): string {
+  const m = Math.max(0, Math.floor(totalMinutes));
+  if (m < 60) return `${m} ${m === 1 ? 'min' : 'mins'}`;
+  if (m < 1440) {
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
+    if (mins === 0) return `${hours} hr`;
+    return `${hours} hr ${mins} ${mins === 1 ? 'min' : 'mins'}`;
+  }
+  const days = Math.floor(m / 1440);
+  const remainder = m % 1440;
+  const hours = Math.floor(remainder / 60);
+  const mins = remainder % 60;
+  const parts: string[] = [`${days} ${days === 1 ? 'day' : 'days'}`];
+  if (hours > 0) parts.push(`${hours} hr`);
+  if (mins > 0) parts.push(`${mins} ${mins === 1 ? 'min' : 'mins'}`);
+  return parts.join(' ');
+}
+
 // Human-readable label for an appointment status. Backed-end enums like
 // 'no_show' / 'in_progress' are not for the receptionist to see.
 export function humaniseStatus(status: AppointmentRow['status']): string {

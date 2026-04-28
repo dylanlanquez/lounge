@@ -73,9 +73,10 @@ export function BottomNav() {
         bottom: 0,
         zIndex: 50,
         background: theme.color.surface,
+        // Match the popup footer's separator: a single 1px hairline, no
+        // upward shadow. The bar reads as a quiet floor of the page rather
+        // than a hovering shelf.
         borderTop: `1px solid ${theme.color.border}`,
-        // Drop shadow upward to lift the bar off scrolling content.
-        boxShadow: '0 -4px 16px rgba(14, 20, 20, 0.04)',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       }}
     >
