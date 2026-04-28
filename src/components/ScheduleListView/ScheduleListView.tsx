@@ -6,6 +6,7 @@ import {
   eventTypeCategory,
   formatBookingSummary,
   humaniseStatus,
+  isAppointmentDimmed,
   isBookingLate,
   minutesPastStart,
   patientDisplayName,
@@ -70,12 +71,12 @@ function Section({
 
 function ListRow({ row, onPick, now }: { row: AppointmentRow; onPick: () => void; now: Date }) {
   const tone = statusToTone(row.status);
-  const isLate = row.status === 'booked' && isBookingLate(row.start_at, now);
+  const slotEnded = new Date(row.end_at).getTime() <= now.getTime();
+  // Late nudge only fires while the slot is still running. After end_at the
+  // dim treatment carries the signal — calling it "late" is past tense.
+  const isLate = row.status === 'booked' && !slotEnded && isBookingLate(row.start_at, now);
   const lateMin = isLate ? minutesPastStart(row.start_at, now) : 0;
-  // Terminal-and-uneventful: fade so the eye lands on rows that still
-  // need attention. Mirror AppointmentCard's rule.
-  const faded =
-    row.status === 'complete' || row.status === 'cancelled' || row.status === 'rescheduled';
+  const faded = isAppointmentDimmed(row, now);
   // Apply category bar only on booked rows (matches AppointmentCard:
   // status colour takes over once the visit is in progress). Late rows
   // override with alert red so the receptionist can scan for them.
@@ -102,7 +103,7 @@ function ListRow({ row, onPick, now }: { row: AppointmentRow; onPick: () => void
           alignItems: 'stretch',
           minHeight: 64,
           overflow: 'hidden',
-          opacity: faded ? 0.65 : 1,
+          opacity: faded ? 0.55 : 1,
           transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
         onMouseEnter={(e) => {

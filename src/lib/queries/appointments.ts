@@ -57,6 +57,26 @@ export function patientDisplayName(row: AppointmentRow): string {
 // flagged as late and the receptionist is nudged to mark it no-show.
 export const NO_SHOW_LATE_THRESHOLD_MIN = 15;
 
+// True when a row should render at reduced opacity so the eye lands on
+// active and upcoming work. Two ways in:
+//   - Terminal status (complete / cancelled / rescheduled) — done, regardless of time.
+//   - Past slot (end_at <= now) for any non-active status — booked rows that
+//     never got actioned and no_shows from earlier in the day or week.
+// Active visits (arrived, in_progress) stay full-strength even past end_at,
+// because the appointment slot may have over-run while the patient is still
+// in the chair.
+export function isAppointmentDimmed(
+  row: { end_at: string; status: AppointmentStatus },
+  now: Date | number
+): boolean {
+  if (row.status === 'arrived' || row.status === 'in_progress') return false;
+  if (row.status === 'complete' || row.status === 'cancelled' || row.status === 'rescheduled') {
+    return true;
+  }
+  const t = typeof now === 'number' ? now : now.getTime();
+  return new Date(row.end_at).getTime() <= t;
+}
+
 // Whole minutes elapsed since an appointment's start_at. Negative when the
 // appointment is still in the future. Floor'd so a 14:59 elapsed shows as 14.
 export function minutesPastStart(startIso: string, now: Date | number): number {

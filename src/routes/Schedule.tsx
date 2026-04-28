@@ -46,6 +46,7 @@ import {
   eventTypeCategory,
   formatBookingSummary,
   humaniseStatus,
+  isAppointmentDimmed,
   isBookingLate,
   minutesPastStart,
   patientDisplayName,
@@ -310,10 +311,14 @@ export function Schedule() {
                       lanesInGroup={item.lanesInGroup}
                       barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
                       lateMinutes={
-                        onToday && item.data.status === 'booked' && isBookingLate(item.data.start_at, now)
+                        onToday &&
+                        item.data.status === 'booked' &&
+                        new Date(item.data.end_at).getTime() > now.getTime() &&
+                        isBookingLate(item.data.start_at, now)
                           ? minutesPastStart(item.data.start_at, now)
                           : null
                       }
+                      dimmed={isAppointmentDimmed(item.data, now)}
                       onClick={() => setSelected(item.data)}
                     />
                   ) : (
