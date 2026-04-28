@@ -242,6 +242,14 @@ async function applyInvitee(
     name?: string;
     text_reminder_number?: string;
     questions_and_answers?: Array<{ question: string; answer: string }>;
+    payment?: {
+      external_id?: string;
+      provider?: string;
+      amount?: number;
+      currency?: string;
+      successful?: boolean;
+    } | null;
+    created_at?: string;
   }
 ): Promise<'applied' | 'skipped'> {
   // Default location
@@ -266,6 +274,7 @@ async function applyInvitee(
   const phoneFromHeader = (inv.text_reminder_number ?? '').trim();
   const phone = phoneFromHeader || extractPhoneFromIntake(intake) || null;
   const join_url = extractJoinUrl(evt.location);
+  const deposit = extractDeposit(inv.payment, inv.created_at ?? new Date().toISOString());
 
   // Identity resolve. Skip placeholder emails (noemail@gmail.com etc.) so
   // multiple invitees sharing a stub email don't all collapse onto one
@@ -320,7 +329,7 @@ async function applyInvitee(
   // re-resolve: create a new patient and re-point the appointment.
   const { data: existingAppt } = await supabase
     .from('lng_appointments')
-    .select('id, intake, event_type_label, patient_id, join_url')
+    .select('id, intake, event_type_label, patient_id, join_url, deposit_pence')
     .eq('calendly_invitee_uri', inv.uri)
     .maybeSingle();
 
@@ -331,6 +340,7 @@ async function applyInvitee(
       event_type_label: string | null;
       patient_id: string;
       join_url: string | null;
+      deposit_pence: number | null;
     };
 
     let nextPatientId = cur.patient_id;
@@ -383,8 +393,34 @@ async function applyInvitee(
     if (cur.event_type_label == null && evt.name) patch.event_type_label = evt.name;
     if (cur.join_url == null && join_url) patch.join_url = join_url;
     if (nextPatientId !== cur.patient_id) patch.patient_id = nextPatientId;
+    // Fill-blanks the deposit so backfill picks up payments on bookings
+    // that pre-date deposit ingest. Never overwrite an existing deposit
+    // — the receptionist may have manually corrected it.
+    if (cur.deposit_pence == null && deposit) {
+      patch.deposit_pence = deposit.deposit_pence;
+      patch.deposit_currency = deposit.deposit_currency;
+      patch.deposit_provider = deposit.deposit_provider;
+      patch.deposit_external_id = deposit.deposit_external_id;
+      patch.deposit_paid_at = deposit.deposit_paid_at;
+    }
     if (Object.keys(patch).length > 0) {
       await supabase.from('lng_appointments').update(patch).eq('id', cur.id);
+      // Emit deposit_paid event when backfilling a deposit onto a row
+      // that didn't have one — keeps the patient timeline in sync.
+      if (cur.deposit_pence == null && deposit) {
+        await supabase.from('patient_events').insert({
+          patient_id: nextPatientId,
+          event_type: 'deposit_paid',
+          payload: {
+            amount_pence: deposit.deposit_pence,
+            currency: deposit.deposit_currency,
+            provider: deposit.deposit_provider,
+            external_id: deposit.deposit_external_id,
+            calendly_invitee_uri: inv.uri,
+            backfilled: true,
+          },
+        });
+      }
       return 'applied';
     }
     return 'skipped';
@@ -402,7 +438,22 @@ async function applyInvitee(
     intake,
     join_url,
     status: 'booked',
+    ...(deposit ?? {}),
   });
+  if (!apptErr && deposit) {
+    await supabase.from('patient_events').insert({
+      patient_id,
+      event_type: 'deposit_paid',
+      payload: {
+        amount_pence: deposit.deposit_pence,
+        currency: deposit.deposit_currency,
+        provider: deposit.deposit_provider,
+        external_id: deposit.deposit_external_id,
+        calendly_invitee_uri: inv.uri,
+        backfilled: true,
+      },
+    });
+  }
   // 23505 == unique violation on calendly_invitee_uri. Shouldn't normally
   // hit since we checked above, but keep the safety net.
   if (apptErr) {
@@ -450,6 +501,44 @@ function isPlaceholderEmail(email: string | null | undefined): boolean {
   if (PLACEHOLDER_LOCAL_RE.test(local)) return true;
   if (PLACEHOLDER_DOMAINS.has(domain)) return true;
   return false;
+}
+
+interface ExtractedDeposit {
+  deposit_pence: number;
+  deposit_currency: string;
+  deposit_provider: 'paypal' | 'stripe';
+  deposit_external_id: string | null;
+  deposit_paid_at: string;
+}
+
+// Mirrors the webhook helper. Pulls a deposit record out of the Calendly
+// invitee `payment` object. Returns null when no deposit was charged, the
+// charge failed, or the provider isn't paypal / stripe — the
+// lng_appointments_deposit_shape CHECK constraint rejects unknown providers
+// so silently failing is preferable to a partial insert.
+function extractDeposit(
+  payment:
+    | {
+        external_id?: string;
+        provider?: string;
+        amount?: number;
+        currency?: string;
+        successful?: boolean;
+      }
+    | null
+    | undefined,
+  fallbackPaidAt: string
+): ExtractedDeposit | null {
+  if (!payment || !payment.successful || typeof payment.amount !== 'number') return null;
+  const provider = (payment.provider ?? '').toLowerCase();
+  if (provider !== 'paypal' && provider !== 'stripe') return null;
+  return {
+    deposit_pence: Math.round(payment.amount * 100),
+    deposit_currency: (payment.currency ?? 'GBP').toUpperCase(),
+    deposit_provider: provider,
+    deposit_external_id: payment.external_id ?? null,
+    deposit_paid_at: fallbackPaidAt,
+  };
 }
 
 const PHONE_QUESTION_RE = /\b(contact|phone|mobile|tel(ephone)?|cell)\s*(number|#|no)?\b/i;

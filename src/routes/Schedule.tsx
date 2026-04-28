@@ -594,11 +594,35 @@ export function Schedule() {
             </ul>
           ) : selected ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-                <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
-                <StatusPill tone={statusToTone(selected.status)} size="sm">
-                  {humaniseStatus(selected.status)}
-                </StatusPill>
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexWrap: 'wrap' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                  <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
+                  <StatusPill tone={statusToTone(selected.status)} size="sm">
+                    {humaniseStatus(selected.status)}
+                  </StatusPill>
+                </span>
+                {selected.deposit_pence != null && selected.deposit_pence > 0 ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Deposit</span>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: `2px ${theme.space[2]}px`,
+                        background: theme.color.accentBg,
+                        color: theme.color.accent,
+                        borderRadius: theme.radius.pill,
+                        fontSize: theme.type.size.xs,
+                        fontWeight: theme.type.weight.semibold,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {formatGbp(selected.deposit_pence)} paid
+                      {selected.deposit_provider ? ` · ${capitalise(selected.deposit_provider)}` : ''}
+                    </span>
+                  </span>
+                ) : null}
               </div>
 
               {selected.status === 'booked' && isBookingLate(selected.start_at, now) ? (
@@ -903,6 +927,22 @@ function formatTime12h(d: Date): string {
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
   return `${hh}${mm}${ampm}`;
+}
+
+// Compact GBP formatter: "£25" / "£25.50". Uses Intl so the receptionist
+// sees the locale-correct separator.
+function formatGbp(pence: number): string {
+  const pounds = pence / 100;
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: pounds % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(pounds);
+}
+
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // Date heading shown above the day's timeline. e.g. "Tuesday 28 April".

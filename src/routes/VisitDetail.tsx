@@ -24,7 +24,7 @@ export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const { visit, patient, loading } = useVisitDetail(id);
+  const { visit, patient, deposit, loading } = useVisitDetail(id);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
 
   const [adding, setAdding] = useState(false);
@@ -38,7 +38,11 @@ export function VisitDetail() {
 
   const subtotal = items.reduce((sum, i) => sum + i.line_total_pence, 0);
   const discount = items.reduce((sum, i) => sum + i.discount_pence, 0);
-  const total = subtotal - discount;
+  const depositPence = deposit?.pence ?? 0;
+  // Balance is what the receptionist will collect at the till after the
+  // Calendly deposit is applied. Floor at 0 — manual PayPal refund handles
+  // the over-deposit case so we never produce a negative charge here.
+  const total = Math.max(0, subtotal - discount - depositPence);
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
 
   const onAddItem = async (e: FormEvent) => {
@@ -233,7 +237,13 @@ export function VisitDetail() {
               ) : null}
 
               {items.length > 0 ? (
-                <Totals subtotal={subtotal} discount={discount} total={total} />
+                <Totals
+                  subtotal={subtotal}
+                  discount={discount}
+                  depositPence={depositPence}
+                  depositProvider={deposit?.provider ?? null}
+                  total={total}
+                />
               ) : null}
             </Card>
 
@@ -269,7 +279,19 @@ export function VisitDetail() {
   );
 }
 
-function Totals({ subtotal, discount, total }: { subtotal: number; discount: number; total: number }) {
+function Totals({
+  subtotal,
+  discount,
+  depositPence,
+  depositProvider,
+  total,
+}: {
+  subtotal: number;
+  discount: number;
+  depositPence: number;
+  depositProvider: 'paypal' | 'stripe' | null;
+  total: number;
+}) {
   return (
     <div
       style={{
@@ -283,6 +305,13 @@ function Totals({ subtotal, discount, total }: { subtotal: number; discount: num
     >
       <Row label="Subtotal" value={formatPence(subtotal)} />
       {discount > 0 ? <Row label="Discount" value={`-${formatPence(discount)}`} /> : null}
+      {depositPence > 0 ? (
+        <Row
+          label={`Deposit (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`}
+          value={`-${formatPence(depositPence)}`}
+          accent
+        />
+      ) : null}
       <div
         style={{
           display: 'flex',
@@ -293,7 +322,9 @@ function Totals({ subtotal, discount, total }: { subtotal: number; discount: num
           borderTop: `1px solid ${theme.color.border}`,
         }}
       >
-        <span style={{ fontSize: theme.type.size.md, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>Total</span>
+        <span style={{ fontSize: theme.type.size.md, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
+          {depositPence > 0 ? 'To collect' : 'Total'}
+        </span>
         <span style={{ fontSize: theme.type.size.xxl, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
           {formatPence(total)}
         </span>
@@ -302,11 +333,20 @@ function Totals({ subtotal, discount, total }: { subtotal: number; discount: num
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
       <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>{label}</span>
-      <span style={{ color: theme.color.ink, fontVariantNumeric: 'tabular-nums', fontSize: theme.type.size.base }}>{value}</span>
+      <span
+        style={{
+          color: accent ? theme.color.accent : theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+          fontSize: theme.type.size.base,
+          fontWeight: accent ? theme.type.weight.semibold : theme.type.weight.regular,
+        }}
+      >
+        {value}
+      </span>
     </div>
   );
 }

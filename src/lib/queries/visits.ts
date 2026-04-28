@@ -283,9 +283,20 @@ export async function markAppointmentArrived(appointmentId: string): Promise<{ v
   return { visit_id: visit.id };
 }
 
+// Calendly deposit captured at booking time, surfaced through the visit
+// so the Pay screen can deduct it from the bill. Null on walk-ins (no
+// underlying appointment) and on Calendly bookings whose event type
+// doesn't take a deposit.
+export interface AppointmentDeposit {
+  pence: number;
+  currency: string;
+  provider: 'paypal' | 'stripe';
+}
+
 interface VisitDetailResult {
   visit: VisitRow | null;
   patient: PatientRow | null;
+  deposit: AppointmentDeposit | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -294,6 +305,7 @@ interface VisitDetailResult {
 export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
   const [visit, setVisit] = useState<VisitRow | null>(null);
   const [patient, setPatient] = useState<PatientRow | null>(null);
+  const [deposit, setDeposit] = useState<AppointmentDeposit | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -321,14 +333,44 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
       }
       setVisit(v as VisitRow);
       if (v) {
+        const visitRow = v as VisitRow;
         const { data: p } = await supabase
           .from('patients')
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id'
           )
-          .eq('id', v.patient_id)
+          .eq('id', visitRow.patient_id)
           .maybeSingle();
         if (!cancelled) setPatient(p as PatientRow | null);
+
+        // Pull the deposit off the linked appointment (if any). Walk-ins
+        // don't have one. The 42703 fallback survives a frontend deploy
+        // that lands before the deposit migration.
+        if (visitRow.appointment_id) {
+          const { data: appt, error: apptErr } = await supabase
+            .from('lng_appointments')
+            .select('deposit_pence, deposit_currency, deposit_provider')
+            .eq('id', visitRow.appointment_id)
+            .maybeSingle();
+          if (!cancelled && !apptErr && appt) {
+            const a = appt as {
+              deposit_pence: number | null;
+              deposit_currency: string | null;
+              deposit_provider: 'paypal' | 'stripe' | null;
+            };
+            if (a.deposit_pence != null && a.deposit_pence > 0 && a.deposit_provider) {
+              setDeposit({
+                pence: a.deposit_pence,
+                currency: a.deposit_currency ?? 'GBP',
+                provider: a.deposit_provider,
+              });
+            } else {
+              setDeposit(null);
+            }
+          }
+        } else {
+          setDeposit(null);
+        }
       }
       setLoading(false);
     })();
@@ -337,5 +379,5 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
     };
   }, [visitId, tick]);
 
-  return { visit, patient, loading, error, refresh };
+  return { visit, patient, deposit, loading, error, refresh };
 }

@@ -23,7 +23,7 @@ type Journey = 'standard' | 'klarna' | 'clearpay';
 export function Pay() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
-  const { visit, patient } = useVisitDetail(id);
+  const { visit, patient, deposit } = useVisitDetail(id);
   const { cart, items } = useCart(id);
   const navigate = useNavigate();
   const [stage, setStage] = useState<Stage>('choose');
@@ -64,7 +64,17 @@ export function Pay() {
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
-  const total = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
+  // Subtotal = sum of line items. Balance = what the receptionist actually
+  // collects, after subtracting any deposit paid via Calendly. Floor at 0
+  // so a deposit larger than the bill (rare — refund handled manually in
+  // PayPal) doesn't produce a negative charge.
+  const subtotal = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
+  const depositPence = deposit?.pence ?? 0;
+  const balanceDue = Math.max(0, subtotal - depositPence);
+  // Total is what we ACTUALLY charge — used everywhere downstream (cash,
+  // card, BNPL). Keeping the variable name `total` minimises churn on the
+  // submit handlers below.
+  const total = balanceDue;
 
   const submitCash = async () => {
     if (!cart) return;
@@ -78,7 +88,11 @@ export function Pay() {
     setError(null);
     try {
       const change = tenderedPence - total;
-      const payment = await recordCashPayment(cart.id, total, `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}`);
+      const note =
+        depositPence > 0
+          ? `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}. Deposit ${formatPence(depositPence)} via ${deposit?.provider ?? 'paypal'} already collected at booking.`
+          : `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}`;
+      const payment = await recordCashPayment(cart.id, total, note);
       setPaymentId(payment.id);
       setStage('success');
     } catch (e: unknown) {
@@ -196,7 +210,39 @@ export function Pay() {
           }}
         >
           {patient ? patientFullName(patient) : 'Visit'} · {formatPence(total)}
+          {depositPence > 0 ? (
+            <span
+              style={{
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.inkMuted,
+                marginLeft: theme.space[2],
+              }}
+            >
+              to collect
+            </span>
+          ) : null}
         </h1>
+        {depositPence > 0 ? (
+          <p
+            style={{
+              margin: `0 0 ${theme.space[3]}px`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            <span>Subtotal {formatPence(subtotal)}</span>
+            <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+            <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+              Deposit −{formatPence(depositPence)}
+            </span>
+            <span style={{ color: theme.color.inkSubtle }}>
+              {' '}
+              ({deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)
+            </span>
+          </p>
+        ) : null}
         <p style={{ margin: `0 0 ${theme.space[6]}px`, color: theme.color.inkMuted }}>
           {stage === 'choose' && 'Choose a payment method.'}
           {stage === 'cash' && 'Enter the amount tendered. Change calculates live.'}

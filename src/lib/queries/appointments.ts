@@ -16,6 +16,11 @@ export interface AppointmentRow {
   staff_account_id: string | null;
   intake: IntakeAnswer[] | null;
   join_url: string | null;
+  // Deposit captured at booking time via Calendly (PayPal / Stripe).
+  // null fields = no deposit on this booking.
+  deposit_pence: number | null;
+  deposit_currency: string | null;
+  deposit_provider: 'paypal' | 'stripe' | null;
   patient_first_name: string | null;
   patient_last_name: string | null;
   patient_email: string | null;
