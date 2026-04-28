@@ -12,16 +12,17 @@ export const theme = {
     overlay: 'rgba(14, 20, 20, 0.5)',
     focus: 'rgba(31, 77, 58, 0.32)',
   },
-  // Muted, desaturated category palette — used for the left bar on
-  // appointment cards. Distinct enough to scan, restrained enough not to
-  // feel busy. Only applied to status='booked' so as patients move
-  // through the visit lifecycle the status color takes over.
+  // Category palette for the appointment-card left bar. Spans the colour
+  // wheel (orange → green → blue → red → neutral) so the receptionist can
+  // identify the type at a glance. Saturation kept moderate so the
+  // calendar still feels grown-up — these are bars, not full backgrounds.
+  // Only applied to status='booked'; status colours take over post-arrival.
   category: {
-    repair: '#6F5B45',     // warm taupe — denture repairs
+    repair: '#9A6234',     // sienna — denture repairs
     sameDay: '#1F4D3A',    // forest green (accent) — click-in veneers
-    appliance: '#3D5A6E',  // slate teal — same-day appliances
-    impression: '#7A4D5C', // muted plum — impression appointments
-    consult: '#5A5F66',    // graphite — anything else
+    appliance: '#2D4A78',  // denim blue — same-day appliances
+    impression: '#7A3D4A', // burgundy — impression appointments
+    consult: '#4A4F55',    // graphite — anything else
   },
   type: {
     family: '"Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
