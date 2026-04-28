@@ -5,6 +5,11 @@ export interface IntakeAnswer {
   answer: string;
 }
 
+// Where the appointment row originated. Drives the icon shown on the
+// schedule + detail surfaces — Calendly glyph for public-bookings,
+// walking-figure for walk-ins / manually added rows.
+export type AppointmentSource = 'calendly' | 'manual' | 'native';
+
 export interface AppointmentRow {
   id: string;
   patient_id: string;
@@ -12,6 +17,7 @@ export interface AppointmentRow {
   start_at: string;
   end_at: string;
   status: AppointmentStatus;
+  source: AppointmentSource;
   event_type_label: string | null;
   staff_account_id: string | null;
   intake: IntakeAnswer[] | null;

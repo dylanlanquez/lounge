@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react';
+import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
 import { theme } from '../../theme/index.ts';
 import {
@@ -163,9 +164,13 @@ export function ScheduleListRow({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}
           >
-            {patientDisplayName(row)}
+            <SourceGlyph source={row.source} size={13} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{patientDisplayName(row)}</span>
           </p>
           <p
             style={{

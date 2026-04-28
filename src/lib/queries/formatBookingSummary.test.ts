@@ -12,6 +12,7 @@ const makeRow = (
   start_at: '2026-04-28T09:00:00Z',
   end_at: '2026-04-28T10:00:00Z',
   status: 'booked',
+  source: 'calendly',
   event_type_label,
   staff_account_id: null,
   intake,
