@@ -22,8 +22,13 @@ interface RawRow {
   staff: { first_name: string | null; last_name: string | null }[] | { first_name: string | null; last_name: string | null } | null;
 }
 
-const SELECT = `
+const SELECT_WITH_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, event_type_label, staff_account_id, intake,
+  patient:patients ( first_name, last_name ),
+  staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
+`;
+const SELECT_NO_INTAKE = `
+  id, patient_id, location_id, start_at, end_at, status, event_type_label, staff_account_id,
   patient:patients ( first_name, last_name ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
 `;
@@ -42,7 +47,7 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       status: raw.status,
       event_type_label: raw.event_type_label,
       staff_account_id: raw.staff_account_id,
-      intake: raw.intake,
+      intake: raw.intake ?? null,
       patient_first_name: patient?.first_name ?? null,
       patient_last_name: patient?.last_name ?? null,
       staff_first_name: staff?.first_name ?? null,
@@ -62,13 +67,20 @@ export function useUpcomingAppointments(daysAhead = 14): Result {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const end = new Date(start.getTime() + daysAhead * 24 * 60 * 60 * 1000);
-      const { data: rows, error: err } = await supabase
-        .from('lng_appointments')
-        .select(SELECT)
-        .gte('start_at', start.toISOString())
-        .lte('start_at', end.toISOString())
-        .in('status', ['booked', 'arrived', 'in_progress'])
-        .order('start_at', { ascending: true });
+      const run = (sel: string) =>
+        supabase
+          .from('lng_appointments')
+          .select(sel)
+          .gte('start_at', start.toISOString())
+          .lte('start_at', end.toISOString())
+          .in('status', ['booked', 'arrived', 'in_progress'])
+          .order('start_at', { ascending: true });
+      let { data: rows, error: err } = await run(SELECT_WITH_INTAKE);
+      if (err && err.code === '42703') {
+        const fb = await run(SELECT_NO_INTAKE);
+        rows = fb.data;
+        err = fb.error;
+      }
       if (cancelled) return;
       if (err) {
         setError(err.message);
@@ -97,12 +109,19 @@ export function usePastAppointments(daysBack = 30): Result {
       const end = new Date();
       end.setHours(0, 0, 0, 0);
       const start = new Date(end.getTime() - daysBack * 24 * 60 * 60 * 1000);
-      const { data: rows, error: err } = await supabase
-        .from('lng_appointments')
-        .select(SELECT)
-        .gte('start_at', start.toISOString())
-        .lt('start_at', end.toISOString())
-        .order('start_at', { ascending: false });
+      const run = (sel: string) =>
+        supabase
+          .from('lng_appointments')
+          .select(sel)
+          .gte('start_at', start.toISOString())
+          .lt('start_at', end.toISOString())
+          .order('start_at', { ascending: false });
+      let { data: rows, error: err } = await run(SELECT_WITH_INTAKE);
+      if (err && err.code === '42703') {
+        const fb = await run(SELECT_NO_INTAKE);
+        rows = fb.data;
+        err = fb.error;
+      }
       if (cancelled) return;
       if (err) {
         setError(err.message);
