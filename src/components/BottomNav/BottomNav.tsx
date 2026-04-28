@@ -23,10 +23,22 @@ export function shouldShowBottomNav(pathname: string, signedIn: boolean): boolea
 }
 
 // Height the nav reserves for content. Pages add this as bottom padding so
-// nothing hides under the fixed bar. The BottomSheet footer reads from the
-// same constant so its top hairline aligns with the nav's top hairline,
-// and its lg-sized action buttons (56px) get comfortable breathing room.
+// nothing hides under the floating pill. Includes the pill's height, the
+// gap below it, and breathing room for the FAB that hangs above it. The
+// BottomSheet footer also reads from this constant so its top hairline
+// stays vertically consistent with the system's bottom rhythm.
 export const BOTTOM_NAV_HEIGHT = 88;
+
+// Internal — the actual visible pill height. Slightly slimmer than
+// BOTTOM_NAV_HEIGHT so pages have a touch of free space between their
+// content and the pill, which makes the floating effect read.
+const PILL_HEIGHT = 68;
+const PILL_BOTTOM_GAP = 10;
+const PILL_MAX_WIDTH = 600;
+// FAB diameter. Pulled up to extend above the pill's top edge by half
+// of itself, so the bottom half sits inside the pill flow.
+const FAB_SIZE = 64;
+const FAB_LIFT = 28; // px the circle rises above the pill's top edge
 
 // FAB-docked bottom navigation: 4 standard tab items + a centred raised
 // action button (Walk-in) that extends above the nav. Pattern lifted from
@@ -67,70 +79,97 @@ export function BottomNav() {
 
   return (
     <>
-      <nav
-        aria-label="Primary"
+      {/* Outer non-interactive bleed bar — full-width fixed positioning
+          that lets the inner pill centre itself horizontally. The pill
+          itself owns all visual chrome; this wrapper only handles
+          placement and gives pointer-events back to the pill so taps
+          on the surrounding cream don't get swallowed. */}
+      <div
+        aria-hidden="false"
         style={{
           position: 'fixed',
           left: 0,
           right: 0,
-          bottom: 0,
+          bottom: `calc(${PILL_BOTTOM_GAP}px + env(safe-area-inset-bottom, 0px))`,
           zIndex: 50,
-          background: theme.color.surface,
-          borderTop: `1px solid ${theme.color.border}`,
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          display: 'flex',
+          justifyContent: 'center',
+          padding: `0 ${theme.space[4]}px`,
+          pointerEvents: 'none',
         }}
       >
-        <ul
+        <nav
+          aria-label="Primary"
           style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-            maxWidth: 880,
-            marginLeft: 'auto',
-            marginRight: 'auto',
+            pointerEvents: 'auto',
+            width: '100%',
+            maxWidth: PILL_MAX_WIDTH,
+            height: PILL_HEIGHT,
+            borderRadius: theme.radius.pill,
+            // Frosted-glass surface. The translucent white reads
+            // calm on the cream page background; the saturate boost
+            // keeps the colour feel of whatever's behind from going
+            // grey under the blur.
+            background: 'rgba(255, 255, 255, 0.72)',
+            backdropFilter: 'blur(20px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+            border: '1px solid rgba(255, 255, 255, 0.55)',
+            boxShadow:
+              '0 18px 48px rgba(14, 20, 20, 0.14), 0 4px 14px rgba(14, 20, 20, 0.08)',
             position: 'relative',
           }}
         >
-          <li>
-            <NavTab
-              label="Schedule"
-              icon={<CalendarIcon size={22} />}
-              active={isSchedule}
-              onClick={onSchedule}
-            />
-          </li>
-          <li>
-            <NavTab
-              label="Patients"
-              icon={<Users size={22} />}
-              active={isPatients}
-              onClick={onPatients}
-            />
-          </li>
-          <li>
-            <FabTab label="Walk-in" active={isWalkIn} onClick={onWalkIn} />
-          </li>
-          <li>
-            <NavTab
-              label="In clinic"
-              icon={<ToothIcon size={22} />}
-              active={isInClinic}
-              onClick={onInClinic}
-            />
-          </li>
-          <li>
-            <NavTab
-              label="Profile"
-              icon={<Avatar name={user?.email ?? 'You'} size="sm" badge="online" />}
-              active={false}
-              onClick={onProfile}
-            />
-          </li>
-        </ul>
-        <BottomNavStyles />
-      </nav>
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              height: '100%',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+              alignItems: 'stretch',
+              position: 'relative',
+            }}
+          >
+            <li style={{ display: 'flex' }}>
+              <NavTab
+                label="Schedule"
+                icon={<CalendarIcon size={22} />}
+                active={isSchedule}
+                onClick={onSchedule}
+              />
+            </li>
+            <li style={{ display: 'flex' }}>
+              <NavTab
+                label="Patients"
+                icon={<Users size={22} />}
+                active={isPatients}
+                onClick={onPatients}
+              />
+            </li>
+            <li style={{ display: 'flex' }}>
+              <FabTab label="Walk-in" active={isWalkIn} onClick={onWalkIn} />
+            </li>
+            <li style={{ display: 'flex' }}>
+              <NavTab
+                label="In clinic"
+                icon={<ToothIcon size={22} />}
+                active={isInClinic}
+                onClick={onInClinic}
+              />
+            </li>
+            <li style={{ display: 'flex' }}>
+              <NavTab
+                label="Profile"
+                icon={<Avatar name={user?.email ?? 'You'} size="sm" badge="online" />}
+                active={false}
+                onClick={onProfile}
+              />
+            </li>
+          </ul>
+          <BottomNavStyles />
+        </nav>
+      </div>
 
       {/* Profile sheet — minimal v1: who's signed in + sign-out shortcut. */}
       <BottomSheet
@@ -201,7 +240,7 @@ function NavTab({ label, icon, active, onClick }: NavTabProps) {
     border: 'none',
     background: 'transparent',
     width: '100%',
-    minHeight: BOTTOM_NAV_HEIGHT,
+    height: '100%',
     padding: `${theme.space[2]}px ${theme.space[1]}px`,
     color: active ? theme.color.ink : theme.color.inkSubtle,
     fontFamily: 'inherit',
@@ -240,14 +279,16 @@ function NavTab({ label, icon, active, onClick }: NavTabProps) {
   );
 }
 
-// Centred, raised floating action button. The circle extends above the
-// nav row via negative margin so it reads as the dominant action of the
-// surface — pattern is Material Design's "FAB-docked" bottom navigation.
+// Centred, raised floating action button. The circle extends ABOVE the
+// pill's top edge by FAB_LIFT pixels — overflow is allowed because the
+// outer pill has no overflow:hidden. The accent fill (Lounge's forest
+// green) gives the action a confident colour against the cream page
+// without relying on stark ink for prominence.
 function FabTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
-      className="lng-bottom-nav-btn"
+      className="lng-bottom-nav-btn lng-bottom-nav-fab"
       aria-current={active ? 'page' : undefined}
       aria-label={label}
       onClick={onClick}
@@ -256,8 +297,8 @@ function FabTab({ label, active, onClick }: { label: string; active: boolean; on
         border: 'none',
         background: 'transparent',
         width: '100%',
-        minHeight: BOTTOM_NAV_HEIGHT,
-        padding: `${theme.space[2]}px ${theme.space[1]}px`,
+        height: '100%',
+        padding: `${theme.space[2]}px ${theme.space[1]}px ${theme.space[2]}px`,
         color: active ? theme.color.ink : theme.color.inkMuted,
         fontFamily: 'inherit',
         fontSize: theme.type.size.xs,
@@ -270,27 +311,30 @@ function FabTab({ label, active, onClick }: { label: string; active: boolean; on
         gap: 4,
         outline: 'none',
         WebkitTapHighlightColor: 'transparent',
+        position: 'relative',
       }}
     >
       <span
         aria-hidden
+        className="lng-bottom-nav-fab-circle"
         style={{
-          // Negative margin lifts the circle above the nav's top edge.
-          // 56px circle, ~24px sits above the nav, ~32px inside.
-          marginTop: -24,
-          width: 56,
-          height: 56,
+          marginTop: -FAB_LIFT,
+          width: FAB_SIZE,
+          height: FAB_SIZE,
           borderRadius: theme.radius.pill,
-          background: theme.color.ink,
+          background: theme.color.accent,
           color: theme.color.surface,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: theme.shadow.raised,
+          // Tinted shadow in the brand accent gives the FAB a soft
+          // glow rather than a heavy grey drop.
+          boxShadow:
+            '0 14px 32px rgba(31, 77, 58, 0.32), 0 4px 10px rgba(31, 77, 58, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.18)',
           transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
       >
-        <Plus size={26} strokeWidth={2.4} />
+        <Plus size={28} strokeWidth={2.4} />
       </span>
       <span>{label}</span>
     </button>
@@ -307,11 +351,15 @@ function BottomNavStyles() {
   // Suppress every focus outline on nav buttons. The previous green
   // ring read as a "stuck active" state to staff after taps. Touch
   // and mouse users don't need a focus indicator here — the icon's
-  // active tint already shows which page they're on.
+  // active tint already shows which page they're on. The FAB grows
+  // a little on press for a tactile cue.
   return (
     <style>{`
       .lng-bottom-nav-btn:focus,
       .lng-bottom-nav-btn:focus-visible { outline: none; }
+      .lng-bottom-nav-fab:active .lng-bottom-nav-fab-circle {
+        transform: scale(0.96);
+      }
     `}</style>
   );
 }
