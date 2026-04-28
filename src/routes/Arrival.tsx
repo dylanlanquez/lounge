@@ -1491,15 +1491,13 @@ function CustomerStep({
           <FieldRow label="Country" helper="ISO code, e.g. GB" current={snapshot.portal_ship_country_code} value={form.portal_ship_country_code} onChange={(v) => onUpdate('portal_ship_country_code', v)} fullSpan editing={isEditing('portal_ship_country_code')} onBeginEdit={() => onBeginEdit('portal_ship_country_code')} />
           <FieldRow label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
           <FieldRow label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
-          <FieldRow
-            label="Allergies & sensitivities"
-            helper="Write 'None known' if not applicable."
+
+          <SubsectionDivider title="Medical & emergency" />
+
+          <AllergiesField
             current={snapshot.allergies}
             value={form.allergies}
             onChange={(v) => onUpdate('allergies', v)}
-            multiline
-            fullSpan
-            alwaysEditable
           />
           <FieldRow label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
           <FieldRow label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
@@ -1825,6 +1823,90 @@ function CheckRow({
       <span style={{ fontSize: theme.type.size.base, color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
         {label}
       </span>
+    </label>
+  );
+}
+
+// Subsection break inside a FormGrid. Spans the whole row so the
+// hairline runs full-width; sentence-case eyebrow above gives the
+// next group a clear name without the all-caps shouting Dylan
+// (rightly) flagged on the previous version.
+function SubsectionDivider({ title }: { title: string }) {
+  return (
+    <div
+      style={{
+        gridColumn: '1 / -1',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        marginTop: theme.space[3],
+        marginBottom: theme.space[1],
+      }}
+    >
+      <h3
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          letterSpacing: 0,
+        }}
+      >
+        {title}
+      </h3>
+      <span aria-hidden style={{ height: 1, background: theme.color.border }} />
+    </div>
+  );
+}
+
+// Allergies field. Lives in its own component so the multiline label
+// rhythm matches the on-file tile language: muted sentence-case label,
+// helper text below the input rather than competing with it. Always
+// editable — even when the patient already has allergies on file we
+// re-confirm so a new symptom can be captured without going back to
+// patient profile.
+function AllergiesField({
+  current,
+  value,
+  onChange,
+}: {
+  current: string | null;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label
+      style={{
+        gridColumn: '1 / -1',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkMuted,
+        }}
+      >
+        Allergies &amp; sensitivities
+      </span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.currentTarget.value)}
+        rows={3}
+        placeholder={current ? '' : "Write 'None known' if not applicable"}
+        style={{
+          ...textareaStyle,
+          minHeight: 96,
+        }}
+      />
+      {current ? (
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+          On file: {current}
+        </span>
+      ) : null}
     </label>
   );
 }
