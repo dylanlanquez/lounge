@@ -7,9 +7,8 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { Avatar, Card, EmptyState, Skeleton, StatusPill } from '../components/index.ts';
+import { Avatar, Card, EmptyState, Skeleton, StatusPill, StickyPageHeader } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
-import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { ToothIcon } from '../components/Icons/ToothIcon.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
@@ -79,49 +78,51 @@ export function InClinic() {
   const matched = filtered.length;
   const noResults = !!deferredSearch && matched === 0;
 
+  const outerPaddingX = isMobile ? theme.space[4] : theme.space[6];
+  const innerMaxWidth = 1080;
+  const countLabel = loading
+    ? 'Loading…'
+    : totalActive === 0
+      ? '0'
+      : deferredSearch
+        ? `${matched} of ${totalActive}`
+        : String(totalActive);
+
   return (
     <main
       style={{
         minHeight: '100dvh',
         background: theme.color.bg,
-        padding: isMobile ? theme.space[4] : theme.space[6],
-        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${isMobile ? theme.space[4] : theme.space[6]}px + env(safe-area-inset-top, 0px))`,
+        padding: `0 ${outerPaddingX}px`,
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
-      <div style={{ maxWidth: 1080, margin: '0 auto' }}>
-        <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginBottom: theme.space[5] }}>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
-            }}
-          >
-            In clinic
-          </h1>
-          <p
-            aria-live="polite"
-            style={{
-              margin: 0,
-              color: theme.color.inkMuted,
-              fontSize: theme.type.size.base,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {loading
-              ? 'Loading…'
-              : totalActive === 0
-                ? 'No active appointments right now.'
-                : deferredSearch
-                  ? `${matched} of ${totalActive} match “${deferredSearch}”.`
-                  : `${totalActive} active appointment${totalActive === 1 ? '' : 's'}.`}
-          </p>
-        </header>
-
-        <SearchBar value={searchInput} onChange={setSearchInput} disabled={!loading && totalActive === 0} />
+      <div style={{ maxWidth: innerMaxWidth, margin: '0 auto' }}>
+        <StickyPageHeader
+          title="In clinic"
+          meta={
+            <span
+              aria-live="polite"
+              style={{
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {countLabel}
+            </span>
+          }
+          body={
+            <SearchBar
+              value={searchInput}
+              onChange={setSearchInput}
+              disabled={!loading && totalActive === 0}
+            />
+          }
+          outerPaddingX={outerPaddingX}
+          innerMaxWidth={innerMaxWidth}
+        />
 
         {error ? (
           <Card padding="lg">
@@ -191,9 +192,8 @@ function SearchBar({
         display: 'flex',
         alignItems: 'center',
         gap: theme.space[3],
-        height: theme.layout.inputHeight,
-        marginBottom: theme.space[6],
-        padding: `0 ${theme.space[5]}px`,
+        height: 44,
+        padding: `0 ${theme.space[4]}px`,
         borderRadius: theme.radius.input,
         background: theme.color.surface,
         border: `1px solid ${theme.color.border}`,

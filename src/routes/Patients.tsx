@@ -1,100 +1,99 @@
-import { useState } from 'react';
+import { type CSSProperties, useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { ChevronRight, Search } from 'lucide-react';
-import { Avatar, EmptyState, Skeleton } from '../components/index.ts';
+import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { Avatar, EmptyState, Skeleton, StickyPageHeader } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
-import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { properCase } from '../lib/queries/appointments.ts';
-import { usePatientList, type PatientListRow } from '../lib/queries/patients.ts';
+import {
+  PATIENT_LIST_PAGE_SIZE,
+  usePatientList,
+  type PatientListRow,
+} from '../lib/queries/patients.ts';
 
-// Patients route — view-only directory. Calm and uncluttered: title +
-// search at the top, hairline-separated rows beneath. No outer card
-// (the page background already gives the surface depth via the rest
-// of the chrome). No column headers — every row is the same shape,
-// so a header strip would just add chrome. Empty fields are dropped
-// from the metadata line rather than rendered as `—`, keeping the
-// list visually quiet on patients with thin records.
+// Patients route — view-only directory.
+//
+// Compact pinned header (page title + search input) so both stay
+// reachable as the list scrolls. Rows render the bare minimum: avatar,
+// name, MP number — anything more competes with the list shape and
+// makes scanning harder. Pagination at the bottom: 50 per page, next /
+// previous, page indicator. Search resets to page 0.
 export function Patients() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const [term, setTerm] = useState('');
-  const { data, loading, error, hasMore } = usePatientList(term);
+  const [page, setPage] = useState(0);
+  const { data, loading, error, hasMore } = usePatientList(term, page);
+
+  // Search resets paging — the user typing a name is starting from the
+  // top of the result set, not picking up where they left off.
+  useEffect(() => {
+    setPage(0);
+  }, [term]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
   const trimmed = term.trim();
+  const outerPaddingX = isMobile ? theme.space[4] : theme.space[6];
+  const innerMaxWidth = 960;
 
   return (
     <main
       style={{
         minHeight: '100dvh',
         background: theme.color.bg,
-        padding: isMobile ? theme.space[4] : theme.space[6],
-        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${isMobile ? theme.space[4] : theme.space[6]}px + env(safe-area-inset-top, 0px))`,
+        padding: `0 ${outerPaddingX}px`,
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
-      <div style={{ maxWidth: 960, margin: '0 auto' }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            gap: theme.space[3],
-            marginBottom: theme.space[4],
-          }}
-        >
-          <h1
-            style={{
-              margin: 0,
-              fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-            }}
-          >
-            Patients
-          </h1>
-          <PatientCount loading={loading} count={data.length} hasMore={hasMore} term={trimmed} />
-        </div>
+      <div style={{ maxWidth: innerMaxWidth, margin: '0 auto' }}>
+        <StickyPageHeader
+          title="Patients"
+          meta={
+            <PatientCount loading={loading} count={data.length} hasMore={hasMore} term={trimmed} page={page} />
+          }
+          body={<SearchInput value={term} onChange={setTerm} />}
+          outerPaddingX={outerPaddingX}
+          innerMaxWidth={innerMaxWidth}
+        />
 
-        <SearchInput value={term} onChange={setTerm} />
-
-        <div style={{ marginTop: theme.space[4] }}>
-          {error ? (
-            <p style={{ color: theme.color.alert, margin: 0 }}>Could not load patients: {error}</p>
-          ) : loading && data.length === 0 ? (
-            <SkeletonList />
-          ) : data.length === 0 ? (
-            <div style={{ paddingTop: theme.space[6] }}>
-              <EmptyState
-                title={trimmed.length > 0 ? 'No patients match' : 'No patients yet'}
-                description={
-                  trimmed.length > 0
-                    ? 'Try a different name, phone, or reference.'
-                    : 'Patients are created via walk-in or arrival flows.'
-                }
-              />
-            </div>
-          ) : (
+        {error ? (
+          <p style={{ color: theme.color.alert, margin: 0 }}>Could not load patients: {error}</p>
+        ) : loading && data.length === 0 ? (
+          <SkeletonList />
+        ) : data.length === 0 ? (
+          <div style={{ paddingTop: theme.space[6] }}>
+            <EmptyState
+              title={trimmed.length > 0 ? 'No patients match' : 'No patients yet'}
+              description={
+                trimmed.length > 0
+                  ? 'Try a different name, phone, or reference.'
+                  : 'Patients are created via walk-in or arrival flows.'
+              }
+            />
+          </div>
+        ) : (
+          <>
             <PatientList data={data} onPick={(id) => navigate(`/patient/${id}`)} />
-          )}
-        </div>
+            <Pagination
+              page={page}
+              hasMore={hasMore}
+              loading={loading}
+              onPrev={() => setPage((p) => Math.max(0, p - 1))}
+              onNext={() => setPage((p) => p + 1)}
+            />
+          </>
+        )}
       </div>
     </main>
   );
 }
 
 function SearchInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  // Custom inline search input — borderless, sat directly on the
-  // page background. Reusing the global Input would force the
-  // bordered "field" treatment, which competes with the patient rows
-  // below for visual weight. The search is *part* of the page chrome
-  // here, not a form field.
   return (
     <label
       style={{
@@ -132,6 +131,24 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
           minWidth: 0,
         }}
       />
+      {value ? (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          aria-label="Clear search"
+          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            color: theme.color.inkSubtle,
+            cursor: 'pointer',
+            padding: theme.space[1],
+            display: 'inline-flex',
+          }}
+        >
+          <X size={16} />
+        </button>
+      ) : null}
     </label>
   );
 }
@@ -141,25 +158,28 @@ function PatientCount({
   count,
   hasMore,
   term,
+  page,
 }: {
   loading: boolean;
   count: number;
   hasMore: boolean;
   term: string;
+  page: number;
 }) {
   if (loading && count === 0) return <span aria-hidden style={{ minWidth: 56 }} />;
-  // Quiet right-aligned count. The full instructional copy has gone;
-  // staff understand the bar from the input alone, the count is
-  // status not narration.
-  const label = term.length > 0 ? `${count}` : `${count}${hasMore ? '+' : ''}`;
+  // Show row range on the current page when not searching, e.g.
+  // "1–50" / "51–100". Search results just count the matches.
+  let label: string;
+  if (term.length > 0) {
+    label = `${count}${hasMore ? '+' : ''}`;
+  } else {
+    const start = page * PATIENT_LIST_PAGE_SIZE + 1;
+    const end = page * PATIENT_LIST_PAGE_SIZE + count;
+    label = count === 0 ? '0' : `${start}–${end}`;
+  }
   return (
     <span
       aria-live="polite"
-      title={
-        hasMore
-          ? 'Refine the search to narrow the list. Showing the first 50.'
-          : `${count} patient${count === 1 ? '' : 's'}.`
-      }
       style={{
         fontSize: theme.type.size.sm,
         color: theme.color.inkMuted,
@@ -189,7 +209,7 @@ function SkeletonList() {
           <Skeleton height={36} width={36} radius={999} />
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <Skeleton height={14} width="40%" radius={4} />
-            <Skeleton height={12} width="60%" radius={4} />
+            <Skeleton height={12} width="20%" radius={4} />
           </div>
         </div>
       ))}
@@ -207,8 +227,6 @@ function PatientList({ data, onPick }: { data: PatientListRow[]; onPick: (id: st
         padding: 0,
         display: 'flex',
         flexDirection: 'column',
-        // Top hairline so the first row reads as part of the list,
-        // not floating above an open void.
         borderTop: `1px solid ${theme.color.border}`,
       }}
     >
@@ -224,20 +242,6 @@ function PatientList({ data, onPick }: { data: PatientListRow[]; onPick: (id: st
 function PatientRow({ patient, onPick }: { patient: PatientListRow; onPick: () => void }) {
   const [hover, setHover] = useState(false);
   const fullName = displayName(patient);
-  // Build a single muted metadata line. Empty values are dropped
-  // entirely so a thin record reads as one short line, not a forest
-  // of em-dashes. Order: internal ref → LWO ref → phone → registered
-  // (most-stable identifier first, longest-changing last).
-  const meta: string[] = [];
-  if (patient.internal_ref) meta.push(patient.internal_ref);
-  if (patient.lwo_ref) meta.push(patient.lwo_ref);
-  if (patient.phone) meta.push(patient.phone);
-  if (patient.registered_at) {
-    const d = new Date(patient.registered_at);
-    if (!Number.isNaN(d.getTime())) {
-      meta.push(`Registered ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`);
-    }
-  }
 
   return (
     <button
@@ -263,7 +267,7 @@ function PatientRow({ patient, onPick }: { patient: PatientListRow; onPick: () =
       }}
     >
       <Avatar name={fullName} size="md" />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
         <p
           style={{
             margin: 0,
@@ -273,24 +277,23 @@ function PatientRow({ patient, onPick }: { patient: PatientListRow; onPick: () =
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
+            flex: 1,
+            minWidth: 0,
           }}
         >
           {fullName}
         </p>
-        {meta.length > 0 ? (
-          <p
+        {patient.internal_ref ? (
+          <span
             style={{
-              margin: `${theme.space[1]}px 0 0`,
               fontSize: theme.type.size.sm,
               color: theme.color.inkMuted,
               fontVariantNumeric: 'tabular-nums',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}
           >
-            {meta.join(' · ')}
-          </p>
+            {patient.internal_ref}
+          </span>
         ) : null}
       </div>
       <ChevronRight
@@ -301,6 +304,73 @@ function PatientRow({ patient, onPick }: { patient: PatientListRow; onPick: () =
       />
     </button>
   );
+}
+
+function Pagination({
+  page,
+  hasMore,
+  loading,
+  onPrev,
+  onNext,
+}: {
+  page: number;
+  hasMore: boolean;
+  loading: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const prevDisabled = page === 0 || loading;
+  const nextDisabled = !hasMore || loading;
+  return (
+    <nav
+      aria-label="Patient list pagination"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        padding: `${theme.space[5]}px 0 ${theme.space[3]}px`,
+      }}
+    >
+      <button type="button" onClick={onPrev} disabled={prevDisabled} style={pageButton(prevDisabled)}>
+        <ChevronLeft size={16} />
+        <span>Previous</span>
+      </button>
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          fontVariantNumeric: 'tabular-nums',
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        Page {page + 1}
+      </span>
+      <button type="button" onClick={onNext} disabled={nextDisabled} style={pageButton(nextDisabled)}>
+        <span>Next</span>
+        <ChevronRight size={16} />
+      </button>
+    </nav>
+  );
+}
+
+function pageButton(disabled: boolean): CSSProperties {
+  return {
+    appearance: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: theme.space[1],
+    padding: `${theme.space[2]}px ${theme.space[4]}px`,
+    borderRadius: theme.radius.pill,
+    border: `1px solid ${theme.color.border}`,
+    background: theme.color.surface,
+    color: disabled ? theme.color.inkSubtle : theme.color.ink,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    fontFamily: 'inherit',
+    fontSize: theme.type.size.sm,
+    fontWeight: theme.type.weight.medium,
+    opacity: disabled ? 0.55 : 1,
+  };
 }
 
 function displayName(p: PatientListRow): string {
