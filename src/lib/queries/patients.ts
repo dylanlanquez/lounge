@@ -205,21 +205,52 @@ export function usePatientSearch(term: string): SearchResult {
     const timer = setTimeout(async () => {
       try {
         const phoneDigits = cleaned.replace(/\D/g, '');
-        const filters: string[] = [
-          `last_name.ilike.%${escape(cleaned)}%`,
-          `first_name.ilike.%${escape(cleaned)}%`,
-          `email.ilike.%${escape(cleaned)}%`,
-          `internal_ref.ilike.%${escape(cleaned)}%`,
-        ];
-        if (phoneDigits.length >= 4) {
-          filters.push(`phone.ilike.%${escape(phoneDigits)}%`);
-        }
-        const { data: rows, error: err } = await supabase
+        const isPhoneSearch =
+          phoneDigits.length >= 7 &&
+          phoneDigits.length <= 15 &&
+          /^[\d\s+()\-]+$/.test(cleaned);
+        const words = cleaned.split(/\s+/).filter(Boolean);
+
+        let query = supabase
           .from('patients')
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
-          )
-          .or(filters.join(','))
+          );
+
+        if (isPhoneSearch) {
+          // The whole term is a phone — search the phone column with
+          // the digits collapsed.
+          query = query.ilike('phone', `%${phoneDigits}%`);
+        } else if (words.length > 1) {
+          // Multi-word term like "dylan lane" — no single column will
+          // contain the full phrase, so split into words and require
+          // each one to match at least one of the name / email / ref
+          // columns. Each chained .or() adds an AND-group at the top
+          // level (PostgREST treats sibling logical filters as AND).
+          for (const word of words) {
+            const w = escape(word);
+            query = query.or(
+              `first_name.ilike.%${w}%,last_name.ilike.%${w}%,email.ilike.%${w}%,internal_ref.ilike.%${w}%`
+            );
+          }
+        } else {
+          // Single token — OR across columns, including a phone-
+          // fragment match when there are enough digits (handles
+          // partial dial-pad searches like "0770").
+          const w = escape(words[0]!);
+          const filters: string[] = [
+            `last_name.ilike.%${w}%`,
+            `first_name.ilike.%${w}%`,
+            `email.ilike.%${w}%`,
+            `internal_ref.ilike.%${w}%`,
+          ];
+          if (phoneDigits.length >= 4) {
+            filters.push(`phone.ilike.%${phoneDigits}%`);
+          }
+          query = query.or(filters.join(','));
+        }
+
+        const { data: rows, error: err } = await query
           .order('last_name', { ascending: true })
           .limit(10);
         if (cancelled) return;
