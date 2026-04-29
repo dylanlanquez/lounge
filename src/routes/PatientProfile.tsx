@@ -37,6 +37,7 @@ import {
   type ScheduledApptStatus,
 } from '../lib/queries/patientProfile.ts';
 import { formatPence } from '../lib/queries/carts.ts';
+import { formatVisitCrumb } from '../lib/queries/visits.ts';
 import {
   sectionSignatureState,
   useSignedWaivers,
@@ -202,15 +203,15 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
 
   const items = (() => {
     if (entry.from === 'visit' && entry.visitId && entry.visitOpenedAt) {
-      const visitLabel = `Appointment, ${new Date(entry.visitOpenedAt).toLocaleString(
-        'en-GB',
-        {
-          day: '2-digit',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-        }
-      )}`;
+      // The patient name is the current page (last crumb), so the
+      // visit crumb sits between origin and the name. Including
+      // "[Name]'s" here would repeat the name immediately to its
+      // right — drop it. Format: "Appt. 29 Apr".
+      const visitLabel = formatVisitCrumb({
+        name: liveName || previewName || null,
+        openedAtIso: entry.visitOpenedAt,
+        includeName: false,
+      });
       const visitState = entry.visitEntry ?? null;
       const visitFrom = visitState?.from;
       const baseCrumb =

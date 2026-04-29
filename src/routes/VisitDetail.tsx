@@ -37,7 +37,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { useVisitDetail } from '../lib/queries/visits.ts';
+import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
@@ -484,32 +484,35 @@ function VisitBreadcrumbs({
   const location = useLocation();
   const entry = (location.state as VisitEntryState | null) ?? {};
 
-  // Visit label resolves from the loaded visit row when ready, falls
-  // back to the caller's preview (entry.visitOpenedAt) on first paint
-  // for direct-to-visit navigations that pass it, and finally to a
-  // tiny shimmer if neither is available yet. Same priority chain as
-  // the patient name below — the rule is: never render a literal
-  // placeholder ("Appointment" with no time) that will get rewritten
-  // on the next render.
+  // Visit-crumb label. Two sources for the open time (live row,
+  // then router-state preview), two for the patient name (live,
+  // then preview). Both go through formatVisitCrumb, which decides
+  // whether to include "[Name]'s " based on whether a separate
+  // patient crumb is already in the chain — avoids "Patients ›
+  // Ewa Deb › Ewa Deb's Appt. 29 Apr" redundancy.
   const visitOpenedAt = visit?.opened_at ?? entry.visitOpenedAt ?? null;
-  const visitLabel: ReactNode = visitOpenedAt
-    ? `Appointment, ${new Date(visitOpenedAt).toLocaleString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`
-    : <VisitLabelSkeleton />;
-
-  // Same rules for the patient crumb when the chain shows it:
-  // live > preview > skeleton.
   const livePatientName = patient ? patientFullName(patient) : '';
   const previewPatientName = entry.patientName?.trim() ?? '';
+  const resolvedPatientName = livePatientName || previewPatientName || '';
+
+  const buildVisitLabel = (includeName: boolean): ReactNode => {
+    if (!visitOpenedAt) return <VisitLabelSkeleton />;
+    return formatVisitCrumb({
+      name: resolvedPatientName,
+      openedAtIso: visitOpenedAt,
+      includeName,
+    });
+  };
+
+  // Patient crumb label (only rendered in chains that include a
+  // separate patient step). Live > preview > skeleton.
   const patientNameLabel: ReactNode =
     livePatientName || previewPatientName || <PatientNameSkeleton />;
 
   const items = (() => {
     if (entry.from === 'patient' && entry.patientId) {
+      // Patients › Ewa Deb › Appt. 29 Apr — name shown by the
+      // middle crumb, so the visit crumb stays compact.
       return [
         { label: 'Patients', onClick: () => navigate('/patients') },
         {
@@ -519,19 +522,19 @@ function VisitBreadcrumbs({
               state: { patientName: livePatientName || previewPatientName },
             }),
         },
-        { label: visitLabel },
+        { label: buildVisitLabel(false) },
       ];
     }
     if (entry.from === 'in_clinic') {
+      // In clinic › Ewa Deb's Appt. 29 Apr — no separate patient
+      // crumb, so the visit crumb takes ownership of the identity.
       return [
         { label: 'In clinic', onClick: () => navigate('/in-clinic') },
-        { label: visitLabel },
+        { label: buildVisitLabel(true) },
       ];
     }
-    // 'schedule' or no hint — default trail. The patient crumb only
-    // renders when we have *some* identity to navigate to (a loaded
-    // patient row, or at least a preview name). Without an id we
-    // can't link, so fall through to a two-step trail.
+    // 'schedule' or no hint — default trail. Patient crumb renders
+    // when we have any identity to link to.
     if (patient) {
       return [
         { label: 'Schedule', onClick: () => navigate('/schedule') },
@@ -542,12 +545,15 @@ function VisitBreadcrumbs({
               state: { patientName: livePatientName },
             }),
         },
-        { label: visitLabel },
+        { label: buildVisitLabel(false) },
       ];
     }
+    // No patient row yet — fold the (preview) name into the visit
+    // crumb so the receptionist isn't staring at a bare "Appt." while
+    // the page resolves.
     return [
       { label: 'Schedule', onClick: () => navigate('/schedule') },
-      { label: visitLabel },
+      { label: buildVisitLabel(true) },
     ];
   })();
 

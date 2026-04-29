@@ -121,6 +121,32 @@ export async function createWalkInVisit(
 // cause without re-reading the appointments row.
 export type NoShowReason = 'did_not_turn_up' | 'patient_cancelled_late' | 'clinic_cancelled' | 'other';
 
+// Compact, human-friendly label for the visit crumb in a breadcrumb
+// chain. Two shapes depending on whether the surrounding chain
+// already carries the patient's identity:
+//
+//   includeName: true   -> "Ewa Deb's Appt. 29 Apr"   (no patient crumb)
+//   includeName: false  -> "Appt. 29 Apr"             (patient already shown)
+//
+// Bare "Appointment, 29 Apr, 21:43" was the previous format and
+// read like an inventory line — staff couldn't see whose
+// appointment it was without dragging their eye across the chain.
+// Date-only (no time) keeps the crumb short; time is rarely needed
+// to orient — the page heading carries it when it matters.
+export function formatVisitCrumb(opts: {
+  name: string | null;
+  openedAtIso: string;
+  includeName: boolean;
+}): string {
+  const d = new Date(opts.openedAtIso);
+  const date = Number.isNaN(d.getTime())
+    ? opts.openedAtIso
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const trimmed = opts.name?.trim();
+  if (opts.includeName && trimmed) return `${trimmed}'s Appt. ${date}`;
+  return `Appt. ${date}`;
+}
+
 export const NO_SHOW_REASONS: { value: NoShowReason; label: string }[] = [
   { value: 'did_not_turn_up', label: 'Did not turn up' },
   { value: 'patient_cancelled_late', label: 'Patient cancelled late' },
