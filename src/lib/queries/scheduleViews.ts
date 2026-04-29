@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { AppointmentRow } from './appointments.ts';
 import { formatDateIso } from '../calendarMonth.ts';
@@ -12,6 +12,12 @@ interface DayResult {
   // instant instead of flashing through a loading state every time.
   hasLoaded: boolean;
   error: string | null;
+  // Re-runs the underlying query against the same date. Use after
+  // server-side mutations (no-show, undo no-show, virtual join,
+  // etc.) so the action sheet can close and the day's row list
+  // reflects the new state without a full page reload — which would
+  // otherwise wipe the receptionist's selectedDate back to today.
+  refresh: () => void;
 }
 
 interface RawRow {
@@ -98,6 +104,9 @@ export function useDayAppointments(dateIso: string): DayResult {
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumping this counter triggers the effect below to re-run the
+  // query without changing dateIso — used by `refresh()`.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,15 +151,20 @@ export function useDayAppointments(dateIso: string): DayResult {
     return () => {
       cancelled = true;
     };
-  }, [dateIso]);
+  }, [dateIso, refreshTick]);
 
-  return { data, loading, hasLoaded, error };
+  const refresh = useCallback(() => {
+    setRefreshTick((t) => t + 1);
+  }, []);
+
+  return { data, loading, hasLoaded, error, refresh };
 }
 
 interface DateRangeCountsResult {
   counts: Map<string, number>;
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 // Per-date appointment count for an inclusive date range. Used by the
@@ -164,6 +178,7 @@ export function useDateRangeCounts(
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,7 +216,11 @@ export function useDateRangeCounts(
     return () => {
       cancelled = true;
     };
-  }, [startIso, endIso]);
+  }, [startIso, endIso, refreshTick]);
 
-  return { counts, loading, error };
+  const refresh = useCallback(() => {
+    setRefreshTick((t) => t + 1);
+  }, []);
+
+  return { counts, loading, error, refresh };
 }
