@@ -212,21 +212,24 @@ export function CataloguePicker({
         open={open}
         onClose={onClose}
         bareContent
+        hideHeader
         contentRef={scrollRef}
       >
         {/* Sentinel — a zero-height marker at the top of the scroll
             content. When it leaves the viewport (root = scrollRef),
-            the sticky search has collapsed up against the sheet
-            chrome and the hairline below it switches on. */}
+            the sticky row has collapsed up against the sheet's drag
+            handle and the hairline below it switches on. */}
         <div ref={sentinelRef} aria-hidden style={{ height: 1, marginBottom: -1 }} />
 
         {/* Large title block — scrolls away with the list, iOS HIG
             "large title" pattern. Collapsed-state context comes from
-            the search field's count below; we don't render a
-            redundant inline title in the sticky region. */}
+            the search field below; we don't render a redundant
+            inline title in the sticky region. Top padding gives air
+            beneath the drag handle now that BottomSheet's chrome
+            header is suppressed (hideHeader). */}
         <div
           style={{
-            padding: `${theme.space[2]}px ${theme.space[6]}px ${theme.space[4]}px`,
+            padding: `${theme.space[5]}px ${theme.space[6]}px ${theme.space[4]}px`,
           }}
         >
           <h2
@@ -254,11 +257,13 @@ export function CataloguePicker({
           </p>
         </div>
 
-        {/* Sticky search. Pinned to the top of the scroll container
-            once the title scrolls away. The hairline only appears in
-            the stuck state — when the title is still visible there's
-            nothing to separate the search from, and an always-on
-            border looks like a stray rule. */}
+        {/* Sticky row: SearchField (flex: 1) + close button. Both
+            pinned to the top of the scroll container once the title
+            scrolls away — the X never steals a row from the search,
+            because it lives *in* the search row. The hairline only
+            appears in the stuck state; when the title is still
+            visible there's nothing to separate the row from, and an
+            always-on border would read as a stray rule. */}
         <div
           style={{
             position: 'sticky',
@@ -270,7 +275,39 @@ export function CataloguePicker({
             transition: `box-shadow ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
           }}
         >
-          <SearchField value={search} onChange={setSearch} />
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <SearchField value={search} onChange={setSearch} />
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                color: theme.color.ink,
+                cursor: 'pointer',
+                width: 44,
+                height: 44,
+                borderRadius: theme.radius.pill,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* List content. Padding mirrors what BottomSheet's inner

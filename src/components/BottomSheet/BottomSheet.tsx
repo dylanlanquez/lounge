@@ -25,6 +25,14 @@ export interface BottomSheetProps {
   // collapsing-header pattern, where the title scrolls away and a
   // search field pins via `position: sticky`.
   bareContent?: boolean;
+  // When true, the chrome header (title / description / close
+  // button / back chevron) is not rendered. Backdrop dismiss + Esc
+  // still respect `dismissable`; the caller is responsible for
+  // putting a close affordance somewhere visible. Used by sheets
+  // that pull the close button into a sticky row alongside other
+  // controls — see CataloguePicker, which puts the X inline with
+  // its search field so neither steals a row from the other.
+  hideHeader?: boolean;
   // Forwarded ref to the inner scroll container. Lets the caller
   // observe scroll state — e.g. driving an IntersectionObserver-based
   // "stuck" signal for a sticky header.
@@ -41,6 +49,7 @@ export function BottomSheet({
   dismissable = true,
   onBack,
   bareContent = false,
+  hideHeader = false,
   contentRef,
 }: BottomSheetProps) {
   useEffect(() => {
@@ -109,7 +118,7 @@ export function BottomSheet({
           />
         </div>
 
-        {(title || description || dismissable || onBack) && (
+        {!hideHeader && (title || description || dismissable || onBack) && (
           <header
             style={{
               padding: `${theme.space[4]}px ${theme.space[6]}px ${theme.space[3]}px`,
