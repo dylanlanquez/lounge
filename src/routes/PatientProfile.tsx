@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Download, FileSignature, Info, Layers, Pencil, Printer, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Download, FileSignature, Info, Layers, Pencil, Printer, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -763,18 +763,43 @@ function WalkInAppointments({
         <Skeleton height={120} radius={14} />
       ) : visits.length === 0 ? (
         <EmptyState title="No appointments yet" description="Walk-ins and arrivals will list here." />
-      ) : isMobile ? (
+      ) : (
+        <PaginatedAppointments visits={visits} isMobile={isMobile} openVisit={openVisit} />
+      )}
+    </Card>
+  );
+}
+
+function PaginatedAppointments({
+  visits,
+  isMobile,
+  openVisit,
+}: {
+  visits: PatientVisitRow[];
+  isMobile: boolean;
+  openVisit: (id: string) => void;
+}) {
+  const pager = usePagedRows(visits, PROFILE_PAGE_SIZE);
+  return (
+    <>
+      {isMobile ? (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {visits.map((v) => (
+          {pager.visible.map((v) => (
             <li key={v.id}>
               <VisitRowMobile visit={v} onClick={() => openVisit(v.id)} />
             </li>
           ))}
         </ul>
       ) : (
-        <VisitsTable visits={visits} onRowClick={(v) => openVisit(v.id)} />
+        <VisitsTable visits={pager.visible} onRowClick={(v) => openVisit(v.id)} />
       )}
-    </Card>
+      <ListPager
+        page={pager.page}
+        totalPages={pager.totalPages}
+        onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
+        onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
+      />
+    </>
   );
 }
 
@@ -928,14 +953,21 @@ function formatDateTime(iso: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CaseHistory({ cases, loading }: { cases: PatientCaseRow[]; loading: boolean }) {
-  const groups = useMemo(() => {
-    const buckets: Record<string, PatientCaseRow[]> = { active: [], paused: [], completed: [] };
-    for (const c of cases) buckets[bucketCase(c)]!.push(c);
-    return [
-      { key: 'active' as const, label: 'Active', dot: '#1d4ed8', cases: buckets.active! },
-      { key: 'paused' as const, label: 'Paused', dot: '#a16207', cases: buckets.paused! },
-      { key: 'completed' as const, label: 'Completed', dot: '#16a34a', cases: buckets.completed! },
-    ].filter((g) => g.cases.length > 0);
+  // Paginated, flat, newest-first. The bucket grouping that lived here
+  // before is preserved per-row via the status pill inside CaseRow —
+  // grouping plus pagination both at once read as too busy on a single
+  // card.
+  const ordered = useMemo(() => {
+    return [...cases].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }, [cases]);
+  const pager = usePagedRows(ordered, PROFILE_PAGE_SIZE);
+  // Bucket counts in the header eyebrow so reception still sees the
+  // active / paused / completed split at a glance even though the
+  // visible rows are mixed.
+  const bucketSummary = useMemo(() => {
+    const counts = { active: 0, paused: 0, completed: 0 };
+    for (const c of cases) counts[bucketCase(c)]++;
+    return counts;
   }, [cases]);
 
   return (
@@ -967,37 +999,49 @@ function CaseHistory({ cases, loading }: { cases: PatientCaseRow[]; loading: boo
       ) : cases.length === 0 ? (
         <EmptyState title="No cases yet" description="Cases raised in Meridian for this patient will appear here." />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          {groups.map((g) => (
-            <div key={g.key}>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[2],
-                  fontSize: theme.type.size.xs,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.inkMuted,
-                  textTransform: 'uppercase',
-                  letterSpacing: theme.type.tracking.tight,
-                  marginBottom: theme.space[3],
-                }}
-              >
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: g.dot, display: 'inline-block' }} />
-                {g.label} ({g.cases.length})
-              </div>
-              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                {g.cases.map((c) => (
-                  <li key={c.id}>
-                    <CaseRow row={c} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+        <>
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.tight,
+              marginBottom: theme.space[3],
+              flexWrap: 'wrap',
+            }}
+          >
+            <CaseBucketBadge color="#1d4ed8" label="Active" count={bucketSummary.active} />
+            <CaseBucketBadge color="#a16207" label="Paused" count={bucketSummary.paused} />
+            <CaseBucketBadge color="#16a34a" label="Completed" count={bucketSummary.completed} />
+          </div>
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            {pager.visible.map((c) => (
+              <li key={c.id}>
+                <CaseRow row={c} />
+              </li>
+            ))}
+          </ul>
+          <ListPager
+            page={pager.page}
+            totalPages={pager.totalPages}
+            onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
+            onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
+          />
+        </>
       )}
     </Card>
+  );
+}
+
+function CaseBucketBadge({ color, label, count }: { color: string; label: string; count: number }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block' }} />
+      {label} ({count})
+    </span>
   );
 }
 
@@ -1021,6 +1065,7 @@ function SignedWaiversHistory({
   isMobile: boolean;
 }) {
   const { rows, loading, error } = useSignedWaivers(patientId);
+  const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
 
   return (
     <Card padding="lg">
@@ -1054,16 +1099,26 @@ function SignedWaiversHistory({
         <Skeleton height={120} radius={14} />
       ) : rows.length === 0 ? (
         <EmptyState title="No signatures yet" description="Waivers signed during arrival or consent will list here." />
-      ) : isMobile ? (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {rows.map((r) => (
-            <li key={r.id}>
-              <SignedWaiverCard row={r} patientName={patientName} />
-            </li>
-          ))}
-        </ul>
       ) : (
-        <SignedWaiverTable rows={rows} patientName={patientName} />
+        <>
+          {isMobile ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {pager.visible.map((r) => (
+                <li key={r.id}>
+                  <SignedWaiverCard row={r} patientName={patientName} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <SignedWaiverTable rows={pager.visible} patientName={patientName} />
+          )}
+          <ListPager
+            page={pager.page}
+            totalPages={pager.totalPages}
+            onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
+            onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
+          />
+        </>
       )}
     </Card>
   );
@@ -1336,4 +1391,99 @@ function CaseRow({ row }: { row: PatientCaseRow }) {
       </span>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pagination — shared by Appointments / Case history / Signed waivers.
+// 10 rows per page across all three sections so the profile reads
+// uniformly: same Prev / Next pill row, same "Page X of N" copy.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROFILE_PAGE_SIZE = 10;
+
+interface PagedRows<T> {
+  page: number;
+  setPage: (updater: (p: number) => number) => void;
+  totalPages: number;
+  visible: T[];
+}
+
+function usePagedRows<T>(rows: T[], pageSize: number): PagedRows<T> {
+  const [page, setPageRaw] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  // Clamp the current page back into range when the list shrinks
+  // underneath us (e.g. data reloads after a filter / refresh).
+  useEffect(() => {
+    if (page > totalPages - 1) setPageRaw(0);
+  }, [page, totalPages]);
+  const start = page * pageSize;
+  const visible = rows.slice(start, start + pageSize);
+  const setPage = (updater: (p: number) => number) => setPageRaw((p) => updater(p));
+  return { page, setPage, totalPages, visible };
+}
+
+function ListPager({
+  page,
+  totalPages,
+  onPrev,
+  onNext,
+}: {
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  if (totalPages <= 1) return null;
+  const prevDisabled = page === 0;
+  const nextDisabled = page >= totalPages - 1;
+  return (
+    <nav
+      aria-label="Page navigation"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        marginTop: theme.space[4],
+      }}
+    >
+      <button type="button" onClick={onPrev} disabled={prevDisabled} style={pagerButtonStyle(prevDisabled)}>
+        <ChevronLeft size={16} />
+        <span>Previous</span>
+      </button>
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          fontVariantNumeric: 'tabular-nums',
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        Page {page + 1} of {totalPages}
+      </span>
+      <button type="button" onClick={onNext} disabled={nextDisabled} style={pagerButtonStyle(nextDisabled)}>
+        <span>Next</span>
+        <ChevronRight size={16} />
+      </button>
+    </nav>
+  );
+}
+
+function pagerButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    appearance: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: theme.space[1],
+    padding: `${theme.space[2]}px ${theme.space[4]}px`,
+    borderRadius: theme.radius.pill,
+    border: `1px solid ${theme.color.border}`,
+    background: theme.color.surface,
+    color: disabled ? theme.color.inkSubtle : theme.color.ink,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    fontFamily: 'inherit',
+    fontSize: theme.type.size.sm,
+    fontWeight: theme.type.weight.medium,
+    opacity: disabled ? 0.55 : 1,
+  };
 }
