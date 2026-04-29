@@ -1455,11 +1455,10 @@ function CustomerStep({
   linkedToShopify: boolean;
 }) {
   const isEditing = (k: keyof FormState) => editingFields.has(k);
-  const itemsLine = stagedItems.length === 0
-    ? 'No items added yet'
-    : stagedItems
-        .map((it) => `${it.qty > 1 ? `${it.qty} × ` : ''}${it.catalogue.name}${it.options.arch ? ` · ${capitalise(it.options.arch)}` : ''}`)
-        .join(', ');
+  const stagedTotalPence = stagedItems.reduce(
+    (sum, it) => sum + totalForQtyPence(it.catalogue, it.qty),
+    0
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
@@ -1504,47 +1503,6 @@ function CustomerStep({
       <section>
         <SectionHeading title="Your details" sub="Just the missing pieces. Anything we already have is shown below." />
 
-        {/* Sync notice — shown for every patient, not just those
-            already linked to venneir.com. For unlinked walk-ins it
-            describes what will happen at submit time; for linked
-            patients it describes what already does. Single notice,
-            single piece of copy, no conditional shape changes. */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: theme.space[3],
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
-            borderRadius: theme.radius.input,
-            background: theme.color.accentBg,
-            border: `1px solid ${theme.color.accent}`,
-            marginBottom: theme.space[4],
-          }}
-        >
-          <span style={{ display: 'inline-flex', color: theme.color.accent, marginTop: 2, flexShrink: 0 }}>
-            <ShoppingBag size={18} />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.accent,
-              }}
-            >
-              {linkedToShopify
-                ? 'Linked to your venneir.com account'
-                : 'These details flow across Venneir'}
-            </p>
-            <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
-              {linkedToShopify
-                ? "Anything you change here updates your account across the whole of Venneir: venneir.com, the One Click app, and any future orders. The same email signs you in everywhere. We'll only save these changes back to your venneir.com profile once this appointment is created."
-                : "Once this appointment is created, these details set up your venneir.com profile. From then on the same details are used across venneir.com, the One Click app, and any future orders, signed in with the same email."}
-            </p>
-          </div>
-        </div>
-
         <FormGrid isMobile={isMobile}>
           <FieldRow required label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
           <FieldRow required label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
@@ -1581,13 +1539,137 @@ function CustomerStep({
 
       <ConfirmationBanner
         title="What's being worked on today"
-        body={itemsLine}
+        body={
+          stagedItems.length === 0 ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.inkMuted }}>
+              No items added yet.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              <ul
+                style={{
+                  listStyle: 'none',
+                  margin: 0,
+                  padding: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[1],
+                }}
+              >
+                {stagedItems.map((it) => (
+                  <li
+                    key={it.key}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: theme.space[3],
+                      fontSize: theme.type.size.base,
+                      color: theme.color.ink,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <span>{formatItemDescriptor(it)}</span>
+                    <span
+                      style={{
+                        fontVariantNumeric: 'tabular-nums',
+                        fontWeight: theme.type.weight.semibold,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {formatPence(totalForQtyPence(it.catalogue, it.qty))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  paddingTop: theme.space[2],
+                  borderTop: `1px solid ${theme.color.border}`,
+                  fontSize: theme.type.size.base,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                }}
+              >
+                <span>Total</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {formatPence(stagedTotalPence)}
+                </span>
+              </div>
+              <div
+                style={{
+                  marginTop: theme.space[1],
+                  padding: `${theme.space[3]}px ${theme.space[3]}px`,
+                  borderRadius: theme.radius.input,
+                  background: theme.color.accentBg,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: theme.space[2],
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    color: theme.color.accent,
+                    flexShrink: 0,
+                    marginTop: 1,
+                  }}
+                >
+                  <ShoppingBag size={16} />
+                </span>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.sm,
+                    color: theme.color.ink,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {linkedToShopify
+                    ? 'Changes to your details update your venneir.com account, the One Click app, and any future orders. Saved once this appointment is created.'
+                    : 'Once this appointment is created, your venneir.com profile is set up. Your details then flow across venneir.com, the One Click app, and any future orders.'}
+                </p>
+              </div>
+            </div>
+          )
+        }
         checked={itemsConfirmed}
         onChange={onConfirmItems}
-        confirmLabel="I confirm the above details are correct"
+        confirmLabel="I confirm the items above and understand my details sync across Venneir."
       />
     </div>
   );
+}
+
+// Render a staged cart item as a human-readable phrase: quantity (when
+// >1), arch as adjective, catalogue name pluralised when natural,
+// shade in parentheses. "2 × Upper Retainers (BL1)" rather than
+// "2 × Retainer · Upper · BL1". Pluralisation is intentionally simple:
+// strip the obvious cases (already-plural names; "tooth" → "teeth")
+// and add "s" otherwise. Edge cases (irregular plurals beyond tooth)
+// can be addressed by renaming the catalogue row.
+function formatItemDescriptor(item: StagedItem): string {
+  const archAdj =
+    item.options.arch === 'both'
+      ? 'Upper and lower '
+      : item.options.arch === 'upper'
+        ? 'Upper '
+        : item.options.arch === 'lower'
+          ? 'Lower '
+          : '';
+  let name = `${archAdj}${item.catalogue.name}`;
+  if (item.qty > 1) {
+    const lower = name.toLowerCase();
+    if (lower.endsWith('tooth')) {
+      name = `${name.slice(0, -5)}teeth`;
+    } else if (!lower.endsWith('s')) {
+      name = `${name}s`;
+    }
+  }
+  const shade = item.options.shade ? ` (${item.options.shade})` : '';
+  const qtyPrefix = item.qty > 1 ? `${item.qty} × ` : '';
+  return `${qtyPrefix}${name}${shade}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1823,7 +1905,7 @@ function ConfirmationBanner({
   confirmLabel,
 }: {
   title: string;
-  body: string;
+  body: React.ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
   confirmLabel: string;
@@ -1858,9 +1940,7 @@ function ConfirmationBanner({
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
             {title}
           </p>
-          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.base, color: theme.color.ink, lineHeight: 1.55 }}>
-            {body}
-          </p>
+          <div style={{ marginTop: theme.space[3] }}>{body}</div>
         </div>
       </div>
       <div style={{ marginTop: theme.space[4], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
