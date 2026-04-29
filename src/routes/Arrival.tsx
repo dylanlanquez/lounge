@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Box,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Loader2,
   Minus,
@@ -20,8 +21,8 @@ import {
   Card,
   Skeleton,
   Toast,
-  WaiverInline,
 } from '../components/index.ts';
+import { WaiverInline, type WaiverInlineHandle } from '../components/WaiverInline/WaiverInline.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -241,6 +242,13 @@ export function Arrival() {
   };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Waiver step is driven from the persistent footer instead of an
+  // inline button. We mirror the WaiverInline's readiness + busy
+  // state into Arrival so ActionBar can render "Sign and continue"
+  // with the right disabled/loading attributes.
+  const waiverRef = useRef<WaiverInlineHandle | null>(null);
+  const [waiverReady, setWaiverReady] = useState(false);
+  const [waiverBusy, setWaiverBusy] = useState(false);
 
   // Walk-ins: derive the service type from whatever's been staged in the
   // bag. The primary type drives JB ref / waiver gating; the full set is
@@ -376,7 +384,6 @@ export function Arrival() {
     need('Address line 1', snapshot.portal_ship_line1, form.portal_ship_line1);
     need('City', snapshot.portal_ship_city, form.portal_ship_city);
     need('Postcode', snapshot.portal_ship_postcode, form.portal_ship_postcode);
-    need('Country', snapshot.portal_ship_country_code, form.portal_ship_country_code);
     if (form.allergies.trim() === '' && (snapshot.allergies ?? '') === '') {
       list.push('Allergies & sensitivities');
     }
@@ -648,6 +655,9 @@ export function Arrival() {
             patient={patient}
             sectionsToSign={sectionsToSign}
             staffName={staffName}
+            waiverRef={waiverRef}
+            onReadyChange={setWaiverReady}
+            onBusyChange={setWaiverBusy}
             onAllSigned={() => {
               refreshSignatures();
               setStep('start');
@@ -673,7 +683,13 @@ export function Arrival() {
             ? submitting
               ? 'Starting…'
               : 'Start appointment'
-            : 'Next'
+            : step === 'consent'
+              ? sectionsToSign.length === 0
+                ? 'Next'
+                : waiverBusy
+                  ? 'Saving…'
+                  : 'Sign and continue'
+              : 'Next'
         }
         primaryDisabled={
           step === 'service'
@@ -681,17 +697,27 @@ export function Arrival() {
             : step === 'customer'
               ? !customerReady
               : step === 'consent'
-                ? !consentReady
+                ? sectionsToSign.length === 0
+                  ? !consentReady
+                  : !waiverReady || waiverBusy
                 : submitting
         }
-        primaryLoading={submitting && step === 'start'}
-        primaryShowArrow={step !== 'start' || !submitting}
+        primaryLoading={(submitting && step === 'start') || (step === 'consent' && waiverBusy)}
+        primaryShowArrow={step === 'consent' ? sectionsToSign.length === 0 : step !== 'start' || !submitting}
         statusMessage={statusFor(step, {
           service: serviceReady,
           customer: customerReady,
           consent: consentReady,
         }, customerMissing.length, stagedItems.length)}
-        onPrimary={step === 'start' ? handleStartAppointment : onContinue}
+        onPrimary={
+          step === 'start'
+            ? handleStartAppointment
+            : step === 'consent' && sectionsToSign.length > 0
+              ? () => {
+                  void waiverRef.current?.submit();
+                }
+              : onContinue
+        }
       />
 
       <CataloguePicker
@@ -1026,21 +1052,6 @@ function ServiceStep({
         </Section>
       ) : null}
 
-      {jbRequired ? (
-        <Section
-          title="Job box"
-          sub="The number on the box where the impression sits. If the patient hasn't given you the impression yet, still grab a fresh job box now and put its number here. This is the only point we can pin a JB to this appointment. We check Checkpoint as you type."
-        >
-          <JbBoxInput
-            value={jbRef}
-            onChange={onChangeJbRef}
-            checking={jbChecking}
-            check={jbCheck}
-            error={jbError}
-          />
-        </Section>
-      ) : null}
-
       <Section
         title="Items"
         sub={stagedItems.length === 0 ? 'What are we doing today?' : undefined}
@@ -1145,7 +1156,22 @@ function ServiceStep({
         ) : null}
       </Section>
 
-      <Section title="Notes" sub="Special requirements, technician notes — staff only.">
+      {jbRequired ? (
+        <Section
+          title="Job box"
+          sub="The number on the box where the impression sits. If the patient hasn't given you the impression yet, still grab a fresh job box now and put its number here. This is the only point we can pin a JB to this appointment. We check Checkpoint as you type."
+        >
+          <JbBoxInput
+            value={jbRef}
+            onChange={onChangeJbRef}
+            checking={jbChecking}
+            check={jbCheck}
+            error={jbError}
+          />
+        </Section>
+      ) : null}
+
+      <Section title="Notes" sub="Special requirements and technician notes. These will be added to the Lab Work Order (LWO). Staff only.">
         <textarea
           value={notes}
           onChange={(e) => onChangeNotes(e.currentTarget.value)}
@@ -1463,14 +1489,6 @@ function CustomerStep({
         </p>
       </header>
 
-      <ConfirmationBanner
-        title="What's being worked on today"
-        body={itemsLine}
-        checked={itemsConfirmed}
-        onChange={onConfirmItems}
-        confirmLabel="I confirm the above details are correct"
-      />
-
       <section>
         <SectionHeading title="Your details" sub="Just the missing pieces. Anything we already have is shown below." />
 
@@ -1502,7 +1520,7 @@ function CustomerStep({
                 Linked to your venneir.com account
               </p>
               <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
-                Anything you change here updates your account across the whole of Venneir — venneir.com, the One Click app, and any future orders. The same email signs you in everywhere.
+                Anything you change here updates your account across the whole of Venneir: venneir.com, the One Click app, and future orders. The same email signs you in everywhere. We'll only save these changes back to your venneir.com profile once this appointment is created.
               </p>
             </div>
           </div>
@@ -1517,21 +1535,31 @@ function CustomerStep({
           <FieldRow label="Address line 2" current={snapshot.portal_ship_line2} value={form.portal_ship_line2} onChange={(v) => onUpdate('portal_ship_line2', v)} fullSpan editing={isEditing('portal_ship_line2')} onBeginEdit={() => onBeginEdit('portal_ship_line2')} />
           <FieldRow label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
           <FieldRow label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
-          <FieldRow label="Country" helper="ISO code, e.g. GB" current={snapshot.portal_ship_country_code} value={form.portal_ship_country_code} onChange={(v) => onUpdate('portal_ship_country_code', v)} fullSpan editing={isEditing('portal_ship_country_code')} onBeginEdit={() => onBeginEdit('portal_ship_country_code')} />
           <FieldRow label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
           <FieldRow label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
 
-          <SubsectionDivider title="Medical & emergency" />
-
-          <AllergiesField
+          <FieldRow
+            label="Allergies & sensitivities"
+            multiline
+            fullSpan
             current={snapshot.allergies}
             value={form.allergies}
             onChange={(v) => onUpdate('allergies', v)}
+            editing={isEditing('allergies')}
+            onBeginEdit={() => onBeginEdit('allergies')}
           />
           <FieldRow label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
           <FieldRow label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
         </FormGrid>
       </section>
+
+      <ConfirmationBanner
+        title="What's being worked on today"
+        body={itemsLine}
+        checked={itemsConfirmed}
+        onChange={onConfirmItems}
+        confirmLabel="I confirm the above details are correct"
+      />
     </div>
   );
 }
@@ -1544,22 +1572,31 @@ function ConsentStep({
   patient,
   sectionsToSign,
   staffName,
+  waiverRef,
+  onReadyChange,
+  onBusyChange,
   onAllSigned,
 }: {
   patient: PatientLite;
   sectionsToSign: WaiverSection[];
   staffName: string;
+  waiverRef: React.RefObject<WaiverInlineHandle | null>;
+  onReadyChange: (ready: boolean) => void;
+  onBusyChange: (busy: boolean) => void;
   onAllSigned: () => void;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       <WaiverInline
+        ref={waiverRef}
         patientId={patient.id}
         visitId={null}
         sections={sectionsToSign}
         patientName={`${patient.first_name} ${patient.last_name}`.trim()}
         defaultWitnessName={staffName}
         onAllSigned={onAllSigned}
+        onReadyChange={onReadyChange}
+        onBusyChange={onBusyChange}
       />
     </div>
   );
@@ -1854,82 +1891,6 @@ function CheckRow({
   );
 }
 
-// Subsection break inside a FormGrid. Spans the whole row so the
-// hairline runs full-width; sentence-case eyebrow above gives the
-// next group a clear name without the all-caps shouting Dylan
-// (rightly) flagged on the previous version.
-function SubsectionDivider({ title }: { title: string }) {
-  return (
-    <div
-      style={{
-        gridColumn: '1 / -1',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-        marginTop: theme.space[3],
-        marginBottom: theme.space[1],
-      }}
-    >
-      <h3
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          letterSpacing: 0,
-        }}
-      >
-        {title}
-      </h3>
-      <span aria-hidden style={{ height: 1, background: theme.color.border }} />
-    </div>
-  );
-}
-
-// Allergies field. Lives in its own component so the multiline label
-// rhythm matches the on-file tile language: muted sentence-case label,
-// helper text below the input rather than competing with it. Always
-// editable — even when the patient already has allergies on file we
-// re-confirm so a new symptom can be captured without going back to
-// patient profile.
-function AllergiesField({
-  current,
-  value,
-  onChange,
-}: {
-  current: string | null;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label
-      style={{
-        gridColumn: '1 / -1',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-      }}
-    >
-      <span style={cardLabelStyle}>Allergies &amp; sensitivities</span>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        rows={3}
-        placeholder={current ? '' : "Write 'None known' if not applicable"}
-        style={{
-          ...textareaStyle,
-          minHeight: 96,
-        }}
-      />
-      {current ? (
-        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-          On file: {current}
-        </span>
-      ) : null}
-    </label>
-  );
-}
-
 function FormGrid({ children, isMobile }: { children: React.ReactNode; isMobile: boolean }) {
   return (
     <div
@@ -2087,30 +2048,85 @@ function SexRow({
       </div>
     );
   }
+  return <SexSelect value={value} onChange={onChange} />;
+}
+
+// Native <select> styled to match EditableFieldCard so the sex picker
+// reads as one of the regular field cards. The native control gives us
+// the platform's animated picker on iPadOS/iOS for free, with the same
+// keyboard and screen-reader semantics as any other <select>.
+function SexSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const hasValue = value !== '';
   return (
-    <div
+    <label
       style={{
+        position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         gap: theme.space[2],
         padding: `${theme.space[3]}px ${theme.space[4]}px`,
         borderRadius: theme.radius.input,
         background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
+        border: `1px solid ${focused ? theme.color.ink : theme.color.border}`,
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        cursor: 'pointer',
       }}
     >
       <span style={cardLabelStyle}>Sex</span>
-      <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-        {SEX_OPTIONS.map((opt) => {
-          const selected = value === opt;
-          return (
-            <button key={opt} type="button" onClick={() => onChange(opt)} style={pillButton(selected)}>
-              {opt}
-            </button>
-          );
-        })}
-      </div>
-    </div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          appearance: 'none',
+          WebkitAppearance: 'none',
+          MozAppearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          outline: 'none',
+          padding: 0,
+          paddingRight: theme.space[6],
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: hasValue ? theme.color.ink : theme.color.inkSubtle,
+          letterSpacing: theme.type.tracking.tight,
+          width: '100%',
+          minWidth: 0,
+          cursor: 'pointer',
+        }}
+      >
+        <option value="" disabled>
+          Choose
+        </option>
+        {SEX_OPTIONS.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        size={18}
+        aria-hidden
+        style={{
+          position: 'absolute',
+          right: theme.space[4],
+          bottom: theme.space[3],
+          color: theme.color.inkSubtle,
+          pointerEvents: 'none',
+          transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          transform: focused ? 'rotate(180deg)' : 'rotate(0deg)',
+        }}
+      />
+    </label>
   );
 }
 
@@ -2300,6 +2316,10 @@ function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
             fontWeight: theme.type.weight.semibold,
             textTransform: 'uppercase',
             letterSpacing: theme.type.tracking.wide,
+            // Letter-spacing adds trailing space after the last glyph; offset
+            // the leading edge by the same amount so the text reads as
+            // geometrically centred inside the pill.
+            textIndent: theme.type.tracking.wide,
             flexShrink: 0,
           }}
         >
@@ -2322,22 +2342,6 @@ function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
 
 function capitalise(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
-}
-
-function pillButton(selected: boolean): CSSProperties {
-  return {
-    appearance: 'none',
-    border: `1px solid ${selected ? theme.color.ink : theme.color.border}`,
-    background: selected ? theme.color.ink : theme.color.surface,
-    color: selected ? theme.color.surface : theme.color.ink,
-    borderRadius: theme.radius.pill,
-    padding: `${theme.space[2]}px ${theme.space[4]}px`,
-    fontSize: theme.type.size.sm,
-    fontWeight: theme.type.weight.medium,
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontFamily: 'inherit',
-  };
 }
 
 // Selectable chip used by the service-type grid. Reads as a card-like

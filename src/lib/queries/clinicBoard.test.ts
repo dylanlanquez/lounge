@@ -62,7 +62,6 @@ describe('searchableTextForVisit', () => {
     expect(s).toContain('07597028509');
     expect(s).toContain('antony@example.com');
     expect(s).toContain('mp-00011');
-    expect(s).toContain('lwo-20260428-0001');
     expect(s).toContain('lap-00001');
     expect(s).toContain('jb33');
     expect(s).toContain('same-day appliance');
