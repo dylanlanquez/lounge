@@ -183,7 +183,7 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
-          'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, file_labels:label_id(key, label), uploader:uploaded_by(full_name)'
+          'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, file_labels:label_id(key, label), uploader:uploaded_by(first_name, last_name)'
         )
         .eq('patient_id', patientId)
         .order('uploaded_at', { ascending: false });
@@ -200,7 +200,10 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
       }
       const mapped: PatientFileEntry[] = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => {
         const lbl = (r.file_labels as { key?: string; label?: string } | null) ?? null;
-        const up = (r.uploader as { full_name?: string } | null) ?? null;
+        const up = (r.uploader as { first_name?: string; last_name?: string } | null) ?? null;
+        const uploaderName = up
+          ? `${up.first_name ?? ''} ${up.last_name ?? ''}`.trim() || null
+          : null;
         return {
           id: r.id as string,
           patient_id: r.patient_id as string,
@@ -213,7 +216,7 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
           mime_type: (r.mime_type as string | null) ?? null,
           status: r.status as string,
           uploaded_at: r.uploaded_at as string,
-          uploaded_by_name: up?.full_name ?? null,
+          uploaded_by_name: uploaderName,
           version: (r.version as number | null) ?? null,
           thumbnail_path: (r.thumbnail_path as string | null) ?? null,
         };
