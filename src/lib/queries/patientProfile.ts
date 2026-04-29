@@ -415,7 +415,11 @@ export interface PatientVisitRow {
   // present in this set must not be re-listed as 'unbooked' alongside the
   // visit they produced.
   appointment_id: string | null;
-  lwo_ref: string | null;
+  // Booking-level reference (e.g. LAP-00001). Sourced from the
+  // appointment for scheduled visits, or from the walk-in row for
+  // walk-ins. Distinct from patients.lwo_ref which is the patient-level
+  // identifier and never displayed in appointment columns.
+  lap_ref: string | null;
   service_label: string | null;
   cart_status: 'open' | 'paid' | 'voided' | null;
   cart_total_pence: number | null;
@@ -457,8 +461,11 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       const walkInIds = ((visits ?? []) as Array<{ walk_in_id: string | null }>)
         .map((v) => v.walk_in_id)
         .filter((x): x is string => !!x);
+      const apptIds = ((visits ?? []) as Array<{ appointment_id: string | null }>)
+        .map((v) => v.appointment_id)
+        .filter((x): x is string => !!x);
 
-      const [cartsRes, walkInsRes] = await Promise.all([
+      const [cartsRes, walkInsRes, apptsRes] = await Promise.all([
         visitIds.length > 0
           ? supabase
               .from('lng_carts')
@@ -468,9 +475,15 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
         walkInIds.length > 0
           ? supabase
               .from('lng_walk_ins')
-              .select('id, lwo_ref, service_type')
+              .select('id, appointment_ref, service_type')
               .in('id', walkInIds)
-          : Promise.resolve({ data: [] as Array<{ id: string; lwo_ref: string | null; service_type: string | null }>, error: null }),
+          : Promise.resolve({ data: [] as Array<{ id: string; appointment_ref: string | null; service_type: string | null }>, error: null }),
+        apptIds.length > 0
+          ? supabase
+              .from('lng_appointments')
+              .select('id, appointment_ref, event_type_label')
+              .in('id', apptIds)
+          : Promise.resolve({ data: [] as Array<{ id: string; appointment_ref: string | null; event_type_label: string | null }>, error: null }),
       ]);
       if (cancelled) return;
 
@@ -478,9 +491,13 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       for (const c of (cartsRes.data ?? []) as Array<{ visit_id: string; status: string; total_pence: number }>) {
         cartByVisit.set(c.visit_id, { status: c.status, total_pence: c.total_pence });
       }
-      const walkInById = new Map<string, { lwo_ref: string | null; service_type: string | null }>();
-      for (const w of (walkInsRes.data ?? []) as Array<{ id: string; lwo_ref: string | null; service_type: string | null }>) {
-        walkInById.set(w.id, { lwo_ref: w.lwo_ref, service_type: w.service_type });
+      const walkInById = new Map<string, { appointment_ref: string | null; service_type: string | null }>();
+      for (const w of (walkInsRes.data ?? []) as Array<{ id: string; appointment_ref: string | null; service_type: string | null }>) {
+        walkInById.set(w.id, { appointment_ref: w.appointment_ref, service_type: w.service_type });
+      }
+      const apptById = new Map<string, { appointment_ref: string | null; event_type_label: string | null }>();
+      for (const a of (apptsRes.data ?? []) as Array<{ id: string; appointment_ref: string | null; event_type_label: string | null }>) {
+        apptById.set(a.id, { appointment_ref: a.appointment_ref, event_type_label: a.event_type_label });
       }
 
       const mapped: PatientVisitRow[] = ((visits ?? []) as Array<{
@@ -493,14 +510,21 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       }>).map((v) => {
         const cart = cartByVisit.get(v.id);
         const wi = v.walk_in_id ? walkInById.get(v.walk_in_id) ?? null : null;
+        const appt = v.appointment_id ? apptById.get(v.appointment_id) ?? null : null;
+        // Scheduled visit: prefer the appointment's LAP ref. Walk-in:
+        // the walk-in row carries its own LAP ref (generated at intake).
+        const lapRef = appt?.appointment_ref ?? wi?.appointment_ref ?? null;
+        const serviceLabel =
+          humaniseEventTypeLabel(appt?.event_type_label ?? null) ??
+          humaniseServiceType(wi?.service_type ?? null);
         return {
           id: v.id,
           opened_at: v.opened_at,
           arrival_type: v.arrival_type,
           status: v.status,
           appointment_id: v.appointment_id ?? null,
-          lwo_ref: wi?.lwo_ref ?? null,
-          service_label: humaniseServiceType(wi?.service_type ?? null),
+          lap_ref: lapRef,
+          service_label: serviceLabel,
           cart_status: (cart?.status as PatientVisitRow['cart_status']) ?? null,
           cart_total_pence: cart?.total_pence ?? null,
         };
