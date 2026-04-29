@@ -512,33 +512,22 @@ export function Schedule() {
                     <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                       {showUndoNoShow ? (
                         <Button
-                          variant={isVirtual ? 'secondary' : 'primary'}
-                          showArrow={!isVirtual}
+                          variant="secondary"
                           disabled={busy}
                           loading={busy}
                           onClick={async () => {
                             if (!selected) return;
                             setBusy(true);
                             try {
-                              const { visit_id, opened_at } = await reverseNoShow(selected.id);
-                              if (visit_id && !isVirtual) {
-                                navigate(`/visit/${visit_id}`, {
-                                  state: {
-                                    from: 'schedule',
-                                    patientName: patientDisplayName(selected),
-                                    visitOpenedAt: opened_at,
-                                  },
-                                });
-                              } else {
-                                // Virtual flow stays on the schedule. Refetch
-                                // the day's rows + week dots so the status
-                                // change shows immediately, without a page
-                                // reload that would snap selectedDate back
-                                // to today.
-                                setSelected(null);
-                                day.refresh();
-                                weekCounts.refresh();
-                              }
+                              // Flip the appointment status back so the
+                              // receptionist can use the normal
+                              // Mark-as-arrived flow (intake, JB ref,
+                              // waivers). The earlier behaviour bounced
+                              // straight to /visit, skipping all of that.
+                              await reverseNoShow(selected.id);
+                              setSelected(null);
+                              day.refresh();
+                              weekCounts.refresh();
                             } catch (e) {
                               setError(e instanceof Error ? e.message : 'Could not undo no-show');
                             } finally {
@@ -546,7 +535,7 @@ export function Schedule() {
                             }
                           }}
                         >
-                          Patient attended
+                          Undo no-show
                         </Button>
                       ) : null}
                       {showNoShow ? (
