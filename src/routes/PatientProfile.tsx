@@ -569,30 +569,33 @@ function WaiverRow({
   const state = sectionSignatureState(section, latest);
   const sig = latest.get(section.key);
 
+  // Visual weight lives on the LEFT (icon + title) so the signed row
+  // reads as the heavier item even before the eye reaches the date on
+  // the right. Status text keeps its green colour but stays at a
+  // moderate weight so it doesn't fight the title.
   let icon;
   let statusText: string;
   let statusColor: string;
-  // Signed rows render bold (700) and pending / stale fall back to
-  // regular (400). The 600 vs 500 split before was too subtle on iOS
-  // Safari — Inter's mid-weights are close in stroke. Pulling them
-  // three steps apart makes the receptionist's eye land on the
-  // signed rows immediately.
-  let statusWeight: number;
+  let titleColor: string;
+  let titleWeight: number;
   if (state === 'current') {
-    icon = <ShieldCheck size={18} color={theme.color.accent} aria-hidden />;
+    icon = <ShieldCheck size={20} color={theme.color.accent} strokeWidth={2.5} aria-hidden />;
     statusText = sig ? `Signed ${formatShortDate(sig.signed_at)}` : 'Signed';
     statusColor = theme.color.accent;
-    statusWeight = theme.type.weight.bold;
+    titleColor = theme.color.ink;
+    titleWeight = theme.type.weight.bold;
   } else if (state === 'stale') {
     icon = <ShieldAlert size={18} color={theme.color.warn} aria-hidden />;
     statusText = 'Re-sign needed';
     statusColor = theme.color.warn;
-    statusWeight = theme.type.weight.regular;
+    titleColor = theme.color.inkMuted;
+    titleWeight = theme.type.weight.regular;
   } else {
     icon = <Shield size={18} color={theme.color.inkSubtle} aria-hidden />;
     statusText = 'Not signed';
     statusColor = theme.color.inkSubtle;
-    statusWeight = theme.type.weight.regular;
+    titleColor = theme.color.inkMuted;
+    titleWeight = theme.type.weight.regular;
   }
 
   return (
@@ -611,8 +614,8 @@ function WaiverRow({
           flex: 1,
           minWidth: 0,
           fontSize: theme.type.size.base,
-          fontWeight: theme.type.weight.medium,
-          color: theme.color.ink,
+          fontWeight: titleWeight,
+          color: titleColor,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -624,7 +627,7 @@ function WaiverRow({
         style={{
           flexShrink: 0,
           fontSize: theme.type.size.sm,
-          fontWeight: statusWeight,
+          fontWeight: theme.type.weight.medium,
           color: statusColor,
           fontVariantNumeric: 'tabular-nums',
         }}
