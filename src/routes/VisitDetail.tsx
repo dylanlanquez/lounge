@@ -24,6 +24,7 @@ import {
   MarketingGallery,
   StatusPill,
   Toast,
+  VisitTimeline,
   WaiverSheet,
 } from '../components/index.ts';
 import { usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
@@ -350,6 +351,7 @@ export function VisitDetail() {
                     refresh={refreshGalleryFiles}
                     isMobile={isMobile}
                   />
+                  <VisitTimeline visitId={visit.id} />
                 </div>
               </>
             ) : null}
