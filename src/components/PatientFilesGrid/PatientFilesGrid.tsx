@@ -805,10 +805,13 @@ function InAppCameraModal({
       style={{
         position: 'fixed',
         inset: 0,
+        // Solid dark backdrop on purpose — the kiosk status bar at the
+        // top of the viewport is white, and any translucent backdrop
+        // would let it bleed through as a thin light line. Capturing
+        // a photo is a "take over the screen" moment, so a fully opaque
+        // surface also feels right.
         zIndex: 1000,
-        background: 'rgba(10, 12, 14, 0.85)',
-        backdropFilter: 'blur(4px)',
-        WebkitBackdropFilter: 'blur(4px)',
+        background: '#0E1414',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
