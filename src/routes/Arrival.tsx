@@ -1187,6 +1187,7 @@ function ServiceStep({
       {jbRequired ? (
         <Section
           title="Job box"
+          required
           sub="The number on the box where the impression sits. If the patient hasn't given you the impression yet, still grab a fresh job box now and put its number here. This is the only point we can pin a JB to this appointment. We check Checkpoint as you type."
         >
           <JbBoxInput
@@ -1222,11 +1223,16 @@ function Section({
   title,
   sub,
   action,
+  required = false,
   children,
 }: {
   title: string;
   sub?: string;
   action?: React.ReactNode;
+  // Renders a small red asterisk after the title — same affordance
+  // as the Your details fields use, so a section that gates progress
+  // (Job box) reads as required at a glance.
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -1250,6 +1256,7 @@ function Section({
             }}
           >
             {title}
+            {required ? <RequiredMark /> : null}
           </h2>
           {sub ? (
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
@@ -1510,13 +1517,11 @@ function CustomerStep({
             maxWidth: 560,
           }}
         >
-          Check the items being worked on today, fill any missing details, and we'll be ready to begin.
+          Fill any missing details, confirm what's being worked on today, and we'll be ready to begin.
         </p>
       </header>
 
       <section>
-        <SectionHeading title="Your details" sub="Just the missing pieces. Anything we already have is shown below." />
-
         <FormGrid isMobile={isMobile}>
           <FieldRow required kind="name" label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
           <FieldRow required kind="name" label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
@@ -1651,6 +1656,7 @@ function CustomerStep({
         checked={itemsConfirmed}
         onChange={onConfirmItems}
         confirmLabel="I confirm the items above and understand my details sync across Venneir."
+        required
       />
     </div>
   );
@@ -1917,12 +1923,17 @@ function ConfirmationBanner({
   checked,
   onChange,
   confirmLabel,
+  required = false,
 }: {
   title: string;
   body: React.ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
   confirmLabel: string;
+  // When true, a small red asterisk is appended to the checkbox
+  // label so the gating tick reads as required at a glance — same
+  // affordance as the per-field RequiredMark on the form above.
+  required?: boolean;
 }) {
   return (
     <div
@@ -1967,7 +1978,20 @@ function ConfirmationBanner({
       </div>
       <div style={{ marginTop: theme.space[4] }}>{body}</div>
       <div style={{ marginTop: theme.space[4], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
-        <Checkbox checked={checked} onChange={onChange} label={confirmLabel} />
+        <Checkbox
+          checked={checked}
+          onChange={onChange}
+          label={
+            required ? (
+              <>
+                {confirmLabel}
+                <RequiredMark />
+              </>
+            ) : (
+              confirmLabel
+            )
+          }
+        />
       </div>
     </div>
   );
@@ -2411,25 +2435,6 @@ function formatOnFileValue(label: string, raw: string): string {
     }
   }
   return raw;
-}
-
-function SectionHeading({ title, sub }: { title: string; sub?: string }) {
-  return (
-    <header style={{ marginBottom: theme.space[4] }}>
-      <h2
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.lg,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.tight,
-          color: theme.color.ink,
-        }}
-      >
-        {title}
-      </h2>
-      {sub ? <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{sub}</p> : null}
-    </header>
-  );
 }
 
 function SummaryRow({
