@@ -472,6 +472,59 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
   return { visits, loading, error, refresh };
 }
 
+// Lightweight count hook for the bottom-nav badge. Polls on an interval
+// (default 30 s) and refetches when the tab becomes visible again, so
+// the receptionist sees the badge update without staring at the In
+// clinic page. Returns null while loading or after an error so the
+// caller can hide the badge until we have a confirmed number — never
+// shows a stale or guessed value.
+export function useActiveVisitCount(
+  enabled: boolean = true,
+  intervalMs: number = 30_000
+): number | null {
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setCount(null);
+      return;
+    }
+    let cancelled = false;
+
+    async function fetchCount() {
+      const { count: c, error } = await supabase
+        .from('lng_visits')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['opened', 'in_progress']);
+      if (cancelled) return;
+      if (error) {
+        console.warn('[useActiveVisitCount]', error.message);
+        setCount(null);
+        return;
+      }
+      setCount(c ?? 0);
+    }
+
+    void fetchCount();
+    const timer = setInterval(() => {
+      void fetchCount();
+    }, intervalMs);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void fetchCount();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [enabled, intervalMs]);
+
+  return count;
+}
+
 // PostgREST sometimes returns single-row FK joins as an array of one,
 // sometimes as the row itself. Normalise to a single value (or null).
 function pickOne<T>(value: T | T[] | null | undefined): T | null {
