@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
-import { TopBar } from '../components/TopBar/TopBar.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
+import { Breadcrumb, Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
 import { theme } from '../theme/index.ts';
@@ -20,12 +19,26 @@ import { supabase } from '../lib/supabase.ts';
 type Stage = 'choose' | 'cash' | 'card' | 'bnpl' | 'success';
 type Journey = 'standard' | 'klarna' | 'clearpay';
 
+// Router state read by PayBreadcrumbs to render the right trail. The
+// "Take payment" button on VisitDetail forwards a `from: 'visit'`
+// payload that carries the visit id, opened-at, and the visit's own
+// entry so the breadcrumb here can render [origin] › Visit › Take
+// payment, with each crumb popping back to the right place. Direct
+// URL pastes (no state) fall back to a sensible default chain.
+interface PayEntryState {
+  from?: 'visit';
+  visitId?: string;
+  visitOpenedAt?: string;
+  visitEntry?: { from?: 'patient' | 'schedule' | 'in_clinic' } | null;
+}
+
 export function Pay() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const { visit, patient, deposit } = useVisitDetail(id);
   const { cart, items } = useCart(id);
   const navigate = useNavigate();
+  const location = useLocation();
   const [stage, setStage] = useState<Stage>('choose');
   const [tendered, setTendered] = useState('');
   const [busy, setBusy] = useState(false);
@@ -176,7 +189,7 @@ export function Pay() {
         }}
       >
         <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
-          <TopBar variant="subpage" />
+          <PayBreadcrumbs visitId={id ?? null} entry={location.state as PayEntryState | null} />
           <Card padding="lg" style={{ marginTop: theme.space[5] }}>
             <EmptyState
               title="Nothing to pay for"
@@ -200,7 +213,7 @@ export function Pay() {
       }}
     >
       <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
-        <TopBar variant="subpage" backTo={`/visit/${id}`} />
+        <PayBreadcrumbs visitId={id ?? null} entry={location.state as PayEntryState | null} />
 
         <h1
           style={{
@@ -427,6 +440,70 @@ export function Pay() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function PayBreadcrumbs({
+  visitId,
+  entry,
+}: {
+  visitId: string | null;
+  entry: PayEntryState | null;
+}) {
+  const navigate = useNavigate();
+  const e = entry ?? {};
+
+  const items = (() => {
+    // Entered from a visit page: render the full chain so each crumb
+    // pops back to the right step. The "Visit" crumb preserves the
+    // visit's own entry state so its breadcrumb stays intact when
+    // navigated back to.
+    if (e.from === 'visit' && e.visitId && e.visitOpenedAt) {
+      const visitLabel = `Appointment, ${new Date(e.visitOpenedAt).toLocaleString(
+        'en-GB',
+        {
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        }
+      )}`;
+      const visitState = e.visitEntry ?? null;
+      const visitFrom = visitState?.from;
+      const baseCrumb =
+        visitFrom === 'patient'
+          ? { label: 'Patients', onClick: () => navigate('/patients') }
+          : visitFrom === 'in_clinic'
+            ? { label: 'In clinic', onClick: () => navigate('/in-clinic') }
+            : { label: 'Schedule', onClick: () => navigate('/schedule') };
+      return [
+        baseCrumb,
+        {
+          label: visitLabel,
+          onClick: () =>
+            navigate(`/visit/${e.visitId}`, {
+              state: visitState ?? undefined,
+            }),
+        },
+        { label: 'Take payment' },
+      ];
+    }
+    // No entry state — direct URL paste or browser refresh. Show a
+    // sensible default that still gets the receptionist out via the
+    // visit page.
+    return [
+      { label: 'Schedule', onClick: () => navigate('/schedule') },
+      visitId
+        ? { label: 'Appointment', onClick: () => navigate(`/visit/${visitId}`) }
+        : { label: 'Appointment' },
+      { label: 'Take payment' },
+    ];
+  })();
+
+  return (
+    <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[6]}px` }}>
+      <Breadcrumb items={items} />
+    </div>
   );
 }
 

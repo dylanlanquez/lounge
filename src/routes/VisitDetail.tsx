@@ -356,7 +356,19 @@ export function VisitDetail() {
                   size="lg"
                   showArrow
                   disabled={cartLocked}
-                  onClick={() => navigate(`/visit/${visit.id}/pay`)}
+                  onClick={() =>
+                    navigate(`/visit/${visit.id}/pay`, {
+                      state: {
+                        from: 'visit',
+                        visitId: visit.id,
+                        visitOpenedAt: visit.opened_at,
+                        // Pass the visit's own entry through so Pay's
+                        // breadcrumb can render the full chain and the
+                        // visit-link can pop back with the right state.
+                        visitEntry: location.state,
+                      },
+                    })
+                  }
                 >
                   Take payment {formatPence(total)}
                 </Button>
