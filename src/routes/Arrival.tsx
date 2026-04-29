@@ -42,6 +42,7 @@ import {
 } from '../lib/queries/carts.ts';
 import { totalForQtyPence } from '../lib/catalogueMatch.ts';
 import { properCase } from '../lib/queries/appointments.ts';
+import { patientFullName } from '../lib/queries/patients.ts';
 import {
   appointmentRequiresJbRef,
   checkJbAvailability,
@@ -506,9 +507,11 @@ export function Arrival() {
       });
 
       let visitId: string;
+      let visitOpenedAt: string;
       if (mode === 'appointment') {
         const r = await markAppointmentArrived(appointment!.id);
         visitId = r.visit_id;
+        visitOpenedAt = r.opened_at;
       } else {
         const r = await createWalkInVisit({
           patient_id: patient.id,
@@ -519,6 +522,7 @@ export function Arrival() {
           notes: notes.trim() || undefined,
         });
         visitId = r.visit_id;
+        visitOpenedAt = r.opened_at;
       }
 
       if (stagedItems.length > 0) {
@@ -534,7 +538,22 @@ export function Arrival() {
         }
       }
 
-      navigate(`/visit/${visitId}`, { state: { from: 'arrival' } });
+      // Pass the visit's opened_at and the patient's name through
+      // router state so VisitDetail's breadcrumb renders the full
+      // "Schedule › Ewa Deb › Appointment, 29 Apr, 17:41" trail on
+      // first paint, with no shimmer transition for either crumb.
+      // 'from' maps to the user's *origin* before arrival: appointment
+      // arrivals came from /schedule, walk-ins came from /in-clinic.
+      navigate(`/visit/${visitId}`, {
+        state: {
+          from: mode === 'appointment' ? 'schedule' : 'in_clinic',
+          patientName: patientFullName({
+            first_name: form.first_name,
+            last_name: form.last_name,
+          }),
+          visitOpenedAt,
+        },
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start appointment');
       setSubmitting(false);

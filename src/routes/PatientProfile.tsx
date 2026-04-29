@@ -173,10 +173,15 @@ interface PatientEntryState {
   from?: 'visit';
   visitId?: string;
   visitOpenedAt?: string;
+  // Mirror of VisitDetail's VisitEntryState. Carrying visitOpenedAt
+  // and patientName here means the visit-link in this breadcrumb
+  // pops back with enough preview data to render every crumb on
+  // first paint without a shimmer transition.
   visitEntry?: {
     from?: 'patient' | 'schedule' | 'in_clinic';
     patientId?: string;
     patientName?: string;
+    visitOpenedAt?: string;
   } | null;
   patientName?: string;
 }
