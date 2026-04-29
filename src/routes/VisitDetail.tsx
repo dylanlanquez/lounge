@@ -292,6 +292,7 @@ export function VisitDetail() {
                       onRemove={() => rm(it.id)}
                       disabled={busyItem === it.id || cartLocked}
                       quantityEnabled={it.quantity_enabled}
+                      thumbnailUrl={it.image_url}
                     />
                   ))}
                 </div>

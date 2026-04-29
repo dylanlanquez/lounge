@@ -39,6 +39,10 @@ export interface CartItemRow {
   // hides the qty stepper for false rows. Default true on ad-hoc
   // entries that didn't come from the picker.
   quantity_enabled: boolean;
+  // Frozen catalogue.image_url at insert time. Visit cart line items
+  // render this as a small thumbnail. Null on ad-hoc rows that didn't
+  // come from the picker.
+  image_url: string | null;
 }
 
 // Per-instance line input. The picker passes one of these per "tick" of
@@ -212,6 +216,7 @@ export async function addCatalogueItemsToCart(
     shade: options.shade ?? null,
     notes: options.notes ?? null,
     quantity_enabled: catalogue.quantity_enabled,
+    image_url: catalogue.image_url,
   };
   const rows = [];
   for (let i = 0; i < qty; i++) {

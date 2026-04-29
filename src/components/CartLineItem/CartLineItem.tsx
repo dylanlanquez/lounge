@@ -1,4 +1,4 @@
-import { Minus, Plus, Trash2 } from 'lucide-react';
+import { Minus, Package, Plus, Trash2 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 
 export interface CartLineItemProps {
@@ -15,6 +15,11 @@ export interface CartLineItemProps {
   // an in-clinic impression appointment). Defaults true so callers
   // that don't pass this keep the existing behaviour.
   quantityEnabled?: boolean;
+  // Snapshot of the catalogue row's image_url. Renders as a small
+  // thumbnail at the leading edge. Null falls back to a Package
+  // glyph on a tinted square — same treatment the catalogue picker
+  // uses when a row has no image.
+  thumbnailUrl?: string | null;
 }
 
 export function CartLineItem({
@@ -28,6 +33,7 @@ export function CartLineItem({
   onRemove,
   disabled = false,
   quantityEnabled = true,
+  thumbnailUrl = null,
 }: CartLineItemProps) {
   return (
     <div
@@ -42,6 +48,7 @@ export function CartLineItem({
         opacity: disabled ? 0.5 : 1,
       }}
     >
+      <Thumb src={thumbnailUrl} alt={name} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <p
           style={{
@@ -158,5 +165,47 @@ function QtyStepper({
         <Plus size={16} />
       </button>
     </div>
+  );
+}
+
+// Square thumbnail with rounded clip + subtle border. Falls back to
+// a Package glyph on a tinted background when no image_url is set
+// (ad-hoc cart rows). Mirrors the CataloguePicker's Thumb pattern so
+// the cart line and the picker row share one visual language.
+function Thumb({ src, alt }: { src: string | null; alt: string }) {
+  const size = 48;
+  if (!src) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: theme.radius.input,
+          background: theme.color.bg,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: theme.color.inkSubtle,
+          flexShrink: 0,
+        }}
+        aria-hidden
+      >
+        <Package size={20} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: theme.radius.input,
+        objectFit: 'cover',
+        background: theme.color.bg,
+        flexShrink: 0,
+      }}
+    />
   );
 }
