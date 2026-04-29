@@ -185,7 +185,7 @@ export function Schedule() {
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
-      <div style={{ maxWidth: 880, margin: '0 auto' }}>
+      <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
         {/* Header structure (top → bottom):
             Row 1: month label centred.
             Row 2: chevrons flank the WeekStrip (40px / 1fr / 40px grid).

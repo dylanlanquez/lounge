@@ -73,7 +73,7 @@ export function Admin() {
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
-      <div style={{ maxWidth: 880, margin: '0 auto' }}>
+      <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
         <h1
           style={{
             margin: 0,

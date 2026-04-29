@@ -167,7 +167,7 @@ export function VisitDetail() {
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
-      <div style={{ maxWidth: 960, margin: '0 auto' }}>
+      <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
         <VisitBreadcrumbs visit={visit} patient={patient} />
 
         {loading ? (

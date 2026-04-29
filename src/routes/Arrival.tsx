@@ -482,7 +482,6 @@ export function Arrival() {
 
   // Render shell ───────────────────────────────────────────────────────
   const currentStepIndex = STEPS.findIndex((s) => s.id === step);
-  const isCustomerStep = step === 'customer' || step === 'consent';
   const staffName = (user.user_metadata?.name as string | undefined) ?? user.email ?? 'Staff';
 
   return (
@@ -512,7 +511,7 @@ export function Arrival() {
         // a router transition.
         key={step}
         style={{
-          maxWidth: isCustomerStep ? 760 : 720,
+          maxWidth: theme.layout.pageMaxWidth,
           margin: '0 auto',
           padding: isMobile
             ? `${theme.space[6]}px ${theme.space[4]}px ${theme.space[6]}px`
@@ -888,7 +887,7 @@ function ActionBar({
       <div
         style={{
           flex: 1,
-          maxWidth: 960,
+          maxWidth: theme.layout.pageMaxWidth,
           margin: '0 auto',
           padding: `0 ${theme.space[5]}px`,
           display: 'flex',
