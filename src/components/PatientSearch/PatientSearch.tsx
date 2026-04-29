@@ -61,15 +61,17 @@ export function PatientSearch({
     });
   }, [data, shopify.data, enableShopifyLookup]);
 
-  // "No matches" only when both the local search and the (optional)
-  // Shopify search have settled with zero results.
-  const showCreate =
+  // Create-new is always offered once the user has typed enough to
+  // commit to a search term. It sits below any matches so the
+  // receptionist can pick "this is a new patient" even when the
+  // search is already showing similar names.
+  const showCreate = trimmed.length >= 2 && Boolean(onCreateNew);
+  const hasNoMatches =
     trimmed.length >= 2 &&
     !loading &&
     !shopify.loading &&
     data.length === 0 &&
-    shopifyOnly.length === 0 &&
-    Boolean(onCreateNew);
+    shopifyOnly.length === 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
@@ -84,16 +86,16 @@ export function PatientSearch({
 
       {trimmed.length < 2 ? (
         <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
-          {emptyHint ?? 'Type at least two characters to search.'}
+          {emptyHint ?? 'Type at least two characters. We will search existing patients and venneir.com customers.'}
         </p>
       ) : (
         <>
           {/* Local patients (existing rows). */}
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-              <Skeleton height={56} radius={12} />
-              <Skeleton height={56} radius={12} />
-              <Skeleton height={56} radius={12} />
+              <Skeleton height={88} radius={12} />
+              <Skeleton height={88} radius={12} />
+              <Skeleton height={88} radius={12} />
             </div>
           ) : data.length > 0 ? (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -116,11 +118,9 @@ export function PatientSearch({
             />
           )}
 
-          {/* Empty fallback only when everything has settled with no
-              matches anywhere. */}
-          {!loading && !shopify.loading && data.length === 0 && shopifyOnly.length === 0 ? (
+          {hasNoMatches ? (
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-              No patient found for &ldquo;{trimmed}&rdquo;.
+              No match for &ldquo;{trimmed}&rdquo;. Create them as a new patient below.
             </p>
           ) : null}
         </>
@@ -135,7 +135,7 @@ export function PatientSearch({
             border: `1px dashed ${theme.color.border}`,
             background: 'transparent',
             borderRadius: 12,
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            padding: `${theme.space[4]}px ${theme.space[4]}px`,
             display: 'flex',
             alignItems: 'center',
             gap: theme.space[3],
@@ -144,11 +144,19 @@ export function PatientSearch({
             fontSize: theme.type.size.sm,
             cursor: 'pointer',
             textAlign: 'left',
+            marginTop: theme.space[1],
           }}
         >
           <User size={20} />
           <span style={{ flex: 1 }}>
-            Create new walk-in for &ldquo;<strong>{trimmed}</strong>&rdquo;
+            {hasNoMatches ? (
+              <>Create new patient for &ldquo;<strong>{trimmed}</strong>&rdquo;</>
+            ) : (
+              <>
+                Not the right person?{' '}
+                <strong>Create new patient for &ldquo;{trimmed}&rdquo;</strong>
+              </>
+            )}
           </span>
         </button>
       ) : null}
@@ -352,6 +360,7 @@ function ShopifyResultRow({
 }
 
 function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p: PatientRow) => void }) {
+  const hasContact = Boolean(patient.phone || patient.email);
   return (
     <button
       type="button"
@@ -361,10 +370,10 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
         border: `1px solid ${theme.color.border}`,
         background: theme.color.surface,
         borderRadius: 12,
-        padding: theme.space[3],
+        padding: theme.space[4],
         display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
+        alignItems: 'flex-start',
+        gap: theme.space[4],
         width: '100%',
         textAlign: 'left',
         cursor: 'pointer',
@@ -373,8 +382,8 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
     >
       <div
         style={{
-          width: 36,
-          height: 36,
+          width: 40,
+          height: 40,
           borderRadius: theme.radius.pill,
           background: theme.color.accentBg,
           color: theme.color.accent,
@@ -390,28 +399,74 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
         {(patient.last_name?.[0] || '').toUpperCase()}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontSize: theme.type.size.base }}>
-          {patientFullName(patient)}
-        </p>
-        <p
+        <div
           style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
             display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
           }}
         >
-          <span>{patient.internal_ref}</span>
-          {patient.phone ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Phone size={12} /> {patient.phone}
-            </span>
-          ) : null}
-        </p>
+          <p
+            style={{
+              margin: 0,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontSize: theme.type.size.base,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {patientFullName(patient)}
+          </p>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkSubtle,
+              fontWeight: theme.type.weight.medium,
+              letterSpacing: theme.type.tracking.wide,
+              flexShrink: 0,
+            }}
+          >
+            {patient.internal_ref}
+          </span>
+        </div>
+
+        {hasContact ? (
+          <div
+            style={{
+              marginTop: theme.space[3],
+              paddingTop: theme.space[3],
+              borderTop: `1px solid ${theme.color.border}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
+            {patient.phone ? <ContactLine icon={<Phone size={14} />} value={patient.phone} /> : null}
+            {patient.email ? <ContactLine icon={<Mail size={14} />} value={patient.email} /> : null}
+          </div>
+        ) : null}
       </div>
     </button>
+  );
+}
+
+function ContactLine({ icon, value }: { icon: ReactNode; value: string }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        fontSize: theme.type.size.sm,
+        color: theme.color.inkMuted,
+        minWidth: 0,
+      }}
+    >
+      <span style={{ color: theme.color.inkSubtle, display: 'inline-flex', flexShrink: 0 }}>{icon}</span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+    </span>
   );
 }

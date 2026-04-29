@@ -16,6 +16,21 @@ import { supabase } from '../lib/supabase.ts';
 
 type Step = 'find' | 'create';
 
+function humanizePatientSaveError(err: { message?: string; code?: string } | null | undefined): string {
+  const msg = err?.message ?? '';
+  const code = err?.code;
+  if (code === '23505' || /duplicate key|unique constraint/i.test(msg)) {
+    if (/email/i.test(msg)) {
+      return 'A patient with this email is already on file at this location. Use the search to find them.';
+    }
+    if (/phone/i.test(msg)) {
+      return 'A patient with this phone number is already on file at this location. Use the search to find them.';
+    }
+    return 'This person is already on file at this location. Use the search to find them.';
+  }
+  return msg || 'Could not create patient.';
+}
+
 export function NewWalkIn() {
   const { user, loading: authLoading } = useAuth();
   const { data: location } = useCurrentLocation();
@@ -91,7 +106,7 @@ export function NewWalkIn() {
         })
         .select('*')
         .single();
-      if (err || !data) throw new Error(err?.message ?? 'Could not create patient');
+      if (err || !data) throw new Error(humanizePatientSaveError(err));
       navigate(`/arrival/walk-in/${(data as PatientRow).id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
@@ -126,7 +141,7 @@ export function NewWalkIn() {
         </h1>
         <p style={{ margin: 0, color: theme.color.inkMuted, marginBottom: theme.space[6] }}>
           {step === 'find'
-            ? 'Search for the patient first. Phone is fastest.'
+            ? 'Search existing patients and venneir.com customers. If there is no match, create a new patient below the results.'
             : 'Quick details. Anything not given can be filled in later.'}
         </p>
 
