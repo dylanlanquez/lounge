@@ -2,22 +2,29 @@ import { type ReactNode } from 'react';
 import { theme } from '../../theme/index.ts';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../KioskStatusBar/KioskStatusBar.tsx';
 
-// Compact sticky header for list-style pages (Patients, In clinic).
-// Sits directly under the always-visible KioskStatusBar so titles +
-// search input stay reachable as the list scrolls. Visual chrome is
-// deliberately quiet — page background, hairline below, no shadow —
-// because the pinned area must not compete with row content for
-// attention.
+// Two-row header for list-style pages (Patients, In clinic).
 //
-// Two children slots: title + meta (right-aligned), and the body
-// (typically a search input). The component owns spacing and the
-// pinning behaviour; consumers own the content.
+// Structure:
+//   - Title + meta row in normal document flow. Scrolls away as the
+//     user scrolls down — Apple HIG calls this the "large title"
+//     pattern. When the user scrolls back to the top, the title
+//     simply re-enters the viewport because it was always there in
+//     the DOM, no re-render or animation needed.
+//   - Search row pinned via `position: sticky` directly under the
+//     KioskStatusBar so the receptionist can search at any depth.
+//     Its bg + border-bottom give the pinned look; padding inside
+//     the sticky element (rather than margin outside) keeps the bg
+//     attached when the bar pins.
+//
+// Visual chrome stays quiet — page background, hairline below the
+// search row only, no shadow — because the pinned area must not
+// compete with row content for attention.
 
 export interface StickyPageHeaderProps {
   title: string;
   meta?: ReactNode;
   body?: ReactNode;
-  // The page's outer horizontal padding so the pinned header bleeds
+  // The page's outer horizontal padding so the pinned bar bleeds
   // edge-to-edge while still aligning the inner content with the
   // page's max-width container.
   outerPaddingX: number;
@@ -32,56 +39,63 @@ export function StickyPageHeader({
   innerMaxWidth,
 }: StickyPageHeaderProps) {
   return (
-    <header
-      style={{
-        // Sit immediately below the KioskStatusBar so the title isn't
-        // clipped by the device chrome.
-        position: 'sticky',
-        top: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
-        zIndex: 10,
-        background: theme.color.bg,
-        borderBottom: `1px solid ${theme.color.border}`,
-        // Bleed edge-to-edge — the consumer wraps its content in a
-        // max-width container so we want the bar to fill the whole
-        // viewport for the pinned effect to read.
-        marginLeft: -outerPaddingX,
-        marginRight: -outerPaddingX,
-        padding: `${theme.space[3]}px ${outerPaddingX}px`,
-        marginBottom: theme.space[5],
-      }}
-    >
+    <>
+      {/* Large title — normal flow, scrolls away with the rest of
+          the page. Reappears naturally on scroll-back-to-top. */}
       <div
         style={{
           maxWidth: innerMaxWidth,
           margin: '0 auto',
+          padding: `${theme.space[6]}px 0 ${theme.space[4]}px`,
           display: 'flex',
-          flexDirection: 'column',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
           gap: theme.space[3],
         }}
       >
-        <div
+        <h1
           style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            gap: theme.space[3],
+            margin: 0,
+            fontSize: theme.type.size.xl,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
           }}
         >
-          <h1
+          {title}
+        </h1>
+        {meta ? <div>{meta}</div> : null}
+      </div>
+
+      {/* Search row — pinned just under the kiosk status bar. The
+          sticky element's own padding handles the breathing space
+          below the input so the cream background stays attached
+          while pinned, instead of relying on margin-bottom which
+          can detach from a sticky element under scroll. */}
+      {body ? (
+        <div
+          style={{
+            position: 'sticky',
+            top: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
+            zIndex: 10,
+            background: theme.color.bg,
+            borderBottom: `1px solid ${theme.color.border}`,
+            marginLeft: -outerPaddingX,
+            marginRight: -outerPaddingX,
+            padding: `${theme.space[3]}px ${outerPaddingX}px ${theme.space[4]}px`,
+            marginBottom: theme.space[6],
+          }}
+        >
+          <div
             style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
+              maxWidth: innerMaxWidth,
+              margin: '0 auto',
             }}
           >
-            {title}
-          </h1>
-          {meta ? <div>{meta}</div> : null}
+            {body}
+          </div>
         </div>
-        {body ? <div>{body}</div> : null}
-      </div>
-    </header>
+      ) : null}
+    </>
   );
 }
