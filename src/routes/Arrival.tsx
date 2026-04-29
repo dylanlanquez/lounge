@@ -1436,7 +1436,7 @@ function CustomerStep({
             letterSpacing: theme.type.tracking.wide,
           }}
         >
-          Welcome to Lounge
+          Welcome to Venneir
         </p>
         <h1
           style={{
@@ -1499,10 +1499,10 @@ function CustomerStep({
                   color: theme.color.accent,
                 }}
               >
-                Linked to your Lounge online account
+                Linked to your venneir.com account
               </p>
               <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
-                Anything you change here also updates your One Click profile on lounge.venneir.com — the same details we use for online ordering and shipping.
+                Anything you change here updates your account across the whole of Venneir — venneir.com, the One Click app, and any future orders. The same email signs you in everywhere.
               </p>
             </div>
           </div>
