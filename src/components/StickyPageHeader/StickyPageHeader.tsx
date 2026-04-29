@@ -41,12 +41,16 @@ export function StickyPageHeader({
   return (
     <>
       {/* Large title — normal flow, scrolls away with the rest of
-          the page. Reappears naturally on scroll-back-to-top. */}
+          the page. Reappears naturally on scroll-back-to-top.
+          Vertical breathing room above the title comes from the
+          page's main padding-top (KIOSK_STATUS_BAR_HEIGHT + a bit);
+          the title row only owns its own tight bottom padding so
+          it sits close to the search input below. */}
       <div
         style={{
           maxWidth: innerMaxWidth,
           margin: '0 auto',
-          padding: `${theme.space[6]}px 0 ${theme.space[4]}px`,
+          padding: `0 0 ${theme.space[2]}px`,
           display: 'flex',
           alignItems: 'baseline',
           justifyContent: 'space-between',
@@ -56,7 +60,7 @@ export function StickyPageHeader({
         <h1
           style={{
             margin: 0,
-            fontSize: theme.type.size.xl,
+            fontSize: theme.type.size.lg,
             fontWeight: theme.type.weight.semibold,
             letterSpacing: theme.type.tracking.tight,
             color: theme.color.ink,
