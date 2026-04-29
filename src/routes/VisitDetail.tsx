@@ -323,22 +323,34 @@ export function VisitDetail() {
             ) : null}
 
             {patient ? (
-              <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-                <BeforeAfterGallery
-                  patient={patient}
-                  files={galleryFiles}
-                  loading={galleryFilesLoading}
-                  refresh={refreshGalleryFiles}
-                  isMobile={isMobile}
+              <>
+                {/* Hairline break splits the cart / payment block from the
+                    media block below so the eye reads the page as two
+                    distinct sections instead of one long scroll. */}
+                <hr
+                  style={{
+                    margin: `${theme.space[6]}px 0 0`,
+                    border: 'none',
+                    borderTop: `1px solid ${theme.color.border}`,
+                  }}
                 />
-                <MarketingGallery
-                  patient={patient}
-                  files={galleryFiles}
-                  loading={galleryFilesLoading}
-                  refresh={refreshGalleryFiles}
-                  isMobile={isMobile}
-                />
-              </div>
+                <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+                  <BeforeAfterGallery
+                    patient={patient}
+                    files={galleryFiles}
+                    loading={galleryFilesLoading}
+                    refresh={refreshGalleryFiles}
+                    isMobile={isMobile}
+                  />
+                  <MarketingGallery
+                    patient={patient}
+                    files={galleryFiles}
+                    loading={galleryFilesLoading}
+                    refresh={refreshGalleryFiles}
+                    isMobile={isMobile}
+                  />
+                </div>
+              </>
             ) : null}
 
           </>
