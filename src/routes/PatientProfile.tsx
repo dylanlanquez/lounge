@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
@@ -154,17 +154,67 @@ export function PatientProfile() {
   );
 }
 
+// Router state read by Breadcrumbs to render the right trail. When
+// the profile is opened via the "View profile" button on a visit
+// page, we get a `from: 'visit'` payload that carries the visit id,
+// its opened-at timestamp, and the visit's *own* entry state so
+// clicking the visit crumb here pops back without losing chain
+// context (Schedule / Patients / In clinic).
+interface PatientEntryState {
+  from?: 'visit';
+  visitId?: string;
+  visitOpenedAt?: string;
+  visitEntry?: { from?: 'patient' | 'schedule' | 'in_clinic' } | null;
+}
+
 function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
   const navigate = useNavigate();
-  const name = patient ? `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() : 'Patient';
+  const location = useLocation();
+  const entry = (location.state as PatientEntryState | null) ?? {};
+  const name = patient
+    ? `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim()
+    : 'Patient';
+
+  const items = (() => {
+    if (entry.from === 'visit' && entry.visitId && entry.visitOpenedAt) {
+      const visitLabel = `Appointment, ${new Date(entry.visitOpenedAt).toLocaleString(
+        'en-GB',
+        {
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        }
+      )}`;
+      const visitState = entry.visitEntry ?? null;
+      const visitFrom = visitState?.from;
+      const baseCrumb =
+        visitFrom === 'patient'
+          ? { label: 'Patients', onClick: () => navigate('/patients') }
+          : visitFrom === 'in_clinic'
+            ? { label: 'In clinic', onClick: () => navigate('/in-clinic') }
+            : { label: 'Schedule', onClick: () => navigate('/schedule') };
+      return [
+        baseCrumb,
+        {
+          label: visitLabel,
+          onClick: () =>
+            navigate(`/visit/${entry.visitId}`, {
+              state: visitState ?? undefined,
+            }),
+        },
+        { label: name },
+      ];
+    }
+    return [
+      { label: 'Patients', onClick: () => navigate('/patients') },
+      { label: name },
+    ];
+  })();
+
   return (
     <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[6]}px` }}>
-      <Breadcrumb
-        items={[
-          { label: 'Patients', onClick: () => navigate('/patients') },
-          { label: name },
-        ]}
-      />
+      <Breadcrumb items={items} />
     </div>
   );
 }

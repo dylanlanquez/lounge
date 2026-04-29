@@ -58,6 +58,7 @@ export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { visit, patient, deposit, appointment, loading } = useVisitDetail(id);
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
@@ -211,7 +212,21 @@ export function VisitDetail() {
                   <Button
                     variant="tertiary"
                     size="sm"
-                    onClick={() => navigate(`/patient/${patient.id}`)}
+                    onClick={() =>
+                      navigate(`/patient/${patient.id}`, {
+                        state: {
+                          from: 'visit',
+                          visitId: visit.id,
+                          visitOpenedAt: visit.opened_at,
+                          // Pass the visit's own entry state through so
+                          // the profile breadcrumb can preserve the chain
+                          // (Schedule / Patients / In clinic) and the
+                          // visit-link can navigate back with that
+                          // context intact.
+                          visitEntry: location.state,
+                        },
+                      })
+                    }
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                       View profile
