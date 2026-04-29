@@ -113,25 +113,31 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
     });
   }
 
-  const cards: FileCardModel[] = [];
+  // Build cards in two passes so we can render filled ones first
+  // (sorted by latest upload, regardless of slot type) and tuck empty
+  // ones at the tail in canonical slot order. The receptionist's eye
+  // lands on what's actually on file before the placeholders.
+  const filled: FileCardModel[] = [];
+  const empty: FileCardModel[] = [];
 
   for (const def of SLOT_DEFS) {
     const versions = byGroup.get(def.group) ?? [];
-    cards.push({
+    const card: FileCardModel = {
       group: def.group,
       label: def.label,
       file: versions[0] ?? null,
       versionCount: versions.length,
       versions,
       uploadable: def.uploadable ? { primaryKey: def.primaryKey } : undefined,
-    });
+    };
+    if (versions.length > 0) filled.push(card);
+    else empty.push(card);
   }
 
-  const dynamic: FileCardModel[] = [];
   for (const [group, versions] of byGroup.entries()) {
     if (SLOT_DEFS.some((d) => d.group === group)) continue;
     if (versions.length === 0) continue;
-    dynamic.push({
+    filled.push({
       group,
       label: labelDisplayByGroup.get(group) ?? 'Other',
       file: versions[0]!,
@@ -139,9 +145,12 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
       versions,
     });
   }
-  dynamic.sort((a, b) => (b.file?.uploaded_at ?? '').localeCompare(a.file?.uploaded_at ?? ''));
 
-  return [...cards, ...dynamic];
+  filled.sort((a, b) =>
+    (b.file?.uploaded_at ?? '').localeCompare(a.file?.uploaded_at ?? '')
+  );
+
+  return [...filled, ...empty];
 }
 
 // Empty slot cards all share the same generic file icon. Earlier we
