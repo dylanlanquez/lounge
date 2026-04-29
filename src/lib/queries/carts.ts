@@ -44,6 +44,20 @@ export interface CatalogueAddOptions {
   arch?: 'upper' | 'lower' | 'both' | null;
   shade?: string | null;
   notes?: string | null;
+  // Applied upgrades, already priced for this line's arch (the picker
+  // resolves single-arch vs both-arches pricing before staging). Each
+  // entry becomes one row in lng_cart_item_upgrades per cart_item the
+  // line spawns, so the upgrade cost rides every quantity tick.
+  upgrades?: AppliedUpgrade[];
+}
+
+export interface AppliedUpgrade {
+  upgrade_id: string;
+  code: string;
+  name: string;
+  // Pence. Resolved by the picker based on the line's arch (so the
+  // both-arches tier of a Scalloped upgrade goes in here when arch=both).
+  price_pence: number;
 }
 
 interface UseCartResult {
@@ -166,9 +180,18 @@ export async function addCatalogueItemsToCart(
   options: CatalogueAddOptions
 ): Promise<CartItemRow[]> {
   if (qty <= 0) return [];
-  const unit = Math.round(catalogue.unit_price * 100);
-  const extra =
-    catalogue.extra_unit_price != null ? Math.round(catalogue.extra_unit_price * 100) : unit;
+  const arch = options.arch ?? null;
+  // Single-arch tier (or non-arch row) uses unit_price + the volume
+  // discount via extra_unit_price. Both-arches tier uses
+  // both_arches_price flat — no extras tier on the multi-arch deal.
+  const isBoth = arch === 'both' && catalogue.both_arches_price != null;
+  const baseUnitPounds = isBoth ? catalogue.both_arches_price! : catalogue.unit_price;
+  const baseUnitPence = Math.round(baseUnitPounds * 100);
+  const extraPence = isBoth
+    ? baseUnitPence
+    : catalogue.extra_unit_price != null
+      ? Math.round(catalogue.extra_unit_price * 100)
+      : baseUnitPence;
   const baseSnapshot = {
     cart_id: cartId,
     sku: catalogue.code,
@@ -181,17 +204,39 @@ export async function addCatalogueItemsToCart(
     service_type: catalogue.service_type,
     product_key: catalogue.product_key,
     repair_variant: catalogue.repair_variant,
-    arch: options.arch ?? null,
+    arch,
     shade: options.shade ?? null,
     notes: options.notes ?? null,
   };
   const rows = [];
   for (let i = 0; i < qty; i++) {
-    rows.push({ ...baseSnapshot, unit_price_pence: i === 0 ? unit : extra });
+    rows.push({ ...baseSnapshot, unit_price_pence: i === 0 ? baseUnitPence : extraPence });
   }
   const { data, error } = await supabase.from('lng_cart_items').insert(rows).select('*');
   if (error) throw new Error(error.message);
-  return (data ?? []) as CartItemRow[];
+  const inserted = (data ?? []) as CartItemRow[];
+
+  // Upgrade snapshots — one row per (cart_item, upgrade) pair. Upgrade
+  // cost rides every quantity tick (qty 2 with Scalloped → 2 cart items
+  // each with a Scalloped upgrade row), matching the line-pricing model.
+  const upgrades = options.upgrades ?? [];
+  if (upgrades.length > 0 && inserted.length > 0) {
+    const upgradeRows = inserted.flatMap((item) =>
+      upgrades.map((u) => ({
+        cart_item_id: item.id,
+        upgrade_id: u.upgrade_id,
+        upgrade_code: u.code,
+        upgrade_name: u.name,
+        price_pence: u.price_pence,
+      }))
+    );
+    const { error: upErr } = await supabase
+      .from('lng_cart_item_upgrades')
+      .insert(upgradeRows);
+    if (upErr) throw new Error(upErr.message);
+  }
+
+  return inserted;
 }
 
 export async function updateCartItemQuantity(itemId: string, quantity: number): Promise<void> {
