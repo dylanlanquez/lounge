@@ -106,7 +106,12 @@ export function PatientProfile() {
               isMobile={isMobile}
               readOnly
             />
-            <PatientFilesPanel files={files} loading={filesLoading} />
+            <PatientFilesPanel
+              files={files}
+              loading={filesLoading}
+              patient={patient}
+              refresh={refreshFiles}
+            />
             <WalkInAppointments
               visits={visits}
               loading={visitsLoading}
@@ -660,17 +665,27 @@ function formatShortDate(iso: string): string {
 function PatientFilesPanel({
   files,
   loading,
+  patient,
+  refresh,
 }: {
   files: PatientFileEntry[];
   loading: boolean;
+  patient: PatientProfileRow;
+  refresh: () => void;
 }) {
   return (
     <CollapsibleCard
       icon={<Files size={18} color={theme.color.ink} aria-hidden />}
-      title="Files"
+      title="Patient files"
       meta={`${files.length} ${files.length === 1 ? 'file' : 'files'}`}
     >
-      <PatientFilesGrid files={files} loading={loading} />
+      <PatientFilesGrid
+        files={files}
+        loading={loading}
+        patientId={patient.id}
+        patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
+        onUploaded={refresh}
+      />
     </CollapsibleCard>
   );
 }
