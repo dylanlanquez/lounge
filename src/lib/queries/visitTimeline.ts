@@ -555,10 +555,14 @@ async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> 
     .order('created_at', { ascending: true });
   if (err) throw new Error(err.message);
   const rows = (data ?? []) as PatientEventRow[];
-  // De-dup against the dedicated event types we already emit (deposit
-  // paid via lng_appointments, walk-in arrived via the visit row) —
-  // surfacing them twice would be noisy.
-  const skip = new Set(['deposit_paid', 'walk_in_arrived']);
+  // De-dup against the dedicated event types we already emit:
+  //   • deposit_paid    -> via lng_appointments.deposit_paid_at
+  //   • walk_in_arrived -> via lng_visits.opened_at + arrival_type
+  //   • visit_closed    -> via lng_visits.closed_at
+  // The patient_events writes for these still happen (Meridian and
+  // other off-app consumers depend on them); we just don't surface
+  // them in the timeline twice.
+  const skip = new Set(['deposit_paid', 'walk_in_arrived', 'visit_closed']);
   return rows
     .filter((r) => !skip.has(r.event_type))
     .map((r) => ({
