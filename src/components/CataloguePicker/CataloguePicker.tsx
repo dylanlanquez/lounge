@@ -214,11 +214,15 @@ export function CataloguePicker({
               ) : null}
               {servicesGrouped.length > 0 ? (
                 <TopGroup title="Services">
-                  {servicesGrouped.map(([category, categoryRows]) => (
-                    <ul key={`svc-${category}`} className="lng-picker-list" style={listStyle}>
-                      {categoryRows.map(renderRow)}
-                    </ul>
-                  ))}
+                  {/* One flat <ul> per TopGroup so :last-child matches
+                      only the actually-last row in the group. Splitting
+                      by category would mark the last row of every
+                      category as :last-child, dropping its borderBottom
+                      and producing visible "gaps" between categories
+                      (no line between Relining and Impression, etc). */}
+                  <ul className="lng-picker-list" style={listStyle}>
+                    {servicesGrouped.flatMap(([, rows]) => rows).map(renderRow)}
+                  </ul>
                 </TopGroup>
               ) : null}
               {servicesGrouped.length > 0 && productsGrouped.length > 0 ? (
@@ -232,11 +236,9 @@ export function CataloguePicker({
               ) : null}
               {productsGrouped.length > 0 ? (
                 <TopGroup title="Products">
-                  {productsGrouped.map(([category, categoryRows]) => (
-                    <ul key={`prd-${category}`} className="lng-picker-list" style={listStyle}>
-                      {categoryRows.map(renderRow)}
-                    </ul>
-                  ))}
+                  <ul className="lng-picker-list" style={listStyle}>
+                    {productsGrouped.flatMap(([, rows]) => rows).map(renderRow)}
+                  </ul>
                 </TopGroup>
               ) : null}
             </>
