@@ -4,6 +4,7 @@ import { theme } from '../../theme/index.ts';
 import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import { supabase } from '../../lib/supabase.ts';
 import type { PatientFileEntry } from '../../lib/queries/patientProfile.ts';
+import { ModelViewer } from './ModelViewer.tsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PatientFilesGrid — view-only port of Meridian's PatientProfileFiles
@@ -446,14 +447,22 @@ function FileCard({
 
 // ─── Preview modal ──────────────────────────────────────────────────────────
 
-function PreviewModal({ file, onClose }: { file: PatientFileEntry; onClose: () => void }) {
+const MODEL_EXTS = new Set(['stl', 'obj', 'ply']);
+
+function modelExt(filename: string): 'stl' | 'obj' | 'ply' | null {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  return MODEL_EXTS.has(ext) ? (ext as 'stl' | 'obj' | 'ply') : null;
+}
+
+export function PreviewModal({ file, onClose }: { file: PatientFileEntry; onClose: () => void }) {
   // Resolve a long-TTL signed URL for the full file. Images render
-  // inline; PDFs in an iframe. Anything else just shows the icon and
-  // filename — Lounge isn't a download surface so deeper types get a
-  // 'preview not available' message rather than a broken viewer.
+  // inline; PDFs in an iframe; STL / OBJ / PLY mount the on-demand
+  // ModelViewer (three.js loaded from CDN). Anything else falls back
+  // to a 'preview not available' message.
   const url = useSignedUrl(file.file_url);
   const isImage = !!file.mime_type?.startsWith('image/');
   const isPdf = file.mime_type === 'application/pdf';
+  const ext3d = modelExt(file.file_name);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -566,6 +575,10 @@ function PreviewModal({ file, onClose }: { file: PatientFileEntry; onClose: () =
               src={url}
               style={{ width: '100%', height: '70vh', border: 'none', background: theme.color.surface }}
             />
+          ) : ext3d ? (
+            <div style={{ width: '100%', height: '70vh' }}>
+              <ModelViewer url={url} ext={ext3d} />
+            </div>
           ) : (
             <div
               style={{
