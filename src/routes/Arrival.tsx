@@ -18,6 +18,7 @@ import {
 import {
   Button,
   Card,
+  Checkbox,
   DateOfBirthRow,
   DropdownSelect,
   Skeleton,
@@ -1863,58 +1864,9 @@ function ConfirmationBanner({
         </div>
       </div>
       <div style={{ marginTop: theme.space[4], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
-        <CheckRow checked={checked} onChange={onChange} label={confirmLabel} />
+        <Checkbox checked={checked} onChange={onChange} label={confirmLabel} />
       </div>
     </div>
-  );
-}
-
-function CheckRow({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: theme.space[3],
-        cursor: 'pointer',
-        userSelect: 'none',
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 22,
-          height: 22,
-          borderRadius: 6,
-          background: checked ? theme.color.ink : theme.color.surface,
-          border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
-          color: theme.color.surface,
-          flexShrink: 0,
-        }}
-      >
-        {checked ? <CheckCircle2 size={16} /> : null}
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.currentTarget.checked)}
-        style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0 }}
-      />
-      <span style={{ fontSize: theme.type.size.base, color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
-        {label}
-      </span>
-    </label>
   );
 }
 

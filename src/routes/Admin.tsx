@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, Cre
 import {
   Button,
   Card,
+  Checkbox,
   EmptyState,
   Input,
   SegmentedControl,
@@ -1425,57 +1426,21 @@ function CatalogueRowEditor({
           onChange={(e) => set('sort_order', e.target.value)}
           style={{ maxWidth: 140 }}
         />
-        <label
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            fontSize: theme.type.size.sm,
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={draft.active}
-            onChange={(e) => set('active', e.target.checked)}
-            style={{ width: 18, height: 18 }}
-          />
-          Active (visible to receptionist)
-        </label>
-        <label
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            fontSize: theme.type.size.sm,
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={draft.is_service}
-            onChange={(e) => set('is_service', e.target.checked)}
-            style={{ width: 18, height: 18 }}
-          />
-          This is a service (sits in Services bucket in the picker)
-        </label>
-        <label
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            fontSize: theme.type.size.sm,
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={draft.quantity_enabled}
-            onChange={(e) => set('quantity_enabled', e.target.checked)}
-            style={{ width: 18, height: 18 }}
-          />
-          Quantity selector (uncheck for one-shot services like in-clinic appointments)
-        </label>
+        <Checkbox
+          checked={draft.active}
+          onChange={(v) => set('active', v)}
+          label="Active (visible to receptionist)"
+        />
+        <Checkbox
+          checked={draft.is_service}
+          onChange={(v) => set('is_service', v)}
+          label="This is a service (sits in Services bucket in the picker)"
+        />
+        <Checkbox
+          checked={draft.quantity_enabled}
+          onChange={(v) => set('quantity_enabled', v)}
+          label="Quantity selector (uncheck for one-shot services like in-clinic appointments)"
+        />
       </div>
       {draft.id ? (
         <UpgradeLinksEditor
@@ -1682,19 +1647,20 @@ function UpgradeLinkRow({
         gap: theme.space[2],
       }}
     >
-      <label style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], cursor: 'pointer' }}>
-        <input
-          type="checkbox"
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+        <Checkbox
           checked={linked}
-          onChange={(e) => onToggle(e.target.checked)}
+          onChange={onToggle}
           disabled={busy}
-          style={{ width: 18, height: 18 }}
+          ariaLabel={upgrade.name}
+          label={
+            <span style={{ fontWeight: theme.type.weight.medium, fontSize: theme.type.size.sm, color: theme.color.ink }}>
+              {upgrade.name}
+            </span>
+          }
         />
-        <span style={{ fontWeight: theme.type.weight.medium, fontSize: theme.type.size.sm, color: theme.color.ink }}>
-          {upgrade.name}
-        </span>
         <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>{upgrade.code}</code>
-      </label>
+      </div>
       {linked ? (
         <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <Input
@@ -1974,23 +1940,11 @@ function UpgradeEditor({
           onChange={(e) => set('sort_order', e.target.value)}
           style={{ maxWidth: 140 }}
         />
-        <label
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            fontSize: theme.type.size.sm,
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={draft.active}
-            onChange={(e) => set('active', e.target.checked)}
-            style={{ width: 18, height: 18 }}
-          />
-          Active
-        </label>
+        <Checkbox
+          checked={draft.active}
+          onChange={(v) => set('active', v)}
+          label="Active"
+        />
       </div>
       <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', marginTop: theme.space[2] }}>
         <Button variant="tertiary" onClick={onCancel} disabled={busy}>
@@ -2509,23 +2463,11 @@ function WaiverSectionEditor({
         />
       </div>
 
-      <label
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          fontSize: theme.type.size.sm,
-          cursor: 'pointer',
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={draft.active}
-          onChange={(e) => set('active', e.target.checked)}
-          style={{ width: 18, height: 18 }}
-        />
-        Active (shown to patients)
-      </label>
+      <Checkbox
+        checked={draft.active}
+        onChange={(v) => set('active', v)}
+        label="Active (shown to patients)"
+      />
 
       <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end' }}>
         <Button variant="tertiary" onClick={onCancel} disabled={busy}>
