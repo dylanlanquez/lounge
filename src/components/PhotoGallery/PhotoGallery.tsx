@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Camera, ChevronLeft, ChevronRight, ImageOff, Megaphone, Sparkles, X } from 'lucide-react';
-import { Card } from '../Card/Card.tsx';
+import { CollapsibleCard } from '../CollapsibleCard/CollapsibleCard.tsx';
 import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
@@ -84,7 +84,7 @@ export function BeforeAfterGallery({
   return (
     <GalleryCard
       icon={<Sparkles size={18} color={theme.color.ink} aria-hidden />}
-      title="Before & after"
+      title="Before & afters"
       description="Capture the transformation. Tap a photo to view full-size."
       patient={patient}
       items={items}
@@ -203,86 +203,74 @@ function GalleryCard({
   const empty = !loading && items.length === 0;
 
   return (
-    <Card padding="lg">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-          {icon}
-          <h2
+    <>
+      <CollapsibleCard
+        icon={icon}
+        title={title}
+        meta={`${items.length} ${items.length === 1 ? 'photo' : 'photos'}`}
+      >
+        <p style={{ margin: `0 0 ${theme.space[4]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          {description}
+        </p>
+
+        {loading ? (
+          <Skeleton height={140} radius={14} />
+        ) : empty && !showUploads ? (
+          <EmptyState
+            icon={<Camera size={20} />}
+            title={emptyTitle}
+            description={emptyDescription}
+          />
+        ) : (
+          <div
             style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
+              display: 'grid',
+              gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
+              gap: theme.space[3],
             }}
           >
-            {title}
-          </h2>
-        </div>
-        <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-          {items.length} {items.length === 1 ? 'photo' : 'photos'}
-        </span>
-      </div>
-      <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-        {description}
-      </p>
+            {showUploads
+              ? uploads.map((u) => (
+                  <UploadTile
+                    key={u.labelKey}
+                    label={u.label}
+                    busy={busyKey === u.labelKey}
+                    disabled={busyKey !== null && busyKey !== u.labelKey}
+                    onClick={() => inputs.current[u.labelKey]?.click()}
+                  />
+                ))
+              : null}
+            {items.map((item, i) => (
+              <PhotoTile key={item.id} item={item} onOpen={() => setOpenIndex(i)} />
+            ))}
+            {!showUploads && empty ? (
+              <span style={{ gridColumn: '1 / -1', color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
+                {emptyDescription}
+              </span>
+            ) : null}
+          </div>
+        )}
 
-      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
+        {showUploads
+          ? uploads.map((u) => (
+              <input
+                key={u.labelKey}
+                ref={(el) => {
+                  inputs.current[u.labelKey] = el;
+                }}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                onChange={(e) => onPick(u.labelKey, e.target.files)}
+                style={{ display: 'none' }}
+              />
+            ))
+          : null}
 
-      {loading ? (
-        <Skeleton height={140} radius={14} />
-      ) : empty && !showUploads ? (
-        <EmptyState
-          icon={<Camera size={20} />}
-          title={emptyTitle}
-          description={emptyDescription}
-        />
-      ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
-            gap: theme.space[3],
-          }}
-        >
-          {showUploads
-            ? uploads.map((u) => (
-                <UploadTile
-                  key={u.labelKey}
-                  label={u.label}
-                  busy={busyKey === u.labelKey}
-                  disabled={busyKey !== null && busyKey !== u.labelKey}
-                  onClick={() => inputs.current[u.labelKey]?.click()}
-                />
-              ))
-            : null}
-          {items.map((item, i) => (
-            <PhotoTile key={item.id} item={item} onOpen={() => setOpenIndex(i)} />
-          ))}
-          {!showUploads && empty ? (
-            <span style={{ gridColumn: '1 / -1', color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
-              {emptyDescription}
-            </span>
-          ) : null}
-        </div>
-      )}
-
-      {showUploads
-        ? uploads.map((u) => (
-            <input
-              key={u.labelKey}
-              ref={(el) => {
-                inputs.current[u.labelKey] = el;
-              }}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              multiple
-              onChange={(e) => onPick(u.labelKey, e.target.files)}
-              style={{ display: 'none' }}
-            />
-          ))
-        : null}
+        {/* Hint to silence the unused-tileCount lint when showUploads is false. */}
+        {tileCount < 0 ? null : null}
+      </CollapsibleCard>
 
       <PhotoLightbox items={items} index={openIndex} onChange={setOpenIndex} />
 
@@ -291,10 +279,7 @@ function GalleryCard({
           <Toast tone="error" title="Could not upload" description={error} duration={6000} onDismiss={() => setError(null)} />
         </div>
       ) : null}
-
-      {/* Hint to silence the unused-tileCount lint when showUploads is false. */}
-      {tileCount < 0 ? null : null}
-    </Card>
+    </>
   );
 }
 
