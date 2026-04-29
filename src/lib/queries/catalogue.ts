@@ -19,8 +19,12 @@ export interface CatalogueRow {
   category: string;
   name: string;
   description: string | null;
-  unit_price: number; // pounds
+  unit_price: number; // pounds — single-arch / non-arch price
   extra_unit_price: number | null; // pounds; null → no volume discount
+  // Pounds. Set only when the product exposes arch options (arch_match
+  // !== 'any'); the picker uses this when arch=both is selected, and
+  // unit_price when arch=upper or lower.
+  both_arches_price: number | null;
   unit_label: string | null;
   // Frozen URL — either a Supabase Storage public URL (admin upload)
   // or a third-party CDN URL pulled by SKU from Shopify. Once written
@@ -30,6 +34,10 @@ export interface CatalogueRow {
   product_key: string | null;
   repair_variant: string | null;
   arch_match: ArchMatch;
+  // Lounge picker classifier: true → Services bucket (top), false →
+  // Products bucket. Defaults to false for legacy rows; admins flip
+  // it per row.
+  is_service: boolean;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -67,7 +75,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -111,12 +119,14 @@ export async function upsertCatalogueRow(
     description: draft.description,
     unit_price: draft.unit_price,
     extra_unit_price: draft.extra_unit_price,
+    both_arches_price: draft.both_arches_price,
     unit_label: draft.unit_label,
     image_url: draft.image_url,
     service_type: draft.service_type,
     product_key: draft.product_key,
     repair_variant: draft.repair_variant,
     arch_match: draft.arch_match,
+    is_service: draft.is_service,
     sort_order: draft.sort_order,
     active: draft.active,
   };
