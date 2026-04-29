@@ -528,23 +528,18 @@ function PaymentPill({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Loading skeleton — same grid shape so the layout doesn't jump on data
-// arrival. Six tiles is enough to imply "more might be coming" on a
-// busy day without dominating the empty state.
+// Loading skeleton — single card placeholder. We don't know how many
+// visits will resolve, so rendering N tiles up front would lie about
+// volume on quiet days (often only one or two people in clinic). One
+// card communicates "loading something card-shaped" without
+// overstating. The actual section + card list grows in once data
+// lands.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LoadingGrid({ isMobile }: { isMobile: boolean }) {
+function LoadingGrid({ isMobile: _isMobile }: { isMobile: boolean }) {
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: theme.space[3],
-      }}
-    >
-      {Array.from({ length: 6 }).map((_, i) => (
-        <Skeleton key={i} height={148} radius={theme.radius.card} />
-      ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <Skeleton height={148} radius={theme.radius.card} />
     </div>
   );
 }

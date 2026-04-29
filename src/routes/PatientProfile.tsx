@@ -92,9 +92,7 @@ export function PatientProfile() {
             <p style={{ color: theme.color.alert, margin: 0 }}>Could not load patient: {patientError}</p>
           </Card>
         ) : patientLoading || !patient ? (
-          <Card padding="lg">
-            <Skeleton height={120} radius={14} />
-          </Card>
+          <ProfileSkeleton isMobile={isMobile} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
             <Hero patient={patient} cases={cases} isMobile={isMobile} onEdit={() => setEditOpen(true)} />
@@ -273,6 +271,74 @@ function NameSkeleton() {
       </span>
       <Skeleton width={96} height={14} radius={4} />
     </>
+  );
+}
+
+// Page-level loading skeleton. Mirrors the actual section layout —
+// a tall Hero card up top followed by collapsed-card-height
+// shimmers for the surfaces below (Waivers, Notes & flags, Before
+// & afters, Marketing content, Files, Final deliveries,
+// Appointments, Case history, Signed waivers). Each card renders
+// the chrome (title + meta) at the same height a closed
+// CollapsibleCard would, so when the patient query resolves the
+// real cards swap in without a layout jump.
+function ProfileSkeleton({ isMobile }: { isMobile: boolean }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <Card padding="lg">
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            alignItems: isMobile ? 'flex-start' : 'center',
+            gap: theme.space[5],
+          }}
+        >
+          <Skeleton width={64} height={64} radius={999} />
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <Skeleton width={isMobile ? '70%' : 280} height={32} radius={6} />
+            <Skeleton width={isMobile ? '40%' : 160} height={16} radius={4} />
+          </div>
+        </div>
+        <div
+          style={{
+            marginTop: theme.space[5],
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+            gap: theme.space[4],
+          }}
+        >
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              <Skeleton height={12} width="60%" radius={4} />
+              <Skeleton height={18} width="80%" radius={4} />
+            </div>
+          ))}
+        </div>
+      </Card>
+      {/* Collapsed-card-height surfaces. Count matches the real
+          section list so the loading height resembles the rendered
+          page. Update if a section is added or removed below. */}
+      {Array.from({ length: 9 }).map((_, i) => (
+        <Card key={i} padding="lg">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: theme.space[3],
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flex: 1, minWidth: 0 }}>
+              <Skeleton width={18} height={18} radius={4} />
+              <Skeleton width="35%" height={20} radius={4} />
+            </div>
+            <Skeleton width={72} height={14} radius={4} />
+            <Skeleton width={20} height={20} radius={4} />
+          </div>
+        </Card>
+      ))}
+    </div>
   );
 }
 
