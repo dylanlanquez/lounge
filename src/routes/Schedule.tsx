@@ -530,8 +530,14 @@ export function Schedule() {
                                   },
                                 });
                               } else {
+                                // Virtual flow stays on the schedule. Refetch
+                                // the day's rows + week dots so the status
+                                // change shows immediately, without a page
+                                // reload that would snap selectedDate back
+                                // to today.
                                 setSelected(null);
-                                window.location.reload();
+                                day.refresh();
+                                weekCounts.refresh();
                               }
                             } catch (e) {
                               setError(e instanceof Error ? e.message : 'Could not undo no-show');
@@ -570,7 +576,8 @@ export function Schedule() {
                               try {
                                 await markVirtualMeetingJoined(selected.id);
                                 setSelected(null);
-                                window.location.reload();
+                                day.refresh();
+                                weekCounts.refresh();
                               } catch (e) {
                                 setError(e instanceof Error ? e.message : 'Could not record join');
                               } finally {
@@ -622,7 +629,8 @@ export function Schedule() {
                   });
                   setPickingNoShowReason(false);
                   setSelected(null);
-                  window.location.reload();
+                  day.refresh();
+                  weekCounts.refresh();
                 } catch (e) {
                   setError(e instanceof Error ? e.message : 'Could not mark no-show');
                 } finally {
