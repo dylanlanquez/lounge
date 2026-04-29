@@ -266,6 +266,15 @@ export function CataloguePicker({
           />
         </div>
       ) : null}
+
+      {/* Hairline + hover rules for ProductRow. Inline-style props
+          can't express :last-child or :hover, so we inject the
+          minimal CSS once at the picker root. Inert when the picker
+          is closed because the rows aren't in the DOM. */}
+      <style>{`
+        .lng-product-row:last-child { border-bottom: none; }
+        .lng-product-row:not(.lng-product-row--expanded):hover { background: rgba(14, 20, 20, 0.025); }
+      `}</style>
     </>
   );
 }
@@ -600,12 +609,18 @@ function ProductRow({
   return (
     <article
       ref={articleRef}
+      className={
+        expanded
+          ? 'lng-product-row lng-product-row--expanded'
+          : 'lng-product-row'
+      }
       style={{
-        borderRadius: theme.radius.card,
-        border: `1px solid ${expanded ? theme.color.ink : theme.color.border}`,
-        background: theme.color.surface,
+        borderBottom: `1px solid ${theme.color.border}`,
+        background: expanded ? theme.color.bg : 'transparent',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        // overflow:hidden keeps the grid-rows expansion animation from
+        // bleeding outside the row before the panel settles.
         overflow: 'hidden',
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
       <button
@@ -620,10 +635,10 @@ function ProductRow({
           textAlign: 'left',
           background: 'transparent',
           border: 'none',
-          padding: theme.space[3],
+          padding: theme.space[4],
           display: 'flex',
           alignItems: 'center',
-          gap: theme.space[3],
+          gap: theme.space[4],
           cursor: 'pointer',
           fontFamily: 'inherit',
         }}
@@ -669,49 +684,11 @@ function ProductRow({
         >
           {showFromPrefix ? 'From ' : ''}£{minHeaderPrice.toFixed(2)}
         </span>
-        {isFormless ? (
-          // Visual affordance so the receptionist knows tapping this
-          // row adds straight to the bag instead of expanding a form.
-          // Renders as a styled <span> rather than a nested <button>
-          // (the row header is already a button) — the parent button
-          // is the click target. Monochrome filled to match the
-          // project's primary Button silhouette; we deliberately
-          // avoid the accent green so this reads as a routine action,
-          // not a "promotion".
-          <span
-            aria-hidden
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: theme.space[2],
-              height: 36,
-              padding: `0 ${theme.space[4]}px`,
-              borderRadius: theme.radius.pill,
-              background: theme.color.ink,
-              color: theme.color.surface,
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.medium,
-              flexShrink: 0,
-              whiteSpace: 'nowrap',
-              opacity: busy ? 0.7 : 1,
-              transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            }}
-          >
-            <ShoppingBag size={14} aria-hidden />
-            {busy ? 'Adding' : 'Add to bag'}
-          </span>
-        ) : (
-          <ChevronDown
-            size={18}
-            color={theme.color.inkSubtle}
-            aria-hidden
-            style={{
-              flexShrink: 0,
-              transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-              transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            }}
-          />
-        )}
+        <RowActionBox
+          isFormless={isFormless}
+          expanded={expanded}
+          busy={busy}
+        />
       </button>
 
       {/* Animated panel — the grid-template-rows trick lets the
@@ -868,6 +845,68 @@ function ProductRow({
         </div>
       </div>
     </article>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RowActionBox — the small bordered icon at the end of every product
+// row. Same chrome (36 square, 1px border, 10px radius) for both
+// affordances; the icon and a tiny background tint signal which is
+// which.
+//
+//   - Form-required (askArch / showShade / has upgrades / unit_label):
+//     ChevronDown, neutral surface. Border tightens to ink + chevron
+//     rotates 180° when the row is expanded.
+//   - Form-less (Impression Appointment et al): ShoppingBag, accent
+//     icon over a 5%-alpha accent wash. Just enough warmth to read
+//     as "this is the action", no shouting.
+//
+// Renders as a <span> rather than a <button> — the parent row header
+// is already a button, and nesting buttons is invalid HTML. The whole
+// row is the click target; this is purely the visual cue.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RowActionBox({
+  isFormless,
+  expanded,
+  busy,
+}: {
+  isFormless: boolean;
+  expanded: boolean;
+  busy: boolean;
+}) {
+  const tightBorder = expanded && !isFormless;
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        border: `1px solid ${tightBorder ? theme.color.ink : theme.color.border}`,
+        background: isFormless ? 'rgba(31, 77, 58, 0.05)' : theme.color.surface,
+        color: isFormless ? theme.color.accent : theme.color.inkSubtle,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        opacity: busy ? 0.6 : 1,
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      {isFormless ? (
+        <ShoppingBag size={18} aria-hidden />
+      ) : (
+        <ChevronDown
+          size={18}
+          aria-hidden
+          style={{
+            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+          }}
+        />
+      )}
+    </span>
   );
 }
 
@@ -1076,7 +1115,10 @@ const listStyle: CSSProperties = {
   padding: 0,
   display: 'flex',
   flexDirection: 'column',
-  gap: theme.space[2],
+  // No gap — rows sit flush and use the per-row borderBottom (with
+  // a :last-child override in the global <style>) for the hairline
+  // dividers between them. Cleaner read than stacked bordered cards.
+  gap: 0,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
