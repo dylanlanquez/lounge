@@ -519,24 +519,12 @@ export function PreviewModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // 3D files take over the whole screen with their own modal so the
-  // viewer can host side flyouts + progress card + bottom hint.
+  // 3D files render in their own popup viewer (Preview3DModal). While
+  // the signed URL is still resolving we render the same outer popup
+  // shell so the user doesn't see a fullscreen black flash before the
+  // sized popup appears. The shell hands `null` for fileUrl, which
+  // Preview3DModal interprets as 'still loading'.
   if (ext3d) {
-    if (!url) {
-      return (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={onClose}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: '#0b0c0f',
-            zIndex: 200,
-          }}
-        />
-      );
-    }
     return (
       <Preview3DModal
         file={file}

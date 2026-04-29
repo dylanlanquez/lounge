@@ -55,15 +55,15 @@ type ModelExt = 'stl' | 'obj' | 'ply';
 export interface ModelViewerProps {
   url: string;
   ext: ModelExt;
-  // Visual settings, all optional. Sensible defaults match Meridian's
-  // out-of-the-box look. Caller can pass these from a viewport panel.
-  background?: string; // hex/rgb string; default '#0b0c0f' (dark)
-  meshColor?: string; // hex; default '#b8c4cf'
-  intensity?: number; // 0..2; default 0.85
-  keyDirection?: 'front' | 'back'; // default 'front'
-  // Progress hooks for the wrapping modal's loading bar. Fire while the
-  // file streams from Supabase Storage; fire again when the renderer
-  // has fitted the camera and the canvas is showing pixels.
+  background?: string;
+  meshColor?: string;
+  intensity?: number;
+  // Light direction as a normalised 2D point on the unit ball — the
+  // user drags a dot around a 100×100 ball widget on the right panel
+  // and the values arrive here. Z sign is governed by `lightBehind`
+  // (front of the mesh vs behind it).
+  lightDir?: { x: number; y: number };
+  lightBehind?: boolean;
   onProgress?: (loadedBytes: number, totalBytes: number) => void;
   onLoaded?: () => void;
 }
@@ -71,10 +71,11 @@ export interface ModelViewerProps {
 export function ModelViewer({
   url,
   ext,
-  background = '#0b0c0f',
-  meshColor = '#b8c4cf',
+  background = '#f5f5f5',
+  meshColor = '#ffffff',
   intensity = 0.85,
-  keyDirection = 'front',
+  lightDir = { x: 0.6, y: -0.45 },
+  lightBehind = false,
   onProgress,
   onLoaded,
 }: ModelViewerProps) {
@@ -126,7 +127,9 @@ export function ModelViewer({
         const ambient = new THREE.AmbientLight(0xffffff, 0.55);
         scene.add(ambient);
         const key = new THREE.DirectionalLight(0xffffff, intensity);
-        key.position.set(keyDirection === 'back' ? -0.6 : 0.6, 0.8, keyDirection === 'back' ? -1 : 1);
+        const keyScale = 12;
+        const zSign = lightBehind ? -1 : 1;
+        key.position.set(lightDir.x * keyScale, -lightDir.y * keyScale, keyScale * zSign);
         scene.add(key);
         keyLightRef.current = key;
         const fill = new THREE.DirectionalLight(0xffffff, 0.35);
@@ -311,7 +314,9 @@ export function ModelViewer({
     if (!THREE || !scene || !mesh) return;
     if (key) {
       key.intensity = intensity;
-      key.position.set(keyDirection === 'back' ? -0.6 : 0.6, 0.8, keyDirection === 'back' ? -1 : 1);
+      const keyScale = 12;
+      const zSign = lightBehind ? -1 : 1;
+      key.position.set(lightDir.x * keyScale, -lightDir.y * keyScale, keyScale * zSign);
     }
     const colour = new THREE.Color(meshColor);
     mesh.traverse?.((child: any) => {
@@ -324,7 +329,7 @@ export function ModelViewer({
       mesh.material.color = colour;
       mesh.material.needsUpdate = true;
     }
-  }, [background, meshColor, intensity, keyDirection]);
+  }, [background, meshColor, intensity, lightDir.x, lightDir.y, lightBehind]);
 
   return (
     <div
