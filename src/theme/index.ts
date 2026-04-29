@@ -14,17 +14,29 @@ export const theme = {
     border: 'rgba(14, 20, 20, 0.08)',
     overlay: 'rgba(14, 20, 20, 0.5)',
   },
-  // Category palette for the appointment-card left bar. Hues span the
-  // colour wheel (orange → green → blue → magenta) so the four types are
-  // unambiguous at a glance. Saturation moderate, lightness consistent —
-  // applied only to a 6px bar (not the card body) so the calendar still
-  // reads as grown-up. Status colours take over post-arrival.
+  // Category palette for the appointment-card left bar. Hues match
+  // Calendly's own per-event-type accents, toned down one notch so
+  // they read as a serious clinical tool rather than a marketing
+  // brochure. Applied only to a 6px bar (not the card body) so the
+  // calendar still reads as grown-up. Status colours take over
+  // post-arrival.
+  //
+  // Mapping (Calendly hue → toned token here):
+  //   • Impression Appointment         lime         → muted olive-lime
+  //   • Same-day Appliances            coral        → muted coral
+  //   • Same-day Click-in Veneers      yellow       → mustard
+  //   • Denture Repairs                orange       → toned amber-orange
+  //   • Virtual Impression Appointment cyan         → muted teal
+  //
+  // Virtual gets its own bucket so a Google-Meet booking is
+  // visually distinct from an in-person impression at a glance.
   category: {
-    repair: '#B36815',     // amber — denture repairs
-    sameDay: '#1F4D3A',    // forest green (accent) — click-in veneers
-    appliance: '#1E5BA8',  // clear blue — same-day appliances
-    impression: '#8C2A5A', // magenta — impression appointments
-    consult: '#4A4F55',    // graphite — anything else
+    repair: '#CC7A1A',            // amber-orange — denture repairs
+    sameDay: '#B89422',           // mustard — click-in veneers
+    appliance: '#C8525F',         // muted coral — same-day appliances
+    impression: '#8FA52A',        // olive-lime — impression appointments
+    virtualImpression: '#3D8FA0', // muted teal — virtual / Google Meet
+    consult: '#4A4F55',           // graphite — anything else
   },
   // Avatar palette — used to give each person a deterministic colour
   // hashed from their email or id, so a list of similarly-named people
