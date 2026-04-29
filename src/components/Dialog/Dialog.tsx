@@ -32,11 +32,14 @@ export function Dialog({
       if (e.key === 'Escape' && dismissable) onClose();
     };
     document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    // Lock the scroll on #root (page scroll lives there now — see
+    // globalStyles for the iOS rubber-band fix).
+    const root = document.getElementById('root');
+    const prev = root?.style.overflow ?? '';
+    if (root) root.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
+      if (root) root.style.overflow = prev;
     };
   }, [open, onClose, dismissable]);
 

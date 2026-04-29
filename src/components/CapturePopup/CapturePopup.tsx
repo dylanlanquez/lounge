@@ -97,13 +97,18 @@ export function useCaptureFlow({
 
 // ─── Internals ──────────────────────────────────────────────────────────────
 
+// Locks the page-scroll container (#root) while a popup is open.
+// The body is pinned at all times by globalStyles to suppress the
+// iOS rubber-band; the real scroll element is #root, so that's
+// what we toggle here.
 function useLockBodyScroll(active: boolean) {
   useEffect(() => {
     if (!active) return;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const root = document.getElementById('root');
+    const original = root?.style.overflow ?? '';
+    if (root) root.style.overflow = 'hidden';
     return () => {
-      document.body.style.overflow = original;
+      if (root) root.style.overflow = original;
     };
   }, [active]);
 }

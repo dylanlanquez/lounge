@@ -30,6 +30,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
+import { useKeyboardOpen } from '../lib/useKeyboardOpen.ts';
 import { supabase } from '../lib/supabase.ts';
 import {
   type CatalogueRow,
@@ -955,6 +956,13 @@ function ActionBar({
   primaryShowArrow?: boolean;
   statusMessage?: string;
 }) {
+  // Hide the bar while the iPad soft keyboard is up. Without this
+  // the visual-viewport-anchored fixed bottom would float above
+  // the keyboard and obscure the input the patient is typing in.
+  // Same signal used by BottomNav.
+  const keyboardOpen = useKeyboardOpen();
+  if (keyboardOpen) return null;
+
   return (
     <footer
       style={{

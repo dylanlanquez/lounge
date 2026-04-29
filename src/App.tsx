@@ -54,13 +54,17 @@ export function App() {
 // down the profile, the patients pagination next-button keeps you
 // at the same y-position on a fresh result set, etc.
 //
+// The page scroll lives on #root (body is pinned to viewport so
+// the iOS rubber-band can't drag the fixed bars), so we scroll
+// that element rather than window.
+//
 // useLayoutEffect (not useEffect) so the scroll fires before the
 // browser paints the new route — no visible jump from old position
 // to top.
 function ScrollToTop() {
   const { pathname } = useLocation();
   useLayoutEffect(() => {
-    window.scrollTo(0, 0);
+    document.getElementById('root')?.scrollTo(0, 0);
   }, [pathname]);
   return null;
 }

@@ -498,11 +498,14 @@ function PhotoLightbox({
       if (e.key === 'ArrowRight' && index! < items.length - 1) onChange(index! + 1);
     };
     document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    // Lock #root (the real page-scroll container; body is pinned
+    // by globalStyles for iOS rubber-band reasons).
+    const root = document.getElementById('root');
+    const prev = root?.style.overflow ?? '';
+    if (root) root.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
+      if (root) root.style.overflow = prev;
     };
   }, [open, index, items.length, onChange]);
 
