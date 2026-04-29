@@ -175,6 +175,28 @@ export function Schedule() {
   const selectedMonth = Number(selectedDate.slice(5, 7)) - 1;
   const toolbarLabel = monthLabel(selectedYear, selectedMonth);
 
+  // Calendar grid expands to cover whatever's actually scheduled.
+  // Default 8 am → 7 pm; if any appointment starts before 8 or ends
+  // after 7 pm, the bounds extend so cards never orphan below the
+  // grid (the bug shown in the 29 Apr screenshot where 7:54 pm and
+  // 8:45 pm walk-ins fell outside the visible range).
+  const { startHour, endHour } = (() => {
+    let s = 8;
+    let e = 19;
+    for (const r of day.data) {
+      const start = new Date(r.start_at);
+      const end = new Date(r.end_at);
+      if (!Number.isNaN(start.getTime())) {
+        s = Math.min(s, start.getHours());
+      }
+      if (!Number.isNaN(end.getTime())) {
+        const endH = end.getHours() + (end.getMinutes() > 0 ? 1 : 0);
+        e = Math.max(e, endH);
+      }
+    }
+    return { startHour: Math.max(0, s), endHour: Math.min(24, e) };
+  })();
+
   return (
     <main
       style={{
@@ -340,7 +362,12 @@ export function Schedule() {
             <ScheduleListView rows={day.data} onPick={setSelected} />
           ) : (
             <div style={{ paddingTop: theme.space[2] }}>
-              <CalendarGrid showNowIndicator={onToday}>
+              <CalendarGrid
+                showNowIndicator={onToday}
+                startHour={startHour}
+                endHour={endHour}
+                isoDate={selectedDate}
+              >
                 {layoutAppointments(day.data).map((item) =>
                   item.kind === 'card' ? (
                     <AppointmentCard
@@ -351,7 +378,7 @@ export function Schedule() {
                       status={item.data.status}
                       staffName={staffDisplayName(item.data)}
                       serviceLabel={formatBookingSummary(item.data) || undefined}
-                      top={offsetForTime(item.data.start_at, 8, 80)}
+                      top={offsetForTime(item.data.start_at, startHour, 80)}
                       height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
                       lane={item.lane}
                       lanesInGroup={item.lanesInGroup}
@@ -375,7 +402,7 @@ export function Schedule() {
                       startAt={item.startAt}
                       endAt={item.endAt}
                       firstNames={item.rows.map((r) => firstNameOf(patientDisplayName(r)))}
-                      top={offsetForTime(item.startAt, 8, 80)}
+                      top={offsetForTime(item.startAt, startHour, 80)}
                       height={heightForDuration(item.startAt, item.endAt, 80)}
                       onClick={() => setClusterRows(item.rows)}
                     />
