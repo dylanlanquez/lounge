@@ -18,6 +18,7 @@ const baseRow = (over: Partial<CatalogueRow> = {}): CatalogueRow => ({
   repair_variant: null,
   arch_match: 'any',
   is_service: false,
+  quantity_enabled: true,
   sort_order: 0,
   active: true,
   created_at: '2026-04-28T00:00:00Z',
