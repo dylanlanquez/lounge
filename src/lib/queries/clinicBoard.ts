@@ -116,8 +116,12 @@ export function bucketForVisit(input: {
   if (input.service_type && WALK_IN_BUCKETS[input.service_type]) {
     return WALK_IN_BUCKETS[input.service_type]!;
   }
-  // eventTypeCategory's enum already matches ClinicSectionKey.
-  return eventTypeCategory(input.event_type_label);
+  // eventTypeCategory carries an extra 'virtualImpression' bucket so
+  // schedule cards can be coloured teal vs olive-lime; the in-clinic
+  // board only cares about the underlying service kind, so collapse
+  // it back to 'impression' here.
+  const cat = eventTypeCategory(input.event_type_label);
+  return cat === 'virtualImpression' ? 'impression' : cat;
 }
 
 export function searchableTextForVisit(v: EnrichedActiveVisit): string {

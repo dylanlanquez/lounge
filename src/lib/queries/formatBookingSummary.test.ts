@@ -262,7 +262,7 @@ describe('eventTypeCategory', () => {
     ['Denture Repairs', 'repair'],
     ['Same-day Click-in Veneers', 'sameDay'],
     ['Same-day Appliances', 'appliance'],
-    ['Virtual Impression Appointment', 'impression'],
+    ['Virtual Impression Appointment', 'virtualImpression'],
     ['In-person Impression Appointment', 'impression'],
     ['Initial Consultation', 'consult'],
     [null, 'consult'],
