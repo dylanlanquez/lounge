@@ -36,11 +36,15 @@ import {
 //
 // Each catalogue row renders as a collapsed tile (thumbnail + name +
 // price + caret). Tapping the tile expands it inline to reveal the
-// per-line options (qty + arch + shade + notes) and an "Add to bag"
-// action. Only one row is expanded at a time; tapping another collapses
-// the previous and opens the new one. After adding, the row collapses
-// and the receptionist can pick another product without bouncing
-// between screens.
+// per-line options (qty + arch + shade + upgrades) and an "Add to bag"
+// action. Form-less rows (no arch, no shade, no upgrades) skip the
+// dropdown entirely and add to the bag straight from the header tap.
+// Only one row is expanded at a time; tapping another collapses the
+// previous and opens the new one. After adding, the row collapses and
+// the receptionist can pick another product without bouncing between
+// screens. Per-line notes don't live here — the page-level staff
+// notes textarea is the single source for technician guidance, which
+// flows onto the LWO.
 //
 // Operates in two modes:
 //   - cartId set:  writes to lng_cart_items immediately (visit page).
@@ -204,9 +208,9 @@ export function CataloguePicker({
               {servicesGrouped.length > 0 ? (
                 <TopGroup title="Services">
                   {servicesGrouped.map(([category, categoryRows]) => (
-                    <Section key={`svc-${category}`} title={category}>
-                      <ul style={listStyle}>{categoryRows.map(renderRow)}</ul>
-                    </Section>
+                    <ul key={`svc-${category}`} style={listStyle}>
+                      {categoryRows.map(renderRow)}
+                    </ul>
                   ))}
                 </TopGroup>
               ) : null}
@@ -222,9 +226,9 @@ export function CataloguePicker({
               {productsGrouped.length > 0 ? (
                 <TopGroup title="Products">
                   {productsGrouped.map(([category, categoryRows]) => (
-                    <Section key={`prd-${category}`} title={category}>
-                      <ul style={listStyle}>{categoryRows.map(renderRow)}</ul>
-                    </Section>
+                    <ul key={`prd-${category}`} style={listStyle}>
+                      {categoryRows.map(renderRow)}
+                    </ul>
                   ))}
                 </TopGroup>
               ) : null}
@@ -237,7 +241,11 @@ export function CataloguePicker({
         <div
           style={{
             position: 'fixed',
-            bottom: theme.space[6],
+            // Anchor near the top of the viewport (still over the
+            // BottomSheet, which is zIndex 1000). Bottom-anchored
+            // toasts collide with the kiosk bottom nav and the sheet's
+            // footer area, so the receptionist often missed them.
+            top: `calc(env(safe-area-inset-top, 0px) + ${theme.space[8]}px)`,
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 1100,
@@ -400,7 +408,7 @@ function Section({
 // ProductRow — the accordion's atomic unit.
 //
 // Header (always visible): thumbnail + name + price + caret.
-// Body (visible when expanded): qty + arch + shade + notes + Add CTA.
+// Body (visible when expanded): qty + arch + shade + upgrades + Add CTA.
 // CSS Grid trick: grid-template-rows transitions from 0fr → 1fr to give
 // a smooth height animation without measuring DOM. Inner div has
 // overflow: hidden so the content clips during the transition.
@@ -432,11 +440,11 @@ function ProductRow({
 }) {
   const headerId = `picker-row-header-${row.id}`;
   const panelId = `picker-row-panel-${row.id}`;
+  const articleRef = useRef<HTMLElement | null>(null);
 
   const [qty, setQty] = useState(1);
   const [arch, setArch] = useState<'upper' | 'lower' | 'both' | null>(null);
   const [shade, setShade] = useState('');
-  const [notes, setNotes] = useState('');
   const [selectedUpgradeIds, setSelectedUpgradeIds] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
 
@@ -447,10 +455,26 @@ function ProductRow({
       setQty(1);
       setArch(null);
       setShade('');
-      setNotes('');
       setSelectedUpgradeIds(new Set());
       setBusy(false);
     }
+  }, [expanded]);
+
+  // When a row expands, scroll it into the centre of the BottomSheet's
+  // scroll viewport. Without this, opening a card near the bottom of
+  // the list leaves the form below the fold and the user has to chase
+  // the content. We wait one frame so the panel's grid-rows transition
+  // has begun expanding before we measure — otherwise scrollIntoView
+  // targets the still-collapsed (zero-height) bounding box and lands
+  // short.
+  useEffect(() => {
+    if (!expanded) return;
+    const el = articleRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => window.cancelAnimationFrame(id);
   }, [expanded]);
 
   // arch_match='single' means the receptionist is picking the arch.
@@ -507,14 +531,23 @@ function ProductRow({
   const showFromPrefix = askArch && hasBothArchesPrice && row.unit_price !== row.both_arches_price;
 
   const canAdd =
-    (cartId != null || onStage != null) && qty >= 1 && (!askArch || arch !== null);
+    (cartId != null || onStage != null) &&
+    qty >= 1 &&
+    (!askArch || arch !== null) &&
+    (!showShade || shade.trim() !== '');
+
+  // Form-less rows (no arch pick, no shade pick, no upgrades) skip the
+  // dropdown entirely — tapping the header adds them straight to the
+  // bag. Impression Appointment is the canonical case but the rule is
+  // schema-driven, not hardcoded by name.
+  const isFormless = !askArch && !showShade && rowUpgrades.length === 0;
 
   const submit = async () => {
     if (!canAdd) return;
     const opts: CatalogueAddOptions = {
       arch: archForLine,
       shade: showShade ? shade.trim() || null : null,
-      notes: notes.trim() || null,
+      notes: null,
       upgrades: appliedUpgrades,
     };
     if (onStage) {
@@ -543,8 +576,18 @@ function ProductRow({
     });
   };
 
+  const handleHeaderClick = () => {
+    if (busy) return;
+    if (isFormless) {
+      void submit();
+      return;
+    }
+    onToggle();
+  };
+
   return (
     <article
+      ref={articleRef}
       style={{
         borderRadius: theme.radius.card,
         border: `1px solid ${expanded ? theme.color.ink : theme.color.border}`,
@@ -556,9 +599,9 @@ function ProductRow({
       <button
         type="button"
         id={headerId}
-        aria-expanded={expanded}
-        aria-controls={panelId}
-        onClick={onToggle}
+        aria-expanded={isFormless ? undefined : expanded}
+        aria-controls={isFormless ? undefined : panelId}
+        onClick={handleHeaderClick}
         style={{
           appearance: 'none',
           width: '100%',
@@ -614,16 +657,18 @@ function ProductRow({
         >
           {showFromPrefix ? 'From ' : ''}£{minHeaderPrice.toFixed(2)}
         </span>
-        <ChevronDown
-          size={18}
-          color={theme.color.inkSubtle}
-          aria-hidden
-          style={{
-            flexShrink: 0,
-            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
-          }}
-        />
+        {isFormless ? null : (
+          <ChevronDown
+            size={18}
+            color={theme.color.inkSubtle}
+            aria-hidden
+            style={{
+              flexShrink: 0,
+              transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+            }}
+          />
+        )}
       </button>
 
       {/* Animated panel — the grid-template-rows trick lets the
@@ -673,7 +718,7 @@ function ProductRow({
             ) : null}
 
             {showShade ? (
-              <FieldBlock label="Shade" optional>
+              <FieldBlock label="Shade" required>
                 <select
                   value={shade}
                   onChange={(e) => setShade(e.target.value)}
@@ -688,7 +733,7 @@ function ProductRow({
                     color: theme.color.ink,
                   }}
                 >
-                  <option value="">— pick a shade —</option>
+                  <option value="">Pick a shade</option>
                   {CLICK_IN_VENEER_SHADES.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -754,14 +799,6 @@ function ProductRow({
                 </div>
               </FieldBlock>
             ) : null}
-
-            <FieldBlock label="Notes" optional>
-              <PlainInput
-                value={notes}
-                onChange={setNotes}
-                placeholder="e.g. matched to upper canine"
-              />
-            </FieldBlock>
 
             <div
               style={{
@@ -960,43 +997,6 @@ function ArchPick({
     >
       {label ?? value}
     </button>
-  );
-}
-
-function PlainInput({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-}) {
-  const ref = useRef<HTMLInputElement | null>(null);
-  const [focused, setFocused] = useState(false);
-  return (
-    <input
-      ref={ref}
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.currentTarget.value)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      placeholder={placeholder}
-      style={{
-        appearance: 'none',
-        height: 44,
-        padding: `0 ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        border: `1px solid ${focused ? theme.color.ink : theme.color.border}`,
-        outline: 'none',
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.base,
-        color: theme.color.ink,
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-      }}
-    />
   );
 }
 
