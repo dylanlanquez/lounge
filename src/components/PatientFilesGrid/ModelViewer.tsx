@@ -19,7 +19,8 @@ import { useEffect, useRef, useState } from 'react';
 
 const CDN = {
   three: 'https://cdn.jsdelivr.net/npm/three@0.143.0/build/three.min.js',
-  orbitControls: 'https://cdn.jsdelivr.net/npm/three@0.143.0/examples/js/controls/OrbitControls.js',
+  trackballControls:
+    'https://cdn.jsdelivr.net/npm/three@0.143.0/examples/js/controls/TrackballControls.js',
   stlLoader: 'https://cdn.jsdelivr.net/npm/three@0.143.0/examples/js/loaders/STLLoader.js',
   objLoader: 'https://cdn.jsdelivr.net/npm/three@0.143.0/examples/js/loaders/OBJLoader.js',
   plyLoader: 'https://cdn.jsdelivr.net/npm/three@0.143.0/examples/js/loaders/PLYLoader.js',
@@ -42,7 +43,7 @@ function loadScript(src: string): Promise<void> {
 async function loadThree(): Promise<void> {
   await loadScript(CDN.three);
   await Promise.all([
-    loadScript(CDN.orbitControls),
+    loadScript(CDN.trackballControls),
     loadScript(CDN.stlLoader),
     loadScript(CDN.objLoader),
     loadScript(CDN.plyLoader),
@@ -107,13 +108,18 @@ export function ModelViewer({
         const h = canvas.clientHeight;
 
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(background);
+        // Transparent scene so the parent's <PreviewBackground> div
+        // renders behind the canvas via CSS — same trick Meridian's
+        // FilePreviewModal uses to support animated background
+        // variants without competing with the three.js render loop.
+        scene.background = null;
         sceneRef.current = scene;
 
         const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 1000);
         camera.position.set(0, 0, 3);
 
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+        renderer.setClearColor(0x000000, 0);
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(w, h, false);
 
@@ -219,9 +225,18 @@ export function ModelViewer({
         camera.far = (camZ || 3) * 100;
         camera.updateProjectionMatrix();
 
-        const controls = new THREE.OrbitControls(camera, canvas);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.08;
+        // TrackballControls — true 3-axis rotation with no up-axis
+        // lock, matches Meridian's FilePreviewModal feel exactly so a
+        // receptionist who's used to the lab tool isn't surprised.
+        // Numbers ported verbatim from Meridian.
+        const controls = new THREE.TrackballControls(camera, canvas);
+        controls.rotateSpeed = 3.5;
+        controls.zoomSpeed = 1.2;
+        controls.panSpeed = 0.8;
+        controls.noZoom = false;
+        controls.noPan = false;
+        controls.staticMoving = false;
+        controls.dynamicDampingFactor = 0.18;
         controls.target.set(0, 0, 0);
         controls.update();
 
@@ -232,6 +247,10 @@ export function ModelViewer({
           camera.aspect = W / H;
           camera.updateProjectionMatrix();
           renderer.setSize(W, H, false);
+          // TrackballControls caches screen geometry internally and
+          // needs a kick after the canvas resizes so the rotate axis
+          // stays correct.
+          controls.handleResize?.();
         };
         const ro = new ResizeObserver(onResize);
         ro.observe(canvas);
@@ -279,15 +298,17 @@ export function ModelViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, ext]);
 
-  // Live settings effect — applies background / mesh colour / light
-  // intensity / key direction to the existing scene without rebuilding.
+  // Live settings effect — applies mesh colour / light intensity /
+  // key direction to the existing scene without rebuilding. Scene
+  // background stays null; the parent renders the visible background
+  // as a CSS layer behind the transparent canvas.
   useEffect(() => {
+    void background; // background lives on the parent's CSS layer.
     const THREE = (window as unknown as { THREE: any }).THREE;
     const scene = sceneRef.current;
     const mesh = meshRef.current;
     const key = keyLightRef.current;
     if (!THREE || !scene || !mesh) return;
-    scene.background = new THREE.Color(background);
     if (key) {
       key.intensity = intensity;
       key.position.set(keyDirection === 'back' ? -0.6 : 0.6, 0.8, keyDirection === 'back' ? -1 : 1);
