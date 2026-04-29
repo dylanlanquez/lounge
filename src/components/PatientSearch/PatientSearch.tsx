@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useState } from 'react';
-import { Phone, Search, User, Mail } from 'lucide-react';
+import { Phone, Search, User, Mail, ShoppingBag } from 'lucide-react';
 import { Input } from '../Input/Input.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { theme } from '../../theme/index.ts';
@@ -263,7 +263,9 @@ function ShopifyResultRow({
     }
   };
 
-  const hasContact = Boolean(customer.email || customer.phone);
+  const showOrders = customer.orders_count > 0;
+  const ordersLabel = customer.orders_count === 1 ? '1 order' : `${customer.orders_count} orders`;
+  const hasMetadata = Boolean(customer.phone || customer.email || showOrders);
   return (
     <button
       type="button"
@@ -309,7 +311,7 @@ function ShopifyResultRow({
             display: 'flex',
             alignItems: 'baseline',
             justifyContent: 'space-between',
-            gap: theme.space[3],
+            gap: theme.space[4],
           }}
         >
           <p
@@ -321,24 +323,25 @@ function ShopifyResultRow({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              minWidth: 0,
             }}
           >
             {fullName}
           </p>
           <span
             style={{
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkSubtle,
-              fontWeight: theme.type.weight.medium,
-              letterSpacing: theme.type.tracking.wide,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.accent,
               flexShrink: 0,
+              whiteSpace: 'nowrap',
             }}
           >
-            {customer.orders_count} {customer.orders_count === 1 ? 'ORDER' : 'ORDERS'}
+            {busy ? 'Registering' : 'Register & continue'}
           </span>
         </div>
 
-        {hasContact ? (
+        {hasMetadata ? (
           <div
             style={{
               marginTop: theme.space[3],
@@ -351,6 +354,7 @@ function ShopifyResultRow({
           >
             {customer.phone ? <ContactLine icon={<Phone size={14} />} value={customer.phone} /> : null}
             {customer.email ? <ContactLine icon={<Mail size={14} />} value={customer.email} /> : null}
+            {showOrders ? <ContactLine icon={<ShoppingBag size={14} />} value={ordersLabel} /> : null}
           </div>
         ) : null}
 
@@ -360,18 +364,6 @@ function ShopifyResultRow({
           </p>
         ) : null}
       </div>
-      <span
-        style={{
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.accent,
-          flexShrink: 0,
-          alignSelf: 'center',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {busy ? 'Registering' : 'Register & continue'}
-      </span>
     </button>
   );
 }
