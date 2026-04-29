@@ -214,6 +214,12 @@ export function Arrival() {
   const mode: Mode = path.startsWith('/arrival/walk-in') ? 'walk_in' : 'appointment';
 
   const [step, setStep] = useState<Step>('service');
+  // Reset scroll on every step transition. The Arrival route doesn't
+  // change URL between steps (it's all internal state) so the App-level
+  // ScrollToTop doesn't fire here — handle it ourselves.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [step]);
   const [appointment, setAppointment] = useState<AppointmentContext | null>(null);
   const [patient, setPatient] = useState<PatientLite | null>(null);
   const [snapshot, setSnapshot] = useState<ArrivalIntakeSnapshot | null>(null);

@@ -35,6 +35,13 @@ export function Patients() {
     setPage(0);
   }, [term]);
 
+  // Scroll to the top of the list whenever the page changes (next /
+  // prev). The route doesn't change so the App-level ScrollToTop
+  // doesn't fire here — handle it ourselves.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [page]);
+
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
