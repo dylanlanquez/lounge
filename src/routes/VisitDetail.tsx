@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -23,6 +23,7 @@ import {
   Card,
   EmptyState,
   MarketingGallery,
+  Skeleton,
   StatusPill,
   Toast,
   VisitTimeline,
@@ -227,6 +228,12 @@ export function VisitDetail() {
                           from: 'visit',
                           visitId: visit.id,
                           visitOpenedAt: visit.opened_at,
+                          // Preview name lets the profile's breadcrumb
+                          // render the correct rightmost crumb on first
+                          // paint, before its own patient query has
+                          // resolved — kills the "Patient" → "Ewa Deb"
+                          // flicker.
+                          patientName: patientFullName(patient),
                           // Pass the visit's own entry state through so
                           // the profile breadcrumb can preserve the chain
                           // (Schedule / Patients / In clinic) and the
@@ -459,6 +466,11 @@ interface VisitEntryState {
   from?: 'patient' | 'schedule' | 'in_clinic';
   patientId?: string;
   patientName?: string;
+  // Optional preview of the visit's opened-at timestamp. When the
+  // caller already has it (e.g. PatientProfile's appointments list),
+  // forwarding it lets the breadcrumb render the full "Appointment,
+  // 29 Apr, 21:43" label on first paint instead of a shimmer.
+  visitOpenedAt?: string;
 }
 
 function VisitBreadcrumbs({
@@ -472,22 +484,40 @@ function VisitBreadcrumbs({
   const location = useLocation();
   const entry = (location.state as VisitEntryState | null) ?? {};
 
-  const visitLabel = visit
-    ? `Appointment, ${new Date(visit.opened_at).toLocaleString('en-GB', {
+  // Visit label resolves from the loaded visit row when ready, falls
+  // back to the caller's preview (entry.visitOpenedAt) on first paint
+  // for direct-to-visit navigations that pass it, and finally to a
+  // tiny shimmer if neither is available yet. Same priority chain as
+  // the patient name below — the rule is: never render a literal
+  // placeholder ("Appointment" with no time) that will get rewritten
+  // on the next render.
+  const visitOpenedAt = visit?.opened_at ?? entry.visitOpenedAt ?? null;
+  const visitLabel: ReactNode = visitOpenedAt
+    ? `Appointment, ${new Date(visitOpenedAt).toLocaleString('en-GB', {
         day: '2-digit',
         month: 'short',
         hour: '2-digit',
         minute: '2-digit',
       })}`
-    : 'Appointment';
+    : <VisitLabelSkeleton />;
+
+  // Same rules for the patient crumb when the chain shows it:
+  // live > preview > skeleton.
+  const livePatientName = patient ? patientFullName(patient) : '';
+  const previewPatientName = entry.patientName?.trim() ?? '';
+  const patientNameLabel: ReactNode =
+    livePatientName || previewPatientName || <PatientNameSkeleton />;
 
   const items = (() => {
     if (entry.from === 'patient' && entry.patientId) {
       return [
         { label: 'Patients', onClick: () => navigate('/patients') },
         {
-          label: entry.patientName ?? 'Patient',
-          onClick: () => navigate(`/patient/${entry.patientId}`),
+          label: patientNameLabel,
+          onClick: () =>
+            navigate(`/patient/${entry.patientId}`, {
+              state: { patientName: livePatientName || previewPatientName },
+            }),
         },
         { label: visitLabel },
       ];
@@ -498,12 +528,20 @@ function VisitBreadcrumbs({
         { label: visitLabel },
       ];
     }
-    // 'schedule' or no hint — default trail.
+    // 'schedule' or no hint — default trail. The patient crumb only
+    // renders when we have *some* identity to navigate to (a loaded
+    // patient row, or at least a preview name). Without an id we
+    // can't link, so fall through to a two-step trail.
     if (patient) {
-      const name = `${patient.first_name} ${patient.last_name}`.trim() || 'Patient';
       return [
         { label: 'Schedule', onClick: () => navigate('/schedule') },
-        { label: name, onClick: () => navigate(`/patient/${patient.id}`) },
+        {
+          label: patientNameLabel,
+          onClick: () =>
+            navigate(`/patient/${patient.id}`, {
+              state: { patientName: livePatientName },
+            }),
+        },
         { label: visitLabel },
       ];
     }
@@ -517,6 +555,56 @@ function VisitBreadcrumbs({
     <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[6]}px` }}>
       <Breadcrumb items={items} />
     </div>
+  );
+}
+
+// Inline shimmers used as crumb labels while the underlying row is
+// in flight. Width ≈ a typical two-word patient name / a typical
+// visit-label string, so the chevrons don't reflow when the real
+// content lands.
+function PatientNameSkeleton() {
+  return (
+    <>
+      <span
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap',
+          borderWidth: 0,
+        }}
+      >
+        Loading patient name
+      </span>
+      <Skeleton width={96} height={14} radius={4} />
+    </>
+  );
+}
+
+function VisitLabelSkeleton() {
+  return (
+    <>
+      <span
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap',
+          borderWidth: 0,
+        }}
+      >
+        Loading appointment timestamp
+      </span>
+      <Skeleton width={160} height={14} radius={4} />
+    </>
   );
 }
 

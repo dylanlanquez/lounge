@@ -91,7 +91,14 @@ export function Patients() {
           </div>
         ) : (
           <>
-            <PatientList data={data} onPick={(id) => navigate(`/patient/${id}`)} />
+            <PatientList
+              data={data}
+              onPick={(p) =>
+                navigate(`/patient/${p.id}`, {
+                  state: { patientName: displayName(p) },
+                })
+              }
+            />
             <Pagination
               page={page}
               hasMore={hasMore}
@@ -230,7 +237,16 @@ function SkeletonList() {
   );
 }
 
-function PatientList({ data, onPick }: { data: PatientListRow[]; onPick: (id: string) => void }) {
+function PatientList({
+  data,
+  onPick,
+}: {
+  data: PatientListRow[];
+  // Receives the full row so the caller can forward a preview name
+  // through router state — keeps the profile breadcrumb from flashing
+  // a placeholder while the patient query is in flight.
+  onPick: (patient: PatientListRow) => void;
+}) {
   return (
     <ul
       role="list"
@@ -244,7 +260,7 @@ function PatientList({ data, onPick }: { data: PatientListRow[]; onPick: (id: st
     >
       {data.map((p) => (
         <li key={p.id}>
-          <PatientRow patient={p} onPick={() => onPick(p.id)} />
+          <PatientRow patient={p} onPick={() => onPick(p)} />
         </li>
       ))}
     </ul>
