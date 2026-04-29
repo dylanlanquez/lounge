@@ -32,6 +32,28 @@ import {
   type UpgradeRow,
 } from '../../lib/queries/upgrades.ts';
 
+// Shared base style for the picker's two close buttons (rest-state
+// in the title block, scrolled-state inline with the search). Width
+// and height are fixed at 44 to hit the iOS HIG minimum tap target;
+// the inline button overrides width to 0 when collapsed so the
+// search field can claim the full row.
+const CLOSE_BUTTON_BASE: CSSProperties = {
+  appearance: 'none',
+  border: 'none',
+  background: 'transparent',
+  color: theme.color.ink,
+  cursor: 'pointer',
+  height: 44,
+  width: 44,
+  borderRadius: theme.radius.pill,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  WebkitTapHighlightColor: 'transparent',
+  padding: 0,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CataloguePicker — a single-screen accordion modal.
 //
@@ -222,48 +244,77 @@ export function CataloguePicker({
         <div ref={sentinelRef} aria-hidden style={{ height: 1, marginBottom: -1 }} />
 
         {/* Large title block — scrolls away with the list, iOS HIG
-            "large title" pattern. Collapsed-state context comes from
-            the search field below; we don't render a redundant
-            inline title in the sticky region. Top padding gives air
-            beneath the drag handle now that BottomSheet's chrome
-            header is suppressed (hideHeader). */}
+            "large title" pattern. Top padding gives air beneath the
+            drag handle now that BottomSheet's chrome header is
+            suppressed (hideHeader). position: relative anchors the
+            rest-state close button at the popup's top-right; that
+            button cross-fades with the inline one in the sticky row
+            as the user scrolls past the sentinel. */}
         <div
           style={{
+            position: 'relative',
             padding: `${theme.space[5]}px ${theme.space[6]}px ${theme.space[4]}px`,
           }}
         >
-          <h2
+          {/* Title text gets right padding to keep it clear of the
+              floating close button so long titles don't run into it. */}
+          <div style={{ paddingRight: 52 }}>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.xl,
+                fontWeight: theme.type.weight.semibold,
+                letterSpacing: theme.type.tracking.tight,
+                color: theme.color.ink,
+              }}
+            >
+              Choose product or service
+            </h2>
+            <p
+              style={{
+                margin: `${theme.space[2]}px 0 0`,
+                color: theme.color.inkMuted,
+                fontSize: theme.type.size.base,
+                lineHeight: 1.5,
+              }}
+            >
+              {trimmedSearch
+                ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`
+                : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'}
+            </p>
+          </div>
+          {/* Rest-state close button: lives in the title block's
+              top-right corner. Fades out when the user scrolls past
+              the sentinel; the inline button below takes over.
+              Right offset = horizontal padding so the X aligns with
+              where the inline X sits when the row collapses (no
+              horizontal jump as it hands off). */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            tabIndex={stuck ? -1 : 0}
             style={{
-              margin: 0,
-              fontSize: theme.type.size.xl,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
+              ...CLOSE_BUTTON_BASE,
+              position: 'absolute',
+              top: theme.space[2],
+              right: theme.space[6],
+              opacity: stuck ? 0 : 1,
+              pointerEvents: stuck ? 'none' : 'auto',
+              transition: `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
             }}
           >
-            Choose product or service
-          </h2>
-          <p
-            style={{
-              margin: `${theme.space[2]}px 0 0`,
-              color: theme.color.inkMuted,
-              fontSize: theme.type.size.base,
-              lineHeight: 1.5,
-            }}
-          >
-            {trimmedSearch
-              ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`
-              : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'}
-          </p>
+            <X size={20} />
+          </button>
         </div>
 
-        {/* Sticky row: SearchField (flex: 1) + close button. Both
-            pinned to the top of the scroll container once the title
-            scrolls away — the X never steals a row from the search,
-            because it lives *in* the search row. The hairline only
-            appears in the stuck state; when the title is still
-            visible there's nothing to separate the row from, and an
-            always-on border would read as a stray rule. */}
+        {/* Sticky row: SearchField + a close button that grows from
+            zero width to 44px once the title has scrolled away. At
+            rest the search takes the row's full width; in the stuck
+            state the X reveals on the right and the search shortens
+            to compensate. Hairline below only appears in the stuck
+            state — at rest there's nothing to separate the row
+            from, and an always-on border reads as a stray rule. */}
         <div
           style={{
             position: 'sticky',
@@ -279,7 +330,6 @@ export function CataloguePicker({
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: theme.space[2],
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -289,20 +339,19 @@ export function CataloguePicker({
               type="button"
               onClick={onClose}
               aria-label="Close"
+              tabIndex={stuck ? 0 : -1}
               style={{
-                appearance: 'none',
-                border: 'none',
-                background: 'transparent',
-                color: theme.color.ink,
-                cursor: 'pointer',
-                width: 44,
-                height: 44,
-                borderRadius: theme.radius.pill,
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                WebkitTapHighlightColor: 'transparent',
+                ...CLOSE_BUTTON_BASE,
+                width: stuck ? 44 : 0,
+                marginLeft: stuck ? theme.space[2] : 0,
+                opacity: stuck ? 1 : 0,
+                pointerEvents: stuck ? 'auto' : 'none',
+                overflow: 'hidden',
+                transition: [
+                  `width ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+                  `margin-left ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+                  `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+                ].join(', '),
               }}
             >
               <X size={20} />
