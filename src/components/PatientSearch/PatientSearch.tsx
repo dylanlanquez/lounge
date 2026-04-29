@@ -263,6 +263,7 @@ function ShopifyResultRow({
     }
   };
 
+  const hasContact = Boolean(customer.email || customer.phone);
   return (
     <button
       type="button"
@@ -273,10 +274,10 @@ function ShopifyResultRow({
         border: `1px solid ${theme.color.border}`,
         background: theme.color.surface,
         borderRadius: 12,
-        padding: theme.space[3],
+        padding: theme.space[4],
         display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
+        alignItems: 'flex-start',
+        gap: theme.space[4],
         width: '100%',
         textAlign: 'left',
         cursor: busy ? 'wait' : 'pointer',
@@ -286,8 +287,8 @@ function ShopifyResultRow({
     >
       <div
         style={{
-          width: 36,
-          height: 36,
+          width: 40,
+          height: 40,
           borderRadius: theme.radius.pill,
           background: theme.color.accentBg,
           color: theme.color.accent,
@@ -303,43 +304,58 @@ function ShopifyResultRow({
         {(customer.last_name?.[0] ?? '').toUpperCase()}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p
+        <div
           style={{
-            margin: 0,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            fontSize: theme.type.size.base,
-          }}
-        >
-          {fullName}
-        </p>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
             display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
           }}
         >
-          {customer.email ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Mail size={12} /> {customer.email}
-            </span>
-          ) : null}
-          {customer.phone ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Phone size={12} /> {customer.phone}
-            </span>
-          ) : null}
-          <span style={{ color: theme.color.inkSubtle }}>
-            {customer.orders_count} {customer.orders_count === 1 ? 'order' : 'orders'}
+          <p
+            style={{
+              margin: 0,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontSize: theme.type.size.base,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {fullName}
+          </p>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkSubtle,
+              fontWeight: theme.type.weight.medium,
+              letterSpacing: theme.type.tracking.wide,
+              flexShrink: 0,
+            }}
+          >
+            {customer.orders_count} {customer.orders_count === 1 ? 'ORDER' : 'ORDERS'}
           </span>
-        </p>
+        </div>
+
+        {hasContact ? (
+          <div
+            style={{
+              marginTop: theme.space[3],
+              paddingTop: theme.space[3],
+              borderTop: `1px solid ${theme.color.border}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
+            {customer.phone ? <ContactLine icon={<Phone size={14} />} value={customer.phone} /> : null}
+            {customer.email ? <ContactLine icon={<Mail size={14} />} value={customer.email} /> : null}
+          </div>
+        ) : null}
+
         {error ? (
-          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.alert }}>
+          <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.alert }}>
             {error}
           </p>
         ) : null}
@@ -350,6 +366,7 @@ function ShopifyResultRow({
           fontWeight: theme.type.weight.semibold,
           color: theme.color.accent,
           flexShrink: 0,
+          alignSelf: 'center',
           whiteSpace: 'nowrap',
         }}
       >
