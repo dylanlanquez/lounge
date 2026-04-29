@@ -610,6 +610,21 @@ function ProductRow({
     onToggle();
   };
 
+  // Which configurator section renders first inside the expansion
+  // panel? The first one drops its top border so it sits flush
+  // against the panel's top whitespace instead of doubling against
+  // the header.
+  const firstSection: 'qty' | 'arch' | 'shade' | 'upgrades' | null =
+    row.quantity_enabled
+      ? 'qty'
+      : askArch
+        ? 'arch'
+        : showShade
+          ? 'shade'
+          : rowUpgrades.length > 0
+            ? 'upgrades'
+            : null;
+
   return (
     <article
       ref={articleRef}
@@ -711,20 +726,24 @@ function ProductRow({
         <div style={{ overflow: 'hidden' }}>
           <div
             style={{
-              padding: `0 ${theme.space[4]}px ${theme.space[3]}px`,
+              padding: `${theme.space[1]}px ${theme.space[5]}px ${theme.space[4]}px`,
               display: 'flex',
               flexDirection: 'column',
             }}
           >
             {row.quantity_enabled ? (
-              <ConfigRow label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}>
-                <CompactStepper value={qty} onChange={setQty} />
+              <ConfigRow
+                label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}
+                first={firstSection === 'qty'}
+              >
+                <PillStepper value={qty} onChange={setQty} />
               </ConfigRow>
             ) : null}
 
             {askArch ? (
-              <ConfigRow label="Arch" required>
+              <ConfigRow label="Arch" required first={firstSection === 'arch'}>
                 <Segmented
+                  ariaLabel="Arch"
                   value={arch}
                   onChange={setArch}
                   options={
@@ -744,8 +763,9 @@ function ProductRow({
             ) : null}
 
             {showShade ? (
-              <ConfigRow label="Shade" required>
+              <ConfigRow label="Shade" required first={firstSection === 'shade'}>
                 <Segmented
+                  ariaLabel="Shade"
                   value={shade}
                   onChange={setShade}
                   options={CLICK_IN_VENEER_SHADES.map((s) => ({ value: s, label: s }))}
@@ -754,9 +774,9 @@ function ProductRow({
             ) : null}
 
             {rowUpgrades.length > 0 ? (
-              <ConfigRow label="Upgrades" hint="optional" stack>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-                  {rowUpgrades.map(({ upgrade, link }) => {
+              <ConfigRow label="Upgrades" hint="optional" stack first={firstSection === 'upgrades'}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {rowUpgrades.map(({ upgrade, link }, i) => {
                     const checked = selectedUpgradeIds.has(upgrade.id);
                     const tierPrice =
                       isBothArches && link.both_arches_price != null
@@ -769,11 +789,10 @@ function ProductRow({
                           display: 'flex',
                           alignItems: 'center',
                           gap: theme.space[3],
-                          padding: `${theme.space[2]}px ${theme.space[2]}px`,
-                          borderRadius: theme.radius.input,
-                          background: checked ? theme.color.accentBg : 'transparent',
+                          padding: `${theme.space[3]}px 0`,
+                          borderTop:
+                            i === 0 ? 'none' : `1px solid ${theme.color.border}`,
                           cursor: 'pointer',
-                          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
                         }}
                       >
                         <Checkbox
@@ -808,34 +827,48 @@ function ProductRow({
               </ConfigRow>
             ) : null}
 
+            {/* Footer — calm summary on the left, primary action on the
+                right. Matches the Wise/Stripe summary-then-CTA pattern:
+                small "Total" eyebrow + a single big tabular value that
+                doesn't compete with the button label. */}
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                gap: theme.space[3],
-                marginTop: theme.space[3],
-                paddingTop: theme.space[3],
+                gap: theme.space[4],
+                marginTop: theme.space[2],
+                paddingTop: theme.space[4],
                 borderTop: `1px solid ${theme.color.border}`,
               }}
             >
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                  Line total
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span
+                  style={{
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkMuted,
+                    fontWeight: theme.type.weight.medium,
+                    letterSpacing: 0,
+                  }}
+                >
+                  Total
                 </span>
                 <span
                   style={{
-                    fontSize: theme.type.size.lg,
+                    fontSize: theme.type.size.xl,
                     fontWeight: theme.type.weight.semibold,
                     fontVariantNumeric: 'tabular-nums',
                     color: theme.color.ink,
+                    letterSpacing: theme.type.tracking.tight,
+                    lineHeight: 1,
                   }}
                 >
                   £{lineTotal.toFixed(2)}
                 </span>
-              </span>
+              </div>
               <Button
                 variant="primary"
+                size="md"
                 onClick={submit}
                 disabled={!canAdd || busy}
                 loading={busy}
@@ -853,10 +886,9 @@ function ProductRow({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ConfigRow — `label-left | control-right` row used inside the
-// expansion panel. Replaces the FieldBlock pattern (uppercase tracked
-// eyebrow + content stacked below) with a single-line layout that
-// matches Linear / Stripe / Notion configurators. Hairline below
-// every row except the last.
+// expansion panel. Hairline ABOVE every row except the first (so the
+// last row sits flush against the footer's own divider, no doubled
+// line). Generous vertical padding (16) for calm rhythm.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ConfigRow({
@@ -865,14 +897,14 @@ function ConfigRow({
   hint,
   stack = false,
   children,
+  first = false,
 }: {
   label: string;
   required?: boolean;
   hint?: string;
-  // When the control is taller than a single row (e.g. the upgrades
-  // checkbox list), stack the label above instead of side-by-side.
   stack?: boolean;
   children: React.ReactNode;
+  first?: boolean;
 }) {
   return (
     <div
@@ -881,9 +913,9 @@ function ConfigRow({
         flexDirection: stack ? 'column' : 'row',
         alignItems: stack ? 'stretch' : 'center',
         justifyContent: stack ? 'flex-start' : 'space-between',
-        gap: stack ? theme.space[2] : theme.space[3],
-        padding: `${theme.space[3]}px 0`,
-        borderBottom: `1px solid ${theme.color.border}`,
+        gap: stack ? theme.space[3] : theme.space[4],
+        padding: `${theme.space[4]}px 0`,
+        borderTop: first ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
       <span
@@ -916,16 +948,21 @@ function ConfigRow({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Segmented — single rounded container, internal pill segments,
-// selected segment fills ink. Used for arch + shade pickers in the
-// product expansion panel.
+// Segmented — iOS-style "lifted pill" control. The container is a
+// soft inset on the row (1.5%-ink wash) so the surrounding cream
+// stays cream; the selected segment lifts to white surface with a
+// subtle 1px shadow, semibold ink. Unselected segments are
+// transparent — the eye reads the lifted segment as the answer.
+// Used for arch + shade pickers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function Segmented<T extends string>({
+  ariaLabel,
   value,
   onChange,
   options,
 }: {
+  ariaLabel: string;
   value: T | null | '';
   onChange: (v: T) => void;
   options: ReadonlyArray<{ value: T; label: string }>;
@@ -933,12 +970,14 @@ function Segmented<T extends string>({
   return (
     <div
       role="radiogroup"
+      aria-label={ariaLabel}
       style={{
         display: 'inline-flex',
-        padding: 2,
+        padding: 3,
         borderRadius: theme.radius.pill,
-        background: theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
+        // Subtle ink wash so the segments float above the cream row
+        // bg without introducing a hard border.
+        background: 'rgba(14, 20, 20, 0.04)',
       }}
     >
       {options.map((opt) => {
@@ -955,14 +994,20 @@ function Segmented<T extends string>({
               border: 'none',
               padding: `${theme.space[2]}px ${theme.space[4]}px`,
               borderRadius: theme.radius.pill,
-              background: selected ? theme.color.ink : 'transparent',
-              color: selected ? theme.color.surface : theme.color.ink,
+              background: selected ? theme.color.surface : 'transparent',
+              color: selected ? theme.color.ink : theme.color.inkMuted,
               fontFamily: 'inherit',
               fontSize: theme.type.size.sm,
               fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
               cursor: 'pointer',
-              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
               minWidth: 56,
+              // Lifted-pill effect: a tiny shadow on the selected
+              // segment so it reads as "in front of" the others
+              // without needing a heavy border.
+              boxShadow: selected
+                ? '0 1px 2px rgba(14, 20, 20, 0.08), 0 0 0 0.5px rgba(14, 20, 20, 0.04)'
+                : 'none',
             }}
           >
             {opt.label}
@@ -974,60 +1019,85 @@ function Segmented<T extends string>({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CompactStepper — tighter than the FieldBlock'd Stepper above; lives
-// on a single row next to its label.
+// PillStepper — single rounded container, three internal segments
+// (minus | value | plus). Same chrome language as Segmented (inset
+// wash bg, no internal borders) so the configurator reads as one
+// system, not three loose controls. The number lifts to surface
+// only by typography weight — no visible background pill behind it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CompactStepper({
+function PillStepper({
   value,
   onChange,
 }: {
   value: number;
   onChange: (n: number) => void;
 }) {
-  const button: CSSProperties = {
+  const [hover, setHover] = useState<'minus' | 'plus' | null>(null);
+  const minDisabled = value <= 1;
+  const button = (kind: 'minus' | 'plus', disabled: boolean): CSSProperties => ({
     appearance: 'none',
     width: 32,
     height: 32,
     borderRadius: theme.radius.pill,
-    border: `1px solid ${theme.color.border}`,
-    background: theme.color.surface,
-    color: theme.color.ink,
-    cursor: 'pointer',
+    border: 'none',
+    background:
+      hover === kind && !disabled
+        ? 'rgba(14, 20, 20, 0.06)'
+        : 'transparent',
+    color: disabled ? theme.color.inkSubtle : theme.color.ink,
+    cursor: disabled ? 'not-allowed' : 'pointer',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     fontFamily: 'inherit',
-  };
+    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+  });
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: 3,
+        borderRadius: theme.radius.pill,
+        background: 'rgba(14, 20, 20, 0.04)',
+        gap: 0,
+      }}
+    >
       <button
         type="button"
-        aria-label="Decrease"
+        aria-label="Decrease quantity"
+        disabled={minDisabled}
         onClick={() => onChange(Math.max(1, value - 1))}
-        style={button}
+        onMouseEnter={() => setHover('minus')}
+        onMouseLeave={() => setHover(null)}
+        style={button('minus', minDisabled)}
       >
-        <Minus size={14} />
+        <Minus size={14} strokeWidth={2.5} />
       </button>
       <span
         style={{
-          minWidth: 28,
+          minWidth: 32,
           textAlign: 'center',
           fontSize: theme.type.size.base,
           fontWeight: theme.type.weight.semibold,
           fontVariantNumeric: 'tabular-nums',
           color: theme.color.ink,
+          padding: `0 ${theme.space[1]}px`,
         }}
+        aria-live="polite"
       >
         {value}
       </span>
       <button
         type="button"
-        aria-label="Increase"
+        aria-label="Increase quantity"
         onClick={() => onChange(value + 1)}
-        style={button}
+        onMouseEnter={() => setHover('plus')}
+        onMouseLeave={() => setHover(null)}
+        style={button('plus', false)}
       >
-        <Plus size={14} />
+        <Plus size={14} strokeWidth={2.5} />
       </button>
     </div>
   );
