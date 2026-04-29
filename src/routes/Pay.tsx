@@ -9,7 +9,7 @@ import { TerminalPaymentModal } from '../components/TerminalPaymentModal/Termina
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useVisitDetail } from '../lib/queries/visits.ts';
+import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
 import { useCart, formatPence } from '../lib/queries/carts.ts';
 import { recordCashPayment } from '../lib/queries/payments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
@@ -500,15 +500,14 @@ function PayBreadcrumbs({
     // visit's own entry state so its breadcrumb stays intact when
     // navigated back to.
     if (e.from === 'visit' && e.visitId && e.visitOpenedAt) {
-      const visitLabel = `Appointment, ${new Date(e.visitOpenedAt).toLocaleString(
-        'en-GB',
-        {
-          day: '2-digit',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-        }
-      )}`;
+      // Pay's chain has no separate patient crumb, so the visit
+      // crumb takes ownership of the patient name. Falls back to
+      // bare "Appt. {date}" when the name isn't in state.
+      const visitLabel = formatVisitCrumb({
+        name: e.visitEntry?.patientName ?? null,
+        openedAtIso: e.visitOpenedAt,
+        includeName: true,
+      });
       const visitState = e.visitEntry ?? null;
       const visitFrom = visitState?.from;
       const baseCrumb =
