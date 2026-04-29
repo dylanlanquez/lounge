@@ -89,7 +89,33 @@ export function useShopifyCustomerSearch(
         const customers: ShopifyCustomerResult[] = Array.isArray(res.customers)
           ? res.customers
           : [];
-        setData(customers);
+        // Shopify's customers(query:) treats space-separated words as
+        // OR with prefix matching, so "james black" returns anyone
+        // matching either word — Paul Lackerstein, Ksenia Placinska
+        // and other unrelated rows leak through. Tighten with a
+        // client-side AND filter: every word must appear in name +
+        // email + phone (joined). Single-word terms skip the filter
+        // so Shopify's fuzzy/prefix behaviour still helps with
+        // partial matches.
+        const words = cleaned
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length > 0);
+        const filtered =
+          words.length > 1
+            ? customers.filter((c) => {
+                const haystack = [
+                  c.first_name ?? '',
+                  c.last_name ?? '',
+                  c.email ?? '',
+                  c.phone ?? '',
+                ]
+                  .join(' ')
+                  .toLowerCase();
+                return words.every((w) => haystack.includes(w));
+              })
+            : customers;
+        setData(filtered);
         setError(null);
         setLoading(false);
       } catch (e: unknown) {
