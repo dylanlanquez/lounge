@@ -54,7 +54,10 @@ function json(body: unknown, status = 200) {
 function normaliseJbDigits(input: unknown): string | null {
   if (typeof input !== 'string') return null;
   const trimmed = input.trim().toUpperCase().replace(/^JB[-_\s]*/i, '');
-  if (!/^\d{1,4}$/.test(trimmed)) return null;
+  // Allow up to 10 digits — labs run JB sequences well past 9999, so the
+  // old 4-digit cap was rejecting legitimate refs (e.g. JB997786). Still
+  // bounded so a paste accident can't blow up parseInt.
+  if (!/^\d{1,10}$/.test(trimmed)) return null;
   return String(parseInt(trimmed, 10));
 }
 
