@@ -459,7 +459,6 @@ function buildHeroFields(p: PatientProfileRow): FieldDef[] {
     { label: 'Emergency phone', value: p.emergency_contact_phone },
     { label: 'Registered', value: formatDate(p.registered_at) },
     { label: 'Shopify customer', value: p.shopify_customer_id, mono: true },
-    { label: 'LWO contact', value: p.lwo_contact_id, mono: true },
     { label: 'Referred by', value: p.referred_by },
     { label: 'Insurance', value: p.insurance },
   ];

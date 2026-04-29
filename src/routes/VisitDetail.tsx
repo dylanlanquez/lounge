@@ -201,11 +201,6 @@ export function VisitDetail() {
                     {patient!.internal_ref}
                   </MetaPill>
                 ) : null}
-                {showableRef(patient?.lwo_ref) ? (
-                  <MetaPill icon={<Hash size={12} />} tone="arrived" size="sm">
-                    {patient!.lwo_ref}
-                  </MetaPill>
-                ) : null}
                 {appointment?.appointment_ref ? (
                   <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
                     {appointment.appointment_ref}
@@ -661,9 +656,7 @@ function MetaPill({
   );
 }
 
-// Filters out internal placeholders that occasionally leak through
-// from the walk-in trigger flow (e.g. lwo_ref still set to
-// "__GENERATE__" between insert and after-trigger). Anything starting
+// Filters out internal placeholders and empty refs. Anything starting
 // with "__" or empty is treated as not-yet-resolved and hidden from
 // the UI rather than rendered as raw plumbing.
 function showableRef(value: string | null | undefined): value is string {

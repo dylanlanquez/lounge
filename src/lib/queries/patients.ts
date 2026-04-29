@@ -10,7 +10,6 @@ export interface PatientRow {
   email: string | null;
   phone: string | null;
   date_of_birth: string | null;
-  lwo_ref: string | null;
   shopify_customer_id: string | null;
 }
 
@@ -213,7 +212,6 @@ export function usePatientSearch(term: string): SearchResult {
           `first_name.ilike.%${escape(cleaned)}%`,
           `email.ilike.%${escape(cleaned)}%`,
           `internal_ref.ilike.%${escape(cleaned)}%`,
-          `lwo_ref.ilike.%${escape(cleaned)}%`,
         ];
         if (phoneDigits.length >= 4) {
           filters.push(`phone.ilike.%${escape(phoneDigits)}%`);
@@ -221,7 +219,7 @@ export function usePatientSearch(term: string): SearchResult {
         const { data: rows, error: err } = await supabase
           .from('patients')
           .select(
-            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id'
+            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
           )
           .or(filters.join(','))
           .order('last_name', { ascending: true })
@@ -254,7 +252,7 @@ export async function getPatient(id: string): Promise<PatientRow | null> {
   const { data, error } = await supabase
     .from('patients')
     .select(
-      'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id'
+      'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
     )
     .eq('id', id)
     .maybeSingle();
@@ -333,8 +331,7 @@ export function usePatientList(
             `first_name.ilike.%${escape(cleaned)}%`,
             `email.ilike.%${escape(cleaned)}%`,
             `internal_ref.ilike.%${escape(cleaned)}%`,
-            `lwo_ref.ilike.%${escape(cleaned)}%`,
-          ];
+            ];
           if (phoneDigits.length >= 4) {
             filters.push(`phone.ilike.%${escape(phoneDigits)}%`);
           }
@@ -351,7 +348,7 @@ export function usePatientList(
               ? buildFallback(cleaned).range(startIdx, endIdx)
               : supabase
                   .from('patients')
-                  .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id')
+                  .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id')
                   .order('first_name', { ascending: true })
                   .order('last_name', { ascending: true })
                   .range(startIdx, endIdx));
@@ -408,14 +405,13 @@ function buildFallback(term: string) {
     `first_name.ilike.%${escape(term)}%`,
     `email.ilike.%${escape(term)}%`,
     `internal_ref.ilike.%${escape(term)}%`,
-    `lwo_ref.ilike.%${escape(term)}%`,
   ];
   if (phoneDigits.length >= 4) {
     filters.push(`phone.ilike.%${escape(phoneDigits)}%`);
   }
   return supabase
     .from('patients')
-    .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id')
+    .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id')
     .or(filters.join(','))
     .order('first_name', { ascending: true })
     .order('last_name', { ascending: true });

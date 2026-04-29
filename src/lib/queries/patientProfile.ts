@@ -26,8 +26,6 @@ export interface PatientProfileRow {
   address: string | null;
   registered_at: string | null;
   shopify_customer_id: string | null;
-  lwo_contact_id: string | null;
-  lwo_ref: string | null;
   referred_by: string | null;
   insurance: string | null;
   allergies: string | null;
@@ -50,7 +48,7 @@ export interface PatientProfileRow {
 }
 
 const PATIENT_PROFILE_COLUMNS =
-  'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, sex, address, registered_at, shopify_customer_id, lwo_contact_id, lwo_ref, referred_by, insurance, allergies, communication_preferences, notes, avatar_data, emergency_contact_name, emergency_contact_phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, created_at, updated_at';
+  'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, sex, address, registered_at, shopify_customer_id, referred_by, insurance, allergies, communication_preferences, notes, avatar_data, emergency_contact_name, emergency_contact_phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, created_at, updated_at';
 
 interface ProfileResult {
   data: PatientProfileRow | null;
@@ -86,7 +84,7 @@ export function usePatientProfile(id: string | null | undefined): ProfileResult 
         if (err.code === '42703') {
           const { data: minRow, error: err2 } = await supabase
             .from('patients')
-            .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id')
+            .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id')
             .eq('id', id)
             .maybeSingle();
           if (cancelled) return;
@@ -98,7 +96,6 @@ export function usePatientProfile(id: string | null | undefined): ProfileResult 
               sex: null,
               address: null,
               registered_at: null,
-              lwo_contact_id: null,
               referred_by: null,
               insurance: null,
               allergies: null,
@@ -420,8 +417,7 @@ export interface PatientVisitRow {
   appointment_id: string | null;
   // Booking-level reference (e.g. LAP-00001). Sourced from the
   // appointment for scheduled visits, or from the walk-in row for
-  // walk-ins. Distinct from patients.lwo_ref which is the patient-level
-  // identifier and never displayed in appointment columns.
+  // walk-ins.
   lap_ref: string | null;
   service_label: string | null;
   cart_status: 'open' | 'paid' | 'voided' | null;

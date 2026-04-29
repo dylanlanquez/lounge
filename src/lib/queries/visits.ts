@@ -29,9 +29,11 @@ export interface CreateWalkInInput {
   jb_ref?: string | null;
 }
 
-// Creates a walk-in + visit pair, stamps lwo_ref on the patient if not set,
-// writes a patient_events row. Returns the new visit id.
-export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ visit_id: string; walk_in_id: string; lwo_ref: string | null }> {
+// Creates a walk-in + visit pair and writes a patient_events row.
+// Returns the new visit + walk-in ids; the human-readable reference
+// is the appointment_ref (LAP-NNNNN) already stamped on lng_walk_ins
+// at intake-submit time.
+export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ visit_id: string; walk_in_id: string }> {
   const { data: walkIn, error: walkInErr } = await supabase
     .from('lng_walk_ins')
     .insert({
@@ -60,50 +62,13 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
     .single();
   if (visitErr || !visit) throw new Error(visitErr?.message ?? 'Could not create visit');
 
-  // Stamp lwo_ref on the patient if not already set. Single-step:
-  // generate the ref via RPC, then UPDATE only where lwo_ref is still
-  // null. If the WHERE matches, we stamped it; if not, the patient
-  // already had a ref (or another arrival raced ahead) and we read
-  // the existing value back. The unique index on patients.lwo_ref +
-  // patients_guard_lwo_ref keep this safe under contention.
-  //
-  // Previous versions of this function used a '__GENERATE__'
-  // placeholder string as a sentinel. That was unsafe — the unique
-  // index would reject a second walk-in setting the same placeholder
-  // while the first was still mid-flight, leaving rows stuck and
-  // every subsequent arrival 409'ing on the unique constraint.
-  let lwoRef: string | null = null;
-  const { data: ref } = await supabase.rpc('generate_lwo_ref');
-  if (typeof ref === 'string') {
-    const { data: stampRows } = await supabase
-      .from('patients')
-      .update({ lwo_ref: ref })
-      .eq('id', input.patient_id)
-      .is('lwo_ref', null)
-      .select('lwo_ref');
-    if (Array.isArray(stampRows) && stampRows.length > 0) {
-      lwoRef = ref;
-    }
-  }
-  if (lwoRef === null) {
-    // Patient already had an lwo_ref OR generation failed. Either way
-    // read what's there so the patient_events payload below is honest.
-    const { data: existing } = await supabase
-      .from('patients')
-      .select('lwo_ref')
-      .eq('id', input.patient_id)
-      .maybeSingle();
-    lwoRef = existing?.lwo_ref ?? null;
-  }
-
-  // Write patient_events
   await supabase.from('patient_events').insert({
     patient_id: input.patient_id,
     event_type: 'walk_in_arrived',
     payload: {
       visit_id: visit.id,
       walk_in_id: walkIn.id,
-      lwo_ref: lwoRef,
+      appointment_ref: input.appointment_ref ?? null,
       service_type: input.service_type ?? null,
     },
   });
@@ -130,7 +95,7 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
     status: 'arrived',
   });
 
-  return { visit_id: visit.id, walk_in_id: walkIn.id, lwo_ref: lwoRef };
+  return { visit_id: visit.id, walk_in_id: walkIn.id };
 }
 
 // The reasons a receptionist can pick when flipping an appointment to
@@ -226,14 +191,6 @@ export async function reverseNoShow(appointmentId: string): Promise<{ visit_id?:
       .single();
     if (!visitErr && visit) {
       visitId = (visit as { id: string }).id;
-      const { data: ref } = await supabase.rpc('generate_lwo_ref');
-      if (typeof ref === 'string') {
-        await supabase
-          .from('patients')
-          .update({ lwo_ref: ref })
-          .eq('id', apptRow.patient_id)
-          .is('lwo_ref', null);
-      }
     }
   }
 
@@ -300,12 +257,6 @@ export async function markAppointmentArrived(appointmentId: string): Promise<{ v
     .select('id')
     .single();
   if (visitErr || !visit) throw new Error(visitErr?.message ?? 'Could not create visit');
-
-  // Stamp lwo_ref if not set
-  const { data: ref } = await supabase.rpc('generate_lwo_ref');
-  if (typeof ref === 'string') {
-    await supabase.from('patients').update({ lwo_ref: ref }).eq('id', appt.patient_id).is('lwo_ref', null);
-  }
 
   await supabase.from('patient_events').insert({
     patient_id: appt.patient_id,
@@ -475,7 +426,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
         const { data: p } = await supabase
           .from('patients')
           .select(
-            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id'
+            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
           )
           .eq('id', visitRow.patient_id)
           .maybeSingle();

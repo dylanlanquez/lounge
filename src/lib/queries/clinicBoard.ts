@@ -74,7 +74,6 @@ export interface EnrichedActiveVisit {
   patient_phone: string | null;
   patient_email: string | null;
   patient_internal_ref: string | null;
-  patient_lwo_ref: string | null;
   patient_avatar_data: string | null;
   // Booking metadata (booked from lng_appointments; walk-in from lng_walk_ins)
   event_type_label: string | null;
@@ -128,7 +127,6 @@ export function searchableTextForVisit(v: EnrichedActiveVisit): string {
     v.patient_phone,
     v.patient_email,
     v.patient_internal_ref,
-    v.patient_lwo_ref,
     v.appointment_ref,
     v.jb_ref ? `JB${v.jb_ref}` : null,
     v.event_type_label,
@@ -224,7 +222,6 @@ interface PatientJoin {
   phone: string | null;
   email: string | null;
   internal_ref: string | null;
-  lwo_ref: string | null;
   avatar_data: string | null;
 }
 
@@ -290,7 +287,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           `id, patient_id, status, arrival_type, opened_at,
            patient:patients (
              first_name, last_name, phone, email,
-             internal_ref, lwo_ref, avatar_data
+             internal_ref, avatar_data
            ),
            appointment:lng_appointments (
              event_type_label, intake, appointment_ref, jb_ref
@@ -436,7 +433,6 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           patient_phone: p?.phone ?? null,
           patient_email: p?.email ?? null,
           patient_internal_ref: p?.internal_ref ?? null,
-          patient_lwo_ref: p?.lwo_ref ?? null,
           patient_avatar_data: p?.avatar_data ?? null,
           event_type_label: eventTypeLabel,
           intake,

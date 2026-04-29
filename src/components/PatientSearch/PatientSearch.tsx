@@ -31,7 +31,7 @@ export function PatientSearch({
   onCreateNew,
   emptyHint,
   autoFocus = true,
-  placeholder = 'Phone, name, email, or LWO ref',
+  placeholder = 'Phone, name, or email',
   enableShopifyLookup = false,
   registerLocationId,
 }: PatientSearchProps) {
@@ -410,7 +410,6 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
               <Phone size={12} /> {patient.phone}
             </span>
           ) : null}
-          {patient.lwo_ref ? <span style={{ color: theme.color.accent }}>{patient.lwo_ref}</span> : null}
         </p>
       </div>
     </button>
