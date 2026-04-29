@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useLayoutEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider } from './lib/auth.tsx';
 import { theme } from './theme/index.ts';
@@ -40,10 +40,29 @@ export function App() {
   return (
     <AuthProvider>
       <KioskStatusBar />
+      <ScrollToTop />
       <RoutedErrorBoundary />
       <BottomNav />
     </AuthProvider>
   );
+}
+
+// Resets the document scroll to the top whenever the URL pathname
+// changes. Without this React Router preserves whatever scroll
+// position the previous route was at — so navigating from the
+// bottom of the patient list to a patient profile lands halfway
+// down the profile, the patients pagination next-button keeps you
+// at the same y-position on a fresh result set, etc.
+//
+// useLayoutEffect (not useEffect) so the scroll fires before the
+// browser paints the new route — no visible jump from old position
+// to top.
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
 }
 
 // Re-key the boundary on pathname so navigating to a fresh route always
