@@ -1915,7 +1915,11 @@ function ConfirmationBanner({
         boxShadow: theme.shadow.card,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+      {/* Header row — icon + title vertically centred against each
+          other. The body wraps below, full width, so the items list
+          aligns with the start of the card chrome rather than
+          inheriting the icon's left offset. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
         <span
           style={{
             display: 'inline-flex',
@@ -1931,13 +1935,18 @@ function ConfirmationBanner({
         >
           <ClipboardList size={18} />
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-            {title}
-          </p>
-          <div style={{ marginTop: theme.space[3] }}>{body}</div>
-        </div>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          {title}
+        </p>
       </div>
+      <div style={{ marginTop: theme.space[4] }}>{body}</div>
       <div style={{ marginTop: theme.space[4], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
         <Checkbox checked={checked} onChange={onChange} label={confirmLabel} />
       </div>
