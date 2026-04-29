@@ -234,7 +234,7 @@ function DeliveryCard({
         <div
           style={{
             fontSize: 13,
-            fontWeight: theme.type.weight.medium,
+            fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -242,6 +242,18 @@ function DeliveryCard({
           }}
         >
           {applianceLabel}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkMuted,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {shortLabel(file) ?? 'Delivery'}
           {file.version != null ? (
             <span style={{ color: theme.color.inkSubtle, fontWeight: theme.type.weight.regular }}>
               <span aria-hidden style={{ margin: '0 4px', color: theme.color.inkSubtle }}>
@@ -251,31 +263,20 @@ function DeliveryCard({
             </span>
           ) : null}
         </div>
-        <div
-          style={{
-            fontSize: 11,
-            color: theme.color.inkMuted,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {entry.reviewedAt ? `Approved ${formatShort(entry.reviewedAt)}` : 'Approved'}
-          {entry.reviewerName ? ` · ${entry.reviewerName}` : ''}
-        </div>
-        {entry.caseRef ? (
-          <code
+        {entry.caseRef || entry.reviewerName ? (
+          <div
             style={{
               fontSize: 10,
               color: theme.color.inkSubtle,
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
             }}
           >
-            {entry.caseRef}
-          </code>
+            {entry.caseRef ?? ''}
+            {entry.caseRef && entry.reviewerName ? ' · ' : ''}
+            {entry.reviewerName ? `By ${entry.reviewerName}` : ''}
+          </div>
         ) : null}
       </div>
     </div>
@@ -534,4 +535,18 @@ function formatShort(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// Squash the file's label / filename down to the slot identifier the
+// receptionist actually cares about — Upper, Lower, Both arches — so
+// the card reads cleanly under the appliance name. Falls back to the
+// custom label or display label if neither side can be inferred.
+function shortLabel(file: PatientFileEntry): string | null {
+  const haystack = `${file.label_key ?? ''} ${file.label_display ?? ''} ${file.custom_label ?? ''} ${file.file_name}`.toLowerCase();
+  if (/\bboth\b/.test(haystack)) return 'Both arches';
+  if (/\bupper\b/.test(haystack)) return 'Upper';
+  if (/\blower\b/.test(haystack)) return 'Lower';
+  if (file.custom_label && file.custom_label.trim()) return file.custom_label.trim();
+  if (file.label_display && file.label_display.trim()) return file.label_display.trim();
+  return null;
 }
