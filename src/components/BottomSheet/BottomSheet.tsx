@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, type RefObject, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
@@ -19,6 +19,16 @@ export interface BottomSheetProps {
   // from a cluster list into one of its rows — so the receptionist can
   // pop back without dismissing the sheet entirely.
   onBack?: () => void;
+  // When true, the inner scroll container has zero padding so the
+  // caller can fully control its own layout (sticky elements, custom
+  // padding, etc.). Used by sheets that follow iOS's large-title /
+  // collapsing-header pattern, where the title scrolls away and a
+  // search field pins via `position: sticky`.
+  bareContent?: boolean;
+  // Forwarded ref to the inner scroll container. Lets the caller
+  // observe scroll state — e.g. driving an IntersectionObserver-based
+  // "stuck" signal for a sticky header.
+  contentRef?: RefObject<HTMLDivElement | null>;
 }
 
 export function BottomSheet({
@@ -30,6 +40,8 @@ export function BottomSheet({
   footer,
   dismissable = true,
   onBack,
+  bareContent = false,
+  contentRef,
 }: BottomSheetProps) {
   useEffect(() => {
     if (!open) return;
@@ -185,8 +197,11 @@ export function BottomSheet({
         )}
 
         <div
+          ref={contentRef}
           style={{
-            padding: `${theme.space[3]}px ${theme.space[6]}px ${theme.space[6]}px`,
+            padding: bareContent
+              ? 0
+              : `${theme.space[3]}px ${theme.space[6]}px ${theme.space[6]}px`,
             overflowY: 'auto',
             flex: 1,
           }}

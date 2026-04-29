@@ -80,6 +80,36 @@ export function CataloguePicker({
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
 
+  // Sticky-header plumbing. When the sheet's scroll moves the title
+  // block out of view, we want a subtle hairline under the sticky
+  // search to communicate the collapsed state — iOS's large-title
+  // pattern in the Human Interface Guidelines. A 1px sentinel sits at
+  // the top of the scroll content; when it leaves the viewport,
+  // `stuck` flips on. Rooting the observer on the BottomSheet's
+  // scroll container (not the document) is essential because the
+  // sheet itself doesn't scroll the page.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (!open) {
+      setStuck(false);
+      return;
+    }
+    const sentinel = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!sentinel || !root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry) setStuck(!entry.isIntersecting);
+      },
+      { root, threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [open]);
+
   // Upgrade lookup by id — small map keeps ProductRow render cheap.
   const upgradeById = useMemo(() => {
     const m = new Map<string, UpgradeRow>();
@@ -181,16 +211,80 @@ export function CataloguePicker({
       <BottomSheet
         open={open}
         onClose={onClose}
-        title="Choose product or service"
-        description={
-          trimmedSearch
-            ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`
-            : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'
-        }
+        bareContent
+        contentRef={scrollRef}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          <SearchField value={search} onChange={setSearch} />
+        {/* Sentinel — a zero-height marker at the top of the scroll
+            content. When it leaves the viewport (root = scrollRef),
+            the sticky search has collapsed up against the sheet
+            chrome and the hairline below it switches on. */}
+        <div ref={sentinelRef} aria-hidden style={{ height: 1, marginBottom: -1 }} />
 
+        {/* Large title block — scrolls away with the list, iOS HIG
+            "large title" pattern. Collapsed-state context comes from
+            the search field's count below; we don't render a
+            redundant inline title in the sticky region. */}
+        <div
+          style={{
+            padding: `${theme.space[2]}px ${theme.space[6]}px ${theme.space[4]}px`,
+          }}
+        >
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xl,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+            }}
+          >
+            Choose product or service
+          </h2>
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.base,
+              lineHeight: 1.5,
+            }}
+          >
+            {trimmedSearch
+              ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`
+              : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'}
+          </p>
+        </div>
+
+        {/* Sticky search. Pinned to the top of the scroll container
+            once the title scrolls away. The hairline only appears in
+            the stuck state — when the title is still visible there's
+            nothing to separate the search from, and an always-on
+            border looks like a stray rule. */}
+        <div
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 2,
+            background: theme.color.surface,
+            padding: `${theme.space[2]}px ${theme.space[6]}px ${theme.space[3]}px`,
+            boxShadow: stuck ? `inset 0 -1px 0 ${theme.color.border}` : 'none',
+            transition: `box-shadow ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+          }}
+        >
+          <SearchField value={search} onChange={setSearch} />
+        </div>
+
+        {/* List content. Padding mirrors what BottomSheet's inner
+            container used to apply (now zeroed via bareContent),
+            with a slightly tighter top so the search-to-list rhythm
+            doesn't double the gap. */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[5],
+            padding: `${theme.space[3]}px ${theme.space[6]}px ${theme.space[6]}px`,
+          }}
+        >
           {error ? (
             <p style={{ margin: 0, color: theme.color.alert }}>Could not load catalogue: {error}</p>
           ) : loading ? (
