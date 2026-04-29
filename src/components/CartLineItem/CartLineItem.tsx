@@ -11,6 +11,10 @@ export interface CartLineItemProps {
   onDecrement: () => void;
   onRemove: () => void;
   disabled?: boolean;
+  // When false, hide the qty stepper (single-instance services like
+  // an in-clinic impression appointment). Defaults true so callers
+  // that don't pass this keep the existing behaviour.
+  quantityEnabled?: boolean;
 }
 
 export function CartLineItem({
@@ -23,6 +27,7 @@ export function CartLineItem({
   onDecrement,
   onRemove,
   disabled = false,
+  quantityEnabled = true,
 }: CartLineItemProps) {
   return (
     <div
@@ -64,12 +69,14 @@ export function CartLineItem({
         </p>
       </div>
 
-      <QtyStepper
-        value={quantity}
-        onIncrement={onIncrement}
-        onDecrement={onDecrement}
-        disabled={disabled}
-      />
+      {quantityEnabled ? (
+        <QtyStepper
+          value={quantity}
+          onIncrement={onIncrement}
+          onDecrement={onDecrement}
+          disabled={disabled}
+        />
+      ) : null}
 
       <div
         style={{

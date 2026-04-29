@@ -291,6 +291,7 @@ export function VisitDetail() {
                       onDecrement={() => dec(it.id, it.quantity)}
                       onRemove={() => rm(it.id)}
                       disabled={busyItem === it.id || cartLocked}
+                      quantityEnabled={it.quantity_enabled}
                     />
                   ))}
                 </div>
