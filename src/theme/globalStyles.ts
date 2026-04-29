@@ -28,6 +28,17 @@ export function applyGlobalStyles(): void {
        the kiosk never scales the page on focus. Components that want
        larger can override; smaller is what we're locking out. */
     input, textarea, select { font-family: inherit; font-size: 16px; }
+    /* Suppress Safari/WebKit's native clear button on type="search"
+       inputs — every search input in the app paints its own X on the
+       right, and the native one was rendering alongside ours as a
+       visible duplicate. */
+    input[type="search"]::-webkit-search-cancel-button,
+    input[type="search"]::-webkit-search-decoration,
+    input[type="search"]::-webkit-search-results-button,
+    input[type="search"]::-webkit-search-results-decoration {
+      -webkit-appearance: none;
+      appearance: none;
+    }
     a { color: inherit; text-decoration: none; }
     :focus-visible {
       outline: 2px solid ${theme.color.accent};
