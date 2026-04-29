@@ -2,7 +2,6 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowLeft,
   Box,
   CheckCircle2,
   ClipboardList,
@@ -500,8 +499,17 @@ export function Arrival() {
       <StepperBar
         steps={STEPS}
         currentIndex={currentStepIndex}
-        onExit={onExit}
       />
+
+      {patient && (step === 'service' || step === 'start') ? (
+        <StaffOnlyBanner
+          subtitle={
+            step === 'service'
+              ? `Set up ${patient.first_name}'s appointment, then hand the device over.`
+              : 'Final check. Tap Start appointment to open the till for this patient.'
+          }
+        />
+      ) : null}
 
       <div
         // Re-keying on step makes React remount the children, which
@@ -532,7 +540,6 @@ export function Arrival() {
         ) : step === 'service' ? (
           <ServiceStep
             mode={mode}
-            patient={patient}
             appointment={appointment}
             serviceType={serviceType}
             onChangeServiceType={setServiceType}
@@ -708,18 +715,16 @@ function hydrateForm(snap: ArrivalIntakeSnapshot, setForm: (f: FormState) => voi
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stepper bar — sticky top. Pill numbers connected by lines, checkmarks
-// for completed, labels below. Exit button left, away from the step
-// progression so receptionists don't accidentally trigger it.
+// for completed, labels below. Exit lives on the bottom action bar so
+// receptionists can't accidentally trigger it from the chrome row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepperBar({
   steps,
   currentIndex,
-  onExit,
 }: {
   steps: { id: Step; label: string }[];
   currentIndex: number;
-  onExit: () => void;
 }) {
   return (
     <header
@@ -737,28 +742,6 @@ function StepperBar({
         gap: theme.space[3],
       }}
     >
-      <button
-        type="button"
-        onClick={onExit}
-        style={{
-          appearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          cursor: 'pointer',
-          padding: `${theme.space[2]}px ${theme.space[3]}px`,
-          color: theme.color.inkMuted,
-          fontFamily: 'inherit',
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.medium,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[1],
-          borderRadius: theme.radius.pill,
-        }}
-      >
-        <ArrowLeft size={16} /> Exit
-      </button>
-
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
         <ol
           aria-label="Arrival progress"
@@ -834,9 +817,6 @@ function StepperBar({
           })}
         </ol>
       </div>
-
-      {/* Right-side balance so the centred stepper stays optically centred. */}
-      <span style={{ width: 64 }} aria-hidden />
     </header>
   );
 }
@@ -934,7 +914,6 @@ function ActionBar({
 
 function ServiceStep({
   mode,
-  patient,
   appointment,
   serviceType,
   onChangeServiceType,
@@ -954,7 +933,6 @@ function ServiceStep({
   onChangeNotes,
 }: {
   mode: Mode;
-  patient: PatientLite;
   appointment: AppointmentContext | null;
   serviceType: string;
   onChangeServiceType: (v: string) => void;
@@ -975,21 +953,18 @@ function ServiceStep({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
-      <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-        <StaffOnlyBanner subtitle={`Set up ${patient.first_name}'s appointment, then hand the device over.`} />
-        <h1
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xxl,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
-            color: theme.color.ink,
-            lineHeight: 1.1,
-          }}
-        >
-          Service details
-        </h1>
-      </header>
+      <h1
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.xxl,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.tight,
+          color: theme.color.ink,
+          lineHeight: 1.1,
+        }}
+      >
+        Service details
+      </h1>
 
       {mode === 'walk_in' ? (
         <Section title="Service type" sub="Pick what's being worked on today.">
@@ -1553,8 +1528,6 @@ function StartStep({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-      <StaffOnlyBanner subtitle="Final check. Tap Start appointment to open the till for this patient." />
-
       <h1
         style={{
           margin: 0,
@@ -2241,33 +2214,50 @@ function SummaryRow({
 function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
   return (
     <div
+      role="note"
+      aria-label="Staff only"
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: theme.space[3],
+        background: theme.color.ink,
+        borderBottom: `1px solid ${theme.color.border}`,
         padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-        alignSelf: 'flex-start',
-        maxWidth: '100%',
       }}
     >
-      <span
+      <div
         style={{
-          padding: `${theme.space[1]}px ${theme.space[2]}px`,
-          borderRadius: theme.radius.pill,
-          background: theme.color.ink,
-          color: theme.color.surface,
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
+          maxWidth: theme.layout.pageMaxWidth,
+          width: '100%',
+          margin: '0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
         }}
       >
-        Staff only
-      </span>
-      <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{subtitle}</span>
+        <span
+          style={{
+            padding: `${theme.space[1]}px ${theme.space[2]}px`,
+            borderRadius: theme.radius.pill,
+            background: theme.color.surface,
+            color: theme.color.ink,
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.semibold,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+            flexShrink: 0,
+          }}
+        >
+          Staff only
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.surface,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          {subtitle}
+        </span>
+      </div>
     </div>
   );
 }
