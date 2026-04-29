@@ -180,12 +180,19 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
       // are Meridian-side append-only columns — version stays stamped
       // on every row, thumbnail_path caches a rendered PNG for STL/OBJ
       // scan files. Both may be null on legacy rows.
+      // Match Meridian's PatientProfileFiles query — only `status='active'`
+      // rows show on the patient profile. Meridian's data model is
+      // append-only-then-archive: a file marked 'archived' has been
+      // explicitly removed and shouldn't surface on the patient view.
+      // Older versions of an active slot stay status='active' too, so
+      // the version-history modal still picks them up.
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
           'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, file_labels:label_id(key, label), uploader:uploaded_by(first_name, last_name)'
         )
         .eq('patient_id', patientId)
+        .eq('status', 'active')
         .order('uploaded_at', { ascending: false });
       if (cancelled) return;
       if (err) {
