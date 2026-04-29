@@ -1294,8 +1294,18 @@ function JbBoxInput({
         <input
           type="text"
           value={value}
-          onChange={(e) => onChange(e.currentTarget.value)}
+          onChange={(e) => {
+            // Canonicalise to digits-only with no leading zeros. The
+            // Checkpoint side compares JB refs as decimals, so "09"
+            // and "9" are the same job box — we strip the zero on the
+            // way in so the lookup hits and so the field can never
+            // hold letters or whitespace.
+            const digits = e.currentTarget.value.replace(/\D/g, '');
+            const canonical = digits.replace(/^0+/, '');
+            onChange(canonical);
+          }}
           inputMode="numeric"
+          autoComplete="off"
           placeholder="33"
           aria-label="Job box number"
           style={{
