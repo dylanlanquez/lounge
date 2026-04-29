@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, FileText, Loader2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, Loader2, Pin, RotateCcw, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import { supabase } from '../../lib/supabase.ts';
@@ -420,6 +420,31 @@ function FileCard({
               e.stopPropagation();
               onHistory(card);
             }}
+            // Hover behaviour mirrors Meridian's FileCardRow link:
+            // arrow nudges right, label underlines. Receptionists
+            // already recognise the affordance from there.
+            onMouseEnter={(e) => {
+              const root = e.currentTarget;
+              (root.querySelector('[data-arrow]') as HTMLElement | null)?.style.setProperty(
+                'transform',
+                'translateX(3px)'
+              );
+              (root.querySelector('[data-label]') as HTMLElement | null)?.style.setProperty(
+                'text-decoration',
+                'underline'
+              );
+            }}
+            onMouseLeave={(e) => {
+              const root = e.currentTarget;
+              (root.querySelector('[data-arrow]') as HTMLElement | null)?.style.setProperty(
+                'transform',
+                'translateX(0)'
+              );
+              (root.querySelector('[data-label]') as HTMLElement | null)?.style.setProperty(
+                'text-decoration',
+                'none'
+              );
+            }}
             style={{
               background: 'none',
               border: 'none',
@@ -432,12 +457,25 @@ function FileCard({
               color: theme.color.ink,
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 4,
+              gap: 5,
               alignSelf: 'flex-start',
+              textAlign: 'left',
             }}
           >
-            <span aria-hidden>→</span>
-            View history ({card.versionCount})
+            <span
+              data-arrow
+              aria-hidden
+              style={{
+                fontSize: 13,
+                lineHeight: 1,
+                transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              }}
+            >
+              →
+            </span>
+            <span data-label style={{ textDecorationThickness: '1px', textUnderlineOffset: '2px' }}>
+              View history ({card.versionCount})
+            </span>
           </button>
         ) : null}
       </div>
@@ -622,6 +660,12 @@ function VersionHistoryModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // The latest version (top of card.versions, ordered desc on insert)
+  // is the auto-main when the slot has no explicit pin record. Match
+  // Meridian's amber-border + 'Main' pill so the receptionist's eye
+  // lands on the live version first.
+  const mainId = card.versions[0]?.id ?? null;
+
   return (
     <div
       role="dialog"
@@ -636,140 +680,243 @@ function VersionHistoryModal({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: theme.space[6],
+        padding: 16,
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
           background: theme.color.surface,
-          borderRadius: theme.radius.card,
-          maxWidth: 540,
-          width: '100%',
-          maxHeight: '100%',
+          borderRadius: 14,
+          padding: '24px 26px 0',
+          width: 'min(720px, 100%)',
+          maxHeight: 'min(86vh, 720px)',
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden',
+          gap: 16,
           boxShadow: theme.shadow.overlay,
+          overflow: 'hidden',
+          position: 'relative',
         }}
       >
-        <header
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close version history"
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: theme.space[3],
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
-            borderBottom: `1px solid ${theme.color.border}`,
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            padding: theme.space[2],
+            borderRadius: theme.radius.pill,
+            cursor: 'pointer',
+            color: theme.color.inkMuted,
+            display: 'inline-flex',
+            zIndex: 1,
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span
-              style={{
-                fontSize: theme.type.size.base,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-              }}
-            >
-              {card.label}
-            </span>
-            <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-              {card.versionCount} {card.versionCount === 1 ? 'version' : 'versions'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close version history"
+          <X size={20} />
+        </button>
+        <header style={{ paddingRight: 44, display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+          <span
+            aria-hidden
             style={{
-              appearance: 'none',
-              border: 'none',
-              background: 'transparent',
-              padding: theme.space[2],
-              borderRadius: theme.radius.pill,
-              cursor: 'pointer',
-              color: theme.color.inkMuted,
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: theme.color.bg,
+              border: `1px solid ${theme.color.border}`,
               display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: theme.color.ink,
+              flexShrink: 0,
             }}
           >
-            <X size={20} />
-          </button>
+            <RotateCcw size={14} />
+          </span>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {card.label}{' '}
+            <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+              · {card.versionCount} {card.versionCount === 1 ? 'file' : 'files'}
+            </span>
+          </h2>
         </header>
         <ul
+          role="list"
           style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
             overflowY: 'auto',
+            overflowX: 'hidden',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+            gridAutoRows: 'min-content',
+            gap: 12,
+            margin: 0,
+            padding: '4px 4px 24px',
+            listStyle: 'none',
+            alignContent: 'start',
+            maxHeight: 520,
           }}
         >
-          {card.versions.map((v, i) => (
-            <li
+          {card.versions.map((v) => (
+            <VersionCard
               key={v.id}
-              style={{
-                borderBottom:
-                  i === card.versions.length - 1 ? 'none' : `1px solid ${theme.color.border}`,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => onPreview(v)}
-                style={{
-                  appearance: 'none',
-                  border: 'none',
-                  background: 'transparent',
-                  width: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[3],
-                  padding: theme.space[3],
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  textAlign: 'left',
-                }}
-              >
-                <span
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: theme.radius.input,
-                    background: theme.color.bg,
-                    border: `1px solid ${theme.color.border}`,
-                    flexShrink: 0,
-                    overflow: 'hidden',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <FileThumb file={v} />
-                </span>
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span
-                    style={{
-                      fontSize: theme.type.size.sm,
-                      fontWeight: theme.type.weight.medium,
-                      color: theme.color.ink,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    v{v.version ?? i + 1} · {v.file_name}
-                  </span>
-                  <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                    {formatShort(v.uploaded_at)}
-                    {v.uploaded_by_name ? ` · ${v.uploaded_by_name}` : ''}
-                    {v.file_size_bytes ? ` · ${formatBytes(v.file_size_bytes)}` : ''}
-                  </span>
-                </div>
-              </button>
-            </li>
+              file={v}
+              isMain={v.id === mainId && card.versions.length > 1}
+              onPreview={() => onPreview(v)}
+            />
           ))}
         </ul>
       </div>
     </div>
   );
+}
+
+function VersionCard({
+  file,
+  isMain,
+  onPreview,
+}: {
+  file: PatientFileEntry;
+  isMain: boolean;
+  onPreview: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const amber = '#f59e0b';
+  return (
+    <li
+      role="listitem"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={onPreview}
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        border: `1px solid ${isMain ? amber : theme.color.border}`,
+        borderRadius: 12,
+        background: theme.color.surface,
+        overflow: 'hidden',
+        cursor: 'pointer',
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        boxShadow: isMain
+          ? hover
+            ? `0 0 0 1px ${amber}, 0 4px 16px -6px rgba(245,158,11,0.35)`
+            : `0 0 0 1px ${amber}`
+          : hover
+            ? '0 4px 16px -6px rgba(14, 20, 20, 0.18)'
+            : 'none',
+      }}
+    >
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          aspectRatio: '4 / 3',
+          background: theme.color.bg,
+          overflow: 'hidden',
+        }}
+      >
+        <FileThumb file={file} />
+        {isMain ? (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              left: 8,
+              zIndex: 2,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 8px',
+              borderRadius: 999,
+              background: 'rgba(245,158,11,0.95)',
+              color: '#fff',
+              fontSize: 10.5,
+              fontWeight: 600,
+              letterSpacing: '0.02em',
+              boxShadow: '0 2px 6px rgba(14, 20, 20, 0.18)',
+            }}
+          >
+            <Pin size={10} aria-hidden /> Main
+          </div>
+        ) : null}
+      </div>
+      <div
+        style={{
+          padding: '10px 12px 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+          borderTop: `1px solid ${theme.color.border}`,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span
+            title={file.file_name}
+            style={{
+              fontSize: 12.5,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.ink,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            }}
+          >
+            {file.file_name}
+          </span>
+          <span
+            style={{
+              fontSize: 10.5,
+              fontWeight: 600,
+              color: isMain ? '#92400e' : theme.color.accent,
+              background: isMain ? 'rgba(245,158,11,0.15)' : theme.color.accentBg,
+              padding: '2px 7px',
+              borderRadius: 999,
+              flexShrink: 0,
+              letterSpacing: '0.02em',
+            }}
+          >
+            v{file.version ?? 1}
+          </span>
+        </div>
+        {file.uploaded_by_name ? (
+          <div style={{ fontSize: 11, color: theme.color.inkMuted }}>
+            Uploaded by {file.uploaded_by_name}
+          </div>
+        ) : null}
+        <div style={{ fontSize: 11, color: theme.color.inkMuted }}>
+          {formatLongDateTime(file.uploaded_at)}
+        </div>
+        {file.file_size_bytes ? (
+          <div style={{ fontSize: 11, color: theme.color.inkMuted }}>
+            {formatBytes(file.file_size_bytes)}
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function formatLongDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${date} at ${time}`;
 }
 
 // ─── Public surface ─────────────────────────────────────────────────────────
@@ -992,13 +1139,6 @@ function ScrollButton({
   );
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
-
-function formatShort(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
