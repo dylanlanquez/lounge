@@ -29,13 +29,16 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false, error: null, resetCount: 0 };
+  override state: State = { hasError: false, error: null, resetCount: 0 };
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, info: { componentStack: string | null | undefined }): void {
+  override componentDidCatch(
+    error: Error,
+    info: { componentStack: string | null | undefined }
+  ): void {
     console.error('[ErrorBoundary]', error, info.componentStack);
   }
 
@@ -47,7 +50,7 @@ export class ErrorBoundary extends Component<Props, State> {
     window.location.reload();
   };
 
-  render(): ReactNode {
+  override render(): ReactNode {
     if (this.state.hasError) {
       return (
         <main
