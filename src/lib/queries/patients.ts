@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { properCase } from './appointments.ts';
 
 export interface PatientRow {
   id: string;
@@ -321,8 +322,13 @@ function escape(s: string): string {
   return s.replace(/,/g, '\\,').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
+// Display-formatted full name. Source data arrives in mixed case
+// (Shopify gives us lower-case email-derived names, lab imports
+// shout in ALL CAPS, etc.) so every UI surface that shows a patient
+// name should go through this helper rather than concatenating raw
+// columns. properCase handles honorifics and apostrophes.
 export function patientFullName(p: Pick<PatientRow, 'first_name' | 'last_name'>): string {
-  return `${p.first_name} ${p.last_name}`.trim();
+  return `${properCase(p.first_name)} ${properCase(p.last_name)}`.trim();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
