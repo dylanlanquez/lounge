@@ -1504,8 +1504,8 @@ function CustomerStep({
         <SectionHeading title="Your details" sub="Just the missing pieces. Anything we already have is shown below." />
 
         <FormGrid isMobile={isMobile}>
-          <FieldRow required label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
-          <FieldRow required label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
+          <FieldRow required kind="name" label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
+          <FieldRow required kind="name" label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
           <DateOfBirthFieldRow
             current={snapshot.date_of_birth}
             value={form.date_of_birth}
@@ -1516,10 +1516,10 @@ function CustomerStep({
           <SexRow current={snapshot.sex} value={form.sex} onChange={(v) => onUpdate('sex', v)} editing={isEditing('sex')} onBeginEdit={() => onBeginEdit('sex')} />
           <FieldRow required label="Address line 1" current={snapshot.portal_ship_line1} value={form.portal_ship_line1} onChange={(v) => onUpdate('portal_ship_line1', v)} fullSpan editing={isEditing('portal_ship_line1')} onBeginEdit={() => onBeginEdit('portal_ship_line1')} />
           <FieldRow label="Address line 2" current={snapshot.portal_ship_line2} value={form.portal_ship_line2} onChange={(v) => onUpdate('portal_ship_line2', v)} fullSpan editing={isEditing('portal_ship_line2')} onBeginEdit={() => onBeginEdit('portal_ship_line2')} />
-          <FieldRow required label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
-          <FieldRow required label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
-          <FieldRow required label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
-          <FieldRow required label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
+          <FieldRow required kind="name" label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
+          <FieldRow required kind="postcode" label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
+          <FieldRow required kind="email" label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
+          <FieldRow required kind="phone" label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
 
           <FieldRow
             required
@@ -1532,8 +1532,8 @@ function CustomerStep({
             editing={isEditing('allergies')}
             onBeginEdit={() => onBeginEdit('allergies')}
           />
-          <FieldRow required label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
-          <FieldRow required label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
+          <FieldRow required kind="name" label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
+          <FieldRow required kind="phone" label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
         </FormGrid>
       </section>
 
@@ -1965,13 +1965,87 @@ function FormGrid({ children, isMobile }: { children: React.ReactNode; isMobile:
   );
 }
 
+// FieldKind drives the per-input keyboard, sanitizer and autocomplete
+// hints. Names accept letters, hyphens and apostrophes only. Phones
+// accept digits with the conventional dial-pad separators. Postcodes
+// uppercase and strip anything that isn't alphanumeric or a space.
+// Emails get the email keyboard with no auto-capitalisation. Free
+// text passes through untouched. Adding a new field type here is
+// the single place to wire input behaviour.
+type FieldKind = 'text' | 'email' | 'phone' | 'name' | 'postcode';
+
+function sanitizeForKind(kind: FieldKind, value: string): string {
+  switch (kind) {
+    case 'name':
+      // Letters from any script (incl. accented), plus space, hyphen,
+      // and apostrophe (covers O'Brien, Smith-Jones). Strips digits.
+      return value.replace(/[^\p{L} '\-]/gu, '');
+    case 'phone':
+      // Digits + the dial-pad separators. The submit-time canonicaliser
+      // collapses the rest.
+      return value.replace(/[^0-9+()\- ]/g, '');
+    case 'postcode':
+      // UK postcodes are alphanumeric, optionally separated by a
+      // single space. Force-uppercase as the receptionist types.
+      return value.toUpperCase().replace(/[^A-Z0-9 ]/g, '');
+    case 'email':
+      // Drop leading whitespace; trust type=email + the submit-time
+      // checks for everything else.
+      return value.replace(/^\s+/, '');
+    default:
+      return value;
+  }
+}
+
+function inputAttributesForKind(kind: FieldKind): {
+  type: string;
+  inputMode?: 'text' | 'email' | 'tel' | 'numeric' | 'search';
+  autoCapitalize?: 'off' | 'none' | 'on' | 'sentences' | 'words' | 'characters';
+  autoComplete?: string;
+  spellCheck?: boolean;
+} {
+  switch (kind) {
+    case 'email':
+      return {
+        type: 'email',
+        inputMode: 'email',
+        autoCapitalize: 'none',
+        autoComplete: 'email',
+        spellCheck: false,
+      };
+    case 'phone':
+      return {
+        type: 'tel',
+        inputMode: 'tel',
+        autoComplete: 'tel',
+        spellCheck: false,
+      };
+    case 'postcode':
+      return {
+        type: 'text',
+        autoCapitalize: 'characters',
+        autoComplete: 'postal-code',
+        spellCheck: false,
+      };
+    case 'name':
+      return {
+        type: 'text',
+        autoCapitalize: 'words',
+        autoComplete: 'name',
+        spellCheck: false,
+      };
+    default:
+      return { type: 'text' };
+  }
+}
+
 function FieldRow({
   label,
   current,
   value,
   onChange,
   helper,
-  type = 'text',
+  kind = 'text',
   multiline = false,
   alwaysEditable = false,
   fullSpan = false,
@@ -1984,7 +2058,7 @@ function FieldRow({
   value: string;
   onChange: (v: string) => void;
   helper?: string;
-  type?: string;
+  kind?: FieldKind;
   multiline?: boolean;
   alwaysEditable?: boolean;
   fullSpan?: boolean;
@@ -2024,9 +2098,9 @@ function FieldRow({
         label={label}
         required={required}
         helper={helper}
-        type={type}
+        kind={kind}
         value={value}
-        onChange={onChange}
+        onChange={(v) => onChange(sanitizeForKind(kind, v))}
       />
     </div>
   );
@@ -2061,18 +2135,19 @@ function EditableFieldCard({
   label,
   required = false,
   helper,
-  type = 'text',
+  kind = 'text',
   value,
   onChange,
 }: {
   label: string;
   required?: boolean;
   helper?: string;
-  type?: string;
+  kind?: FieldKind;
   value: string;
   onChange: (v: string) => void;
 }) {
   const [focused, setFocused] = useState(false);
+  const inputAttrs = inputAttributesForKind(kind);
   return (
     <label
       style={{
@@ -2092,7 +2167,7 @@ function EditableFieldCard({
         {required ? <RequiredMark /> : null}
       </span>
       <input
-        type={type}
+        {...inputAttrs}
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
         onFocus={() => setFocused(true)}

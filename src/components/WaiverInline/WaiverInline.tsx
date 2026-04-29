@@ -76,14 +76,20 @@ export const WaiverInline = forwardRef<WaiverInlineHandle, WaiverInlineProps>(
 
     const empty = path.trim().length === 0;
 
-    // Reset transient state whenever the parent feeds in a new sections
-    // list (e.g. the patient just changed their mind on which line items
-    // they're agreeing to and re-rendered the consent step).
+    // Reset transient state whenever the parent feeds in a *different*
+    // sections list (e.g. the patient just changed their mind on which
+    // line items they're agreeing to). Keying on the array reference
+    // would also trip every time an upstream re-render rebuilds the
+    // sectionsToSign useMemo, which resets the SignaturePad every time
+    // the user ticks the confirm checkbox or types in the witness
+    // input. Hashing to a content-based key (the section keys joined)
+    // reacts only to genuinely-different lists.
+    const sectionsKey = sections.map((s) => s.key).join('|');
     useEffect(() => {
       setPath('');
       setConfirmed(false);
       setPadKey((k) => k + 1);
-    }, [sections]);
+    }, [sectionsKey]);
 
     const ready = !empty && confirmed && !busy && witness.trim().length > 0;
 
