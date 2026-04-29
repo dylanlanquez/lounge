@@ -24,6 +24,9 @@ export type { DropdownSelectProps, DropdownSelectOption } from './DropdownSelect
 export { DateOfBirthRow } from './DateOfBirthRow/DateOfBirthRow.tsx';
 export type { DateOfBirthRowProps } from './DateOfBirthRow/DateOfBirthRow.tsx';
 
+export { Checkbox } from './Checkbox/Checkbox.tsx';
+export type { CheckboxProps } from './Checkbox/Checkbox.tsx';
+
 export { Tooltip } from './Tooltip/Tooltip.tsx';
 export type { TooltipProps } from './Tooltip/Tooltip.tsx';
 

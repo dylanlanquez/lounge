@@ -1,11 +1,11 @@
 import {
-  type CSSProperties,
   forwardRef,
   useEffect,
   useImperativeHandle,
   useState,
 } from 'react';
 import { CheckCircle2 } from 'lucide-react';
+import { Checkbox } from '../Checkbox/Checkbox.tsx';
 import { Input } from '../Input/Input.tsx';
 import { SignaturePad, svgFromPath } from '../SignaturePad/SignaturePad.tsx';
 import { theme } from '../../theme/index.ts';
@@ -233,11 +233,20 @@ export const WaiverInline = forwardRef<WaiverInlineHandle, WaiverInlineProps>(
           onChange={(e) => setWitness(e.currentTarget.value)}
         />
 
-        <Checkbox
-          checked={confirmed}
-          onChange={setConfirmed}
-          label="I confirm the customer has read and signed the waiver"
-        />
+        <div
+          style={{
+            padding: theme.space[3],
+            borderRadius: theme.radius.input,
+            border: `1px solid ${confirmed ? theme.color.ink : theme.color.border}`,
+            background: theme.color.surface,
+          }}
+        >
+          <Checkbox
+            checked={confirmed}
+            onChange={setConfirmed}
+            label="I confirm the customer has read and signed the waiver"
+          />
+        </div>
 
         {error ? (
           <p
@@ -306,52 +315,3 @@ function SectionBlock({
   );
 }
 
-function Checkbox({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
-  const wrapper: CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: theme.space[3],
-    cursor: 'pointer',
-    padding: theme.space[3],
-    borderRadius: theme.radius.input,
-    border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
-    background: theme.color.surface,
-    userSelect: 'none',
-  };
-  return (
-    <label style={wrapper}>
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 22,
-          height: 22,
-          borderRadius: 6,
-          background: checked ? theme.color.ink : theme.color.surface,
-          border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
-          color: theme.color.surface,
-          flexShrink: 0,
-        }}
-      >
-        {checked ? <CheckCircle2 size={16} /> : null}
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.currentTarget.checked)}
-        style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
-      />
-      <span style={{ fontSize: theme.type.size.base, color: theme.color.ink }}>{label}</span>
-    </label>
-  );
-}

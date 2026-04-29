@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Minus, Package, Plus, Search, ShoppingBag, Sparkles, X } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { Checkbox } from '../Checkbox/Checkbox.tsx';
 import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
@@ -767,7 +768,7 @@ function ProductRow({
                         ? link.both_arches_price
                         : link.price;
                     return (
-                      <label
+                      <div
                         key={upgrade.id}
                         style={{
                           display: 'flex',
@@ -777,25 +778,25 @@ function ProductRow({
                           borderRadius: theme.radius.input,
                           border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
                           background: checked ? theme.color.bg : theme.color.surface,
-                          cursor: 'pointer',
                         }}
                       >
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={checked}
                           onChange={() => toggleUpgrade(upgrade.id)}
-                          style={{ width: 18, height: 18 }}
+                          ariaLabel={upgrade.name}
+                          label={
+                            <span
+                              style={{
+                                fontSize: theme.type.size.base,
+                                fontWeight: theme.type.weight.medium,
+                                color: theme.color.ink,
+                              }}
+                            >
+                              {upgrade.name}
+                            </span>
+                          }
                         />
-                        <span
-                          style={{
-                            flex: 1,
-                            fontSize: theme.type.size.base,
-                            fontWeight: theme.type.weight.medium,
-                            color: theme.color.ink,
-                          }}
-                        >
-                          {upgrade.name}
-                        </span>
+                        <span style={{ flex: 1 }} />
                         <span
                           style={{
                             fontSize: theme.type.size.sm,
@@ -807,7 +808,7 @@ function ProductRow({
                         >
                           +£{tierPrice.toFixed(2)}
                         </span>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
