@@ -58,11 +58,15 @@ export function BottomSheet({
       if (e.key === 'Escape' && dismissable) onClose();
     };
     document.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    // Lock the page scroll while the sheet is open. The page
+    // scrolls on #root (body is pinned for iOS rubber-band reasons,
+    // see globalStyles), so we toggle overflow there.
+    const root = document.getElementById('root');
+    const prevOverflow = root?.style.overflow ?? '';
+    if (root) root.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
+      if (root) root.style.overflow = prevOverflow;
     };
   }, [open, onClose, dismissable]);
 

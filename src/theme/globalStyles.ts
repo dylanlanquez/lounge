@@ -6,13 +6,36 @@ export function applyGlobalStyles(): void {
   style.id = 'lng-global-styles';
   style.textContent = `
     *, *::before, *::after { box-sizing: border-box; }
-    html, body, #root { margin: 0; padding: 0; height: 100%; background: ${theme.color.bg}; }
-    /* Kill the iOS / iPadOS rubber-band over-scroll. Without this, the
-       fixed kiosk status bar and bottom nav drift up/down when the user
-       pulls past the top or bottom of the page — they're meant to be
-       anchored. Supported on iOS 16+ and Chrome 63+, so universal on
-       any tablet shipping in the last few years. */
-    html, body { overscroll-behavior: none; }
+    html, body { margin: 0; padding: 0; background: ${theme.color.bg}; }
+    /* The KioskStatusBar and BottomNav are position:fixed. iPadOS
+       Safari rubber-bands the document body when the user pulls
+       past the top or bottom — and crucially, drags every fixed
+       child up/down with it, including those bars. overscroll-
+       behavior:none alone doesn't kill the body bounce on iOS; the
+       only reliable fix is to take the body out of the scroll
+       picture entirely.
+
+       Body is pinned to the layout viewport (position:fixed,
+       inset:0). The real scroll container is #root, which has
+       overscroll-behavior-y:contain so its own bottom/top can't
+       chain a bounce up to the body either. Fixed children stay
+       anchored because nothing moves underneath them. */
+    html, body {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+    #root {
+      width: 100%;
+      height: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+    }
     body {
       font-family: ${theme.type.family};
       font-size: ${theme.type.size.base}px;
