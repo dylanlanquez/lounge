@@ -26,6 +26,19 @@ export const theme = {
     impression: '#8C2A5A', // magenta — impression appointments
     consult: '#4A4F55',    // graphite — anything else
   },
+  // Avatar palette — used to give each person a deterministic colour
+  // hashed from their email or id, so a list of similarly-named people
+  // (three Dylan Lanes, etc) is instantly distinguishable. Backgrounds
+  // are 10%-alpha tints of the foreground; foregrounds are the same
+  // five hues as `category`, kept consistent so the brand reads as one
+  // system. Each fg on a near-white surface meets WCAG AA (≥4.5:1).
+  avatar: [
+    { bg: 'rgba(31, 77, 58, 0.10)', fg: '#1F4D3A' },   // green
+    { bg: 'rgba(30, 91, 168, 0.10)', fg: '#1E5BA8' },  // blue
+    { bg: 'rgba(140, 42, 90, 0.10)', fg: '#8C2A5A' },  // magenta
+    { bg: 'rgba(179, 104, 21, 0.10)', fg: '#B36815' }, // amber
+    { bg: 'rgba(74, 79, 85, 0.10)', fg: '#4A4F55' },   // graphite
+  ],
   type: {
     family: '"Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
     size: {
