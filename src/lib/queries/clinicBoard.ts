@@ -56,7 +56,7 @@ export const CLINIC_SECTION_LABELS: Record<ClinicSectionKey, string> = {
   appliance: 'Same-day appliances',
   sameDay: 'Same-day click-in veneers',
   repair: 'Denture repairs',
-  impression: 'In-person impression appointments',
+  impression: 'Impression appointments',
   consult: 'Other',
 };
 
