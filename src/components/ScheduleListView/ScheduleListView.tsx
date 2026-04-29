@@ -115,7 +115,11 @@ export function ScheduleListRow({
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'stretch',
-          minHeight: 64,
+          // Card floor — was 64, raised to give each row a bit more
+          // vertical breathing room (~5mm taller at typical kiosk DPI)
+          // so the time / name / status read more comfortably without
+          // changing the overall information density.
+          minHeight: 84,
           overflow: 'hidden',
           opacity: faded ? 0.55 : 1,
           transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
