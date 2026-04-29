@@ -180,7 +180,7 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
         .select(
           `id, section_key, section_version, signed_at, signature_svg, terms_snapshot, visit_id,
            section:section_key(title),
-           witness:witnessed_by(full_name)`
+           witness:witnessed_by(first_name, last_name)`
         )
         .eq('patient_id', patientId)
         .order('signed_at', { ascending: false });
@@ -198,7 +198,11 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
       const mapped: SignedWaiverRow[] = ((data ?? []) as Array<Record<string, unknown>>).map(
         (r) => {
           const section = (r.section as { title?: string } | null) ?? null;
-          const witness = (r.witness as { full_name?: string } | null) ?? null;
+          const witness =
+            (r.witness as { first_name?: string; last_name?: string } | null) ?? null;
+          const witnessName = witness
+            ? `${witness.first_name ?? ''} ${witness.last_name ?? ''}`.trim() || null
+            : null;
           const termsSnapshot = r.terms_snapshot;
           return {
             id: r.id as string,
@@ -210,7 +214,7 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
             terms_snapshot: Array.isArray(termsSnapshot)
               ? (termsSnapshot as string[])
               : null,
-            witness_name: witness?.full_name ?? null,
+            witness_name: witnessName,
             visit_id: (r.visit_id as string | null) ?? null,
           };
         }
