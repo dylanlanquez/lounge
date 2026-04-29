@@ -51,6 +51,10 @@ export async function uploadPatientFile(args: {
     .upload(path, args.file, { contentType: args.file.type, upsert: false });
   if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
 
+  // `description` is NOT NULL on patient_files with a CHECK that
+  // trims to >= 3 chars. Use the label's display name — that's what
+  // the file is, and the names we feed in (Before photo, Marketing
+  // content, smile-photo slot labels, etc.) all clear the floor.
   const { data: row, error: insertErr } = await supabase
     .from('patient_files')
     .insert({
@@ -63,6 +67,7 @@ export async function uploadPatientFile(args: {
       status: 'active',
       is_delivery: false,
       uploaded_by: args.uploaderAccountId,
+      description: args.labelDisplayName,
     })
     .select('*')
     .single();
