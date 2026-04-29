@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Camera,
   ChevronLeft,
@@ -248,15 +249,19 @@ function FileCard({
   onUpload: (card: FileCardModel, file: File) => void;
 }) {
   const [hover, setHover] = useState(false);
-  // Two separate inputs — one with `capture="environment"` to force the
-  // camera, one without to fall back on the OS file picker (gallery).
-  // Samsung Chrome on the kiosk doesn't reliably offer 'Camera or Files'
-  // when the user taps a single `accept="image/*"` input, so we expose
-  // both choices explicitly via a small action sheet. Works the same on
-  // iOS Safari, desktop Chrome, etc.
-  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  // Gallery input stays as a hidden <input>: the OS file picker is
+  // already a system overlay, so it doesn't need to live inside our
+  // app. The camera, however, would launch Samsung's full-screen
+  // Camera app (which the Knox kiosk cannot return from) — so the
+  // 'Take a photo' choice opens a custom in-app camera modal that
+  // streams getUserMedia into a <video> we own. The two intents are
+  // selected from a small action sheet that itself is rendered via a
+  // portal, otherwise CollapsibleCard's overflow:hidden + the
+  // horizontal scroll row's overflow:auto trap the modal inside the
+  // card's stacking context.
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   if (!card.file) {
     const canUpload = !!card.uploadable && !uploading;
@@ -329,44 +334,40 @@ function FileCard({
               : 'Add in Meridian'}
         </span>
         {card.uploadable ? (
-          <>
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                e.target.value = '';
-                handleFile(f);
-              }}
-            />
-            <input
-              ref={galleryInputRef}
-              type="file"
-              accept="image/*"
-              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                e.target.value = '';
-                handleFile(f);
-              }}
-            />
-          </>
+          <input
+            ref={galleryInputRef}
+            type="file"
+            accept="image/*"
+            style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              e.target.value = '';
+              handleFile(f);
+            }}
+          />
         ) : null}
         {sheetOpen ? (
           <PhotoSourceSheet
             label={card.label}
             onTakePhoto={() => {
               setSheetOpen(false);
-              cameraInputRef.current?.click();
+              setCameraOpen(true);
             }}
             onChooseGallery={() => {
               setSheetOpen(false);
               galleryInputRef.current?.click();
             }}
             onClose={() => setSheetOpen(false)}
+          />
+        ) : null}
+        {cameraOpen ? (
+          <InAppCameraModal
+            label={card.label}
+            onCapture={(file) => {
+              setCameraOpen(false);
+              handleFile(file);
+            }}
+            onClose={() => setCameraOpen(false)}
           />
         ) : null}
         <style>{`@keyframes lng-files-spin { to { transform: rotate(360deg); } }`}</style>
@@ -529,13 +530,30 @@ function FileCard({
 
 // ─── Photo source action sheet ─────────────────────────────────────────────
 //
-// Centred modal with two big tap targets: 'Take a photo' (triggers a
-// hidden input with capture="environment" so the OS opens the camera)
-// and 'Choose from gallery' (a second hidden input with no capture, so
-// the OS opens the file picker / gallery). Cross-platform: Samsung Tab
-// Chrome doesn't reliably offer both options off a single accept="image/*"
-// input, and iOS Safari treats them as two distinct intents anyway, so
-// asking the user explicitly is the only way both surfaces work.
+// Centred modal with two big tap targets: 'Take a photo' (opens our
+// in-app camera modal) and 'Choose from gallery' (triggers a hidden
+// `accept="image/*"` input so the OS opens the file picker / gallery).
+//
+// Rendered via a React portal anchored to document.body. CollapsibleCard
+// applies overflow:hidden during expand/collapse, and the horizontal
+// scroll row uses overflow:auto — both can clip a position:fixed
+// descendant in some browsers. Mounting on document.body sidesteps both
+// stacking-context and clipping issues.
+//
+// While the sheet is open we lock document body scrolling so the page
+// behind doesn't slide around under the modal. The lock is applied per
+// instance and torn down on unmount.
+
+function useLockBodyScroll(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [active]);
+}
 
 function PhotoSourceSheet({
   label,
@@ -548,9 +566,7 @@ function PhotoSourceSheet({
   onChooseGallery: () => void;
   onClose: () => void;
 }) {
-  // The sheet's parent is the empty-card <div>, which is a click target
-  // itself. Stop propagation on every interaction here so a tap on the
-  // sheet doesn't bubble up and re-open it.
+  useLockBodyScroll(true);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -559,7 +575,7 @@ function PhotoSourceSheet({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  const node = (
     <div
       role="dialog"
       aria-modal="true"
@@ -571,7 +587,7 @@ function PhotoSourceSheet({
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 200,
+        zIndex: 1000,
         background: theme.color.overlay,
         display: 'flex',
         alignItems: 'center',
@@ -659,6 +675,326 @@ function PhotoSourceSheet({
       </div>
     </div>
   );
+
+  return createPortal(node, document.body);
+}
+
+// ─── In-app camera modal ───────────────────────────────────────────────────
+//
+// Live camera feed via getUserMedia, rendered into a popup window with a
+// capture button and an X close. Required because the Samsung Knox kiosk
+// can't navigate back from the OS Camera app once `<input capture>`
+// launches it — we need to keep the camera inside the Lounge web app.
+//
+// Stream lifecycle: requested on mount, stopped on unmount + on capture.
+// Falls back to the front camera if 'environment' is unavailable. Capture
+// draws the current video frame to an offscreen canvas, encodes JPEG at
+// 0.92, and hands the resulting File to onCapture for upload.
+
+function InAppCameraModal({
+  label,
+  onCapture,
+  onClose,
+}: {
+  label: string;
+  onCapture: (file: File) => void;
+  onClose: () => void;
+}) {
+  useLockBodyScroll(true);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError('This device does not expose a camera to the browser.');
+        return;
+      }
+      try {
+        // Prefer rear-facing camera at HD; fall back to any video device
+        // if the rear camera or HD constraint isn't satisfied.
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+            audio: false,
+          });
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        const v = videoRef.current;
+        if (v) {
+          v.srcObject = stream;
+          // playsInline is set in JSX; trigger play here once the stream is wired up.
+          await v.play().catch(() => undefined);
+          setReady(true);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Could not access the camera';
+        setError(
+          /denied|notallowed/i.test(msg)
+            ? 'Camera permission denied. Allow camera access for this site, then try again.'
+            : msg
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  const handleCapture = async () => {
+    const v = videoRef.current;
+    if (!v || !ready || busy) return;
+    setBusy(true);
+    const w = v.videoWidth;
+    const h = v.videoHeight;
+    if (!w || !h) {
+      setBusy(false);
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      setBusy(false);
+      return;
+    }
+    ctx.drawImage(v, 0, 0, w, h);
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92)
+    );
+    if (!blob) {
+      setBusy(false);
+      return;
+    }
+    const filename = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${Date.now()}.jpg`;
+    const file = new File([blob], filename, { type: 'image/jpeg' });
+    onCapture(file);
+  };
+
+  const node = (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Take a photo for ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        background: 'rgba(10, 12, 14, 0.85)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: theme.space[4],
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          width: 'min(720px, 100%)',
+          maxHeight: '100%',
+          borderRadius: 16,
+          overflow: 'hidden',
+          background: '#0E1414',
+          boxShadow: '0 24px 80px -16px rgba(0, 0, 0, 0.55)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <header
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            color: '#fff',
+            background: 'rgba(0,0,0,0.3)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span
+              style={{
+                fontSize: theme.type.size.base,
+                fontWeight: theme.type.weight.semibold,
+                color: '#fff',
+              }}
+            >
+              Take a photo
+            </span>
+            <span style={{ fontSize: theme.type.size.xs, color: 'rgba(255,255,255,0.7)' }}>
+              {label}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close camera"
+            style={{
+              appearance: 'none',
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: '#fff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <X size={18} />
+          </button>
+        </header>
+
+        <div
+          style={{
+            position: 'relative',
+            background: '#000',
+            // 4:3 aspect for the live preview keeps the layout stable
+            // before the stream's own dimensions arrive.
+            aspectRatio: '4 / 3',
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            autoPlay
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              opacity: ready ? 1 : 0,
+              transition: 'opacity 200ms ease',
+            }}
+          />
+          {!ready && !error ? (
+            <span
+              aria-live="polite"
+              style={{
+                position: 'absolute',
+                color: 'rgba(255,255,255,0.7)',
+                fontSize: theme.type.size.sm,
+              }}
+            >
+              Starting camera…
+            </span>
+          ) : null}
+          {error ? (
+            <div
+              role="alert"
+              style={{
+                position: 'absolute',
+                inset: theme.space[4],
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                background: 'rgba(220,38,38,0.85)',
+                borderRadius: 12,
+                padding: theme.space[4],
+                fontSize: theme.type.size.sm,
+                lineHeight: 1.4,
+                textAlign: 'center',
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        <footer
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: theme.space[3],
+            padding: theme.space[4],
+            background: 'rgba(0,0,0,0.3)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleCapture}
+            disabled={!ready || busy || !!error}
+            aria-label="Capture photo"
+            style={{
+              appearance: 'none',
+              width: 72,
+              height: 72,
+              borderRadius: '50%',
+              background: '#fff',
+              border: '4px solid rgba(255,255,255,0.4)',
+              cursor: ready && !busy && !error ? 'pointer' : 'not-allowed',
+              opacity: ready && !error ? 1 : 0.5,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+              transition: 'transform 120ms ease',
+            }}
+            onMouseDown={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.94)';
+            }}
+            onMouseUp={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)';
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: '50%',
+                background: '#fff',
+                border: '2px solid #0E1414',
+              }}
+            />
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+
+  return createPortal(node, document.body);
 }
 
 function SourceButton({
