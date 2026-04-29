@@ -113,7 +113,7 @@ export function PatientProfile() {
               patient={patient}
               refresh={refreshFiles}
             />
-            <FinalDeliveries patientId={patient.id} />
+            <FinalDeliveries patientId={patient.id} patient={patient} />
             <WalkInAppointments
               visits={visits}
               loading={visitsLoading}
@@ -686,6 +686,7 @@ function PatientFilesPanel({
         loading={loading}
         patientId={patient.id}
         patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
+        patient={patient}
         onUploaded={refresh}
       />
     </CollapsibleCard>

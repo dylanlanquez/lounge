@@ -8,6 +8,7 @@ import {
   usePatientDeliveryFiles,
   type DeliveryFileEntry,
   type PatientFileEntry,
+  type PatientProfileRow,
 } from '../../lib/queries/patientProfile.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +35,13 @@ interface DeliveryCardModel {
   applianceLabel: string;
 }
 
-export function FinalDeliveries({ patientId }: { patientId: string }) {
+export function FinalDeliveries({
+  patientId,
+  patient,
+}: {
+  patientId: string;
+  patient?: PatientProfileRow | null;
+}) {
   const { groups, loading, error } = usePatientDeliveryFiles(patientId);
   const [previewFile, setPreviewFile] = useState<PatientFileEntry | null>(null);
   const [rejectedOpen, setRejectedOpen] = useState(false);
@@ -167,7 +174,11 @@ export function FinalDeliveries({ patientId }: { patientId: string }) {
       </CollapsibleCard>
 
       {previewFile ? (
-        <PreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
+        <PreviewModal
+          file={previewFile}
+          patient={patient ?? null}
+          onClose={() => setPreviewFile(null)}
+        />
       ) : null}
     </>
   );

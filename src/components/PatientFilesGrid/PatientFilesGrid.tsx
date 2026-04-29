@@ -3,8 +3,8 @@ import { ChevronLeft, ChevronRight, FileText, Loader2, Pin, RotateCcw, X } from 
 import { theme } from '../../theme/index.ts';
 import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import { supabase } from '../../lib/supabase.ts';
-import type { PatientFileEntry } from '../../lib/queries/patientProfile.ts';
-import { ModelViewer } from './ModelViewer.tsx';
+import type { PatientFileEntry, PatientProfileRow } from '../../lib/queries/patientProfile.ts';
+import { Preview3DModal } from './Preview3DModal.tsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PatientFilesGrid — view-only port of Meridian's PatientProfileFiles
@@ -492,11 +492,20 @@ function modelExt(filename: string): 'stl' | 'obj' | 'ply' | null {
   return MODEL_EXTS.has(ext) ? (ext as 'stl' | 'obj' | 'ply') : null;
 }
 
-export function PreviewModal({ file, onClose }: { file: PatientFileEntry; onClose: () => void }) {
+export function PreviewModal({
+  file,
+  onClose,
+  patient,
+}: {
+  file: PatientFileEntry;
+  onClose: () => void;
+  patient?: PatientProfileRow | null;
+}) {
   // Resolve a long-TTL signed URL for the full file. Images render
-  // inline; PDFs in an iframe; STL / OBJ / PLY mount the on-demand
-  // ModelViewer (three.js loaded from CDN). Anything else falls back
-  // to a 'preview not available' message.
+  // inline; PDFs in an iframe; STL / OBJ / PLY route to the dedicated
+  // Preview3DModal (fullscreen viewer with progress card + side
+  // panels). Anything else falls back to a 'preview not available'
+  // message in this simple modal.
   const url = useSignedUrl(file.file_url);
   const isImage = !!file.mime_type?.startsWith('image/');
   const isPdf = file.mime_type === 'application/pdf';
@@ -509,6 +518,35 @@ export function PreviewModal({ file, onClose }: { file: PatientFileEntry; onClos
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 3D files take over the whole screen with their own modal so the
+  // viewer can host side flyouts + progress card + bottom hint.
+  if (ext3d) {
+    if (!url) {
+      return (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={onClose}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: '#0b0c0f',
+            zIndex: 200,
+          }}
+        />
+      );
+    }
+    return (
+      <Preview3DModal
+        file={file}
+        ext={ext3d}
+        fileUrl={url}
+        patient={patient ?? null}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <div
@@ -613,10 +651,6 @@ export function PreviewModal({ file, onClose }: { file: PatientFileEntry; onClos
               src={url}
               style={{ width: '100%', height: '70vh', border: 'none', background: theme.color.surface }}
             />
-          ) : ext3d ? (
-            <div style={{ width: '100%', height: '70vh' }}>
-              <ModelViewer url={url} ext={ext3d} />
-            </div>
           ) : (
             <div
               style={{
@@ -926,12 +960,14 @@ export function PatientFilesGrid({
   loading,
   patientId,
   patientName,
+  patient,
   onUploaded,
 }: {
   files: PatientFileEntry[];
   loading: boolean;
   patientId: string;
   patientName: string;
+  patient?: PatientProfileRow | null;
   onUploaded: () => void;
 }) {
   const cards = useMemo(() => buildCards(files), [files]);
@@ -1011,7 +1047,11 @@ export function PatientFilesGrid({
       ) : null}
 
       {previewFile ? (
-        <PreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
+        <PreviewModal
+          file={previewFile}
+          patient={patient ?? null}
+          onClose={() => setPreviewFile(null)}
+        />
       ) : null}
       {historyCard ? (
         <VersionHistoryModal

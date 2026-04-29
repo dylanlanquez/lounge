@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { theme } from '../../theme/index.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ModelViewer — minimal STL / OBJ / PLY mesh previewer.
@@ -52,11 +51,44 @@ async function loadThree(): Promise<void> {
 
 type ModelExt = 'stl' | 'obj' | 'ply';
 
-export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
+export interface ModelViewerProps {
+  url: string;
+  ext: ModelExt;
+  // Visual settings, all optional. Sensible defaults match Meridian's
+  // out-of-the-box look. Caller can pass these from a viewport panel.
+  background?: string; // hex/rgb string; default '#0b0c0f' (dark)
+  meshColor?: string; // hex; default '#b8c4cf'
+  intensity?: number; // 0..2; default 0.85
+  keyDirection?: 'front' | 'back'; // default 'front'
+  // Progress hooks for the wrapping modal's loading bar. Fire while the
+  // file streams from Supabase Storage; fire again when the renderer
+  // has fitted the camera and the canvas is showing pixels.
+  onProgress?: (loadedBytes: number, totalBytes: number) => void;
+  onLoaded?: () => void;
+}
+
+export function ModelViewer({
+  url,
+  ext,
+  background = '#0b0c0f',
+  meshColor = '#b8c4cf',
+  intensity = 0.85,
+  keyDirection = 'front',
+  onProgress,
+  onLoaded,
+}: ModelViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Refs we mutate from outside the bootstrap effect so the second
+  // settings effect can change colour / intensity / background / key
+  // direction without rebuilding the scene.
+  const sceneRef = useRef<any>(null);
+  const meshRef = useRef<any>(null);
+  const keyLightRef = useRef<any>(null);
+
+  // ── Bootstrap: load three, fetch + parse, build scene ──
   useEffect(() => {
     let cancelled = false;
     let raf = 0;
@@ -75,7 +107,8 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
         const h = canvas.clientHeight;
 
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xf7f6f2); // theme.color.bg
+        scene.background = new THREE.Color(background);
+        sceneRef.current = scene;
 
         const camera = new THREE.PerspectiveCamera(45, w / h, 0.01, 1000);
         camera.position.set(0, 0, 3);
@@ -84,21 +117,49 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(w, h, false);
 
-        // Neutral two-light setup — receptionist's identification needs
-        // a clean, evenly-lit mesh, not a dramatic look.
         const ambient = new THREE.AmbientLight(0xffffff, 0.55);
         scene.add(ambient);
-        const key = new THREE.DirectionalLight(0xffffff, 0.85);
-        key.position.set(0.6, 0.8, 1);
+        const key = new THREE.DirectionalLight(0xffffff, intensity);
+        key.position.set(keyDirection === 'back' ? -0.6 : 0.6, 0.8, keyDirection === 'back' ? -1 : 1);
         scene.add(key);
+        keyLightRef.current = key;
         const fill = new THREE.DirectionalLight(0xffffff, 0.35);
         fill.position.set(-0.5, -0.4, -0.7);
         scene.add(fill);
 
-        // ── Fetch + parse the file ──
+        // ── Stream + parse the file with progress ──
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const buf = await res.arrayBuffer();
+        const total = Number(res.headers.get('content-length') || 0);
+        let buf: ArrayBuffer;
+        if (res.body && total > 0 && onProgress) {
+          const reader = res.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let loaded = 0;
+          // Loud-fail on early break; the catch below converts to UI.
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              chunks.push(value);
+              loaded += value.length;
+              onProgress(loaded, total);
+            }
+          }
+          if (cancelled) return;
+          // Concat chunks into a single ArrayBuffer.
+          const merged = new Uint8Array(loaded);
+          let off = 0;
+          for (const c of chunks) {
+            merged.set(c, off);
+            off += c.length;
+          }
+          buf = merged.buffer;
+        } else {
+          buf = await res.arrayBuffer();
+          if (onProgress && total > 0) onProgress(total, total);
+        }
         if (cancelled) return;
 
         let mesh: any;
@@ -107,7 +168,7 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
           const geometry = loader.parse(buf);
           geometry.computeVertexNormals();
           const material = new THREE.MeshStandardMaterial({
-            color: 0xb8c4cf,
+            color: new THREE.Color(meshColor),
             roughness: 0.55,
             metalness: 0.05,
             flatShading: false,
@@ -118,7 +179,7 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
           const geometry = loader.parse(buf);
           geometry.computeVertexNormals();
           const material = new THREE.MeshStandardMaterial({
-            color: 0xb8c4cf,
+            color: new THREE.Color(meshColor),
             roughness: 0.55,
             metalness: 0.05,
           });
@@ -131,7 +192,7 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
           mesh.traverse((child: any) => {
             if (child.isMesh) {
               child.material = new THREE.MeshStandardMaterial({
-                color: 0xb8c4cf,
+                color: new THREE.Color(meshColor),
                 roughness: 0.55,
                 metalness: 0.05,
               });
@@ -148,6 +209,7 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
         mesh.position.sub(center);
 
         scene.add(mesh);
+        meshRef.current = mesh;
 
         const maxDim = Math.max(size.x, size.y, size.z);
         const fov = (camera.fov * Math.PI) / 180;
@@ -181,7 +243,10 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
         };
         animate();
 
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          onLoaded?.();
+        }
 
         cleanup = () => {
           cancelAnimationFrame(raf);
@@ -209,7 +274,36 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
       cancelled = true;
       cleanup?.();
     };
+    // url + ext are the rebuild keys. Visual settings live on a
+    // separate effect below so a slider tweak doesn't refetch the file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, ext]);
+
+  // Live settings effect — applies background / mesh colour / light
+  // intensity / key direction to the existing scene without rebuilding.
+  useEffect(() => {
+    const THREE = (window as unknown as { THREE: any }).THREE;
+    const scene = sceneRef.current;
+    const mesh = meshRef.current;
+    const key = keyLightRef.current;
+    if (!THREE || !scene || !mesh) return;
+    scene.background = new THREE.Color(background);
+    if (key) {
+      key.intensity = intensity;
+      key.position.set(keyDirection === 'back' ? -0.6 : 0.6, 0.8, keyDirection === 'back' ? -1 : 1);
+    }
+    const colour = new THREE.Color(meshColor);
+    mesh.traverse?.((child: any) => {
+      if (child.isMesh && child.material?.color) {
+        child.material.color = colour;
+        child.material.needsUpdate = true;
+      }
+    });
+    if (mesh.material?.color) {
+      mesh.material.color = colour;
+      mesh.material.needsUpdate = true;
+    }
+  }, [background, meshColor, intensity, keyDirection]);
 
   return (
     <div
@@ -217,7 +311,6 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
         position: 'relative',
         width: '100%',
         height: '100%',
-        background: theme.color.bg,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -230,33 +323,23 @@ export function ModelViewer({ url, ext }: { url: string; ext: ModelExt }) {
           width: '100%',
           height: '100%',
           touchAction: 'none',
+          // Hide canvas pixels until first paint completes so the
+          // wrapping modal's loading card sits over a clean
+          // background instead of a flicker of three's clear colour.
+          opacity: loading && !error ? 0 : 1,
+          transition: 'opacity 200ms ease',
         }}
       />
-      {loading && !error ? (
-        <span
-          style={{
-            position: 'absolute',
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
-            background: theme.color.surface,
-            padding: `${theme.space[2]}px ${theme.space[3]}px`,
-            borderRadius: theme.radius.pill,
-            border: `1px solid ${theme.color.border}`,
-          }}
-        >
-          Loading model…
-        </span>
-      ) : null}
       {error ? (
         <span
+          role="alert"
           style={{
             position: 'absolute',
-            color: theme.color.alert,
-            fontSize: theme.type.size.sm,
-            background: theme.color.surface,
-            padding: `${theme.space[2]}px ${theme.space[3]}px`,
-            borderRadius: theme.radius.pill,
-            border: `1px solid ${theme.color.border}`,
+            color: '#fff',
+            fontSize: 13,
+            background: 'rgba(220,38,38,0.85)',
+            padding: '8px 12px',
+            borderRadius: 999,
           }}
         >
           {error}
