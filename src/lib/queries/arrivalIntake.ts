@@ -250,7 +250,13 @@ export interface JbAvailabilityResult {
     customer_name: string | null;
     status: string | null;
     checked_in_at: string | null;
-    source: 'lab_order' | 'walk_in';
+    // Where the conflict comes from. Checkpoint sources are 'lab_order'
+    // (live order_arch_slots) and 'walk_in' (live walk_ins). Lounge's
+    // own sources are 'lounge_appointment' / 'lounge_walk_in', set
+    // when a JB is pinned to an in-flight appointment or walk-in here
+    // — those refs only clear once the visit completes (see
+    // Pay.closeVisit).
+    source: 'lab_order' | 'walk_in' | 'lounge_appointment' | 'lounge_walk_in';
   } | null;
 }
 

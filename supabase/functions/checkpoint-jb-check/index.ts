@@ -66,7 +66,12 @@ interface Conflict {
   customer_name: string | null;
   status: string | null;
   checked_in_at: string | null;
-  source: 'lab_order' | 'walk_in';
+  // 'lab_order' / 'walk_in' come from Checkpoint.
+  // 'lounge_appointment' / 'lounge_walk_in' come from Lounge's own
+  // active assignments — a JB pinned to an in-flight appointment or
+  // walk-in here is just as much "in use" as a Checkpoint lab box,
+  // so we have to check both source-of-truth surfaces.
+  source: 'lab_order' | 'walk_in' | 'lounge_appointment' | 'lounge_walk_in';
 }
 
 Deno.serve(async (req) => {
@@ -181,6 +186,91 @@ Deno.serve(async (req) => {
         status: r.status,
         checked_in_at: r.created_at,
         source: 'walk_in',
+      };
+    }
+  }
+
+  // 3. Lounge active appointments — direct jb_ref pin. The column is
+  //    nulled by Pay.closeVisit when the visit completes, so a
+  //    non-null match means "currently held by a live appointment".
+  if (!conflict) {
+    const { data: apptRows, error: apptErr } = await sbAdmin
+      .from('lng_appointments')
+      .select(
+        'appointment_ref, start_at, status, patient:patients(first_name, last_name)'
+      )
+      .eq('jb_ref', digits)
+      .order('start_at', { ascending: false })
+      .limit(1);
+    if (apptErr) {
+      return json(
+        { error: 'lounge_query_failed', source: 'lng_appointments', detail: apptErr.message },
+        502
+      );
+    }
+    if (apptRows && apptRows.length > 0) {
+      const r = apptRows[0] as {
+        appointment_ref: string | null;
+        start_at: string | null;
+        status: string | null;
+        patient:
+          | { first_name: string | null; last_name: string | null }
+          | { first_name: string | null; last_name: string | null }[]
+          | null;
+      };
+      const p = Array.isArray(r.patient) ? r.patient[0] ?? null : r.patient;
+      const name = p
+        ? [p.first_name, p.last_name].filter(Boolean).join(' ').trim() || null
+        : null;
+      conflict = {
+        order_name: r.appointment_ref,
+        customer_name: name,
+        status: r.status,
+        checked_in_at: r.start_at,
+        source: 'lounge_appointment',
+      };
+    }
+  }
+
+  // 4. Lounge active walk-ins. Same logic — jb_ref non-null = in use.
+  //    Walk-ins don't have an appointment_ref UI label that maps as
+  //    cleanly, but we still pass the LAP-style ref the column carries
+  //    so the receptionist sees a stable identifier in the conflict
+  //    banner.
+  if (!conflict) {
+    const { data: walkInRows, error: walkInErr } = await sbAdmin
+      .from('lng_walk_ins')
+      .select(
+        'appointment_ref, created_at, patient:patients(first_name, last_name)'
+      )
+      .eq('jb_ref', digits)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (walkInErr) {
+      return json(
+        { error: 'lounge_query_failed', source: 'lng_walk_ins', detail: walkInErr.message },
+        502
+      );
+    }
+    if (walkInRows && walkInRows.length > 0) {
+      const r = walkInRows[0] as {
+        appointment_ref: string | null;
+        created_at: string | null;
+        patient:
+          | { first_name: string | null; last_name: string | null }
+          | { first_name: string | null; last_name: string | null }[]
+          | null;
+      };
+      const p = Array.isArray(r.patient) ? r.patient[0] ?? null : r.patient;
+      const name = p
+        ? [p.first_name, p.last_name].filter(Boolean).join(' ').trim() || null
+        : null;
+      conflict = {
+        order_name: r.appointment_ref,
+        customer_name: name,
+        status: 'walk-in',
+        checked_in_at: r.created_at,
+        source: 'lounge_walk_in',
       };
     }
   }
