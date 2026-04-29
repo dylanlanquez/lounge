@@ -23,7 +23,7 @@ export async function getOrCreateLabel(key: string, displayName: string): Promis
   if (existing) return (existing as { id: string }).id;
   const { data: created, error } = await supabase
     .from('file_labels')
-    .insert({ key, display_name: displayName, sort_order: 900 })
+    .insert({ key, label: displayName, sort_order: 900 })
     .select('id')
     .single();
   if (error || !created) throw new Error(error?.message ?? 'Could not create file_label');
