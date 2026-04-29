@@ -181,11 +181,10 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
       // on every row, thumbnail_path caches a rendered PNG for STL/OBJ
       // scan files. Both may be null on legacy rows.
       // Match Meridian's PatientProfileFiles query — only `status='active'`
-      // rows show on the patient profile. Meridian's data model is
-      // append-only-then-archive: a file marked 'archived' has been
-      // explicitly removed and shouldn't surface on the patient view.
-      // Older versions of an active slot stay status='active' too, so
-      // the version-history modal still picks them up.
+      // rows that are NOT deliveries surface here. Meridian splits them
+      // off because delivery files (is_delivery=true) belong to the
+      // FinalDeliveries surface — including them here used to render
+      // the same case_delivery STL in both places, confusing reception.
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
@@ -193,6 +192,7 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
         )
         .eq('patient_id', patientId)
         .eq('status', 'active')
+        .eq('is_delivery', false)
         .order('uploaded_at', { ascending: false });
       if (cancelled) return;
       if (err) {
