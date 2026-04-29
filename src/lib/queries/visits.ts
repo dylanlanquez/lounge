@@ -14,6 +14,13 @@ export interface VisitRow {
   opened_at: string;
   closed_at: string | null;
   notes: string | null;
+  // Immutable historical copy of the job box ref used during this
+  // visit. Captured at insert time by trigger
+  // lng_visits_capture_jb_ref_trg from the source row
+  // (lng_appointments.jb_ref or lng_walk_ins.jb_ref). The source
+  // values get nulled when the visit closes so the box becomes
+  // available again; this column preserves the audit trail.
+  jb_ref: string | null;
 }
 
 export interface CreateWalkInInput {

@@ -184,7 +184,31 @@ export function Pay() {
 
   const closeVisit = async () => {
     if (!visit) return;
-    await supabase.from('lng_visits').update({ status: 'complete', closed_at: new Date().toISOString() }).eq('id', visit.id);
+    await supabase
+      .from('lng_visits')
+      .update({ status: 'complete', closed_at: new Date().toISOString() })
+      .eq('id', visit.id);
+
+    // Free the job box. The source rows (appointment / walk-in)
+    // hold the "currently assigned" JB; nulling them once the
+    // visit completes lets the box be reassigned to a new
+    // appointment. The visit's own jb_ref column was captured at
+    // insert time (trigger lng_visits_capture_jb_ref_trg) and is
+    // immutable, so the historical record survives on the
+    // VisitDetail timeline.
+    if (visit.appointment_id) {
+      await supabase
+        .from('lng_appointments')
+        .update({ jb_ref: null })
+        .eq('id', visit.appointment_id);
+    }
+    if (visit.walk_in_id) {
+      await supabase
+        .from('lng_walk_ins')
+        .update({ jb_ref: null })
+        .eq('id', visit.walk_in_id);
+    }
+
     if (patient) {
       await supabase.from('patient_events').insert({
         patient_id: patient.id,

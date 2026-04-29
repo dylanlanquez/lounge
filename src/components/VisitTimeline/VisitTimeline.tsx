@@ -1,5 +1,6 @@
 import { type ReactNode, useMemo } from 'react';
 import {
+  Box,
   CalendarCheck,
   CreditCard,
   FileSignature,
@@ -254,6 +255,8 @@ function iconFor(event: TimelineEvent): ReactNode {
       return <FileSignature size={size} />;
     case 'card':
       return <CreditCard size={size} />;
+    case 'box':
+      return <Box size={size} />;
     case 'flag':
     default:
       return <Flag size={size} />;
