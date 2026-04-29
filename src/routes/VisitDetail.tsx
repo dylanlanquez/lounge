@@ -6,6 +6,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   CheckCircle,
+  ChevronRight,
   Circle,
   CircleSlash,
   CreditCard,
@@ -186,16 +187,39 @@ export function VisitDetail() {
                 joins the pills row alongside status and cart, so
                 every meta atom lives in one consistent rhythm. */}
             <div style={{ marginBottom: theme.space[6] }}>
-              <h1
+              <div
                 style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: theme.space[3],
+                  flexWrap: 'wrap',
                   margin: `0 0 ${theme.space[3]}px`,
-                  fontSize: theme.type.size.xxl,
-                  fontWeight: theme.type.weight.semibold,
-                  letterSpacing: theme.type.tracking.tight,
                 }}
               >
-                {patient ? patientFullName(patient) : 'Patient'}
-              </h1>
+                <h1
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.xxl,
+                    fontWeight: theme.type.weight.semibold,
+                    letterSpacing: theme.type.tracking.tight,
+                  }}
+                >
+                  {patient ? patientFullName(patient) : 'Patient'}
+                </h1>
+                {patient ? (
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    onClick={() => navigate(`/patient/${patient.id}`)}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                      View profile
+                      <ChevronRight size={16} />
+                    </span>
+                  </Button>
+                ) : null}
+              </div>
               <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                 {showableRef(patient?.internal_ref) ? (
                   <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
