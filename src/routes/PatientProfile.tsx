@@ -21,14 +21,18 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import { properCase } from '../lib/queries/appointments.ts';
 import {
   bucketCase,
+  humaniseEventTypeLabel,
   usePatientCases,
   usePatientProfile,
   usePatientProfileFiles,
+  usePatientScheduledAppointments,
   usePatientVisits,
   type PatientCaseRow,
   type PatientFileEntry,
   type PatientProfileRow,
+  type PatientScheduledAppointmentRow,
   type PatientVisitRow,
+  type ScheduledApptStatus,
 } from '../lib/queries/patientProfile.ts';
 import { formatPence } from '../lib/queries/carts.ts';
 import {
@@ -60,6 +64,8 @@ export function PatientProfile() {
   const { data: patient, loading: patientLoading, error: patientError } = usePatientProfile(id);
   const { data: files, loading: filesLoading, refresh: refreshFiles } = usePatientProfileFiles(id);
   const { data: visits, loading: visitsLoading } = usePatientVisits(id);
+  const { data: scheduledAppointments, loading: apptsLoading } =
+    usePatientScheduledAppointments(id);
   const { data: cases, loading: casesLoading } = usePatientCases(id);
 
   if (authLoading) return null;
@@ -114,9 +120,10 @@ export function PatientProfile() {
               refresh={refreshFiles}
             />
             <FinalDeliveries patientId={patient.id} patient={patient} />
-            <WalkInAppointments
+            <Appointments
               visits={visits}
-              loading={visitsLoading}
+              scheduledAppointments={scheduledAppointments}
+              loading={visitsLoading || apptsLoading}
               isMobile={isMobile}
               patientId={patient.id}
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
@@ -789,17 +796,88 @@ function NotesField({ label, value, multiline = false }: { label: string; value:
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Walk-in appointments table — per-visit row.
+// Appointments — unified timeline.
+//
+// Past-and-present visits in lng_visits represent appointments that DID
+// get booked in (the receptionist hit Arrived). Rows in lng_appointments
+// represent the booking itself; if a booking was never converted to a
+// visit (no_show, cancelled, or a legacy row from before Lounge existed)
+// it lives only here. We surface both:
+//   - Upcoming  : future bookings (lng_appointments, no visit yet)
+//   - Past      : visits + past bookings that were never arrived
+// Booking rows whose id appears in any visit.appointment_id are filtered
+// out — the visit row already represents them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function WalkInAppointments({
+interface UnifiedApptRow {
+  // Stable key for the table row.
+  key: string;
+  // Whether this row originates from lng_visits (the patient was booked
+  // in) or lng_appointments (still scheduled, or never arrived).
+  kind: 'visit' | 'appointment';
+  // The visit, when kind === 'visit'.
+  visit?: PatientVisitRow;
+  // The appointment, when kind === 'appointment'.
+  appointment?: PatientScheduledAppointmentRow;
+  // Date used for sorting + display. Visits use opened_at; appointments
+  // use start_at.
+  sortDate: string;
+  // Which side of "now" this row sits — drives the upcoming/past split.
+  bucket: 'upcoming' | 'past';
+}
+
+function buildUnifiedAppts(
+  visits: PatientVisitRow[],
+  appointments: PatientScheduledAppointmentRow[]
+): UnifiedApptRow[] {
+  const now = Date.now();
+  // Visits already represent appointments that were arrived. Skip any
+  // appointment whose id matches a visit.appointment_id so we don't show
+  // both rows for the same slot.
+  const visitedApptIds = new Set(visits.map((v) => v.appointment_id).filter(Boolean) as string[]);
+
+  const rows: UnifiedApptRow[] = [];
+
+  for (const v of visits) {
+    rows.push({
+      key: `v-${v.id}`,
+      kind: 'visit',
+      visit: v,
+      sortDate: v.opened_at,
+      bucket: 'past',
+    });
+  }
+
+  for (const a of appointments) {
+    if (visitedApptIds.has(a.id)) continue;
+    const isFuture = new Date(a.start_at).getTime() >= now;
+    rows.push({
+      key: `a-${a.id}`,
+      kind: 'appointment',
+      appointment: a,
+      sortDate: a.start_at,
+      bucket: isFuture ? 'upcoming' : 'past',
+    });
+  }
+
+  // Past goes newest-first (most recent visit at the top) — Upcoming goes
+  // soonest-first (next appointment at the top). The split happens in the
+  // render layer; the array stays sorted newest-first so each pager
+  // chunks chronologically without further work.
+  rows.sort((a, b) => b.sortDate.localeCompare(a.sortDate));
+  return rows;
+}
+
+function Appointments({
   visits,
+  scheduledAppointments,
   loading,
   isMobile,
   patientId,
   patientName,
 }: {
   visits: PatientVisitRow[];
+  scheduledAppointments: PatientScheduledAppointmentRow[];
   loading: boolean;
   isMobile: boolean;
   patientId: string;
@@ -811,45 +889,101 @@ function WalkInAppointments({
   // of "Schedule › Visit", so back-navigation lands on this profile.
   const openVisit = (id: string) =>
     navigate(`/visit/${id}`, { state: { from: 'patient', patientId, patientName } });
+
+  const all = useMemo(
+    () => buildUnifiedAppts(visits, scheduledAppointments),
+    [visits, scheduledAppointments]
+  );
+  const upcoming = useMemo(
+    // Render upcoming soonest-first so the next appointment is at the
+    // top of the list (the merged array is newest-first by default).
+    () => all.filter((r) => r.bucket === 'upcoming').slice().reverse(),
+    [all]
+  );
+  const past = useMemo(() => all.filter((r) => r.bucket === 'past'), [all]);
+
   return (
     <CollapsibleCard
       icon={<CalendarDays size={18} color={theme.color.ink} aria-hidden />}
       title="Appointments"
-      meta={`${visits.length} ${visits.length === 1 ? 'appointment' : 'appointments'}`}
+      meta={`${all.length} ${all.length === 1 ? 'appointment' : 'appointments'}`}
     >
       {loading ? (
         <Skeleton height={120} radius={14} />
-      ) : visits.length === 0 ? (
-        <EmptyState title="No appointments yet" description="Walk-ins and arrivals will list here." />
+      ) : all.length === 0 ? (
+        <EmptyState
+          title="No appointments yet"
+          description="Bookings, walk-ins and arrivals will list here."
+        />
       ) : (
-        <PaginatedAppointments visits={visits} isMobile={isMobile} openVisit={openVisit} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          {upcoming.length > 0 ? (
+            <ApptGroup
+              eyebrow="Upcoming"
+              rows={upcoming}
+              isMobile={isMobile}
+              onOpenVisit={openVisit}
+            />
+          ) : null}
+          {past.length > 0 ? (
+            <ApptGroup
+              eyebrow="Past"
+              rows={past}
+              isMobile={isMobile}
+              onOpenVisit={openVisit}
+            />
+          ) : null}
+        </div>
       )}
     </CollapsibleCard>
   );
 }
 
-function PaginatedAppointments({
-  visits,
+function ApptGroup({
+  eyebrow,
+  rows,
   isMobile,
-  openVisit,
+  onOpenVisit,
 }: {
-  visits: PatientVisitRow[];
+  eyebrow: string;
+  rows: UnifiedApptRow[];
   isMobile: boolean;
-  openVisit: (id: string) => void;
+  onOpenVisit: (visitId: string) => void;
 }) {
-  const pager = usePagedRows(visits, PROFILE_PAGE_SIZE);
+  const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
   return (
-    <>
+    <div>
+      <div
+        style={{
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          marginBottom: theme.space[2],
+        }}
+      >
+        {eyebrow} <span style={{ color: theme.color.inkSubtle }}>· {rows.length}</span>
+      </div>
       {isMobile ? (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {pager.visible.map((v) => (
-            <li key={v.id}>
-              <VisitRowMobile visit={v} onClick={() => openVisit(v.id)} />
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+          }}
+        >
+          {pager.visible.map((r) => (
+            <li key={r.key}>
+              <ApptRowMobile row={r} onOpenVisit={onOpenVisit} />
             </li>
           ))}
         </ul>
       ) : (
-        <VisitsTable visits={pager.visible} onRowClick={(v) => openVisit(v.id)} />
+        <ApptTable rows={pager.visible} onOpenVisit={onOpenVisit} />
       )}
       <ListPager
         page={pager.page}
@@ -857,11 +991,17 @@ function PaginatedAppointments({
         onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
         onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
       />
-    </>
+    </div>
   );
 }
 
-function VisitsTable({ visits, onRowClick }: { visits: PatientVisitRow[]; onRowClick: (v: PatientVisitRow) => void }) {
+function ApptTable({
+  rows,
+  onOpenVisit,
+}: {
+  rows: UnifiedApptRow[];
+  onOpenVisit: (visitId: string) => void;
+}) {
   const headerStyle: CSSProperties = {
     fontSize: theme.type.size.xs,
     fontWeight: theme.type.weight.semibold,
@@ -883,7 +1023,9 @@ function VisitsTable({ visits, onRowClick }: { visits: PatientVisitRow[]; onRowC
   };
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums' }}>
+      <table
+        style={{ width: '100%', borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums' }}
+      >
         <thead>
           <tr>
             <th style={headerStyle}>Date</th>
@@ -894,42 +1036,86 @@ function VisitsTable({ visits, onRowClick }: { visits: PatientVisitRow[]; onRowC
           </tr>
         </thead>
         <tbody>
-          {visits.map((v) => (
-            <tr
-              key={v.id}
-              onClick={() => onRowClick(v)}
-              style={{ cursor: 'pointer' }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLTableRowElement).style.background = theme.color.bg;
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLTableRowElement).style.background = 'transparent';
-              }}
-            >
-              <td style={cellStyle}>{formatDateTime(v.opened_at)}</td>
-              <td style={{ ...cellStyle, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: theme.color.inkMuted }}>
-                {v.lwo_ref ?? '—'}
-              </td>
-              <td style={cellStyle}>{v.service_label ?? '—'}</td>
-              <td style={cellStyle}>
-                <VisitStatusPill visit={v} />
-              </td>
-              <td style={{ ...cellStyle, textAlign: 'right', color: v.cart_status === 'paid' ? theme.color.ink : theme.color.inkMuted }}>
-                {paymentLabel(v)}
-              </td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            const isVisit = r.kind === 'visit';
+            const handleClick = isVisit && r.visit ? () => onOpenVisit(r.visit!.id) : undefined;
+            return (
+              <tr
+                key={r.key}
+                onClick={handleClick}
+                style={{ cursor: handleClick ? 'pointer' : 'default' }}
+                onMouseEnter={(e) => {
+                  if (!handleClick) return;
+                  (e.currentTarget as HTMLTableRowElement).style.background = theme.color.bg;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLTableRowElement).style.background = 'transparent';
+                }}
+              >
+                <td style={cellStyle}>{formatDateTime(r.sortDate)}</td>
+                <td
+                  style={{
+                    ...cellStyle,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    color: theme.color.inkMuted,
+                  }}
+                >
+                  {isVisit ? r.visit?.lwo_ref ?? '—' : r.appointment?.appointment_ref ?? '—'}
+                </td>
+                <td style={cellStyle}>
+                  {isVisit
+                    ? r.visit?.service_label ?? '—'
+                    : humaniseEventTypeLabel(r.appointment?.event_type_label ?? null) ?? '—'}
+                </td>
+                <td style={cellStyle}>
+                  {isVisit ? (
+                    <VisitStatusPill visit={r.visit!} />
+                  ) : (
+                    <ApptStatusPill status={r.appointment!.status} />
+                  )}
+                </td>
+                <td
+                  style={{
+                    ...cellStyle,
+                    textAlign: 'right',
+                    color:
+                      isVisit && r.visit?.cart_status === 'paid'
+                        ? theme.color.ink
+                        : theme.color.inkMuted,
+                  }}
+                >
+                  {isVisit ? paymentLabel(r.visit!) : '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function VisitRowMobile({ visit, onClick }: { visit: PatientVisitRow; onClick: () => void }) {
+function ApptRowMobile({
+  row,
+  onOpenVisit,
+}: {
+  row: UnifiedApptRow;
+  onOpenVisit: (visitId: string) => void;
+}) {
+  const isVisit = row.kind === 'visit';
+  const clickable = isVisit && row.visit;
+  const handleClick = clickable ? () => onOpenVisit(row.visit!.id) : undefined;
+  const service = isVisit
+    ? row.visit?.service_label ?? 'Appointment'
+    : humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ?? 'Appointment';
+  const ref = isVisit
+    ? row.visit?.lwo_ref ?? 'no LWO ref'
+    : row.appointment?.appointment_ref ?? 'no ref';
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={handleClick}
+      disabled={!clickable}
       style={{
         appearance: 'none',
         width: '100%',
@@ -938,7 +1124,7 @@ function VisitRowMobile({ visit, onClick }: { visit: PatientVisitRow; onClick: (
         borderRadius: theme.radius.card,
         border: `1px solid ${theme.color.border}`,
         background: theme.color.surface,
-        cursor: 'pointer',
+        cursor: clickable ? 'pointer' : 'default',
         fontFamily: 'inherit',
         display: 'flex',
         alignItems: 'center',
@@ -946,17 +1132,43 @@ function VisitRowMobile({ visit, onClick }: { visit: PatientVisitRow; onClick: (
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-          {visit.service_label ?? 'Appointment'}
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {service}
         </p>
-        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums' }}>
-          {formatDateTime(visit.opened_at)} · {visit.lwo_ref ?? 'no LWO ref'}
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatDateTime(row.sortDate)} · {ref}
         </p>
       </div>
-      <VisitStatusPill visit={visit} />
-      <span style={{ fontVariantNumeric: 'tabular-nums', color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-        {paymentLabel(visit)}
-      </span>
+      {isVisit ? (
+        <VisitStatusPill visit={row.visit!} />
+      ) : (
+        <ApptStatusPill status={row.appointment!.status} />
+      )}
+      {isVisit ? (
+        <span
+          style={{
+            fontVariantNumeric: 'tabular-nums',
+            color: theme.color.inkMuted,
+            fontSize: theme.type.size.sm,
+          }}
+        >
+          {paymentLabel(row.visit!)}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -974,6 +1186,31 @@ function VisitStatusPill({ visit }: { visit: PatientVisitRow }) {
   return <StatusPill tone={tone} size="sm">{label}</StatusPill>;
 }
 
+function ApptStatusPill({ status }: { status: ScheduledApptStatus }) {
+  // Map lng_appointments.status onto the StatusPill tone vocabulary.
+  // Booked + arrived sit on the active rail; complete maps to its
+  // muted-green; no_show is the loud one; cancelled / rescheduled both
+  // read as inert.
+  const tone =
+    status === 'complete'
+      ? 'complete'
+      : status === 'no_show'
+        ? 'no_show'
+        : status === 'cancelled' || status === 'rescheduled'
+          ? 'cancelled'
+          : status === 'in_progress'
+            ? 'in_progress'
+            : status === 'arrived'
+              ? 'arrived'
+              : 'neutral';
+  const label = humaniseApptStatus(status);
+  return (
+    <StatusPill tone={tone} size="sm">
+      {label}
+    </StatusPill>
+  );
+}
+
 function humaniseVisitStatus(s: PatientVisitRow['status']): string {
   switch (s) {
     case 'opened':
@@ -984,6 +1221,25 @@ function humaniseVisitStatus(s: PatientVisitRow['status']): string {
       return 'Complete';
     case 'cancelled':
       return 'Cancelled';
+  }
+}
+
+function humaniseApptStatus(s: ScheduledApptStatus): string {
+  switch (s) {
+    case 'booked':
+      return 'Booked';
+    case 'arrived':
+      return 'Arrived';
+    case 'in_progress':
+      return 'In progress';
+    case 'complete':
+      return 'Complete';
+    case 'no_show':
+      return 'No show';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'rescheduled':
+      return 'Rescheduled';
   }
 }
 
