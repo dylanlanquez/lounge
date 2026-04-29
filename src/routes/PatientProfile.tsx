@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, FileSignature, Info, Layers, Pencil, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, Download, FileSignature, Info, Layers, Pencil, Printer, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -29,8 +29,10 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import {
   sectionSignatureState,
+  useSignedWaivers,
   useWaiverSections,
   usePatientWaiverState,
+  type SignedWaiverRow,
   type WaiverSection,
   type WaiverSignatureSummary,
 } from '../lib/queries/waiver.ts';
@@ -109,6 +111,11 @@ export function PatientProfile() {
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
             />
             <CaseHistory cases={cases} loading={casesLoading} />
+            <SignedWaiversHistory
+              patientId={patient.id}
+              patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
+              isMobile={isMobile}
+            />
           </div>
         )}
       </div>
@@ -772,7 +779,7 @@ function WalkInAppointments({
 }
 
 function VisitsTable({ visits, onRowClick }: { visits: PatientVisitRow[]; onRowClick: (v: PatientVisitRow) => void }) {
-  const headerStyle: React.CSSProperties = {
+  const headerStyle: CSSProperties = {
     fontSize: theme.type.size.xs,
     fontWeight: theme.type.weight.semibold,
     color: theme.color.inkMuted,
@@ -784,7 +791,7 @@ function VisitsTable({ visits, onRowClick }: { visits: PatientVisitRow[]; onRowC
     borderTop: `1px solid ${theme.color.border}`,
     borderBottom: `1px solid ${theme.color.border}`,
   };
-  const cellStyle: React.CSSProperties = {
+  const cellStyle: CSSProperties = {
     padding: `${theme.space[3]}px ${theme.space[3]}px`,
     fontSize: theme.type.size.sm,
     color: theme.color.ink,
@@ -993,6 +1000,300 @@ function CaseHistory({ cases, loading }: { cases: PatientCaseRow[]; loading: boo
     </Card>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signed waivers — full audit table of every signing event for this
+// patient. Newest first. Each row exposes Download (raw signature SVG)
+// and Print (a clean window with the section title, version, signed-at,
+// witness, the terms snapshot the patient agreed to, and the signature
+// itself rendered to scale). Audit-grade output — terms_snapshot is the
+// frozen copy of what was signed, so re-printing decades later still
+// reproduces the exact contract.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SignedWaiversHistory({
+  patientId,
+  patientName,
+  isMobile,
+}: {
+  patientId: string;
+  patientName: string;
+  isMobile: boolean;
+}) {
+  const { rows, loading, error } = useSignedWaivers(patientId);
+
+  return (
+    <Card padding="lg">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+          <FileSignature size={18} color={theme.color.ink} aria-hidden />
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+            }}
+          >
+            Signed waivers
+          </h2>
+        </div>
+        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
+          {rows.length} {rows.length === 1 ? 'signature' : 'signatures'}
+        </span>
+      </div>
+
+      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
+
+      {error ? (
+        <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          Could not load signatures: {error}
+        </p>
+      ) : loading ? (
+        <Skeleton height={120} radius={14} />
+      ) : rows.length === 0 ? (
+        <EmptyState title="No signatures yet" description="Waivers signed during arrival or consent will list here." />
+      ) : isMobile ? (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {rows.map((r) => (
+            <li key={r.id}>
+              <SignedWaiverCard row={r} patientName={patientName} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <SignedWaiverTable rows={rows} patientName={patientName} />
+      )}
+    </Card>
+  );
+}
+
+function SignedWaiverTable({
+  rows,
+  patientName,
+}: {
+  rows: SignedWaiverRow[];
+  patientName: string;
+}) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          fontSize: theme.type.size.sm,
+          color: theme.color.ink,
+        }}
+      >
+        <thead>
+          <tr>
+            <th style={tableHeaderStyle}>Section</th>
+            <th style={tableHeaderStyle}>Version</th>
+            <th style={tableHeaderStyle}>Signed</th>
+            <th style={tableHeaderStyle}>Witness</th>
+            <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} style={{ borderTop: `1px solid ${theme.color.border}` }}>
+              <td style={tableCellStyle}>
+                <span style={{ fontWeight: theme.type.weight.medium }}>
+                  {r.section_title ?? r.section_key}
+                </span>
+              </td>
+              <td style={tableCellStyle}>
+                <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                  {r.section_version}
+                </code>
+              </td>
+              <td style={tableCellStyle}>{formatLongDateTime(r.signed_at)}</td>
+              <td style={tableCellStyle}>
+                {r.witness_name ?? <span style={{ color: theme.color.inkSubtle }}>not recorded</span>}
+              </td>
+              <td style={{ ...tableCellStyle, textAlign: 'right' }}>
+                <SignatureActions row={r} patientName={patientName} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SignedWaiverCard({ row, patientName }: { row: SignedWaiverRow; patientName: string }) {
+  return (
+    <div
+      style={{
+        padding: theme.space[3],
+        borderRadius: theme.radius.card,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[2] }}>
+        <span style={{ fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+          {row.section_title ?? row.section_key}
+        </span>
+        <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+          {row.section_version}
+        </code>
+      </div>
+      <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+        Signed {formatLongDateTime(row.signed_at)}
+        {row.witness_name ? ` · witnessed by ${row.witness_name}` : ''}
+      </span>
+      <div style={{ display: 'flex', gap: theme.space[2], marginTop: theme.space[1] }}>
+        <SignatureActions row={row} patientName={patientName} />
+      </div>
+    </div>
+  );
+}
+
+function SignatureActions({ row, patientName }: { row: SignedWaiverRow; patientName: string }) {
+  const onDownload = () => downloadSignatureSvg(row, patientName);
+  const onPrint = () => printSignedWaiver(row, patientName);
+  return (
+    <span style={{ display: 'inline-flex', gap: theme.space[1] }}>
+      <button type="button" onClick={onDownload} style={iconButtonStyle} aria-label="Download signature SVG">
+        <Download size={14} />
+        <span>Download</span>
+      </button>
+      <button type="button" onClick={onPrint} style={iconButtonStyle} aria-label="Print waiver">
+        <Printer size={14} />
+        <span>Print</span>
+      </button>
+    </span>
+  );
+}
+
+function downloadSignatureSvg(row: SignedWaiverRow, patientName: string): void {
+  const filename = sanitiseFilename(
+    `waiver-${patientName}-${row.section_title ?? row.section_key}-${formatShortDate(row.signed_at)}.svg`
+  );
+  const blob = new Blob([row.signature_svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke the object URL on the next tick so the browser has time to
+  // honour the download click before the blob is freed.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function printSignedWaiver(row: SignedWaiverRow, patientName: string): void {
+  const win = window.open('', '_blank', 'noopener,noreferrer,width=820,height=1024');
+  if (!win) return;
+  const sectionTitle = row.section_title ?? row.section_key;
+  const terms = row.terms_snapshot ?? [];
+  const html = `<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8" />
+<title>Waiver — ${escapeHtml(patientName)} — ${escapeHtml(sectionTitle)}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; color: #0E1414; padding: 32px; max-width: 720px; margin: 0 auto; line-height: 1.5; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .meta { color: rgba(14, 20, 20, 0.6); font-size: 13px; margin-bottom: 24px; }
+  .meta strong { color: #0E1414; font-weight: 600; }
+  .terms { font-size: 13px; line-height: 1.55; }
+  .terms p { margin: 0 0 10px; }
+  .signature { margin-top: 32px; border-top: 1px solid rgba(14, 20, 20, 0.12); padding-top: 16px; }
+  .signature h2 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(14, 20, 20, 0.6); margin: 0 0 8px; }
+  .signature svg { max-width: 320px; height: auto; }
+  @media print {
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml(sectionTitle)}</h1>
+  <p class="meta">
+    <strong>${escapeHtml(patientName)}</strong> ·
+    Version ${escapeHtml(row.section_version)} ·
+    Signed ${escapeHtml(formatLongDateTime(row.signed_at))}${
+      row.witness_name ? ` · witnessed by ${escapeHtml(row.witness_name)}` : ''
+    }
+  </p>
+  <div class="terms">
+    ${terms.map((t) => `<p>${escapeHtml(t)}</p>`).join('')}
+  </div>
+  <div class="signature">
+    <h2>Signature</h2>
+    ${row.signature_svg}
+  </div>
+  <script>window.addEventListener('load', () => { window.focus(); window.print(); });</script>
+</body>
+</html>`;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitiseFilename(s: string): string {
+  return s.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
+}
+
+function formatLongDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+const tableHeaderStyle: CSSProperties = {
+  textAlign: 'left',
+  fontSize: theme.type.size.xs,
+  fontWeight: theme.type.weight.semibold,
+  textTransform: 'uppercase',
+  letterSpacing: theme.type.tracking.wide,
+  color: theme.color.inkMuted,
+  padding: `${theme.space[2]}px ${theme.space[3]}px`,
+};
+
+const tableCellStyle: CSSProperties = {
+  padding: `${theme.space[3]}px`,
+  verticalAlign: 'top',
+  fontSize: theme.type.size.sm,
+};
+
+const iconButtonStyle: CSSProperties = {
+  appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: `${theme.space[1]}px ${theme.space[3]}px`,
+  borderRadius: theme.radius.pill,
+  border: `1px solid ${theme.color.border}`,
+  background: theme.color.surface,
+  color: theme.color.ink,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: theme.type.size.xs,
+  fontWeight: theme.type.weight.medium,
+};
 
 function CaseRow({ row }: { row: PatientCaseRow }) {
   return (
