@@ -13,6 +13,20 @@ import {
   getPatient,
 } from '../../lib/queries/patients.ts';
 
+// Hash a stable identifier (email preferred, id as fallback) into a
+// theme.avatar palette entry so people with similar names get visually
+// distinct circles. djb2-style integer hash; pure function so it is
+// deterministic across renders and trivially unit-testable.
+function getAvatarPalette(seed: string): { bg: string; fg: string } {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  const palette = theme.avatar;
+  // palette is a non-empty const tuple, so `n % palette.length` is always a valid index.
+  return palette[Math.abs(hash) % palette.length]!;
+}
+
 export interface PatientSearchProps {
   onPick: (patient: PatientRow) => void;
   onCreateNew?: (term: string) => void;
@@ -266,6 +280,7 @@ function ShopifyResultRow({
   const showOrders = customer.orders_count > 0;
   const ordersLabel = customer.orders_count === 1 ? '1 order' : `${customer.orders_count} orders`;
   const hasMetadata = Boolean(customer.phone || customer.email || showOrders);
+  const avatar = getAvatarPalette(customer.email ?? String(customer.shopify_customer_id));
   return (
     <button
       type="button"
@@ -292,8 +307,8 @@ function ShopifyResultRow({
           width: 40,
           height: 40,
           borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
+          background: avatar.bg,
+          color: avatar.fg,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -344,12 +359,10 @@ function ShopifyResultRow({
         {hasMetadata ? (
           <div
             style={{
-              marginTop: theme.space[3],
-              paddingTop: theme.space[3],
-              borderTop: `1px solid ${theme.color.border}`,
+              marginTop: theme.space[2],
               display: 'flex',
               flexDirection: 'column',
-              gap: theme.space[2],
+              gap: theme.space[1],
             }}
           >
             {customer.phone ? <ContactLine icon={<Phone size={14} />} value={customer.phone} /> : null}
@@ -370,6 +383,7 @@ function ShopifyResultRow({
 
 function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p: PatientRow) => void }) {
   const hasContact = Boolean(patient.phone || patient.email);
+  const avatar = getAvatarPalette(patient.email ?? patient.id);
   return (
     <button
       type="button"
@@ -394,8 +408,8 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
           width: 40,
           height: 40,
           borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
+          background: avatar.bg,
+          color: avatar.fg,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -445,12 +459,10 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
         {hasContact ? (
           <div
             style={{
-              marginTop: theme.space[3],
-              paddingTop: theme.space[3],
-              borderTop: `1px solid ${theme.color.border}`,
+              marginTop: theme.space[2],
               display: 'flex',
               flexDirection: 'column',
-              gap: theme.space[2],
+              gap: theme.space[1],
             }}
           >
             {patient.phone ? <ContactLine icon={<Phone size={14} />} value={patient.phone} /> : null}
