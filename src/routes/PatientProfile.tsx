@@ -5,6 +5,7 @@ import {
   BeforeAfterGallery,
   Breadcrumb,
   Card,
+  CollapsibleCard,
   EmptyState,
   MarketingGallery,
   Skeleton,
@@ -758,35 +759,11 @@ function WalkInAppointments({
   const openVisit = (id: string) =>
     navigate(`/visit/${id}`, { state: { from: 'patient', patientId, patientName } });
   return (
-    <Card padding="lg">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-          <CalendarDays size={18} color={theme.color.ink} aria-hidden />
-          <h2
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
-            }}
-          >
-            Appointments
-          </h2>
-        </div>
-        <span
-          style={{
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {visits.length} {visits.length === 1 ? 'appointment' : 'appointments'}
-        </span>
-      </div>
-
-      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
-
+    <CollapsibleCard
+      icon={<CalendarDays size={18} color={theme.color.ink} aria-hidden />}
+      title="Appointments"
+      meta={`${visits.length} ${visits.length === 1 ? 'appointment' : 'appointments'}`}
+    >
       {loading ? (
         <Skeleton height={120} radius={14} />
       ) : visits.length === 0 ? (
@@ -794,7 +771,7 @@ function WalkInAppointments({
       ) : (
         <PaginatedAppointments visits={visits} isMobile={isMobile} openVisit={openVisit} />
       )}
-    </Card>
+    </CollapsibleCard>
   );
 }
 
@@ -999,29 +976,11 @@ function CaseHistory({ cases, loading }: { cases: PatientCaseRow[]; loading: boo
   }, [cases]);
 
   return (
-    <Card padding="lg">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-          <Layers size={18} color={theme.color.ink} aria-hidden />
-          <h2
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
-            }}
-          >
-            Case history
-          </h2>
-        </div>
-        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-          {cases.length} {cases.length === 1 ? 'case' : 'cases'}
-        </span>
-      </div>
-
-      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
-
+    <CollapsibleCard
+      icon={<Layers size={18} color={theme.color.ink} aria-hidden />}
+      title="Case history"
+      meta={`${cases.length} ${cases.length === 1 ? 'case' : 'cases'}`}
+    >
       {loading ? (
         <Skeleton height={80} radius={14} />
       ) : cases.length === 0 ? (
@@ -1060,7 +1019,7 @@ function CaseHistory({ cases, loading }: { cases: PatientCaseRow[]; loading: boo
           />
         </>
       )}
-    </Card>
+    </CollapsibleCard>
   );
 }
 
@@ -1108,29 +1067,11 @@ function SignedWaiversHistory({
   const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
 
   return (
-    <Card padding="lg">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-          <FileSignature size={18} color={theme.color.ink} aria-hidden />
-          <h2
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.tight,
-              color: theme.color.ink,
-            }}
-          >
-            Signed waivers
-          </h2>
-        </div>
-        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-          {rows.length} {rows.length === 1 ? 'signature' : 'signatures'}
-        </span>
-      </div>
-
-      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
-
+    <CollapsibleCard
+      icon={<FileSignature size={18} color={theme.color.ink} aria-hidden />}
+      title="Signed waivers"
+      meta={`${rows.length} ${rows.length === 1 ? 'signature' : 'signatures'}`}
+    >
       {error ? (
         <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
           Could not load signatures: {error}
@@ -1168,7 +1109,7 @@ function SignedWaiversHistory({
           />
         </>
       )}
-    </Card>
+    </CollapsibleCard>
   );
 }
 
