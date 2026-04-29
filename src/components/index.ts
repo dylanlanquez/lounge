@@ -68,3 +68,5 @@ export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
 export type { CollapsibleCardProps } from './CollapsibleCard/CollapsibleCard.tsx';
+
+export { PatientFilesGrid } from './PatientFilesGrid/PatientFilesGrid.tsx';
