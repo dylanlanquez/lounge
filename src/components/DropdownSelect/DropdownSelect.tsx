@@ -2,9 +2,11 @@ import {
   type CSSProperties,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 
@@ -57,7 +59,13 @@ export function DropdownSelect<T extends string>({
 }: DropdownSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLUListElement | null>(null);
   const listboxId = useId();
+  // Trigger rect captured while open so the panel — rendered via a
+  // portal to document.body — can anchor itself with position:fixed
+  // and stay attached even when an ancestor scrolls.
+  const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
 
   const items = options.map((o) =>
     typeof o === 'string'
@@ -66,11 +74,17 @@ export function DropdownSelect<T extends string>({
   );
 
   // Outside click / Escape close. Wired only when open so an idle
-  // dropdown doesn't keep listeners attached.
+  // dropdown doesn't keep listeners attached. The portal node is
+  // outside wrapperRef, so we test panelRef too — otherwise tapping
+  // an option would close the dropdown before the option's own
+  // mousedown→click sequence could fire.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: MouseEvent) => {
-      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -80,6 +94,29 @@ export function DropdownSelect<T extends string>({
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Track the trigger's viewport rect while open so the portal panel
+  // stays anchored to it. Capture-phase scroll listener catches scrolls
+  // on every ancestor (e.g. the BottomSheet's content area) without
+  // having to walk the parent chain.
+  useLayoutEffect(() => {
+    if (!open) {
+      setTriggerRect(null);
+      return;
+    }
+    const update = () => {
+      if (triggerRef.current) {
+        setTriggerRect(triggerRef.current.getBoundingClientRect());
+      }
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
     };
   }, [open]);
 
@@ -129,6 +166,7 @@ export function DropdownSelect<T extends string>({
   return (
     <div ref={wrapperRef} style={{ position: 'relative' }}>
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen((o) => !o)}
@@ -187,28 +225,35 @@ export function DropdownSelect<T extends string>({
         />
       </button>
 
-      {open ? (
-        <ul
-          id={listboxId}
-          role="listbox"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            right: 0,
-            margin: 0,
-            padding: theme.space[1],
-            listStyle: 'none',
-            background: theme.color.surface,
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.input,
-            boxShadow: theme.shadow.overlay,
-            zIndex: 20,
-            maxHeight: 320,
-            overflowY: 'auto',
-            animation: `lng-dropdown-enter ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
-          }}
-        >
+      {open && triggerRect
+        ? createPortal(
+            <ul
+              ref={panelRef}
+              id={listboxId}
+              role="listbox"
+              style={{
+                // Portal'd to document.body to escape every parent
+                // overflow:hidden context (the catalogue picker's
+                // expansion panel uses overflow:hidden for its grid-
+                // rows animation, which would otherwise clip us).
+                position: 'fixed',
+                top: triggerRect.bottom + 6,
+                left: triggerRect.left,
+                width: triggerRect.width,
+                margin: 0,
+                padding: theme.space[1],
+                listStyle: 'none',
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+                boxShadow: theme.shadow.overlay,
+                // Above BottomSheet (1000) and Toast (1100).
+                zIndex: 1200,
+                maxHeight: 320,
+                overflowY: 'auto',
+                animation: `lng-dropdown-enter ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+              }}
+            >
           {items.map((item) => {
             const isSelected = item.value === value;
             return (
@@ -247,8 +292,10 @@ export function DropdownSelect<T extends string>({
               </li>
             );
           })}
-        </ul>
-      ) : null}
+            </ul>,
+            document.body
+          )
+        : null}
 
       <style>{`
         @keyframes lng-dropdown-enter {
