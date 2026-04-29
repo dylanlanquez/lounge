@@ -9,6 +9,7 @@ import {
   ChevronRight,
   List,
   Monitor,
+  ShieldCheck,
   Video,
   X,
 } from 'lucide-react';
@@ -647,11 +648,22 @@ export function Schedule() {
           ) : selected ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
                   <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Status</span>
                   <StatusPill tone={statusToTone(selected.status)} size="sm">
                     {humaniseStatus(selected.status)}
                   </StatusPill>
+                  {waiverFlag ? (
+                    <StatusPill
+                      tone={waiverFlag.status === 'ready' ? 'arrived' : 'pending'}
+                      size="sm"
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <ShieldCheck size={12} aria-hidden />
+                        {waiverFlag.status === 'ready' ? 'Waiver signed' : 'Waiver pending'}
+                      </span>
+                    </StatusPill>
+                  ) : null}
                 </div>
 
                 {selected.deposit_pence != null && selected.deposit_status ? (
@@ -682,39 +694,6 @@ export function Schedule() {
                     {selected.join_url
                       ? 'If they have not connected, tap No-show.'
                       : 'If they have not turned up, tap No-show.'}
-                  </p>
-                </div>
-              ) : null}
-
-              {waiverFlag && waiverFlag.status !== 'ready' ? (
-                <div
-                  role="alert"
-                  style={{
-                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                    background: 'rgba(184, 58, 42, 0.08)',
-                    border: `1px solid ${theme.color.alert}`,
-                    borderRadius: 12,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: theme.space[3],
-                    color: theme.color.ink,
-                  }}
-                >
-                  <AlertTriangle
-                    size={20}
-                    color={theme.color.alert}
-                    aria-hidden
-                    style={{ flexShrink: 0 }}
-                  />
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.sm,
-                      lineHeight: theme.type.leading.snug,
-                    }}
-                  >
-                    <strong>{waiverFlagTitle(waiverFlag)}.</strong>{' '}
-                    {waiverFlagBody(waiverFlag)}
                   </p>
                 </div>
               ) : null}
@@ -1101,34 +1080,6 @@ function DepositLine({
       <span>{text}</span>
     </div>
   );
-}
-
-// Banner title for the waiver flag. Maps the four summariseWaiverFlag
-// states to receptionist-facing copy. Tab-friendly: stale and partial
-// both phrase as "needs re-signing" — the difference between them is
-// just whether the patient has zero up-to-date signatures or some.
-function waiverFlagTitle(flag: WaiverFlag): string {
-  if (flag.status === 'none') return 'Waiver needed';
-  if (flag.status === 'stale') return 'Waiver needs re-signing';
-  return 'Waiver partial';
-}
-
-function waiverFlagBody(flag: WaiverFlag): string {
-  if (flag.status === 'none') {
-    return `Patient has not signed the ${listSectionTitles(flag.missingSections)} section(s).`;
-  }
-  if (flag.status === 'stale') {
-    return `Terms updated since they last signed. Re-sign needed for ${listSectionTitles(flag.staleSections)}.`;
-  }
-  // partial
-  const parts: string[] = [];
-  if (flag.missingSections.length > 0) parts.push(`missing: ${listSectionTitles(flag.missingSections)}`);
-  if (flag.staleSections.length > 0) parts.push(`re-sign: ${listSectionTitles(flag.staleSections)}`);
-  return parts.join(' · ');
-}
-
-function listSectionTitles(secs: { title: string }[]): string {
-  return secs.map((s) => s.title).join(', ');
 }
 
 // Compact GBP formatter: "£25" / "£25.50". Uses Intl so the receptionist
