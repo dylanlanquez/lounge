@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import {
@@ -20,6 +20,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { properCase } from '../lib/queries/appointments.ts';
+import { patientFullName } from '../lib/queries/patients.ts';
 import {
   bucketCase,
   humaniseEventTypeLabel,
@@ -160,20 +161,41 @@ export function PatientProfile() {
 // its opened-at timestamp, and the visit's *own* entry state so
 // clicking the visit crumb here pops back without losing chain
 // context (Schedule / Patients / In clinic).
+//
+// `patientName` is a *preview* — every caller that already knows
+// the patient's name (Patients list, VisitDetail "View profile",
+// Schedule "Patient profile") forwards it so the rightmost crumb
+// renders the correct name on first paint, before the live patient
+// query has resolved. Without this, the breadcrumb would either
+// flash a literal placeholder ("Patient") or pop in late once the
+// query lands — the exact flicker we're avoiding.
 interface PatientEntryState {
   from?: 'visit';
   visitId?: string;
   visitOpenedAt?: string;
-  visitEntry?: { from?: 'patient' | 'schedule' | 'in_clinic' } | null;
+  visitEntry?: {
+    from?: 'patient' | 'schedule' | 'in_clinic';
+    patientId?: string;
+    patientName?: string;
+  } | null;
+  patientName?: string;
 }
 
 function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const entry = (location.state as PatientEntryState | null) ?? {};
-  const name = patient
-    ? `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim()
-    : 'Patient';
+
+  // Priority for the rightmost crumb:
+  //   1. live patient row (truth)
+  //   2. preview name from router state (caller's hint, used while
+  //      the live row is still in flight)
+  //   3. NameSkeleton — no preview means we genuinely don't know yet
+  //      (e.g. direct URL paste); render a loading shimmer instead
+  //      of a fake "Patient" placeholder.
+  const liveName = patient ? patientFullName(patient) : '';
+  const previewName = entry.patientName?.trim() ?? '';
+  const nameLabel: ReactNode = liveName || previewName || <NameSkeleton />;
 
   const items = (() => {
     if (entry.from === 'visit' && entry.visitId && entry.visitOpenedAt) {
@@ -203,12 +225,12 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
               state: visitState ?? undefined,
             }),
         },
-        { label: name },
+        { label: nameLabel },
       ];
     }
     return [
       { label: 'Patients', onClick: () => navigate('/patients') },
-      { label: name },
+      { label: nameLabel },
     ];
   })();
 
@@ -216,6 +238,36 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
     <div style={{ margin: `${theme.space[3]}px 0 ${theme.space[6]}px` }}>
       <Breadcrumb items={items} />
     </div>
+  );
+}
+
+// Inline shimmer used as the rightmost breadcrumb crumb while the
+// patient name is unknown. ~96px width is roughly a two-word name
+// at the breadcrumb's font size, so the surrounding chevrons don't
+// reflow when the real name lands.
+function NameSkeleton() {
+  return (
+    <>
+      {/* Visually-hidden text gives screen readers something to
+          announce in place of the shimmer; sighted users see the
+          inline rectangle. */}
+      <span
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap',
+          borderWidth: 0,
+        }}
+      >
+        Loading patient name
+      </span>
+      <Skeleton width={96} height={14} radius={4} />
+    </>
   );
 }
 
@@ -967,8 +1019,18 @@ function Appointments({
   // Tell the visit page where the user came from. VisitDetail's
   // breadcrumb uses this to render "Patients › Name › Visit" instead
   // of "Schedule › Visit", so back-navigation lands on this profile.
-  const openVisit = (id: string) =>
-    navigate(`/visit/${id}`, { state: { from: 'patient', patientId, patientName } });
+  // The opened_at preview lets that breadcrumb render its full
+  // "Appointment, 29 Apr, 21:43" label on first paint instead of
+  // shimmering until the visit query resolves.
+  const openVisit = (v: { id: string; opened_at: string }) =>
+    navigate(`/visit/${v.id}`, {
+      state: {
+        from: 'patient',
+        patientId,
+        patientName,
+        visitOpenedAt: v.opened_at,
+      },
+    });
 
   const all = useMemo(
     () => buildUnifiedAppts(visits, scheduledAppointments),
@@ -1028,7 +1090,7 @@ function ApptGroup({
   eyebrow: string;
   rows: UnifiedApptRow[];
   isMobile: boolean;
-  onOpenVisit: (visitId: string) => void;
+  onOpenVisit: (visit: { id: string; opened_at: string }) => void;
 }) {
   const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
   return (
@@ -1080,7 +1142,7 @@ function ApptTable({
   onOpenVisit,
 }: {
   rows: UnifiedApptRow[];
-  onOpenVisit: (visitId: string) => void;
+  onOpenVisit: (visit: { id: string; opened_at: string }) => void;
 }) {
   const headerStyle: CSSProperties = {
     fontSize: theme.type.size.xs,
@@ -1118,7 +1180,10 @@ function ApptTable({
         <tbody>
           {rows.map((r) => {
             const isVisit = r.kind === 'visit';
-            const handleClick = isVisit && r.visit ? () => onOpenVisit(r.visit!.id) : undefined;
+            const handleClick =
+              isVisit && r.visit
+                ? () => onOpenVisit({ id: r.visit!.id, opened_at: r.visit!.opened_at })
+                : undefined;
             return (
               <tr
                 key={r.key}
@@ -1180,11 +1245,13 @@ function ApptRowMobile({
   onOpenVisit,
 }: {
   row: UnifiedApptRow;
-  onOpenVisit: (visitId: string) => void;
+  onOpenVisit: (visit: { id: string; opened_at: string }) => void;
 }) {
   const isVisit = row.kind === 'visit';
   const clickable = isVisit && row.visit;
-  const handleClick = clickable ? () => onOpenVisit(row.visit!.id) : undefined;
+  const handleClick = clickable
+    ? () => onOpenVisit({ id: row.visit!.id, opened_at: row.visit!.opened_at })
+    : undefined;
   const service = isVisit
     ? row.visit?.service_label ?? 'Appointment'
     : humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ?? 'Appointment';

@@ -480,7 +480,9 @@ export function Schedule() {
                   variant="tertiary"
                   onClick={() => {
                     if (!selected) return;
-                    navigate(`/patient/${selected.patient_id}`);
+                    navigate(`/patient/${selected.patient_id}`, {
+                      state: { patientName: patientDisplayName(selected) },
+                    });
                   }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
