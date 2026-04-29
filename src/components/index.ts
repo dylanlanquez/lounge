@@ -18,6 +18,9 @@ export type { StatusPillProps, StatusTone } from './StatusPill/StatusPill.tsx';
 export { SegmentedControl } from './SegmentedControl/SegmentedControl.tsx';
 export type { SegmentedControlOption, SegmentedControlProps } from './SegmentedControl/SegmentedControl.tsx';
 
+export { DropdownSelect } from './DropdownSelect/DropdownSelect.tsx';
+export type { DropdownSelectProps, DropdownSelectOption } from './DropdownSelect/DropdownSelect.tsx';
+
 export { Toast } from './Toast/Toast.tsx';
 export type { ToastProps, ToastTone } from './Toast/Toast.tsx';
 

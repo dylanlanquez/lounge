@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Minus, Package, Plus, Search, Sparkles, X } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { theme } from '../../theme/index.ts';
@@ -138,6 +139,12 @@ export function CataloguePicker({
     setExpandedKey(null);
     setToast({ tone: 'success', title: 'Added to bag' });
     onItemAdded();
+    // Slide the picker away after a successful add. The toast lives
+    // outside the BottomSheet portal so it stays on screen as the
+    // sheet slides down. If the receptionist needs another item, the
+    // parent page surfaces an "Add another" affordance next to the
+    // staged items.
+    onClose();
   };
 
   const renderRow = (row: CatalogueRow) => {
@@ -241,11 +248,11 @@ export function CataloguePicker({
         <div
           style={{
             position: 'fixed',
-            // Anchor near the top of the viewport (still over the
-            // BottomSheet, which is zIndex 1000). Bottom-anchored
-            // toasts collide with the kiosk bottom nav and the sheet's
-            // footer area, so the receptionist often missed them.
-            top: `calc(env(safe-area-inset-top, 0px) + ${theme.space[8]}px)`,
+            // ~160px above the bottom safe area — clear of the kiosk
+            // bottom nav and the BottomSheet's footer rhythm, but still
+            // bottom-anchored so it reads as a confirmation tied to
+            // the action just taken (not a system banner).
+            bottom: `calc(env(safe-area-inset-bottom, 0px) + ${theme.space[16] + theme.space[24]}px)`,
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 1100,
@@ -536,11 +543,16 @@ function ProductRow({
     (!askArch || arch !== null) &&
     (!showShade || shade.trim() !== '');
 
-  // Form-less rows (no arch pick, no shade pick, no upgrades) skip the
-  // dropdown entirely — tapping the header adds them straight to the
-  // bag. Impression Appointment is the canonical case but the rule is
-  // schema-driven, not hardcoded by name.
-  const isFormless = !askArch && !showShade && rowUpgrades.length === 0;
+  // Form-less rows (no arch pick, no shade pick, no upgrades, no
+  // count-based unit) skip the dropdown entirely — tapping the header
+  // adds them straight to the bag. Impression Appointment is the
+  // canonical case (arch_match='any', unit_label=null). Denture
+  // repairs like "Add a new tooth" or "Broken tooth" have
+  // unit_label='per tooth' so they're treated as count-based and
+  // keep the dropdown for the quantity stepper. Schema-driven, not
+  // hardcoded by product name.
+  const isFormless =
+    !askArch && !showShade && rowUpgrades.length === 0 && !row.unit_label;
 
   const submit = async () => {
     if (!canAdd) return;
@@ -657,7 +669,34 @@ function ProductRow({
         >
           {showFromPrefix ? 'From ' : ''}£{minHeaderPrice.toFixed(2)}
         </span>
-        {isFormless ? null : (
+        {isFormless ? (
+          // Visual affordance so the receptionist knows tapping this
+          // row will add it to the bag immediately, rather than
+          // expanding into a form. Whole row is the click target;
+          // this pill is the visual cue.
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[1],
+              padding: `${theme.space[1]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.pill,
+              background: busy ? theme.color.accentBg : theme.color.accent,
+              color: busy ? theme.color.accent : theme.color.surface,
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.wide,
+              textTransform: 'uppercase',
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
+              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            }}
+          >
+            <Plus size={14} aria-hidden />
+            {busy ? 'Adding' : 'Add to bag'}
+          </span>
+        ) : (
           <ChevronDown
             size={18}
             color={theme.color.inkSubtle}
@@ -719,27 +758,13 @@ function ProductRow({
 
             {showShade ? (
               <FieldBlock label="Shade" required>
-                <select
+                <DropdownSelect
+                  ariaLabel="Shade"
                   value={shade}
-                  onChange={(e) => setShade(e.target.value)}
-                  style={{
-                    height: theme.layout.inputHeight,
-                    padding: `0 ${theme.space[3]}px`,
-                    fontSize: theme.type.size.base,
-                    fontFamily: 'inherit',
-                    border: `1px solid ${theme.color.border}`,
-                    borderRadius: theme.radius.input,
-                    background: theme.color.surface,
-                    color: theme.color.ink,
-                  }}
-                >
-                  <option value="">Pick a shade</option>
-                  {CLICK_IN_VENEER_SHADES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                  options={CLICK_IN_VENEER_SHADES}
+                  placeholder="Pick a shade"
+                  onChange={setShade}
+                />
               </FieldBlock>
             ) : null}
 

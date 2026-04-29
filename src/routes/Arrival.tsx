@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Box,
   CheckCircle2,
-  ChevronDown,
   ClipboardList,
   Loader2,
   Minus,
@@ -19,6 +18,7 @@ import {
 import {
   Button,
   Card,
+  DropdownSelect,
   Skeleton,
   Toast,
 } from '../components/index.ts';
@@ -2048,85 +2048,13 @@ function SexRow({
       </div>
     );
   }
-  return <SexSelect value={value} onChange={onChange} />;
-}
-
-// Native <select> styled to match EditableFieldCard so the sex picker
-// reads as one of the regular field cards. The native control gives us
-// the platform's animated picker on iPadOS/iOS for free, with the same
-// keyboard and screen-reader semantics as any other <select>.
-function SexSelect({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const [focused, setFocused] = useState(false);
-  const hasValue = value !== '';
   return (
-    <label
-      style={{
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        border: `1px solid ${focused ? theme.color.ink : theme.color.border}`,
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        cursor: 'pointer',
-      }}
-    >
-      <span style={cardLabelStyle}>Sex</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={{
-          appearance: 'none',
-          WebkitAppearance: 'none',
-          MozAppearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          outline: 'none',
-          padding: 0,
-          paddingRight: theme.space[6],
-          fontFamily: 'inherit',
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: hasValue ? theme.color.ink : theme.color.inkSubtle,
-          letterSpacing: theme.type.tracking.tight,
-          width: '100%',
-          minWidth: 0,
-          cursor: 'pointer',
-        }}
-      >
-        <option value="" disabled>
-          Choose
-        </option>
-        {SEX_OPTIONS.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        size={18}
-        aria-hidden
-        style={{
-          position: 'absolute',
-          right: theme.space[4],
-          bottom: theme.space[3],
-          color: theme.color.inkSubtle,
-          pointerEvents: 'none',
-          transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-          transform: focused ? 'rotate(180deg)' : 'rotate(0deg)',
-        }}
-      />
-    </label>
+    <DropdownSelect
+      label="Sex"
+      value={value}
+      options={SEX_OPTIONS}
+      onChange={onChange}
+    />
   );
 }
 
