@@ -35,6 +35,10 @@ export interface CartItemRow {
   arch: 'upper' | 'lower' | 'both' | null;
   shade: string | null;
   notes: string | null;
+  // Frozen catalogue.quantity_enabled at insert time. Visit cart UI
+  // hides the qty stepper for false rows. Default true on ad-hoc
+  // entries that didn't come from the picker.
+  quantity_enabled: boolean;
 }
 
 // Per-instance line input. The picker passes one of these per "tick" of
@@ -207,6 +211,7 @@ export async function addCatalogueItemsToCart(
     arch,
     shade: options.shade ?? null,
     notes: options.notes ?? null,
+    quantity_enabled: catalogue.quantity_enabled,
   };
   const rows = [];
   for (let i = 0; i < qty; i++) {

@@ -1730,17 +1730,19 @@ function ItemRow({
             .join(' · ') || formatPence(Math.round(item.catalogue.unit_price * 100))}
         </p>
       </div>
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-        <button type="button" onClick={onDecrement} style={qtyButton} aria-label="Decrease quantity">
-          <Minus size={14} />
-        </button>
-        <span style={{ minWidth: 24, textAlign: 'center', fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, fontVariantNumeric: 'tabular-nums' }}>
-          {item.qty}
-        </span>
-        <button type="button" onClick={onIncrement} style={qtyButton} aria-label="Increase quantity">
-          <Plus size={14} />
-        </button>
-      </div>
+      {item.catalogue.quantity_enabled ? (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+          <button type="button" onClick={onDecrement} style={qtyButton} aria-label="Decrease quantity">
+            <Minus size={14} />
+          </button>
+          <span style={{ minWidth: 24, textAlign: 'center', fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, fontVariantNumeric: 'tabular-nums' }}>
+            {item.qty}
+          </span>
+          <button type="button" onClick={onIncrement} style={qtyButton} aria-label="Increase quantity">
+            <Plus size={14} />
+          </button>
+        </div>
+      ) : null}
       <span style={{ minWidth: 72, textAlign: 'right', fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
         {formatPence(lineTotal)}
       </span>
