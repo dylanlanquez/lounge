@@ -556,16 +556,14 @@ function ProductRow({
     (!askArch || arch !== null) &&
     (!showShade || shade.trim() !== '');
 
-  // Form-less rows (no arch pick, no shade pick, no upgrades, no
-  // count-based unit) skip the dropdown entirely — tapping the header
-  // adds them straight to the bag. Impression Appointment is the
-  // canonical case (arch_match='any', unit_label=null). Denture
-  // repairs like "Add a new tooth" or "Broken tooth" have
-  // unit_label='per tooth' so they're treated as count-based and
-  // keep the dropdown for the quantity stepper. Schema-driven, not
-  // hardcoded by product name.
+  // Form-less rows have nothing to configure: no arch pick, no shade
+  // pick, no upgrades, and quantity_enabled=false on the row so the
+  // Quantity stepper is hidden too. Tapping the header adds them
+  // straight to the bag. Schema-driven via the explicit
+  // quantity_enabled flag (admin-controlled), not inferred from
+  // unit_label.
   const isFormless =
-    !askArch && !showShade && rowUpgrades.length === 0 && !row.unit_label;
+    !askArch && !showShade && rowUpgrades.length === 0 && !row.quantity_enabled;
 
   const submit = async () => {
     if (!canAdd) return;
@@ -720,11 +718,13 @@ function ProductRow({
           >
             <div style={{ height: 1, background: theme.color.border }} />
 
-            <Stepper
-              label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}
-              value={qty}
-              onChange={setQty}
-            />
+            {row.quantity_enabled ? (
+              <Stepper
+                label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}
+                value={qty}
+                onChange={setQty}
+              />
+            ) : null}
 
             {askArch ? (
               <FieldBlock label="Arch" required>

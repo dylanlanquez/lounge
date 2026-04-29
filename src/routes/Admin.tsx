@@ -897,6 +897,7 @@ function CatalogueTab() {
         repair_variant: draft.repair_variant.trim() || null,
         arch_match: draft.arch_match,
         is_service: draft.is_service,
+        quantity_enabled: draft.quantity_enabled,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
@@ -1050,6 +1051,7 @@ interface CatalogueDraft {
   repair_variant: string;
   arch_match: ArchMatch;
   is_service: boolean;
+  quantity_enabled: boolean;
   sort_order: string;
   active: boolean;
 }
@@ -1070,6 +1072,7 @@ function emptyDraft(): CatalogueDraft {
     repair_variant: '',
     arch_match: 'any',
     is_service: false,
+    quantity_enabled: true,
     sort_order: '0',
     active: true,
   };
@@ -1092,6 +1095,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     repair_variant: row.repair_variant ?? '',
     arch_match: row.arch_match,
     is_service: row.is_service,
+    quantity_enabled: row.quantity_enabled,
     sort_order: String(row.sort_order),
     active: row.active,
   };
@@ -1454,6 +1458,23 @@ function CatalogueRowEditor({
             style={{ width: 18, height: 18 }}
           />
           This is a service (sits in Services bucket in the picker)
+        </label>
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            fontSize: theme.type.size.sm,
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={draft.quantity_enabled}
+            onChange={(e) => set('quantity_enabled', e.target.checked)}
+            style={{ width: 18, height: 18 }}
+          />
+          Quantity selector (uncheck for one-shot services like in-clinic appointments)
         </label>
       </div>
       {draft.id ? (
