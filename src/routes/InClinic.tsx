@@ -80,7 +80,7 @@ export function InClinic() {
   const noResults = !!deferredSearch && matched === 0;
 
   const outerPaddingX = isMobile ? theme.space[4] : theme.space[6];
-  const innerMaxWidth = 1080;
+  const innerMaxWidth = theme.layout.pageMaxWidth;
   const countLabel = loading
     ? 'Loading…'
     : totalActive === 0

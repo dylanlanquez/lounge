@@ -40,7 +40,7 @@ export function Patients() {
 
   const trimmed = term.trim();
   const outerPaddingX = isMobile ? theme.space[4] : theme.space[6];
-  const innerMaxWidth = 960;
+  const innerMaxWidth = theme.layout.pageMaxWidth;
 
   return (
     <main

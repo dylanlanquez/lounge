@@ -103,6 +103,12 @@ export const theme = {
     inputHeight: 56,
     minTouchTarget: 48,
     safeAreaPaddingY: 16,
+    // Single source of truth for the page-content max width across
+    // every route (Schedule, Patients, In clinic, Walk-in, Visit,
+    // Pay, Patient profile, Arrival, etc). Pages render their inner
+    // max-width container at this value so the chrome rhythm
+    // matches as the receptionist tabs between surfaces.
+    pageMaxWidth: 960,
   },
 } as const;
 
