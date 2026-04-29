@@ -8,6 +8,7 @@ import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { CalendarIcon } from '../Icons/CalendarIcon.tsx';
 import { ToothIcon } from '../Icons/ToothIcon.tsx';
+import { useActiveVisitCount } from '../../lib/queries/clinicBoard.ts';
 
 // Returns true when the bottom nav should render. Pulled out as a named
 // helper so App can apply the matching bottom padding to its routes
@@ -49,8 +50,10 @@ export function BottomNav() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
+  const navVisible = shouldShowBottomNav(location.pathname, !!user);
+  const inClinicCount = useActiveVisitCount(navVisible);
 
-  if (!shouldShowBottomNav(location.pathname, !!user)) return null;
+  if (!navVisible) return null;
 
   const onSchedule = () => navigate('/schedule');
   const onPatients = () => navigate('/patients');
@@ -150,6 +153,7 @@ export function BottomNav() {
                 icon={<ToothIcon size={22} />}
                 active={isInClinic}
                 onClick={onInClinic}
+                badgeCount={inClinicCount}
               />
             </li>
             <li style={{ display: 'flex' }}>
@@ -226,9 +230,13 @@ interface NavTabProps {
   icon: ReactNode;
   active: boolean;
   onClick: () => void;
+  // null hides the badge (loading or error). 0 also hides — no point in
+  // shouting "0 in clinic" at the receptionist. Anything > 99 renders
+  // as "99+" so the pill stays compact.
+  badgeCount?: number | null;
 }
 
-function NavTab({ label, icon, active, onClick }: NavTabProps) {
+function NavTab({ label, icon, active, onClick, badgeCount }: NavTabProps) {
   const styles: CSSProperties = {
     appearance: 'none',
     border: 'none',
@@ -250,12 +258,14 @@ function NavTab({ label, icon, active, onClick }: NavTabProps) {
     WebkitTapHighlightColor: 'transparent',
     transition: `color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
   };
+  const showBadge = typeof badgeCount === 'number' && badgeCount > 0;
+  const badgeText = showBadge ? (badgeCount > 99 ? '99+' : String(badgeCount)) : '';
   return (
     <button
       type="button"
       className="lng-bottom-nav-btn"
       aria-current={active ? 'page' : undefined}
-      aria-label={label}
+      aria-label={showBadge ? `${label}, ${badgeCount} in clinic` : label}
       onClick={onClick}
       onMouseEnter={(e) => {
         if (active) return;
@@ -267,7 +277,34 @@ function NavTab({ label, icon, active, onClick }: NavTabProps) {
       }}
       style={styles}
     >
-      {icon}
+      <span style={{ position: 'relative', display: 'inline-flex', lineHeight: 0 }}>
+        {icon}
+        {showBadge ? (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              top: -6,
+              right: -10,
+              minWidth: 18,
+              height: 18,
+              padding: `0 5px`,
+              borderRadius: theme.radius.pill,
+              background: theme.color.accent,
+              color: theme.color.surface,
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              lineHeight: '18px',
+              textAlign: 'center',
+              fontVariantNumeric: 'tabular-nums',
+              border: `1.5px solid ${theme.color.surface}`,
+              boxSizing: 'content-box',
+            }}
+          >
+            {badgeText}
+          </span>
+        ) : null}
+      </span>
       <span>{label}</span>
     </button>
   );
