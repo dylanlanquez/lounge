@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Camera, ChevronLeft, ChevronRight, ImageOff, Megaphone, Sparkles, X } from 'lucide-react';
 import { CollapsibleCard } from '../CollapsibleCard/CollapsibleCard.tsx';
+import { useCaptureFlow } from '../CapturePopup/CapturePopup.tsx';
 import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
@@ -171,25 +172,21 @@ function GalleryCard({
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const inputs = useRef<Record<string, HTMLInputElement | null>>({});
   const patientName = `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient';
 
-  const onPick = async (labelKey: string, fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
+  const onPick = async (labelKey: string, file: File) => {
     setBusyKey(labelKey);
     setError(null);
     try {
       const { data: accId } = await supabase.rpc('auth_account_id');
-      for (const file of Array.from(fileList)) {
-        await uploadPatientFile({
-          patientId: patient.id,
-          patientName,
-          file,
-          labelKey,
-          labelDisplayName: LABEL_DISPLAY[labelKey] ?? labelKey,
-          uploaderAccountId: (accId as string | null) ?? null,
-        });
-      }
+      await uploadPatientFile({
+        patientId: patient.id,
+        patientName,
+        file,
+        labelKey,
+        labelDisplayName: LABEL_DISPLAY[labelKey] ?? labelKey,
+        uploaderAccountId: (accId as string | null) ?? null,
+      });
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
@@ -231,12 +228,13 @@ function GalleryCard({
           >
             {showUploads
               ? uploads.map((u) => (
-                  <UploadTile
+                  <UploadFlowSlot
                     key={u.labelKey}
                     label={u.label}
+                    labelKey={u.labelKey}
                     busy={busyKey === u.labelKey}
                     disabled={busyKey !== null && busyKey !== u.labelKey}
-                    onClick={() => inputs.current[u.labelKey]?.click()}
+                    onFile={onPick}
                   />
                 ))
               : null}
@@ -251,23 +249,6 @@ function GalleryCard({
           </div>
         )}
 
-        {showUploads
-          ? uploads.map((u) => (
-              <input
-                key={u.labelKey}
-                ref={(el) => {
-                  inputs.current[u.labelKey] = el;
-                }}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                multiple
-                onChange={(e) => onPick(u.labelKey, e.target.files)}
-                style={{ display: 'none' }}
-              />
-            ))
-          : null}
-
         {/* Hint to silence the unused-tileCount lint when showUploads is false. */}
         {tileCount < 0 ? null : null}
       </CollapsibleCard>
@@ -279,6 +260,37 @@ function GalleryCard({
           <Toast tone="error" title="Could not upload" description={error} duration={6000} onDismiss={() => setError(null)} />
         </div>
       ) : null}
+    </>
+  );
+}
+
+// Each upload slot owns its own useCaptureFlow instance — wrapping
+// in a sub-component keeps Rules-of-Hooks happy when uploads.length
+// varies between renders. Tile click → opens the source sheet
+// (Take a photo / Choose from gallery). The sheet + camera modal
+// portal to document.body, so the slot's DOM placement doesn't
+// affect their stacking.
+function UploadFlowSlot({
+  label,
+  labelKey,
+  busy,
+  disabled,
+  onFile,
+}: {
+  label: string;
+  labelKey: string;
+  busy: boolean;
+  disabled: boolean;
+  onFile: (labelKey: string, file: File) => void;
+}) {
+  const capture = useCaptureFlow({
+    label,
+    onFile: (file) => onFile(labelKey, file),
+  });
+  return (
+    <>
+      <UploadTile label={label} busy={busy} disabled={disabled} onClick={capture.open} />
+      {capture.node}
     </>
   );
 }
