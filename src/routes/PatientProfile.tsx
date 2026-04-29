@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Info, Layers, Pencil, Printer, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -519,89 +519,109 @@ function WaiverStatus({ patientId }: { patientId: string }) {
         </div>
         {!loading && activeSections.length > 0 ? (
           <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-            {counts.current} signed
-            {counts.stale > 0 ? `, ${counts.stale} need re-sign` : ''}
-            {counts.missing > 0 ? `, ${counts.missing} missing` : ''}
+            {counts.current} of {activeSections.length} current
           </span>
         ) : null}
       </div>
 
-      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
+      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 0` }} />
 
       {loading ? (
-        <Skeleton height={36} radius={theme.radius.pill} />
+        <div style={{ paddingTop: theme.space[4] }}>
+          <Skeleton height={48} radius={10} />
+        </div>
       ) : activeSections.length === 0 ? (
-        <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+        <p style={{ margin: `${theme.space[4]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
           No waiver sections configured.
         </p>
       ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[2] }}>
-          {activeSections.map((sec) => (
-            <WaiverChip key={sec.key} section={sec} latest={latest} />
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          {activeSections.map((sec, i) => (
+            <WaiverRow
+              key={sec.key}
+              section={sec}
+              latest={latest}
+              isLast={i === activeSections.length - 1}
+            />
           ))}
-        </div>
+        </ul>
       )}
     </Card>
   );
 }
 
-function WaiverChip({
+// One row per active waiver section. Symmetric three-column layout:
+// shield icon (left, status-coloured) — section title (centre, takes
+// flex slack) — single status line (right). No nested pills, no
+// version chip; the detailed Signed waivers table further down owns
+// the audit copy. Hairline between rows; the last row sits flush so
+// the card doesn't end on a doubled border.
+function WaiverRow({
   section,
   latest,
+  isLast,
 }: {
   section: WaiverSection;
   latest: Map<string, WaiverSignatureSummary>;
+  isLast: boolean;
 }) {
   const state = sectionSignatureState(section, latest);
   const sig = latest.get(section.key);
 
-  // Three visual states: current (signed at this version) → green
-  // accent fill; stale (older version, needs re-sign) → amber outline;
-  // missing → muted grey outline. Each chip spells out the version so
-  // staff can see at a glance whether terms have moved on.
-  let bg: string;
-  let border: string;
-  let icon: React.ReactNode;
-  let suffix: string;
-
+  let icon;
+  let statusText: string;
+  let statusColor: string;
   if (state === 'current') {
-    bg = theme.color.accentBg;
-    border = theme.color.accent;
-    icon = <ShieldCheck size={14} color={theme.color.accent} aria-hidden />;
-    suffix = sig ? `signed ${formatShortDate(sig.signed_at)}` : 'signed';
+    icon = <ShieldCheck size={18} color={theme.color.accent} aria-hidden />;
+    statusText = sig ? `Signed ${formatShortDate(sig.signed_at)}` : 'Signed';
+    statusColor = theme.color.accent;
   } else if (state === 'stale') {
-    bg = 'rgba(179, 104, 21, 0.08)';
-    border = theme.color.warn;
-    icon = <ShieldAlert size={14} color={theme.color.warn} aria-hidden />;
-    suffix = 'needs re-sign';
+    icon = <ShieldAlert size={18} color={theme.color.warn} aria-hidden />;
+    statusText = 'Re-sign needed';
+    statusColor = theme.color.warn;
   } else {
-    bg = theme.color.surface;
-    border = theme.color.border;
-    icon = <ShieldAlert size={14} color={theme.color.inkSubtle} aria-hidden />;
-    suffix = 'not signed';
+    icon = <Shield size={18} color={theme.color.inkSubtle} aria-hidden />;
+    statusText = 'Not signed';
+    statusColor = theme.color.inkSubtle;
   }
 
   return (
-    <span
+    <li
       style={{
-        display: 'inline-flex',
+        display: 'flex',
         alignItems: 'center',
-        gap: theme.space[2],
-        padding: `${theme.space[2]}px ${theme.space[3]}px`,
-        borderRadius: theme.radius.pill,
-        background: bg,
-        border: `1px solid ${border}`,
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.medium,
-        color: theme.color.ink,
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px 0`,
+        borderBottom: isLast ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      {icon}
-      <span>{section.title}</span>
-      <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.regular }}>
-        v{section.version} · {suffix}
+      <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: theme.type.size.base,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.ink,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {section.title}
       </span>
-    </span>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: statusColor,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {statusText}
+      </span>
+    </li>
   );
 }
 
