@@ -126,12 +126,12 @@ export function DateOfBirthRow({
     return out;
   }, [parts.month, parts.year]);
 
-  // Match EditableFieldCard's silhouette exactly so the row sits on
-  // the same baseline as the other field cards — same padding, same
-  // border, same label rhythm. We use a div + role=group instead of
-  // a native <fieldset>/<legend> because the browser's UA legend
-  // renders into the top border, which broke the card's outline
-  // rectangle in the FormGrid.
+  // Match EditableFieldCard / DropdownSelect-card silhouette exactly:
+  // same padding, same border, single-decked card with the value row
+  // sitting where the single value text would. The three Day/Month/
+  // Year pickers render as text-variant DropdownSelects so they sit
+  // inline as one phrase ("1 February 2019"), each one independently
+  // tappable. Same total height as the Sex card next to it.
   const wrapper: CSSProperties = {
     ...(fullSpan ? { gridColumn: '1 / -1' } : {}),
     display: 'flex',
@@ -167,12 +167,14 @@ export function DateOfBirthRow({
       </span>
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.4fr 1fr',
-          gap: theme.space[2],
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[4],
+          flexWrap: 'wrap',
         }}
       >
         <DropdownSelect
+          variant="text"
           ariaLabel="Day"
           value={parts.day}
           options={dayOptions}
@@ -180,6 +182,7 @@ export function DateOfBirthRow({
           onChange={(v) => setParts((p) => ({ ...p, day: v }))}
         />
         <DropdownSelect
+          variant="text"
           ariaLabel="Month"
           value={parts.month}
           options={MONTH_OPTIONS}
@@ -187,6 +190,7 @@ export function DateOfBirthRow({
           onChange={(v) => setParts((p) => ({ ...p, month: v }))}
         />
         <DropdownSelect
+          variant="text"
           ariaLabel="Year"
           value={parts.year}
           options={yearOptions}
