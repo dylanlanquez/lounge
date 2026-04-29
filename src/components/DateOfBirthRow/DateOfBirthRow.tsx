@@ -29,6 +29,11 @@ const MONTH_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '12', label: 'December' },
 ];
 
+// The youngest patient the clinic accepts is 12. The year list starts
+// 12 years before the current year (so the receptionist physically
+// cannot pick a more-recent year for the DOB) and goes back 110 years
+// to cover the oldest patients we'll ever see.
+const MIN_AGE_YEARS = 12;
 const YEARS_BACK = 110;
 
 interface Parts {
@@ -106,8 +111,10 @@ export function DateOfBirthRow({
 
   const yearOptions = useMemo(() => {
     const now = new Date().getFullYear();
+    const latest = now - MIN_AGE_YEARS;
+    const earliest = now - YEARS_BACK;
     const out: { value: string; label: string }[] = [];
-    for (let y = now; y >= now - YEARS_BACK; y--) {
+    for (let y = latest; y >= earliest; y--) {
       out.push({ value: String(y), label: String(y) });
     }
     return out;
