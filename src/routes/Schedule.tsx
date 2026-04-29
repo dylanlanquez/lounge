@@ -454,20 +454,19 @@ export function Schedule() {
             pickingNoShowReason ? (
               <span>Pick the reason. We log it against the appointment so reports show no-show causes.</span>
             ) : selected ? (
-              <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <SourceGlyph source={selected.source} size={13} />
-                  <span>
-                    {selected.source === 'manual' ? 'Walk-in · ' : ''}
-                    {formatRange(selected.start_at, selected.end_at)}
-                    {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
-                  </span>
+              // Single line: source glyph + day + start time + staff.
+              // Email and phone are not surfaced here — they live on
+              // the patient profile, which the receptionist can open
+              // from the visit page if needed. End time is dropped
+              // too: the duration is fixed per booking type and the
+              // start is what staff actually scan for.
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <SourceGlyph source={selected.source} size={13} />
+                <span>
+                  {selected.source === 'manual' ? 'Walk-in · ' : ''}
+                  {formatStart(selected.start_at)}
+                  {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
                 </span>
-                {selected.patient_email || selected.patient_phone ? (
-                  <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-                    {[selected.patient_email, selected.patient_phone].filter(Boolean).join(' · ')}
-                  </span>
-                ) : null}
               </span>
             ) : (
               <span>{formatClusterRange(clusterRows!)}</span>
@@ -1002,10 +1001,14 @@ function statusToTone(s: AppointmentRow['status']) {
             : 'cancelled';
 }
 
-function formatRange(startIso: string, endIso: string): string {
+// Compact day + start-time string for the appointment popup
+// header. The cluster sheet uses formatClusterRange (range matters
+// when it spans multiple appointments), but a single appointment
+// reads cleaner without the redundant duration — staff care about
+// when it starts, not when it ends.
+function formatStart(startIso: string): string {
   const s = new Date(startIso);
-  const e = new Date(endIso);
-  return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} to ${e.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function formatClusterRange(rows: AppointmentRow[]): string {
