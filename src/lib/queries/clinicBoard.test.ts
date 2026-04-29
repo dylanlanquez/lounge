@@ -50,7 +50,7 @@ describe('searchableTextForVisit', () => {
       patient_email: 'antony@example.com',
       patient_internal_ref: 'MP-00011',
       patient_lwo_ref: 'LWO-20260428-0001',
-      appointment_ref: 'LNGE-APT-20260428-0001',
+      appointment_ref: 'LAP-00001',
       jb_ref: '33',
       event_type_label: 'Same-day Appliance',
       service_type: null,
@@ -64,7 +64,7 @@ describe('searchableTextForVisit', () => {
     expect(s).toContain('antony@example.com');
     expect(s).toContain('mp-00011');
     expect(s).toContain('lwo-20260428-0001');
-    expect(s).toContain('lnge-apt-20260428-0001');
+    expect(s).toContain('lap-00001');
     expect(s).toContain('jb33');
     expect(s).toContain('same-day appliance');
     expect(s).toContain('upper whitening trays');
