@@ -32,6 +32,14 @@ import {
   type UpgradeRow,
 } from '../../lib/queries/upgrades.ts';
 
+// Vertical travel for the close-button slide. Same value applied
+// in opposite signs to the rest-state and inline X so they appear
+// to be one element gliding from the popup's top-right down into
+// the sticky search row (and back up). Picked to read as a real
+// motion without being so far that the user tracks two distinct
+// objects.
+const CLOSE_SLIDE_DISTANCE = 28;
+
 // Shared base style for the picker's two close buttons (rest-state
 // in the title block, scrolled-state inline with the search). Width
 // and height are fixed at 44 to hit the iOS HIG minimum tap target;
@@ -284,11 +292,14 @@ export function CataloguePicker({
             </p>
           </div>
           {/* Rest-state close button: lives in the title block's
-              top-right corner. Fades out when the user scrolls past
-              the sentinel; the inline button below takes over.
-              Right offset = horizontal padding so the X aligns with
-              where the inline X sits when the row collapses (no
-              horizontal jump as it hands off). */}
+              top-right corner. Right offset matches the inline X's
+              horizontal position so the eye reads the two as the
+              same element handing off. As the user scrolls past the
+              sentinel, this X slides DOWN (translateY) and fades —
+              while the inline X below slides DOWN into place from
+              above. Both move together in the same direction so the
+              motion reads as one X gliding into the search row,
+              not two cross-fading. Reverses on scroll-back-up. */}
           <button
             type="button"
             onClick={onClose}
@@ -300,8 +311,12 @@ export function CataloguePicker({
               top: theme.space[2],
               right: theme.space[6],
               opacity: stuck ? 0 : 1,
+              transform: stuck ? `translateY(${CLOSE_SLIDE_DISTANCE}px)` : 'translateY(0)',
               pointerEvents: stuck ? 'none' : 'auto',
-              transition: `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+              transition: [
+                `transform ${theme.motion.duration.slow}ms ${theme.motion.easing.spring}`,
+                `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+              ].join(', '),
             }}
           >
             <X size={20} />
@@ -345,9 +360,14 @@ export function CataloguePicker({
                 width: stuck ? 44 : 0,
                 marginLeft: stuck ? theme.space[2] : 0,
                 opacity: stuck ? 1 : 0,
+                // Slide DOWN into place from above when the row
+                // collapses — same direction as the rest-state X's
+                // exit, so the two reads as one continuous motion.
+                transform: stuck ? 'translateY(0)' : `translateY(-${CLOSE_SLIDE_DISTANCE}px)`,
                 pointerEvents: stuck ? 'auto' : 'none',
                 overflow: 'hidden',
                 transition: [
+                  `transform ${theme.motion.duration.slow}ms ${theme.motion.easing.spring}`,
                   `width ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
                   `margin-left ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
                   `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
