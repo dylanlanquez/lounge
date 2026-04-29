@@ -291,8 +291,20 @@ function FileCard({
         >
           {card.label}
         </span>
-        <span style={{ fontSize: 10, color: theme.color.inkSubtle }}>
-          {uploading ? 'Uploading…' : canUpload ? 'Tap to add' : 'No file yet'}
+        <span
+          style={{
+            fontSize: 10,
+            color: theme.color.inkSubtle,
+            textAlign: 'center',
+            lineHeight: 1.35,
+            padding: '0 4px',
+          }}
+        >
+          {uploading
+            ? 'Uploading…'
+            : canUpload
+              ? 'Tap to take or upload a photo'
+              : 'Add in Meridian'}
         </span>
         {card.uploadable ? (
           <input
