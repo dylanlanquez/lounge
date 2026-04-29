@@ -23,6 +23,8 @@ export type TimelineEventType =
   | 'deposit_paid'
   | 'visit_opened'
   | 'visit_closed'
+  | 'jb_assigned'
+  | 'jb_freed'
   | 'waiver_signed'
   | 'cart_item_added'
   | 'payment_succeeded'
@@ -39,7 +41,7 @@ export interface TimelineEvent {
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
   actor?: string;
-  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag';
+  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box';
 }
 
 // Internal shape used by the fetchers — same as TimelineEvent but
@@ -70,6 +72,7 @@ interface VisitRow {
   receptionist_id: string | null;
   opened_at: string;
   closed_at: string | null;
+  jb_ref: string | null;
 }
 
 interface WaiverSignatureRow {
@@ -233,7 +236,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
         const { data: visitRaw, error: visitErr } = await supabase
           .from('lng_visits')
           .select(
-            'id, patient_id, appointment_id, arrival_type, receptionist_id, opened_at, closed_at'
+            'id, patient_id, appointment_id, arrival_type, receptionist_id, opened_at, closed_at, jb_ref'
           )
           .eq('id', visitId)
           .maybeSingle();
@@ -265,7 +268,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
 
         if (cancelled) return;
 
-        // Step 3: visit-level events (open / close).
+        // Step 3: visit-level events (open / close + JB lifecycle).
         const visitOwnEvents: RawTimelineEvent[] = [
           {
             id: `visit-${visit.id}-opened`,
@@ -279,6 +282,32 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             hint: 'check',
           },
         ];
+        // JB lifecycle. The visit's jb_ref column is captured at
+        // insert time and is immutable, so it survives the
+        // close-time clearing of the source rows. Render an
+        // "assigned" event at the visit's open and (when the visit
+        // is closed) a matching "freed" event at the close, so
+        // staff can read the JB's whole lifetime in one pass.
+        if (visit.jb_ref) {
+          visitOwnEvents.push({
+            id: `visit-${visit.id}-jb-assigned`,
+            type: 'jb_assigned',
+            timestamp: visit.opened_at,
+            title: 'Job box assigned',
+            detail: `JB${visit.jb_ref}`,
+            hint: 'box',
+          });
+          if (visit.closed_at) {
+            visitOwnEvents.push({
+              id: `visit-${visit.id}-jb-freed`,
+              type: 'jb_freed',
+              timestamp: visit.closed_at,
+              title: 'Job box freed',
+              detail: `JB${visit.jb_ref} is available again`,
+              hint: 'box',
+            });
+          }
+        }
         if (visit.closed_at) {
           visitOwnEvents.push({
             id: `visit-${visit.id}-closed`,
