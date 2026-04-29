@@ -132,7 +132,12 @@ export function NewWalkIn() {
 
         <Card padding="lg">
           {step === 'find' ? (
-            <PatientSearch onPick={onPick} onCreateNew={onCreateNew} />
+            <PatientSearch
+              onPick={onPick}
+              onCreateNew={onCreateNew}
+              enableShopifyLookup={Boolean(location?.id)}
+              registerLocationId={location?.id}
+            />
           ) : (
             <form onSubmit={submitNewPatient} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
               <Input

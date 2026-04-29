@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -13,6 +13,7 @@ import {
   Skeleton,
   StatusPill,
 } from '../components/index.ts';
+import { PatientEditModal } from '../components/PatientEditModal/PatientEditModal.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -61,12 +62,13 @@ export function PatientProfile() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const isMobile = useIsMobile(640);
-  const { data: patient, loading: patientLoading, error: patientError } = usePatientProfile(id);
+  const { data: patient, loading: patientLoading, error: patientError, refresh: refreshPatient } = usePatientProfile(id);
   const { data: files, loading: filesLoading, refresh: refreshFiles } = usePatientProfileFiles(id);
   const { data: visits, loading: visitsLoading } = usePatientVisits(id);
   const { data: scheduledAppointments, loading: apptsLoading } =
     usePatientScheduledAppointments(id);
   const { data: cases, loading: casesLoading } = usePatientCases(id);
+  const [editOpen, setEditOpen] = useState(false);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -94,7 +96,7 @@ export function PatientProfile() {
           </Card>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-            <Hero patient={patient} cases={cases} isMobile={isMobile} />
+            <Hero patient={patient} cases={cases} isMobile={isMobile} onEdit={() => setEditOpen(true)} />
             <WaiverStatus patientId={patient.id} />
             <NotesAndFlags patient={patient} />
             <BeforeAfterGallery
@@ -136,6 +138,17 @@ export function PatientProfile() {
             />
           </div>
         )}
+
+        {patient ? (
+          <PatientEditModal
+            open={editOpen}
+            patient={patient}
+            onClose={() => setEditOpen(false)}
+            onSaved={async () => {
+              await refreshPatient();
+            }}
+          />
+        ) : null}
       </div>
     </main>
   );
@@ -164,10 +177,12 @@ function Hero({
   patient,
   cases: _cases,
   isMobile,
+  onEdit,
 }: {
   patient: PatientProfileRow;
   cases: PatientCaseRow[];
   isMobile: boolean;
+  onEdit: () => void;
 }) {
   // The earlier "Active / Inactive" pill mapped to whether the
   // patient had any non-terminal Meridian case — useful in Meridian,
@@ -246,8 +261,8 @@ function Hero({
         <button
           type="button"
           aria-label="Edit patient details"
-          title="Edit patient details (coming soon)"
-          disabled
+          title="Edit patient details"
+          onClick={onEdit}
           style={{
             appearance: 'none',
             width: 36,
@@ -258,8 +273,8 @@ function Hero({
             background: 'transparent',
             border: `1px solid ${theme.color.border}`,
             borderRadius: theme.radius.input,
-            color: theme.color.inkSubtle,
-            cursor: 'not-allowed',
+            color: theme.color.inkMuted,
+            cursor: 'pointer',
             flexShrink: 0,
           }}
         >
@@ -274,10 +289,12 @@ function Hero({
   );
 }
 
-// "Linked to Shopify & One Click" pill. Tap or focus the (i) icon to
+// "Linked to venneir.com & One Click" pill. Tap or focus the (i) icon to
 // reveal a popover explaining where the data comes from and how the
 // patient updates it. Mirrors Meridian's identity-pill pattern so the
-// two surfaces feel like one product.
+// two surfaces feel like one product. Two icons: One Click first
+// (the customer-facing app the customer actually signs in to) then the
+// Shopify mark (the account system behind it).
 function ShopifyLinkedPill() {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
@@ -308,7 +325,7 @@ function ShopifyLinkedPill() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label="Linked to Shopify and One Click — show details"
+        aria-label="Linked to venneir.com and One Click, show details"
         style={{
           appearance: 'none',
           display: 'inline-flex',
@@ -326,15 +343,30 @@ function ShopifyLinkedPill() {
           letterSpacing: 0.1,
         }}
       >
-        <ShoppingBag size={12} aria-hidden />
-        Linked to Shopify &amp; One Click
+        <img
+          src="/one-click-logo-icon.png"
+          alt=""
+          aria-hidden
+          width={12}
+          height={12}
+          style={{ display: 'block', flexShrink: 0 }}
+        />
+        <img
+          src="/shopify.svg"
+          alt=""
+          aria-hidden
+          width={12}
+          height={12}
+          style={{ display: 'block', flexShrink: 0, marginLeft: -1 }}
+        />
+        Linked to venneir.com &amp; One Click
         <Info size={12} aria-hidden style={{ opacity: 0.75 }} />
       </button>
 
       {open ? (
         <div
           role="dialog"
-          aria-label="Shopify and One Click linked account"
+          aria-label="venneir.com and One Click linked account"
           style={{
             position: 'absolute',
             top: 'calc(100% + 8px)',
@@ -381,7 +413,7 @@ function ShopifyLinkedPill() {
               paddingRight: theme.space[5],
             }}
           >
-            Linked to Shopify &amp; One Click
+            Linked to venneir.com &amp; One Click
           </p>
           <p
             style={{
@@ -391,11 +423,12 @@ function ShopifyLinkedPill() {
               lineHeight: 1.55,
             }}
           >
-            These details come from the customer&apos;s Shopify &amp; One Click account.
-            They can update them any time in the One Click app or on Shopify
-            (it&apos;s the same account, so a change in one shows up in the other).
-            If anything here is wrong, the customer must update it themselves and
-            it&apos;ll reflect here.
+            These details come from the customer&apos;s venneir.com / One Click account.
+            They can update them any time in the One Click app or on Shopify (it&apos;s
+            the same account, so a change in one shows up in the other). If you
+            edit them here at the lab, the change syncs back to the customer&apos;s
+            online account too — only edit when the customer is in front of you and
+            has agreed.
           </p>
         </div>
       ) : null}

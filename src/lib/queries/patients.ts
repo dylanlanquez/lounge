@@ -20,6 +20,173 @@ interface SearchResult {
   error: string | null;
 }
 
+// Shopify customer (no patient row yet) result shape returned by the
+// shopify-customer-search edge function. Used by the walk-in
+// search-first flow to surface customers who exist on venneir.com but
+// have not been registered as a patient at the lab.
+export interface ShopifyCustomerResult {
+  shopify_customer_id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  orders_count: number;
+}
+
+interface ShopifySearchResult {
+  data: ShopifyCustomerResult[];
+  loading: boolean;
+  error: string | null;
+}
+
+// Hits Shopify's customers query via the staff-authenticated edge
+// function. Off by default — only enable from surfaces that actually
+// want to register Shopify customers as patients (the walk-in flow).
+// Returns an empty list when disabled, when the term is too short,
+// or when the request fails (loud failures live on the server side).
+export function useShopifyCustomerSearch(
+  term: string,
+  opts: { enabled: boolean }
+): ShopifySearchResult {
+  const [data, setData] = useState<ShopifyCustomerResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!opts.enabled) {
+      setData([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const cleaned = term.trim();
+    if (cleaned.length < 3) {
+      setData([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const { data: res, error: err } = await supabase.functions.invoke(
+          'shopify-customer-search',
+          { body: { query: cleaned } },
+        );
+        if (cancelled) return;
+        if (err) {
+          setError(err.message);
+          setData([]);
+          setLoading(false);
+          return;
+        }
+        if (!res?.ok) {
+          setError(res?.detail ?? res?.error ?? 'shopify_search_failed');
+          setData([]);
+          setLoading(false);
+          return;
+        }
+        const customers: ShopifyCustomerResult[] = Array.isArray(res.customers)
+          ? res.customers
+          : [];
+        setData(customers);
+        setError(null);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Unknown error');
+        setData([]);
+        setLoading(false);
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [term, opts.enabled]);
+
+  return { data, loading, error };
+}
+
+// Calls staff-link-shopify-customer in REGISTER mode. Creates a fresh
+// patient row pre-linked to the Shopify customer, with identity fields
+// seeded from Shopify. Throws on failure so the caller surfaces a
+// loud error in the UI.
+export async function registerShopifyCustomerAsPatient(args: {
+  shopifyCustomerId: string;
+  locationId: string;
+}): Promise<{ patientId: string }> {
+  const { data, error } = await supabase.functions.invoke(
+    'staff-link-shopify-customer',
+    {
+      body: {
+        shopify_customer_id: args.shopifyCustomerId,
+        location_id: args.locationId,
+      },
+    },
+  );
+  if (error) throw new Error(error.message);
+  if (!data?.ok) {
+    throw new Error(data?.detail ?? data?.error ?? 'register_failed');
+  }
+  const patientId = data?.patient_id;
+  if (typeof patientId !== 'string' || !patientId) {
+    throw new Error('register_returned_no_patient_id');
+  }
+  return { patientId };
+}
+
+// Calls staff-update-patient. Routes identity edits via Shopify Admin
+// for linked patients, or directly to the patients row for walk-ins.
+// Returns the response so the caller can read identity_synced and
+// fields_changed for follow-up UI feedback.
+export async function staffUpdatePatient(args: {
+  patientId: string;
+  identity?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    address?: {
+      company?: string | null;
+      address1?: string | null;
+      address2?: string | null;
+      city?: string | null;
+      province?: string | null;
+      postcode?: string | null;
+      countryCode?: string | null;
+    } | null;
+  };
+  clinical?: {
+    date_of_birth?: string | null;
+    sex?: string | null;
+    allergies?: string | null;
+    emergency_contact_name?: string | null;
+    emergency_contact_phone?: string | null;
+    referred_by?: string | null;
+    insurance?: string | null;
+    notes?: string | null;
+    communication_preferences?: string | null;
+  };
+}): Promise<{ identitySynced: boolean; fieldsChanged: string[] }> {
+  const { data, error } = await supabase.functions.invoke('staff-update-patient', {
+    body: {
+      patient_id: args.patientId,
+      identity: args.identity,
+      clinical: args.clinical,
+    },
+  });
+  if (error) throw new Error(error.message);
+  if (!data?.ok) {
+    throw new Error(data?.detail ?? data?.error ?? 'update_failed');
+  }
+  return {
+    identitySynced: !!data.identity_synced,
+    fieldsChanged: Array.isArray(data.fields_changed) ? data.fields_changed : [],
+  };
+}
+
 // Phone-first search per `06-patient-identity.md §4.1`. Term can be a phone
 // number, name, or LWO ref. ILIKE matches each, LIMIT 10.
 

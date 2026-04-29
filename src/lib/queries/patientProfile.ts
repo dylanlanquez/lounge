@@ -56,12 +56,15 @@ interface ProfileResult {
   data: PatientProfileRow | null;
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 export function usePatientProfile(id: string | null | undefined): ProfileResult {
   const [data, setData] = useState<PatientProfileRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!id) {
@@ -125,9 +128,9 @@ export function usePatientProfile(id: string | null | undefined): ProfileResult 
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, tick]);
 
-  return { data, loading, error };
+  return { data, loading, error, refresh };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
