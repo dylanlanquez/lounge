@@ -91,6 +91,33 @@ export function totalForQtyPence(row: CatalogueRow, qty: number): number {
   return Math.round(totalForQty(row, qty) * 100);
 }
 
+// Per-instance base price for a row given the arch the receptionist
+// picked. arch=both pulls from both_arches_price (the multi-arch tier);
+// everything else (upper, lower, null/non-arch) uses unit_price.
+export function unitPriceForArch(
+  row: CatalogueRow,
+  arch: 'upper' | 'lower' | 'both' | null
+): number {
+  if (arch === 'both' && row.both_arches_price != null) return row.both_arches_price;
+  return row.unit_price;
+}
+
+// Volume-aware total at a qty + arch. Volume discount (extra_unit_price)
+// only applies inside the single-arch tier — both-arches deals already
+// quote the multi-arch price and shouldn't double-discount.
+export function totalForQtyWithArch(
+  row: CatalogueRow,
+  qty: number,
+  arch: 'upper' | 'lower' | 'both' | null
+): number {
+  if (qty <= 0) return 0;
+  const base = unitPriceForArch(row, arch);
+  if (row.extra_unit_price == null || arch === 'both') {
+    return roundPounds(base * qty);
+  }
+  return roundPounds(base + row.extra_unit_price * (qty - 1));
+}
+
 // Snap to 2dp so 25.55 * 3 doesn't return 76.65000000000001.
 function roundPounds(p: number): number {
   return Math.round(p * 100) / 100;

@@ -9,7 +9,11 @@ import {
   type CatalogueRow,
   useCatalogueActive,
 } from '../../lib/queries/catalogue.ts';
-import { findMatches, type MatchCriteria, totalForQty } from '../../lib/catalogueMatch.ts';
+import {
+  findMatches,
+  type MatchCriteria,
+  totalForQtyWithArch,
+} from '../../lib/catalogueMatch.ts';
 import {
   type IntakeAnswer,
   archToAnatomy,
@@ -17,8 +21,15 @@ import {
 } from '../../lib/queries/appointments.ts';
 import {
   addCatalogueItemsToCart,
+  type AppliedUpgrade,
   type CatalogueAddOptions,
 } from '../../lib/queries/carts.ts';
+import {
+  useAllUpgradeLinks,
+  useUpgradesActive,
+  type UpgradeLinkRow,
+  type UpgradeRow,
+} from '../../lib/queries/upgrades.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CataloguePicker — a single-screen accordion modal.
@@ -58,9 +69,18 @@ export function CataloguePicker({
   onItemAdded,
 }: CataloguePickerProps) {
   const { rows, loading, error } = useCatalogueActive();
+  const { rows: upgrades } = useUpgradesActive();
+  const { links: upgradeLinks } = useAllUpgradeLinks();
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
+
+  // Upgrade lookup by id — small map keeps ProductRow render cheap.
+  const upgradeById = useMemo(() => {
+    const m = new Map<string, UpgradeRow>();
+    for (const u of upgrades) m.set(u.id, u);
+    return m;
+  }, [upgrades]);
 
   const criteria = useMemo(
     () => criteriaFromAppointment(intake, eventTypeLabel),
@@ -90,16 +110,15 @@ export function CataloguePicker({
     });
   }, [rows, trimmedSearch]);
 
-  // Top-level grouping: Services on top, Products underneath. Until the
-  // catalogue gets a dedicated is_service column (next PR), we infer
-  // service-ness from service_type — denture repair work and impression
-  // appointments read as services; everything else (click-in veneers,
-  // same-day appliances, retainers, whitening) is a product.
+  // Top-level grouping: Services on top, Products underneath, driven by
+  // the lwo_catalogue.is_service flag. Bootstrap migration 03 backfills
+  // the flag for existing denture-repair and impression rows so the
+  // grouping continues to look right on first paint.
   const { servicesGrouped, productsGrouped } = useMemo(() => {
     const services: CatalogueRow[] = [];
     const products: CatalogueRow[] = [];
     for (const r of filtered) {
-      if (r.service_type === 'denture_repair' || r.service_type === 'impression_appointment') {
+      if (r.is_service) {
         services.push(r);
       } else {
         products.push(r);
@@ -117,19 +136,34 @@ export function CataloguePicker({
     onItemAdded();
   };
 
-  const renderRow = (row: CatalogueRow) => (
-    <li key={row.id}>
-      <ProductRow
-        row={row}
-        expanded={expandedKey === row.id}
-        onToggle={() => setExpandedKey(expandedKey === row.id ? null : row.id)}
-        cartId={cartId ?? null}
-        onStage={onStage}
-        onAdded={handleAdded}
-        onError={(msg) => setToast({ tone: 'error', title: msg })}
-      />
-    </li>
-  );
+  const renderRow = (row: CatalogueRow) => {
+    // Resolve the upgrade options applicable to this row by joining the
+    // global links list against the upgrades registry. Keeps the
+    // ProductRow itself focused on rendering — it doesn't talk to
+    // Supabase directly.
+    const linksForRow = upgradeLinks.filter((l) => l.catalogue_id === row.id);
+    const rowUpgrades = linksForRow
+      .map((l) => {
+        const u = upgradeById.get(l.upgrade_id);
+        return u && u.active ? { upgrade: u, link: l } : null;
+      })
+      .filter((x): x is { upgrade: UpgradeRow; link: UpgradeLinkRow } => x !== null)
+      .sort((a, b) => a.upgrade.sort_order - b.upgrade.sort_order);
+    return (
+      <li key={row.id}>
+        <ProductRow
+          row={row}
+          rowUpgrades={rowUpgrades}
+          expanded={expandedKey === row.id}
+          onToggle={() => setExpandedKey(expandedKey === row.id ? null : row.id)}
+          cartId={cartId ?? null}
+          onStage={onStage}
+          onAdded={handleAdded}
+          onError={(msg) => setToast({ tone: 'error', title: msg })}
+        />
+      </li>
+    );
+  };
 
   return (
     <>
@@ -372,8 +406,14 @@ function Section({
 // overflow: hidden so the content clips during the transition.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Click-in veneers picker shade options. Restricted set per Dylan's
+// build brief — anything else just hides the field. If the clinic
+// adds new shades later, extend this list (or move it to lng_settings).
+const CLICK_IN_VENEER_SHADES = ['BL1', 'A1', 'A2'] as const;
+
 function ProductRow({
   row,
+  rowUpgrades,
   expanded,
   onToggle,
   cartId,
@@ -382,6 +422,7 @@ function ProductRow({
   onError,
 }: {
   row: CatalogueRow;
+  rowUpgrades: { upgrade: UpgradeRow; link: UpgradeLinkRow }[];
   expanded: boolean;
   onToggle: () => void;
   cartId: string | null;
@@ -393,9 +434,10 @@ function ProductRow({
   const panelId = `picker-row-panel-${row.id}`;
 
   const [qty, setQty] = useState(1);
-  const [arch, setArch] = useState<'upper' | 'lower' | null>(null);
+  const [arch, setArch] = useState<'upper' | 'lower' | 'both' | null>(null);
   const [shade, setShade] = useState('');
   const [notes, setNotes] = useState('');
+  const [selectedUpgradeIds, setSelectedUpgradeIds] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
 
   // Reset the per-line form whenever the row collapses so the next
@@ -406,13 +448,63 @@ function ProductRow({
       setArch(null);
       setShade('');
       setNotes('');
+      setSelectedUpgradeIds(new Set());
       setBusy(false);
     }
   }, [expanded]);
 
+  // arch_match='single' means the receptionist is picking the arch.
+  // 'both' on a row means it's preset (legacy duplicate row); the
+  // picker shows it as a fixed both-arches selection. 'any' is non-arch.
   const askArch = row.arch_match === 'single';
+  const hasBothArchesPrice = row.both_arches_price != null;
   const archForLine: 'upper' | 'lower' | 'both' | null =
     row.arch_match === 'both' ? 'both' : askArch ? arch : null;
+  const isBothArches = archForLine === 'both';
+
+  // Shade is a constrained dropdown, only on click-in veneers. Other
+  // products don't expose a shade field at all per Dylan's spec.
+  const showShade = row.service_type === 'click_in_veneers';
+
+  // Upgrades — resolve each selected upgrade to its arch-tier price so
+  // the displayed total and the staged options carry the same numbers
+  // the cart will eventually persist.
+  const appliedUpgrades: AppliedUpgrade[] = useMemo(() => {
+    const list: AppliedUpgrade[] = [];
+    for (const { upgrade, link } of rowUpgrades) {
+      if (!selectedUpgradeIds.has(upgrade.id)) continue;
+      const pricePounds =
+        isBothArches && link.both_arches_price != null
+          ? link.both_arches_price
+          : link.price;
+      list.push({
+        upgrade_id: upgrade.id,
+        code: upgrade.code,
+        name: upgrade.name,
+        price_pence: Math.round(pricePounds * 100),
+      });
+    }
+    return list;
+  }, [rowUpgrades, selectedUpgradeIds, isBothArches]);
+
+  // Per-instance upgrade cost in pounds. Upgrades ride every quantity
+  // tick (matches the cart write — one upgrade snapshot per cart_item),
+  // so 2× a Scalloped retainer charges Scalloped twice.
+  const upgradePerInstance = appliedUpgrades.reduce((sum, u) => sum + u.price_pence, 0) / 100;
+
+  const baseLineTotal = totalForQtyWithArch(row, qty, archForLine);
+  const lineTotal = baseLineTotal + upgradePerInstance * qty;
+
+  // Header price hint: row's lowest possible per-instance price. Lets
+  // the receptionist see "From £X" for arch-priced rows without
+  // expanding the row first.
+  const minHeaderPrice =
+    askArch && hasBothArchesPrice
+      ? Math.min(row.unit_price, row.both_arches_price ?? row.unit_price)
+      : row.arch_match === 'both' && row.both_arches_price != null
+        ? row.both_arches_price
+        : row.unit_price;
+  const showFromPrefix = askArch && hasBothArchesPrice && row.unit_price !== row.both_arches_price;
 
   const canAdd =
     (cartId != null || onStage != null) && qty >= 1 && (!askArch || arch !== null);
@@ -421,8 +513,9 @@ function ProductRow({
     if (!canAdd) return;
     const opts: CatalogueAddOptions = {
       arch: archForLine,
-      shade: shade.trim() || null,
+      shade: showShade ? shade.trim() || null : null,
       notes: notes.trim() || null,
+      upgrades: appliedUpgrades,
     };
     if (onStage) {
       onStage(row, qty, opts);
@@ -441,7 +534,14 @@ function ProductRow({
     }
   };
 
-  const lineTotal = totalForQty(row, qty);
+  const toggleUpgrade = (upgradeId: string) => {
+    setSelectedUpgradeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(upgradeId)) next.delete(upgradeId);
+      else next.add(upgradeId);
+      return next;
+    });
+  };
 
   return (
     <article
@@ -512,7 +612,7 @@ function ProductRow({
             whiteSpace: 'nowrap',
           }}
         >
-          £{row.unit_price.toFixed(2)}
+          {showFromPrefix ? 'From ' : ''}£{minHeaderPrice.toFixed(2)}
         </span>
         <ChevronDown
           size={18}
@@ -557,20 +657,103 @@ function ProductRow({
 
             {askArch ? (
               <FieldBlock label="Arch" required>
-                <div style={{ display: 'flex', gap: theme.space[2] }}>
+                <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                   <ArchPick value="upper" current={arch} onClick={() => setArch('upper')} />
                   <ArchPick value="lower" current={arch} onClick={() => setArch('lower')} />
+                  {hasBothArchesPrice ? (
+                    <ArchPick
+                      value="both"
+                      label="Both arches"
+                      current={arch}
+                      onClick={() => setArch('both')}
+                    />
+                  ) : null}
                 </div>
               </FieldBlock>
             ) : null}
 
-            <FieldBlock label="Shade" optional>
-              <PlainInput
-                value={shade}
-                onChange={setShade}
-                placeholder="e.g. A2"
-              />
-            </FieldBlock>
+            {showShade ? (
+              <FieldBlock label="Shade" optional>
+                <select
+                  value={shade}
+                  onChange={(e) => setShade(e.target.value)}
+                  style={{
+                    height: theme.layout.inputHeight,
+                    padding: `0 ${theme.space[3]}px`,
+                    fontSize: theme.type.size.base,
+                    fontFamily: 'inherit',
+                    border: `1px solid ${theme.color.border}`,
+                    borderRadius: theme.radius.input,
+                    background: theme.color.surface,
+                    color: theme.color.ink,
+                  }}
+                >
+                  <option value="">— pick a shade —</option>
+                  {CLICK_IN_VENEER_SHADES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </FieldBlock>
+            ) : null}
+
+            {rowUpgrades.length > 0 ? (
+              <FieldBlock label="Upgrades" optional>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                  {rowUpgrades.map(({ upgrade, link }) => {
+                    const checked = selectedUpgradeIds.has(upgrade.id);
+                    const tierPrice =
+                      isBothArches && link.both_arches_price != null
+                        ? link.both_arches_price
+                        : link.price;
+                    return (
+                      <label
+                        key={upgrade.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: theme.space[3],
+                          padding: theme.space[3],
+                          borderRadius: theme.radius.input,
+                          border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
+                          background: checked ? theme.color.bg : theme.color.surface,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleUpgrade(upgrade.id)}
+                          style={{ width: 18, height: 18 }}
+                        />
+                        <span
+                          style={{
+                            flex: 1,
+                            fontSize: theme.type.size.base,
+                            fontWeight: theme.type.weight.medium,
+                            color: theme.color.ink,
+                          }}
+                        >
+                          {upgrade.name}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: theme.type.size.sm,
+                            fontWeight: theme.type.weight.semibold,
+                            color: theme.color.ink,
+                            fontVariantNumeric: 'tabular-nums',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          +£{tierPrice.toFixed(2)}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </FieldBlock>
+            ) : null}
 
             <FieldBlock label="Notes" optional>
               <PlainInput
@@ -747,10 +930,12 @@ function ArchPick({
   value,
   current,
   onClick,
+  label,
 }: {
-  value: 'upper' | 'lower';
-  current: 'upper' | 'lower' | null;
+  value: 'upper' | 'lower' | 'both';
+  current: 'upper' | 'lower' | 'both' | null;
   onClick: () => void;
+  label?: string;
 }) {
   const selected = current === value;
   return (
@@ -760,6 +945,7 @@ function ArchPick({
       style={{
         appearance: 'none',
         flex: 1,
+        minWidth: 110,
         height: 44,
         borderRadius: theme.radius.input,
         background: selected ? theme.color.ink : theme.color.surface,
@@ -769,10 +955,10 @@ function ArchPick({
         fontSize: theme.type.size.base,
         fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
         cursor: 'pointer',
-        textTransform: 'capitalize',
+        textTransform: label ? 'none' : 'capitalize',
       }}
     >
-      {value}
+      {label ?? value}
     </button>
   );
 }

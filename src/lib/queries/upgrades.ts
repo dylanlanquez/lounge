@@ -128,6 +128,45 @@ interface UpgradeLinksResult {
   refresh: () => void;
 }
 
+// All links across the catalogue. Picker loads this once at open so each
+// expanded ProductRow can render its upgrade checklist without spawning
+// a fresh query — the link table is small (rows × upgrades).
+export function useAllUpgradeLinks(): UpgradeLinksResult {
+  const [links, setLinks] = useState<UpgradeLinkRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data, error: err } = await supabase
+        .from('lng_catalogue_upgrade_links')
+        .select('catalogue_id, upgrade_id, price, both_arches_price, created_at, updated_at');
+      if (cancelled) return;
+      if (err) {
+        if (err.code === '42P01') {
+          setLinks([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+      setLinks((data ?? []) as UpgradeLinkRow[]);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  return { links, loading, error, refresh };
+}
+
 export function useUpgradeLinksForCatalogue(catalogueId: string | null): UpgradeLinksResult {
   const [links, setLinks] = useState<UpgradeLinkRow[]>([]);
   const [loading, setLoading] = useState(true);
