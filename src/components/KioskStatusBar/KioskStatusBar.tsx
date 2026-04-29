@@ -1,5 +1,6 @@
 import { Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../lib/auth.tsx';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';
@@ -9,17 +10,25 @@ import { theme } from '../../theme/index.ts';
 // underneath the fixed bar.
 export const KIOSK_STATUS_BAR_HEIGHT = 32;
 
-// Always-visible top strip. Left side carries the faint Lounge
-// watermark; right side is the system tray — Settings, Wi-Fi,
-// battery, then date and time. Keeping the time right-aligned brings
-// it closer to where staff naturally glance for status (next to the
-// device chrome) and frees the left edge for the brand mark. Lives
-// outside any route so it persists through navigation.
+// Always-visible top strip *for signed-in staff*. Left side carries
+// the faint Lounge watermark; right side is the system tray —
+// Settings, Wi-Fi, battery, then date and time. Lives outside any
+// route so it persists through navigation.
+//
+// Hidden entirely when no user is signed in (and while the auth
+// session is still resolving). The Settings button on this bar
+// links straight into the admin surface, so anyone walking past an
+// unattended kiosk on the sign-in screen could otherwise tap
+// through. SignIn drops the matching paddingTop so the layout
+// doesn't carry a phantom 32px gap.
 export function KioskStatusBar() {
+  const { user, loading: authLoading } = useAuth();
   const now = useNow(60_000);
   const { level, charging, supported: batterySupported } = useBattery();
   const network = useNetwork();
   const navigate = useNavigate();
+
+  if (authLoading || !user) return null;
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
