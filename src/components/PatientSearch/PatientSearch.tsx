@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useState } from 'react';
-import { Info, Phone, Search, User, Mail, ShoppingBag } from 'lucide-react';
+import { Info, Phone, Search, User, Users, Mail, ShoppingBag } from 'lucide-react';
 import { Input } from '../Input/Input.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Tooltip } from '../Tooltip/Tooltip.tsx';
@@ -105,7 +105,10 @@ export function PatientSearch({
         </p>
       ) : (
         <>
-          {/* Local patients (existing rows). */}
+          {/* Local patients (existing rows). The section header mirrors
+              the venneir.com one structurally (icon + sentence-case
+              h3) so the two groups read as siblings. Without this,
+              the list reads as one undifferentiated wall. */}
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               <Skeleton height={88} radius={12} />
@@ -113,13 +116,19 @@ export function PatientSearch({
               <Skeleton height={88} radius={12} />
             </div>
           ) : data.length > 0 ? (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-              {data.map((p) => (
-                <li key={p.id}>
-                  <PatientResultRow patient={p} onPick={onPick} />
-                </li>
-              ))}
-            </ul>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              <SearchSectionHeading
+                icon={<Users size={18} aria-hidden style={{ color: theme.color.ink }} />}
+                title="Existing patients"
+              />
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {data.map((p) => (
+                  <li key={p.id}>
+                    <PatientResultRow patient={p} onPick={onPick} />
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
 
           {/* Shopify customers with no patient row yet, only when the
@@ -179,61 +188,47 @@ export function PatientSearch({
   );
 }
 
-function ShopifyResultsBlock({
-  loading,
-  results,
-  registerLocationId,
-  onPick,
+// Section heading for the search results — same chrome whether we're
+// labelling existing patients or venneir.com customers, so the two
+// groups read as siblings on the page. The optional `info` prop
+// renders a small (i) trigger that opens a Tooltip; we use it only on
+// the venneir.com section because that group needs context.
+function SearchSectionHeading({
+  icon,
+  title,
+  info,
 }: {
-  loading: boolean;
-  results: ShopifyCustomerResult[];
-  registerLocationId: string | undefined;
-  onPick: (patient: PatientRow) => void;
+  icon: ReactNode;
+  title: string;
+  info?: ReactNode;
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      <div
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+        {icon}
+      </span>
+      <h3
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          marginTop: theme.space[3],
+          margin: 0,
+          fontSize: theme.type.size.base,
+          color: theme.color.ink,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.tight,
         }}
       >
-        <img
-          src="/one-click-logo-icon.png"
-          alt=""
-          aria-hidden
-          width={18}
-          height={18}
-          style={{ display: 'block', flexShrink: 0 }}
-        />
-        <h3
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.base,
-            color: theme.color.ink,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
-          }}
-        >
-          From venneir.com
-        </h3>
-        <Tooltip
-          align="start"
-          maxWidth={300}
-          content={
-            <span>
-              They've shopped on venneir.com but aren't yet registered as a
-              patient on Lounge. Tap <strong>Register &amp; continue</strong> to
-              add them. This is the standard first-visit flow for anyone
-              arriving from the website, no special handling needed.
-            </span>
-          }
-        >
+        {title}
+      </h3>
+      {info ? (
+        <Tooltip align="start" maxWidth={300} content={info}>
           <button
             type="button"
-            aria-label="Why is this person here?"
+            aria-label={`More about: ${title}`}
             style={{
               appearance: 'none',
               border: 'none',
@@ -253,7 +248,45 @@ function ShopifyResultsBlock({
             <Info size={16} aria-hidden />
           </button>
         </Tooltip>
-      </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ShopifyResultsBlock({
+  loading,
+  results,
+  registerLocationId,
+  onPick,
+}: {
+  loading: boolean;
+  results: ShopifyCustomerResult[];
+  registerLocationId: string | undefined;
+  onPick: (patient: PatientRow) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginTop: theme.space[2] }}>
+      <SearchSectionHeading
+        icon={
+          <img
+            src="/one-click-logo-icon.png"
+            alt=""
+            aria-hidden
+            width={18}
+            height={18}
+            style={{ display: 'block', flexShrink: 0 }}
+          />
+        }
+        title="From venneir.com"
+        info={
+          <span>
+            They've shopped on venneir.com but aren't yet registered as a
+            patient on Lounge. Tap <strong>Register &amp; continue</strong> to
+            add them. This is the standard first-visit flow for anyone
+            arriving from the website, no special handling needed.
+          </span>
+        }
+      />
       {loading && results.length === 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
           <Skeleton height={56} radius={12} />

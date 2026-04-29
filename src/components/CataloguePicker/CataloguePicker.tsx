@@ -204,18 +204,18 @@ export function CataloguePicker({
               No products match "{trimmedSearch}".
             </p>
           ) : trimmedSearch ? (
-            <ul style={listStyle}>{filtered.map(renderRow)}</ul>
+            <ul className="lng-picker-list" style={listStyle}>{filtered.map(renderRow)}</ul>
           ) : (
             <>
               {suggestions.length > 0 ? (
                 <Section title="Suggested for this booking" accent>
-                  <ul style={listStyle}>{suggestions.map(renderRow)}</ul>
+                  <ul className="lng-picker-list" style={listStyle}>{suggestions.map(renderRow)}</ul>
                 </Section>
               ) : null}
               {servicesGrouped.length > 0 ? (
                 <TopGroup title="Services">
                   {servicesGrouped.map(([category, categoryRows]) => (
-                    <ul key={`svc-${category}`} style={listStyle}>
+                    <ul key={`svc-${category}`} className="lng-picker-list" style={listStyle}>
                       {categoryRows.map(renderRow)}
                     </ul>
                   ))}
@@ -233,7 +233,7 @@ export function CataloguePicker({
               {productsGrouped.length > 0 ? (
                 <TopGroup title="Products">
                   {productsGrouped.map(([category, categoryRows]) => (
-                    <ul key={`prd-${category}`} style={listStyle}>
+                    <ul key={`prd-${category}`} className="lng-picker-list" style={listStyle}>
                       {categoryRows.map(renderRow)}
                     </ul>
                   ))}
@@ -270,9 +270,13 @@ export function CataloguePicker({
       {/* Hairline + hover rules for ProductRow. Inline-style props
           can't express :last-child or :hover, so we inject the
           minimal CSS once at the picker root. Inert when the picker
-          is closed because the rows aren't in the DOM. */}
+          is closed because the rows aren't in the DOM. The borderBottom
+          is set here (not inline on the article) so the
+          li:last-child override actually wins — inline styles outrank
+          a CSS :last-child rule, which would leave a doubled hairline
+          right above the Services / Products <hr>. */}
       <style>{`
-        .lng-product-row:last-child { border-bottom: none; }
+        .lng-picker-list > li:not(:last-child) > .lng-product-row { border-bottom: 1px solid ${theme.color.border}; }
         .lng-product-row:not(.lng-product-row--expanded):hover { background: rgba(14, 20, 20, 0.025); }
       `}</style>
     </>
@@ -615,7 +619,9 @@ function ProductRow({
           : 'lng-product-row'
       }
       style={{
-        borderBottom: `1px solid ${theme.color.border}`,
+        // borderBottom is set in CSS, not inline — inline styles
+        // outrank a CSS :last-child override, which would leave a
+        // doubled hairline next to the Services / Products <hr>.
         background: expanded ? theme.color.bg : 'transparent',
         transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         // overflow:hidden keeps the grid-rows expansion animation from
