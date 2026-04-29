@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, FileText, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -8,6 +8,7 @@ import {
   CollapsibleCard,
   EmptyState,
   MarketingGallery,
+  PatientFilesGrid,
   Skeleton,
   StatusPill,
 } from '../components/index.ts';
@@ -28,7 +29,6 @@ import {
   type PatientProfileRow,
   type PatientVisitRow,
 } from '../lib/queries/patientProfile.ts';
-import { signedUrlFor } from '../lib/queries/patientFiles.ts';
 import { formatPence } from '../lib/queries/carts.ts';
 import {
   sectionSignatureState,
@@ -650,54 +650,12 @@ function formatShortDate(iso: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Patient files — view-only mirror of Meridian's file library.
 // Lounge runs on Samsung tablets at the desk; staff never upload, edit
-// or delete from here. The panel groups every patient_files row by
-// (label_key, custom_label) so each "slot" reads as a single item with
-// expandable version history. Image MIME types render an inline
-// thumbnail (signed URL), other types fall back to a generic file
-// icon. No download / open-in-new-tab affordance — view only.
+// or delete. The PatientFilesGrid component renders the same eight
+// fixed slots Meridian uses (Upper Arch, Lower Arch, Bite Reg, Full
+// Face, Smile front/left/right, X-Ray) plus per-label "other" cards,
+// in a horizontal scroll row. Click a filled card → preview modal;
+// click 'View history' → version list.
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface FileGroup {
-  key: string;
-  label: string;
-  versions: PatientFileEntry[];
-}
-
-function buildFileGroups(files: PatientFileEntry[]): FileGroup[] {
-  // Group key combines label_key and custom_label. Files with neither
-  // (legacy rows) get a per-id key so they each render as their own
-  // standalone slot rather than collapsing together.
-  const groups = new Map<string, FileGroup>();
-  for (const f of files) {
-    const groupKey =
-      f.label_key || f.custom_label
-        ? `${f.label_key ?? '_custom'}::${f.custom_label ?? ''}`
-        : `solo::${f.id}`;
-    const label = f.custom_label || f.label_display || f.label_key || 'File';
-    let g = groups.get(groupKey);
-    if (!g) {
-      g = { key: groupKey, label, versions: [] };
-      groups.set(groupKey, g);
-    }
-    g.versions.push(f);
-  }
-  // Sort each group's versions newest first by version number, falling
-  // back to uploaded_at when version is missing on legacy rows.
-  for (const g of groups.values()) {
-    g.versions.sort((a, b) => {
-      const av = a.version ?? 0;
-      const bv = b.version ?? 0;
-      if (bv !== av) return bv - av;
-      return b.uploaded_at.localeCompare(a.uploaded_at);
-    });
-  }
-  // Order groups by latest upload across the slot, newest first.
-  return [...groups.values()].sort((a, b) => {
-    const at = a.versions[0]?.uploaded_at ?? '';
-    const bt = b.versions[0]?.uploaded_at ?? '';
-    return bt.localeCompare(at);
-  });
-}
 
 function PatientFilesPanel({
   files,
@@ -706,251 +664,15 @@ function PatientFilesPanel({
   files: PatientFileEntry[];
   loading: boolean;
 }) {
-  const groups = useMemo(() => buildFileGroups(files), [files]);
-  const pager = usePagedRows(groups, PROFILE_PAGE_SIZE);
-
   return (
     <CollapsibleCard
       icon={<Files size={18} color={theme.color.ink} aria-hidden />}
       title="Files"
-      meta={`${groups.length} ${groups.length === 1 ? 'file' : 'files'}`}
+      meta={`${files.length} ${files.length === 1 ? 'file' : 'files'}`}
     >
-      {loading ? (
-        <Skeleton height={120} radius={14} />
-      ) : groups.length === 0 ? (
-        <EmptyState
-          icon={<Files size={24} />}
-          title="No files yet"
-          description="Patient files uploaded in Meridian will appear here."
-        />
-      ) : (
-        <>
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            {pager.visible.map((g) => (
-              <li key={g.key}>
-                <FileGroupCard group={g} />
-              </li>
-            ))}
-          </ul>
-          <ListPager
-            page={pager.page}
-            totalPages={pager.totalPages}
-            onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
-            onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
-          />
-        </>
-      )}
+      <PatientFilesGrid files={files} loading={loading} />
     </CollapsibleCard>
   );
-}
-
-function FileGroupCard({ group }: { group: FileGroup }) {
-  const latest = group.versions[0]!;
-  const olders = group.versions.slice(1);
-  const [showHistory, setShowHistory] = useState(false);
-
-  return (
-    <article
-      style={{
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        background: theme.color.surface,
-        padding: theme.space[3],
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
-        <FileThumb file={latest} />
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
-              textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
-            }}
-          >
-            {group.label}
-          </span>
-          <span
-            style={{
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {latest.file_name}
-          </span>
-          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            v{latest.version ?? 1} · {formatShortDate(latest.uploaded_at)}
-            {latest.uploaded_by_name ? ` · ${latest.uploaded_by_name}` : ''}
-            {latest.file_size_bytes ? ` · ${formatBytes(latest.file_size_bytes)}` : ''}
-          </span>
-        </div>
-      </div>
-
-      {olders.length > 0 ? (
-        <>
-          <button
-            type="button"
-            onClick={() => setShowHistory((o) => !o)}
-            aria-expanded={showHistory}
-            style={{
-              appearance: 'none',
-              border: 'none',
-              background: 'transparent',
-              padding: `${theme.space[1]}px 0`,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: theme.space[1],
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.medium,
-              color: theme.color.inkMuted,
-              alignSelf: 'flex-start',
-            }}
-          >
-            <ChevronRight
-              size={14}
-              aria-hidden
-              style={{
-                transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-                transform: showHistory ? 'rotate(90deg)' : 'rotate(0deg)',
-              }}
-            />
-            {olders.length} older {olders.length === 1 ? 'version' : 'versions'}
-          </button>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateRows: showHistory ? '1fr' : '0fr',
-              transition: `grid-template-rows ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
-            }}
-          >
-            <div style={{ overflow: 'hidden' }}>
-              <ul
-                style={{
-                  listStyle: 'none',
-                  margin: `${theme.space[2]}px 0 0`,
-                  padding: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: theme.space[2],
-                  borderTop: `1px solid ${theme.color.border}`,
-                  paddingTop: theme.space[2],
-                }}
-              >
-                {olders.map((f) => (
-                  <li
-                    key={f.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: theme.space[3],
-                      paddingLeft: theme.space[1],
-                    }}
-                  >
-                    <FileThumb file={f} small />
-                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <span
-                        style={{
-                          fontSize: theme.type.size.sm,
-                          color: theme.color.ink,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {f.file_name}
-                      </span>
-                      <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                        v{f.version ?? 1} · {formatShortDate(f.uploaded_at)}
-                        {f.uploaded_by_name ? ` · ${f.uploaded_by_name}` : ''}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </>
-      ) : null}
-    </article>
-  );
-}
-
-function FileThumb({ file, small = false }: { file: PatientFileEntry; small?: boolean }) {
-  // Prefer the cached thumbnail (Meridian renders one for STL / OBJ
-  // scans). Otherwise use the file_url if it's an image. Anything else
-  // falls back to a file-type icon — Lounge is view-only so we don't
-  // need a non-image preview.
-  const previewPath =
-    file.thumbnail_path ?? (file.mime_type?.startsWith('image/') ? file.file_url : null);
-  const url = useSignedUrl(previewPath);
-  const size = small ? 36 : 56;
-  const baseStyle: CSSProperties = {
-    width: size,
-    height: size,
-    borderRadius: theme.radius.input,
-    flexShrink: 0,
-    background: theme.color.bg,
-    border: `1px solid ${theme.color.border}`,
-  };
-  if (url) {
-    return (
-      <img
-        src={url}
-        alt={file.file_name}
-        style={{ ...baseStyle, objectFit: 'cover' }}
-      />
-    );
-  }
-  return (
-    <span
-      aria-hidden
-      style={{
-        ...baseStyle,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: theme.color.inkSubtle,
-      }}
-    >
-      <FileText size={small ? 14 : 20} />
-    </span>
-  );
-}
-
-function useSignedUrl(path: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!path) {
-      setUrl(null);
-      return;
-    }
-    let cancelled = false;
-    void signedUrlFor(path, 600).then((u) => {
-      if (!cancelled) setUrl(u);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
-  return url;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
