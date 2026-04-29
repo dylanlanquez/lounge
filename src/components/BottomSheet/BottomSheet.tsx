@@ -104,6 +104,12 @@ export function BottomSheet({
           paddingBottom: `env(safe-area-inset-bottom, 0px)`,
           animation: 'lng-sheet-up 280ms cubic-bezier(0.25, 1, 0.3, 1)',
           boxShadow: theme.shadow.overlay,
+          // Clip inner content (notably a sticky element's solid
+          // background) to the rounded top corners. Without this, a
+          // sticky search row's white fill pokes past the curve and
+          // breaks the silhouette. boxShadow renders outside the box
+          // so it isn't affected by the clip.
+          overflow: 'hidden',
         }}
       >
         {/* Drag handle */}
