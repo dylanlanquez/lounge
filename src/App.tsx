@@ -1,9 +1,10 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider } from './lib/auth.tsx';
 import { theme } from './theme/index.ts';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 
 const SignIn = lazy(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })));
 const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })));
@@ -39,6 +40,21 @@ export function App() {
   return (
     <AuthProvider>
       <KioskStatusBar />
+      <RoutedErrorBoundary />
+      <BottomNav />
+    </AuthProvider>
+  );
+}
+
+// Re-key the boundary on pathname so navigating to a fresh route always
+// drops back to a clean tree even if the previous one was stuck on an
+// error. The Suspense fallback also lives inside the boundary so a
+// chunk-load failure surfaces the same "something broke" surface
+// instead of a blank loading screen.
+function RoutedErrorBoundary() {
+  const location = useLocation();
+  return (
+    <ErrorBoundary key={location.pathname}>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<Navigate to="/schedule" replace />} />
@@ -59,7 +75,6 @@ export function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-      <BottomNav />
-    </AuthProvider>
+    </ErrorBoundary>
   );
 }

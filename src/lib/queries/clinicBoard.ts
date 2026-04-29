@@ -565,6 +565,7 @@ const WALK_IN_DISPLAY: Record<string, string> = {
   denture_repair: 'Denture repair',
   same_day_appliance: 'Same-day appliance',
   click_in_veneers: 'Click-in veneers',
+  impression_appointment: 'Impression appointment',
   other: 'Consultation',
 };
 
