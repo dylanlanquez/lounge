@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { Avatar, EmptyState, Skeleton, StickyPageHeader } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
+import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -47,6 +48,10 @@ export function Patients() {
         minHeight: '100dvh',
         background: theme.color.bg,
         padding: `0 ${outerPaddingX}px`,
+        // Breathing room above the title — clears the fixed kiosk
+        // status bar plus a comfortable spacing token so the title
+        // doesn't read as crammed against the device chrome.
+        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px) + ${theme.space[5]}px)`,
         paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
       }}
     >
