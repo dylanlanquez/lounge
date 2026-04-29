@@ -3,7 +3,6 @@ import { ChevronDown, Minus, Package, Plus, Search, ShoppingBag, Sparkles, X } f
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Checkbox } from '../Checkbox/Checkbox.tsx';
-import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { theme } from '../../theme/index.ts';
@@ -698,8 +697,7 @@ function ProductRow({
         />
       </button>
 
-      {/* Animated panel — the grid-template-rows trick lets the
-          height transition smoothly without JS measurement. */}
+      {/* Animated panel — grid-template-rows transition. */}
       <div
         id={panelId}
         role="region"
@@ -713,54 +711,51 @@ function ProductRow({
         <div style={{ overflow: 'hidden' }}>
           <div
             style={{
-              padding: `0 ${theme.space[3]}px ${theme.space[3]}px`,
+              padding: `0 ${theme.space[4]}px ${theme.space[3]}px`,
               display: 'flex',
               flexDirection: 'column',
-              gap: theme.space[4],
             }}
           >
-            <div style={{ height: 1, background: theme.color.border }} />
-
             {row.quantity_enabled ? (
-              <Stepper
-                label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}
-                value={qty}
-                onChange={setQty}
-              />
+              <ConfigRow label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}>
+                <CompactStepper value={qty} onChange={setQty} />
+              </ConfigRow>
             ) : null}
 
             {askArch ? (
-              <FieldBlock label="Arch" required>
-                <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-                  <ArchPick value="upper" current={arch} onClick={() => setArch('upper')} />
-                  <ArchPick value="lower" current={arch} onClick={() => setArch('lower')} />
-                  {hasBothArchesPrice ? (
-                    <ArchPick
-                      value="both"
-                      label="Both arches"
-                      current={arch}
-                      onClick={() => setArch('both')}
-                    />
-                  ) : null}
-                </div>
-              </FieldBlock>
+              <ConfigRow label="Arch" required>
+                <Segmented
+                  value={arch}
+                  onChange={setArch}
+                  options={
+                    hasBothArchesPrice
+                      ? [
+                          { value: 'upper', label: 'Upper' },
+                          { value: 'lower', label: 'Lower' },
+                          { value: 'both', label: 'Both' },
+                        ]
+                      : [
+                          { value: 'upper', label: 'Upper' },
+                          { value: 'lower', label: 'Lower' },
+                        ]
+                  }
+                />
+              </ConfigRow>
             ) : null}
 
             {showShade ? (
-              <FieldBlock label="Shade" required>
-                <DropdownSelect
-                  ariaLabel="Shade"
+              <ConfigRow label="Shade" required>
+                <Segmented
                   value={shade}
-                  options={CLICK_IN_VENEER_SHADES}
-                  placeholder="Pick a shade"
                   onChange={setShade}
+                  options={CLICK_IN_VENEER_SHADES.map((s) => ({ value: s, label: s }))}
                 />
-              </FieldBlock>
+              </ConfigRow>
             ) : null}
 
             {rowUpgrades.length > 0 ? (
-              <FieldBlock label="Upgrades" optional>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              <ConfigRow label="Upgrades" hint="optional" stack>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
                   {rowUpgrades.map(({ upgrade, link }) => {
                     const checked = selectedUpgradeIds.has(upgrade.id);
                     const tierPrice =
@@ -768,51 +763,49 @@ function ProductRow({
                         ? link.both_arches_price
                         : link.price;
                     return (
-                      <div
+                      <label
                         key={upgrade.id}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
                           gap: theme.space[3],
-                          padding: theme.space[3],
+                          padding: `${theme.space[2]}px ${theme.space[2]}px`,
                           borderRadius: theme.radius.input,
-                          border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
-                          background: checked ? theme.color.bg : theme.color.surface,
+                          background: checked ? theme.color.accentBg : 'transparent',
+                          cursor: 'pointer',
+                          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
                         }}
                       >
                         <Checkbox
                           checked={checked}
                           onChange={() => toggleUpgrade(upgrade.id)}
                           ariaLabel={upgrade.name}
-                          label={
-                            <span
-                              style={{
-                                fontSize: theme.type.size.base,
-                                fontWeight: theme.type.weight.medium,
-                                color: theme.color.ink,
-                              }}
-                            >
-                              {upgrade.name}
-                            </span>
-                          }
                         />
-                        <span style={{ flex: 1 }} />
+                        <span
+                          style={{
+                            flex: 1,
+                            fontSize: theme.type.size.base,
+                            fontWeight: theme.type.weight.medium,
+                            color: theme.color.ink,
+                          }}
+                        >
+                          {upgrade.name}
+                        </span>
                         <span
                           style={{
                             fontSize: theme.type.size.sm,
-                            fontWeight: theme.type.weight.semibold,
-                            color: theme.color.ink,
+                            color: theme.color.inkMuted,
                             fontVariantNumeric: 'tabular-nums',
                             whiteSpace: 'nowrap',
                           }}
                         >
                           +£{tierPrice.toFixed(2)}
                         </span>
-                      </div>
+                      </label>
                     );
                   })}
                 </div>
-              </FieldBlock>
+              </ConfigRow>
             ) : null}
 
             <div
@@ -821,7 +814,8 @@ function ProductRow({
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: theme.space[3],
-                paddingTop: theme.space[2],
+                marginTop: theme.space[3],
+                paddingTop: theme.space[3],
                 borderTop: `1px solid ${theme.color.border}`,
               }}
             >
@@ -854,6 +848,188 @@ function ProductRow({
         </div>
       </div>
     </article>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ConfigRow — `label-left | control-right` row used inside the
+// expansion panel. Replaces the FieldBlock pattern (uppercase tracked
+// eyebrow + content stacked below) with a single-line layout that
+// matches Linear / Stripe / Notion configurators. Hairline below
+// every row except the last.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ConfigRow({
+  label,
+  required = false,
+  hint,
+  stack = false,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  // When the control is taller than a single row (e.g. the upgrades
+  // checkbox list), stack the label above instead of side-by-side.
+  stack?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: stack ? 'column' : 'row',
+        alignItems: stack ? 'stretch' : 'center',
+        justifyContent: stack ? 'flex-start' : 'space-between',
+        gap: stack ? theme.space[2] : theme.space[3],
+        padding: `${theme.space[3]}px 0`,
+        borderBottom: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkMuted,
+        }}
+      >
+        <span>{label}</span>
+        {required ? (
+          <span aria-hidden style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+            *
+          </span>
+        ) : null}
+        {hint ? (
+          <span style={{ color: theme.color.inkSubtle, fontWeight: theme.type.weight.regular, fontSize: theme.type.size.xs }}>
+            {hint}
+          </span>
+        ) : null}
+      </span>
+      <div style={{ display: stack ? 'block' : 'flex', alignItems: 'center', minWidth: 0 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Segmented — single rounded container, internal pill segments,
+// selected segment fills ink. Used for arch + shade pickers in the
+// product expansion panel.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T | null | '';
+  onChange: (v: T) => void;
+  options: ReadonlyArray<{ value: T; label: string }>;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      style={{
+        display: 'inline-flex',
+        padding: 2,
+        borderRadius: theme.radius.pill,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+      }}
+    >
+      {options.map((opt) => {
+        const selected = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.value)}
+            style={{
+              appearance: 'none',
+              border: 'none',
+              padding: `${theme.space[2]}px ${theme.space[4]}px`,
+              borderRadius: theme.radius.pill,
+              background: selected ? theme.color.ink : 'transparent',
+              color: selected ? theme.color.surface : theme.color.ink,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+              fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
+              cursor: 'pointer',
+              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              minWidth: 56,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CompactStepper — tighter than the FieldBlock'd Stepper above; lives
+// on a single row next to its label.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CompactStepper({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  const button: CSSProperties = {
+    appearance: 'none',
+    width: 32,
+    height: 32,
+    borderRadius: theme.radius.pill,
+    border: `1px solid ${theme.color.border}`,
+    background: theme.color.surface,
+    color: theme.color.ink,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'inherit',
+  };
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+      <button
+        type="button"
+        aria-label="Decrease"
+        onClick={() => onChange(Math.max(1, value - 1))}
+        style={button}
+      >
+        <Minus size={14} />
+      </button>
+      <span
+        style={{
+          minWidth: 28,
+          textAlign: 'center',
+          fontSize: theme.type.size.base,
+          fontWeight: theme.type.weight.semibold,
+          fontVariantNumeric: 'tabular-nums',
+          color: theme.color.ink,
+        }}
+      >
+        {value}
+      </span>
+      <button
+        type="button"
+        aria-label="Increase"
+        onClick={() => onChange(value + 1)}
+        style={button}
+      >
+        <Plus size={14} />
+      </button>
+    </div>
   );
 }
 
@@ -916,164 +1092,6 @@ function RowActionBox({
         />
       )}
     </span>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Field block — wraps a row of options with a small muted label.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function FieldBlock({
-  label,
-  required = false,
-  optional = false,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  optional?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      <p
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          letterSpacing: theme.type.tracking.wide,
-          textTransform: 'uppercase',
-        }}
-      >
-        {label}
-        {required ? (
-          <span style={{ color: theme.color.alert, marginLeft: 4 }}>*</span>
-        ) : optional ? (
-          <span
-            style={{
-              color: theme.color.inkSubtle,
-              fontWeight: theme.type.weight.medium,
-              textTransform: 'none',
-              letterSpacing: 0,
-              marginLeft: 6,
-            }}
-          >
-            optional
-          </span>
-        ) : null}
-      </p>
-      {children}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Stepper — minus / count / plus, tabular-nums.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function Stepper({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-}) {
-  return (
-    <FieldBlock label={label}>
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-        <StepperButton aria="Decrease" onClick={() => onChange(Math.max(1, value - 1))}>
-          <Minus size={16} />
-        </StepperButton>
-        <span
-          style={{
-            minWidth: 32,
-            textAlign: 'center',
-            fontSize: theme.type.size.lg,
-            fontWeight: theme.type.weight.semibold,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {value}
-        </span>
-        <StepperButton aria="Increase" onClick={() => onChange(value + 1)}>
-          <Plus size={16} />
-        </StepperButton>
-      </div>
-    </FieldBlock>
-  );
-}
-
-function StepperButton({
-  aria,
-  children,
-  onClick,
-}: {
-  aria: string;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={aria}
-      onClick={onClick}
-      style={{
-        appearance: 'none',
-        width: 36,
-        height: 36,
-        borderRadius: theme.radius.pill,
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.surface,
-        color: theme.color.ink,
-        cursor: 'pointer',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: 'inherit',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ArchPick({
-  value,
-  current,
-  onClick,
-  label,
-}: {
-  value: 'upper' | 'lower' | 'both';
-  current: 'upper' | 'lower' | 'both' | null;
-  onClick: () => void;
-  label?: string;
-}) {
-  const selected = current === value;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        appearance: 'none',
-        flex: 1,
-        minWidth: 110,
-        height: 44,
-        borderRadius: theme.radius.input,
-        background: selected ? theme.color.ink : theme.color.surface,
-        color: selected ? theme.color.surface : theme.color.ink,
-        border: selected ? 'none' : `1px solid ${theme.color.border}`,
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.base,
-        fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
-        cursor: 'pointer',
-        textTransform: label ? 'none' : 'capitalize',
-      }}
-    >
-      {label ?? value}
-    </button>
   );
 }
 
