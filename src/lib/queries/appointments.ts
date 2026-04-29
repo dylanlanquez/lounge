@@ -303,8 +303,18 @@ export function formatBookingSummary(row: AppointmentRow): string {
 
   const eventStripped = event.replace(/^(same-day|in-person|virtual)\s+/i, '').trim();
 
-  if (subjectLabel && archLabel) return `${archLabel} ${subjectLabel}`;
-  if (subjectLabel) return subjectLabel;
+  // Denture-repair bookings should always read "Denture …" so the
+  // card disambiguates against real-tooth issues. Calendly's intake
+  // answers vary — "Snapped Denture" already includes the word, but
+  // "Broken Tooth" / "Add a Tooth" / "Relining" do not. Prepend
+  // "Denture " only when the rendered subject doesn't already
+  // contain it, otherwise we'd produce "Denture Snapped Denture".
+  const isRepair = eventTypeCategory(event) === 'repair';
+  const withDenturePrefix = (text: string): string =>
+    isRepair && !/denture/i.test(text) ? `Denture ${text}` : text;
+
+  if (subjectLabel && archLabel) return `${archLabel} ${withDenturePrefix(subjectLabel)}`;
+  if (subjectLabel) return withDenturePrefix(subjectLabel);
   if (archLabel && eventStripped) return `${archLabel} ${eventStripped}`;
   if (answers.length > 0) {
     return answers

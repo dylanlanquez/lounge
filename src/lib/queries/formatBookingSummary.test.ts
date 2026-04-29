@@ -46,10 +46,38 @@ describe('archToAnatomy', () => {
 });
 
 describe('formatBookingSummary', () => {
-  it('Denture Repairs + Snapped Denture → "Snapped Denture"', () => {
+  it('Denture Repairs + Snapped Denture → "Snapped Denture" (denture word already present)', () => {
     expect(
       formatBookingSummary(makeRow('Denture Repairs', [{ question: 'Repair Type', answer: 'Snapped Denture' }]))
     ).toBe('Snapped Denture');
+  });
+
+  it('Denture Repairs + Broken Tooth → "Denture Broken Tooth" (prefix added)', () => {
+    expect(
+      formatBookingSummary(makeRow('Denture Repairs', [{ question: 'Repair Type', answer: 'Broken Tooth' }]))
+    ).toBe('Denture Broken Tooth');
+  });
+
+  it('Denture Repairs + Broken Tooth + Top → "Upper Denture Broken Tooth"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Denture Repairs', [
+          { question: 'Repair Type', answer: 'Broken Tooth' },
+          { question: 'Arch', answer: 'Top' },
+        ])
+      )
+    ).toBe('Upper Denture Broken Tooth');
+  });
+
+  it('Denture Repairs + Cracked Denture + Both → "Upper and Lower Cracked Denture" (no double prefix)', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Denture Repairs', [
+          { question: 'Repair Type', answer: 'Cracked Denture' },
+          { question: 'Arch', answer: 'Both' },
+        ])
+      )
+    ).toBe('Upper and Lower Cracked Denture');
   });
 
   it('Same-day Appliances + Missing Tooth Retainer + Top → "Upper Missing Tooth Retainer"', () => {
@@ -204,14 +232,14 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper and Lower Retainer');
   });
 
-  it('comma-joins multi-select repair-type answers', () => {
+  it('comma-joins multi-select repair-type answers and prepends Denture', () => {
     expect(
       formatBookingSummary(
         makeRow('Denture Repairs', [
           { question: 'Repair Type', answer: 'Broken Tooth/Teeth\nRelining (Upper or Lower)' },
         ])
       )
-    ).toBe('Broken Tooth/Teeth, Relining (Upper or Lower)');
+    ).toBe('Denture Broken Tooth/Teeth, Relining (Upper or Lower)');
   });
 
   it('comma-joins multi-select appliances with arch', () => {
