@@ -410,6 +410,11 @@ export interface PatientVisitRow {
   opened_at: string;
   arrival_type: 'walk_in' | 'scheduled';
   status: 'opened' | 'in_progress' | 'complete' | 'cancelled';
+  // Linkage back to lng_appointments when the visit was a scheduled
+  // arrival. Lets the profile timeline dedupe — appointments whose id is
+  // present in this set must not be re-listed as 'unbooked' alongside the
+  // visit they produced.
+  appointment_id: string | null;
   lwo_ref: string | null;
   service_label: string | null;
   cart_status: 'open' | 'paid' | 'voided' | null;
@@ -439,7 +444,7 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       // not express "latest cart per visit" easily.
       const { data: visits, error: vErr } = await supabase
         .from('lng_visits')
-        .select('id, opened_at, arrival_type, status, walk_in_id')
+        .select('id, opened_at, arrival_type, status, walk_in_id, appointment_id')
         .eq('patient_id', patientId)
         .order('opened_at', { ascending: false });
       if (cancelled) return;
@@ -484,6 +489,7 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
         arrival_type: 'walk_in' | 'scheduled';
         status: PatientVisitRow['status'];
         walk_in_id: string | null;
+        appointment_id: string | null;
       }>).map((v) => {
         const cart = cartByVisit.get(v.id);
         const wi = v.walk_in_id ? walkInById.get(v.walk_in_id) ?? null : null;
@@ -492,6 +498,7 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
           opened_at: v.opened_at,
           arrival_type: v.arrival_type,
           status: v.status,
+          appointment_id: v.appointment_id ?? null,
           lwo_ref: wi?.lwo_ref ?? null,
           service_label: humaniseServiceType(wi?.service_type ?? null),
           cart_status: (cart?.status as PatientVisitRow['cart_status']) ?? null,
@@ -523,6 +530,122 @@ function humaniseServiceType(s: string | null): string | null {
     default:
       return s;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scheduled appointments — every lng_appointments row for this patient.
+// Surfaces upcoming bookings (the visit hasn't been opened yet) AND legacy
+// past appointments that were never booked in (no_show, cancelled, or
+// historical ones from before Lounge existed). Past appointments that DID
+// get booked in already appear in usePatientVisits, so the Appointments
+// section in the profile filters those out client-side via visit.appointment_id
+// to avoid double-counting.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ScheduledApptStatus =
+  | 'booked'
+  | 'arrived'
+  | 'in_progress'
+  | 'complete'
+  | 'no_show'
+  | 'cancelled'
+  | 'rescheduled';
+
+export interface PatientScheduledAppointmentRow {
+  id: string;
+  start_at: string;
+  end_at: string;
+  status: ScheduledApptStatus;
+  source: 'calendly' | 'manual' | 'native' | null;
+  event_type_label: string | null;
+  appointment_ref: string | null;
+  jb_ref: string | null;
+}
+
+interface ScheduledAppointmentsResult {
+  data: PatientScheduledAppointmentRow[];
+  loading: boolean;
+  error: string | null;
+}
+
+export function usePatientScheduledAppointments(
+  patientId: string | null | undefined
+): ScheduledAppointmentsResult {
+  const [data, setData] = useState<PatientScheduledAppointmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!patientId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      // appointment_ref + jb_ref are post-migration columns; fall back to
+      // a slimmer select if the deploy doesn't have them yet (42703).
+      const fullSel =
+        'id, start_at, end_at, status, source, event_type_label, appointment_ref, jb_ref';
+      const slimSel = 'id, start_at, end_at, status, source, event_type_label';
+      const first = await supabase
+        .from('lng_appointments')
+        .select(fullSel)
+        .eq('patient_id', patientId)
+        .order('start_at', { ascending: false });
+      let rows: Array<Record<string, unknown>> | null =
+        (first.data as Array<Record<string, unknown>> | null) ?? null;
+      let err = first.error;
+      if (err && err.code === '42703') {
+        const fb = await supabase
+          .from('lng_appointments')
+          .select(slimSel)
+          .eq('patient_id', patientId)
+          .order('start_at', { ascending: false });
+        rows = (fb.data as Array<Record<string, unknown>> | null) ?? null;
+        err = fb.error;
+      }
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setData([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+      const mapped: PatientScheduledAppointmentRow[] = (rows ?? []).map((r) => ({
+        id: r.id as string,
+        start_at: r.start_at as string,
+        end_at: r.end_at as string,
+        status: r.status as ScheduledApptStatus,
+        source: (r.source as PatientScheduledAppointmentRow['source']) ?? null,
+        event_type_label: (r.event_type_label as string | null) ?? null,
+        appointment_ref: (r.appointment_ref as string | null) ?? null,
+        jb_ref: (r.jb_ref as string | null) ?? null,
+      }));
+      setData(mapped);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
+
+  return { data, loading, error };
+}
+
+// Same humaniser as the visits row, exported so the profile Appointments
+// section can label scheduled appointments without re-implementing the
+// service-type mapping locally.
+export function humaniseEventTypeLabel(label: string | null): string | null {
+  if (!label) return null;
+  // Calendly event type labels are already human-friendly; only fall back
+  // to the underscore-stripped service_type when the label itself looks
+  // like a slug (no spaces, all lowercase + underscores).
+  if (/^[a-z0-9_]+$/.test(label)) return humaniseServiceType(label);
+  return label;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

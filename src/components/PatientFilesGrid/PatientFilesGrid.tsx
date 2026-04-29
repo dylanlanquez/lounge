@@ -1,5 +1,15 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, FileText, Loader2, Pin, RotateCcw, X } from 'lucide-react';
+import {
+  Camera,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Pin,
+  RotateCcw,
+  X,
+} from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import { supabase } from '../../lib/supabase.ts';
@@ -238,14 +248,25 @@ function FileCard({
   onUpload: (card: FileCardModel, file: File) => void;
 }) {
   const [hover, setHover] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Two separate inputs — one with `capture="environment"` to force the
+  // camera, one without to fall back on the OS file picker (gallery).
+  // Samsung Chrome on the kiosk doesn't reliably offer 'Camera or Files'
+  // when the user taps a single `accept="image/*"` input, so we expose
+  // both choices explicitly via a small action sheet. Works the same on
+  // iOS Safari, desktop Chrome, etc.
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   if (!card.file) {
     const canUpload = !!card.uploadable && !uploading;
+    const handleFile = (f: File | null) => {
+      if (f) onUpload(card, f);
+    };
     return (
       <div
         onClick={() => {
-          if (canUpload) inputRef.current?.click();
+          if (canUpload) setSheetOpen(true);
         }}
         onMouseEnter={() => canUpload && setHover(true)}
         onMouseLeave={() => setHover(false)}
@@ -308,21 +329,44 @@ function FileCard({
               : 'Add in Meridian'}
         </span>
         {card.uploadable ? (
-          <input
-            ref={inputRef}
-            type="file"
-            // accept image/* without `capture`: Samsung Chrome offers
-            // both Camera and Files in the chooser, which is the UX
-            // Dylan asked for ('camera roll or take photo').
-            accept="image/*"
-            style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              // Reset the value so the same file picked twice still
-              // fires onChange the second time.
-              e.target.value = '';
-              if (f) onUpload(card, f);
+          <>
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                e.target.value = '';
+                handleFile(f);
+              }}
+            />
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                e.target.value = '';
+                handleFile(f);
+              }}
+            />
+          </>
+        ) : null}
+        {sheetOpen ? (
+          <PhotoSourceSheet
+            label={card.label}
+            onTakePhoto={() => {
+              setSheetOpen(false);
+              cameraInputRef.current?.click();
             }}
+            onChooseGallery={() => {
+              setSheetOpen(false);
+              galleryInputRef.current?.click();
+            }}
+            onClose={() => setSheetOpen(false)}
           />
         ) : null}
         <style>{`@keyframes lng-files-spin { to { transform: rotate(360deg); } }`}</style>
@@ -480,6 +524,202 @@ function FileCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+// ─── Photo source action sheet ─────────────────────────────────────────────
+//
+// Centred modal with two big tap targets: 'Take a photo' (triggers a
+// hidden input with capture="environment" so the OS opens the camera)
+// and 'Choose from gallery' (a second hidden input with no capture, so
+// the OS opens the file picker / gallery). Cross-platform: Samsung Tab
+// Chrome doesn't reliably offer both options off a single accept="image/*"
+// input, and iOS Safari treats them as two distinct intents anyway, so
+// asking the user explicitly is the only way both surfaces work.
+
+function PhotoSourceSheet({
+  label,
+  onTakePhoto,
+  onChooseGallery,
+  onClose,
+}: {
+  label: string;
+  onTakePhoto: () => void;
+  onChooseGallery: () => void;
+  onClose: () => void;
+}) {
+  // The sheet's parent is the empty-card <div>, which is a click target
+  // itself. Stop propagation on every interaction here so a tap on the
+  // sheet doesn't bubble up and re-open it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Add a photo for ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 200,
+        background: theme.color.overlay,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: theme.space[4],
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: theme.color.surface,
+          borderRadius: theme.radius.card,
+          width: 'min(420px, 100%)',
+          padding: `${theme.space[5]}px ${theme.space[5]}px ${theme.space[4]}px`,
+          boxShadow: theme.shadow.overlay,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+          position: 'relative',
+        }}
+      >
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          aria-label="Close"
+          style={{
+            position: 'absolute',
+            top: theme.space[2],
+            right: theme.space[2],
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            padding: theme.space[2],
+            borderRadius: theme.radius.pill,
+            color: theme.color.inkMuted,
+            cursor: 'pointer',
+            display: 'inline-flex',
+          }}
+        >
+          <X size={18} />
+        </button>
+        <div>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            Add a photo
+          </h2>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+            }}
+          >
+            {label}
+          </p>
+        </div>
+        <SourceButton
+          icon={<Camera size={20} />}
+          title="Take a photo"
+          subtitle="Use the device camera"
+          onClick={(e) => {
+            e.stopPropagation();
+            onTakePhoto();
+          }}
+        />
+        <SourceButton
+          icon={<ImageIcon size={20} />}
+          title="Choose from gallery"
+          subtitle="Pick an existing photo"
+          onClick={(e) => {
+            e.stopPropagation();
+            onChooseGallery();
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SourceButton({
+  icon,
+  title,
+  subtitle,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        appearance: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.card,
+        border: `1px solid ${hover ? theme.color.ink : theme.color.border}`,
+        background: hover ? theme.color.bg : theme.color.surface,
+        color: theme.color.ink,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        textAlign: 'left',
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
+          {title}
+        </span>
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          {subtitle}
+        </span>
+      </span>
+    </button>
   );
 }
 
