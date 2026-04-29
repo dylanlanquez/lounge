@@ -26,8 +26,6 @@ export interface PatientProfileRow {
   address: string | null;
   registered_at: string | null;
   shopify_customer_id: string | null;
-  referred_by: string | null;
-  insurance: string | null;
   allergies: string | null;
   communication_preferences: string | null;
   notes: string | null;
@@ -48,7 +46,7 @@ export interface PatientProfileRow {
 }
 
 const PATIENT_PROFILE_COLUMNS =
-  'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, sex, address, registered_at, shopify_customer_id, referred_by, insurance, allergies, communication_preferences, notes, avatar_data, emergency_contact_name, emergency_contact_phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, created_at, updated_at';
+  'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, sex, address, registered_at, shopify_customer_id, allergies, communication_preferences, notes, avatar_data, emergency_contact_name, emergency_contact_phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, created_at, updated_at';
 
 interface ProfileResult {
   data: PatientProfileRow | null;
@@ -96,8 +94,6 @@ export function usePatientProfile(id: string | null | undefined): ProfileResult 
               sex: null,
               address: null,
               registered_at: null,
-              referred_by: null,
-              insurance: null,
               allergies: null,
               communication_preferences: null,
               notes: null,

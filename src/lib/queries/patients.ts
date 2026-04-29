@@ -163,8 +163,6 @@ export async function staffUpdatePatient(args: {
     allergies?: string | null;
     emergency_contact_name?: string | null;
     emergency_contact_phone?: string | null;
-    referred_by?: string | null;
-    insurance?: string | null;
     notes?: string | null;
     communication_preferences?: string | null;
   };
