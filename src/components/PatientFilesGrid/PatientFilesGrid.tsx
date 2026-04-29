@@ -1,7 +1,8 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, FileText, X } from 'lucide-react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, FileText, Loader2, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
-import { signedUrlFor } from '../../lib/queries/patientFiles.ts';
+import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
+import { supabase } from '../../lib/supabase.ts';
 import type { PatientFileEntry } from '../../lib/queries/patientProfile.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,18 +26,30 @@ interface SlotDef {
   group: string;
   label: string;
   subLabelKeys: string[];
-  icon: 'upper_arch' | 'lower_arch' | 'bite' | 'camera' | 'xray' | 'other';
+  // The four photo slots are uploadable from Lounge — staff can take
+  // or pick a photo on the kiosk and the row writes a fresh
+  // patient_files row at the slot's primary label_key. The lab-derived
+  // slots (arch scans, bite, x-ray) stay view-only; those uploads
+  // happen via Meridian / scanner equipment.
+  uploadable?: boolean;
+  // Primary label_key used when uploading from Lounge.
+  primaryKey: string;
 }
 
 const SLOT_DEFS: SlotDef[] = [
-  { group: 'upper_arch', label: 'Upper Arch', subLabelKeys: ['upper_arch', 'upper_arch_opposing'], icon: 'upper_arch' },
-  { group: 'lower_arch', label: 'Lower Arch', subLabelKeys: ['lower_arch', 'lower_arch_opposing'], icon: 'lower_arch' },
-  { group: 'bite_registration', label: 'Bite Registration', subLabelKeys: ['bite_registration', 'both_arches'], icon: 'bite' },
-  { group: 'full_face_photo', label: 'Full Face Photo', subLabelKeys: ['full_face_photo'], icon: 'camera' },
-  { group: 'smile_photo_front', label: 'Smile Photo — Front', subLabelKeys: ['smile_photo_front'], icon: 'camera' },
-  { group: 'smile_photo_left', label: 'Smile Photo — Left', subLabelKeys: ['smile_photo_left'], icon: 'camera' },
-  { group: 'smile_photo_right', label: 'Smile Photo — Right', subLabelKeys: ['smile_photo_right'], icon: 'camera' },
-  { group: 'xray', label: 'X-Ray', subLabelKeys: ['xray_panoramic', 'xray_periapical', 'reference_previous_work', 'patient_reference_image'], icon: 'xray' },
+  // Photo slots first — these are the ones receptionists can capture
+  // at the desk, so they're the ones a receptionist is most likely to
+  // act on, and putting them at the front of the row matches the
+  // tap-to-add order Dylan wants.
+  { group: 'full_face_photo', label: 'Full Face Photo', subLabelKeys: ['full_face_photo'], primaryKey: 'full_face_photo', uploadable: true },
+  { group: 'smile_photo_front', label: 'Smile Photo — Front', subLabelKeys: ['smile_photo_front'], primaryKey: 'smile_photo_front', uploadable: true },
+  { group: 'smile_photo_left', label: 'Smile Photo — Left', subLabelKeys: ['smile_photo_left'], primaryKey: 'smile_photo_left', uploadable: true },
+  { group: 'smile_photo_right', label: 'Smile Photo — Right', subLabelKeys: ['smile_photo_right'], primaryKey: 'smile_photo_right', uploadable: true },
+  // Lab-derived slots after.
+  { group: 'upper_arch', label: 'Upper Arch', subLabelKeys: ['upper_arch', 'upper_arch_opposing'], primaryKey: 'upper_arch' },
+  { group: 'lower_arch', label: 'Lower Arch', subLabelKeys: ['lower_arch', 'lower_arch_opposing'], primaryKey: 'lower_arch' },
+  { group: 'bite_registration', label: 'Bite Registration', subLabelKeys: ['bite_registration', 'both_arches'], primaryKey: 'bite_registration' },
+  { group: 'xray', label: 'X-Ray', subLabelKeys: ['xray_panoramic', 'xray_periapical', 'reference_previous_work', 'patient_reference_image'], primaryKey: 'xray_panoramic' },
 ];
 
 // SLOT_DEF subLabelKeys → group lookup, used by buildCards to bucket a
@@ -52,7 +65,6 @@ const LABEL_TO_GROUP: Record<string, string> = (() => {
 interface FileCardModel {
   group: string;
   label: string;
-  icon: SlotDef['icon'];
   // The file shown on the card face. Null for empty slots.
   file: PatientFileEntry | null;
   // Total number of versions for this slot (counts every file mapped to
@@ -60,41 +72,38 @@ interface FileCardModel {
   versionCount: number;
   // Every version, newest first. Powers the History modal.
   versions: PatientFileEntry[];
+  // Set on slots staff can fill from the kiosk (the four photo slots).
+  // Drives the empty-card upload affordance + click handler. Includes
+  // the canonical primary label_key so the upload writes to the right
+  // bucket.
+  uploadable?: { primaryKey: string };
 }
 
 function buildCards(files: PatientFileEntry[]): FileCardModel[] {
   // Group every file by slot group via its label_key. Files whose label
-  // doesn't map to a fixed slot end up in dynamic 'other_*' groups,
-  // matching Meridian's behaviour.
+  // doesn't map to a fixed slot end up in dynamic 'other_*' groups.
   const byGroup = new Map<string, PatientFileEntry[]>();
   const labelDisplayByGroup = new Map<string, string>();
-  const iconByGroup = new Map<string, SlotDef['icon']>();
 
   for (const f of files) {
     const labelKey = f.label_key ?? '';
     let group = LABEL_TO_GROUP[labelKey];
-    let icon: SlotDef['icon'] = 'other';
     let label = f.label_display ?? f.custom_label ?? 'Other';
 
     if (!group) {
-      // Build a synthetic "other_*" group keyed on (label_key + custom_label)
-      // so each named upload reads as its own slot card.
       const customSlug = (f.custom_label ?? '').trim().toLowerCase();
       group = `other_${labelKey || 'unlabelled'}_${customSlug}`;
       label = (f.custom_label && f.custom_label.trim()) || f.label_display || 'Other';
     } else {
       const def = SLOT_DEFS.find((d) => d.group === group)!;
-      icon = def.icon;
       label = def.label;
     }
-    iconByGroup.set(group, icon);
     labelDisplayByGroup.set(group, label);
     const list = byGroup.get(group) ?? [];
     list.push(f);
     byGroup.set(group, list);
   }
 
-  // Sort each group's versions newest first by uploaded_at then version.
   for (const list of byGroup.values()) {
     list.sort((a, b) => {
       const av = a.version ?? 0;
@@ -106,23 +115,18 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
 
   const cards: FileCardModel[] = [];
 
-  // 1) Fixed slot cards — always render in the canonical order, even
-  //    when empty, so the receptionist sees the same shape on every
-  //    patient profile.
   for (const def of SLOT_DEFS) {
     const versions = byGroup.get(def.group) ?? [];
     cards.push({
       group: def.group,
       label: def.label,
-      icon: def.icon,
       file: versions[0] ?? null,
       versionCount: versions.length,
       versions,
+      uploadable: def.uploadable ? { primaryKey: def.primaryKey } : undefined,
     });
   }
 
-  // 2) Other / custom-label cards — one per dynamic group, newest slot
-  //    first by latest upload.
   const dynamic: FileCardModel[] = [];
   for (const [group, versions] of byGroup.entries()) {
     if (SLOT_DEFS.some((d) => d.group === group)) continue;
@@ -130,7 +134,6 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
     dynamic.push({
       group,
       label: labelDisplayByGroup.get(group) ?? 'Other',
-      icon: iconByGroup.get(group) ?? 'other',
       file: versions[0]!,
       versionCount: versions.length,
       versions,
@@ -141,78 +144,10 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
   return [...cards, ...dynamic];
 }
 
-// ─── Slot icons — ported from Meridian/FileSlot.jsx ─────────────────────────
-// These are the exact glyphs Meridian uses so the surface reads as
-// familiar to staff who toggle between the two apps. currentColor keeps
-// the icon recolourable from the parent.
-
-function SlotIcon({ kind }: { kind: SlotDef['icon'] }) {
-  const common = {
-    width: 26,
-    height: 26,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.5,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-  };
-  if (kind === 'upper_arch') {
-    return (
-      <svg {...common}>
-        <path d="M3 6c.5 4 2 8 4 10.5S10 20 12 20s3-1.5 5-3.5S19.5 10 20 6" />
-        <path
-          d="M6.5 7.5c.3 1 .5 2.2.5 2.5M10 8.5c.2 1 .3 2.5.3 2.5M13.7 8.5c-.2 1-.3 2.5-.3 2.5M17.5 7.5c-.3 1-.5 2.2-.5 2.5"
-          opacity="0.4"
-        />
-      </svg>
-    );
-  }
-  if (kind === 'lower_arch') {
-    return (
-      <svg {...common}>
-        <path d="M3 18c.5-4 2-8 4-10.5S10 4 12 4s3 1.5 5 3.5S19.5 14 20 18" />
-        <path
-          d="M6.5 16.5c.3-1 .5-2.2.5-2.5M10 15.5c.2-1 .3-2.5.3-2.5M13.7 15.5c-.2-1-.3-2.5-.3-2.5M17.5 16.5c-.3-1-.5-2.2-.5-2.5"
-          opacity="0.4"
-        />
-      </svg>
-    );
-  }
-  if (kind === 'bite') {
-    return (
-      <svg {...common}>
-        <path d="M4 5c0 4 3 7 8 7s8-3 8-7" />
-        <path d="M4 19c0-4 3-7 8-7s8 3 8 7" />
-        <line x1="8" y1="10" x2="8" y2="14" opacity="0.3" />
-        <line x1="12" y1="10" x2="12" y2="14" opacity="0.3" />
-        <line x1="16" y1="10" x2="16" y2="14" opacity="0.3" />
-      </svg>
-    );
-  }
-  if (kind === 'camera') {
-    return (
-      <svg {...common}>
-        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-        <circle cx="12" cy="13" r="4" />
-      </svg>
-    );
-  }
-  if (kind === 'xray') {
-    return (
-      <svg {...common} strokeWidth={1.4}>
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <path d="M9 8v8M15 8v8M9 12h6" opacity="0.5" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...common} strokeWidth={1.4}>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}
+// Empty slot cards all share the same generic file icon. Earlier we
+// rendered a different glyph per slot (arch, bite, camera, xray, etc.)
+// but Dylan asked for a single consistent file icon across every empty
+// state, so the per-kind SlotIcon got dropped.
 
 // ─── Signed URL hook + thumbnail ────────────────────────────────────────────
 
@@ -281,25 +216,36 @@ const THUMB_H = 116;
 
 function FileCard({
   card,
+  uploading,
   onPreview,
   onHistory,
+  onUpload,
 }: {
   card: FileCardModel;
+  uploading: boolean;
   onPreview: (file: PatientFileEntry) => void;
   onHistory: (card: FileCardModel) => void;
+  onUpload: (card: FileCardModel, file: File) => void;
 }) {
   const [hover, setHover] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   if (!card.file) {
+    const canUpload = !!card.uploadable && !uploading;
     return (
       <div
+        onClick={() => {
+          if (canUpload) inputRef.current?.click();
+        }}
+        onMouseEnter={() => canUpload && setHover(true)}
+        onMouseLeave={() => setHover(false)}
         style={{
           width: CARD_W,
           height: CARD_H,
           flexShrink: 0,
           scrollSnapAlign: 'start',
           borderRadius: 16,
-          border: `2px dashed ${theme.color.border}`,
+          border: `2px dashed ${hover ? theme.color.ink : theme.color.border}`,
           background: theme.color.bg,
           display: 'flex',
           flexDirection: 'column',
@@ -308,11 +254,23 @@ function FileCard({
           gap: 6,
           padding: '10px 12px',
           boxSizing: 'border-box',
-          opacity: 0.6,
+          opacity: uploading ? 0.85 : canUpload ? (hover ? 0.9 : 0.7) : 0.55,
           color: theme.color.inkSubtle,
+          cursor: canUpload ? 'pointer' : 'default',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          position: 'relative',
         }}
       >
-        <SlotIcon kind={card.icon} />
+        {uploading ? (
+          <Loader2
+            size={22}
+            color={theme.color.accent}
+            aria-hidden
+            style={{ animation: 'lng-files-spin 1s linear infinite' }}
+          />
+        ) : (
+          <FileText size={26} aria-hidden />
+        )}
         <span
           style={{
             fontSize: 12,
@@ -324,7 +282,28 @@ function FileCard({
         >
           {card.label}
         </span>
-        <span style={{ fontSize: 10, color: theme.color.inkSubtle }}>No file yet</span>
+        <span style={{ fontSize: 10, color: theme.color.inkSubtle }}>
+          {uploading ? 'Uploading…' : canUpload ? 'Tap to add' : 'No file yet'}
+        </span>
+        {card.uploadable ? (
+          <input
+            ref={inputRef}
+            type="file"
+            // accept image/* without `capture`: Samsung Chrome offers
+            // both Camera and Files in the chooser, which is the UX
+            // Dylan asked for ('camera roll or take photo').
+            accept="image/*"
+            style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              // Reset the value so the same file picked twice still
+              // fires onChange the second time.
+              e.target.value = '';
+              if (f) onUpload(card, f);
+            }}
+          />
+        ) : null}
+        <style>{`@keyframes lng-files-spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -764,13 +743,51 @@ function VersionHistoryModal({
 export function PatientFilesGrid({
   files,
   loading,
+  patientId,
+  patientName,
+  onUploaded,
 }: {
   files: PatientFileEntry[];
   loading: boolean;
+  patientId: string;
+  patientName: string;
+  onUploaded: () => void;
 }) {
   const cards = useMemo(() => buildCards(files), [files]);
   const [previewFile, setPreviewFile] = useState<PatientFileEntry | null>(null);
   const [historyCard, setHistoryCard] = useState<FileCardModel | null>(null);
+  const [uploading, setUploading] = useState<Set<string>>(() => new Set());
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const accountId = useAccountId();
+
+  const handleUpload = async (card: FileCardModel, file: File) => {
+    if (!card.uploadable) return;
+    setUploading((s) => {
+      const n = new Set(s);
+      n.add(card.group);
+      return n;
+    });
+    setErrorMsg(null);
+    try {
+      await uploadPatientFile({
+        patientId,
+        patientName,
+        file,
+        labelKey: card.uploadable.primaryKey,
+        labelDisplayName: card.label,
+        uploaderAccountId: accountId,
+      });
+      onUploaded();
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading((s) => {
+        const n = new Set(s);
+        n.delete(card.group);
+        return n;
+      });
+    }
+  };
 
   return (
     <>
@@ -796,13 +813,21 @@ export function PatientFilesGrid({
               <FileCard
                 key={c.group}
                 card={c}
+                uploading={uploading.has(c.group)}
                 onPreview={setPreviewFile}
                 onHistory={setHistoryCard}
+                onUpload={handleUpload}
               />
             ))}
           </ScrollRow>
         )}
       </div>
+
+      {errorMsg ? (
+        <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          {errorMsg}
+        </p>
+      ) : null}
 
       {previewFile ? (
         <PreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
@@ -819,6 +844,25 @@ export function PatientFilesGrid({
       ) : null}
     </>
   );
+}
+
+// Resolve the signed-in user's accounts.id once via auth_account_id().
+// Required for stamping the uploader on each new patient_files row;
+// auth.uid() and accounts.id are not the same value (see waiver.ts
+// for the same lookup).
+function useAccountId(): string | null {
+  const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.rpc('auth_account_id').then(({ data }) => {
+      if (cancelled) return;
+      setId((data as string | null) ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return id;
 }
 
 function ScrollRow({ children }: { children: React.ReactNode }) {
