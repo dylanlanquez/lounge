@@ -1605,8 +1605,8 @@ function CustomerStep({
                   borderRadius: theme.radius.input,
                   background: theme.color.accentBg,
                   display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: theme.space[2],
+                  alignItems: 'center',
+                  gap: theme.space[3],
                 }}
               >
                 <span
@@ -1614,7 +1614,6 @@ function CustomerStep({
                     display: 'inline-flex',
                     color: theme.color.accent,
                     flexShrink: 0,
-                    marginTop: 2,
                   }}
                 >
                   <ShoppingBag size={22} />

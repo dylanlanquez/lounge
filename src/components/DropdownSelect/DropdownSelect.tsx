@@ -319,7 +319,13 @@ export function DropdownSelect<T extends string>({
                 position: 'fixed',
                 top: triggerRect.bottom + 6,
                 left: triggerRect.left,
-                width: triggerRect.width,
+                // Pin to the trigger's width for the card / inline
+                // variants (the field already controls width), but for
+                // the slim text variant the trigger is just a value
+                // phrase + chevron, ~60px wide. The panel needs room
+                // for the longest option ("September", "Wednesday",
+                // …) so we floor it at 180px.
+                width: Math.max(triggerRect.width, 180),
                 margin: 0,
                 padding: theme.space[1],
                 listStyle: 'none',
