@@ -29,6 +29,11 @@ export interface StickyPageHeaderProps {
   // page's max-width container.
   outerPaddingX: number;
   innerMaxWidth: number;
+  // Override the gap between the pinned search row and the first
+  // content row below it. Default 24 (theme.space[6]). Lists like
+  // Patients pass a smaller value so the first row sits closer to
+  // the search bar.
+  bodyMarginBottom?: number;
 }
 
 export function StickyPageHeader({
@@ -37,6 +42,7 @@ export function StickyPageHeader({
   body,
   outerPaddingX,
   innerMaxWidth,
+  bodyMarginBottom,
 }: StickyPageHeaderProps) {
   return (
     <>
@@ -87,7 +93,7 @@ export function StickyPageHeader({
             marginLeft: -outerPaddingX,
             marginRight: -outerPaddingX,
             padding: `${theme.space[3]}px ${outerPaddingX}px ${theme.space[4]}px`,
-            marginBottom: theme.space[6],
+            marginBottom: bodyMarginBottom ?? theme.space[6],
           }}
         >
           <div

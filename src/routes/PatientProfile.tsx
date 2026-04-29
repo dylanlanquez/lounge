@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Info, Layers, Pencil, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, FileSignature, Info, Layers, Pencil, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -27,6 +27,13 @@ import {
   type PatientVisitRow,
 } from '../lib/queries/patientProfile.ts';
 import { formatPence } from '../lib/queries/carts.ts';
+import {
+  sectionSignatureState,
+  useWaiverSections,
+  usePatientWaiverState,
+  type WaiverSection,
+  type WaiverSignatureSummary,
+} from '../lib/queries/waiver.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PatientProfile — the full Meridian-style patient page, dropped into
@@ -76,6 +83,7 @@ export function PatientProfile() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
             <Hero patient={patient} cases={cases} isMobile={isMobile} />
+            <WaiverStatus patientId={patient.id} />
             <NotesAndFlags patient={patient} />
             <BeforeAfterGallery
               patient={patient}
@@ -458,6 +466,145 @@ function formatDate(iso: string | null): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WaiverStatus — compact signed-waiver chip row at the top of the
+// profile. One chip per active section: green when current, amber when
+// the patient signed a previous version (stale), grey-outlined when
+// they have not signed at all. Lets reception spot in one glance
+// whether the patient is paperwork-clear before bringing them through.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function WaiverStatus({ patientId }: { patientId: string }) {
+  const { sections, loading: sectionsLoading } = useWaiverSections();
+  const { latest, loading: latestLoading } = usePatientWaiverState(patientId);
+
+  const activeSections = useMemo(() => sections.filter((s) => s.active), [sections]);
+  const counts = useMemo(() => {
+    let current = 0;
+    let stale = 0;
+    let missing = 0;
+    for (const sec of activeSections) {
+      const state = sectionSignatureState(sec, latest);
+      if (state === 'current') current++;
+      else if (state === 'stale') stale++;
+      else missing++;
+    }
+    return { current, stale, missing };
+  }, [activeSections, latest]);
+
+  const loading = sectionsLoading || latestLoading;
+
+  return (
+    <Card padding="lg">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+          <FileSignature size={18} color={theme.color.ink} aria-hidden />
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+            }}
+          >
+            Waivers
+          </h2>
+        </div>
+        {!loading && activeSections.length > 0 ? (
+          <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
+            {counts.current} signed
+            {counts.stale > 0 ? `, ${counts.stale} need re-sign` : ''}
+            {counts.missing > 0 ? `, ${counts.missing} missing` : ''}
+          </span>
+        ) : null}
+      </div>
+
+      <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
+
+      {loading ? (
+        <Skeleton height={36} radius={theme.radius.pill} />
+      ) : activeSections.length === 0 ? (
+        <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          No waiver sections configured.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[2] }}>
+          {activeSections.map((sec) => (
+            <WaiverChip key={sec.key} section={sec} latest={latest} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function WaiverChip({
+  section,
+  latest,
+}: {
+  section: WaiverSection;
+  latest: Map<string, WaiverSignatureSummary>;
+}) {
+  const state = sectionSignatureState(section, latest);
+  const sig = latest.get(section.key);
+
+  // Three visual states: current (signed at this version) → green
+  // accent fill; stale (older version, needs re-sign) → amber outline;
+  // missing → muted grey outline. Each chip spells out the version so
+  // staff can see at a glance whether terms have moved on.
+  let bg: string;
+  let border: string;
+  let icon: React.ReactNode;
+  let suffix: string;
+
+  if (state === 'current') {
+    bg = theme.color.accentBg;
+    border = theme.color.accent;
+    icon = <ShieldCheck size={14} color={theme.color.accent} aria-hidden />;
+    suffix = sig ? `signed ${formatShortDate(sig.signed_at)}` : 'signed';
+  } else if (state === 'stale') {
+    bg = 'rgba(179, 104, 21, 0.08)';
+    border = theme.color.warn;
+    icon = <ShieldAlert size={14} color={theme.color.warn} aria-hidden />;
+    suffix = 'needs re-sign';
+  } else {
+    bg = theme.color.surface;
+    border = theme.color.border;
+    icon = <ShieldAlert size={14} color={theme.color.inkSubtle} aria-hidden />;
+    suffix = 'not signed';
+  }
+
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.pill,
+        background: bg,
+        border: `1px solid ${border}`,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.medium,
+        color: theme.color.ink,
+      }}
+    >
+      {icon}
+      <span>{section.title}</span>
+      <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.regular }}>
+        v{section.version} · {suffix}
+      </span>
+    </span>
+  );
+}
+
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Notes and flags — three muted read-only fields.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -579,6 +726,7 @@ function WalkInAppointments({
     <Card padding="lg">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+          <CalendarDays size={18} color={theme.color.ink} aria-hidden />
           <h2
             style={{
               margin: 0,
