@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Minus, Package, Plus, Search, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Minus, Package, Plus, Search, ShoppingBag, Sparkles, X } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
@@ -671,29 +671,33 @@ function ProductRow({
         </span>
         {isFormless ? (
           // Visual affordance so the receptionist knows tapping this
-          // row will add it to the bag immediately, rather than
-          // expanding into a form. Whole row is the click target;
-          // this pill is the visual cue.
+          // row adds straight to the bag instead of expanding a form.
+          // Renders as a styled <span> rather than a nested <button>
+          // (the row header is already a button) — the parent button
+          // is the click target. Monochrome filled to match the
+          // project's primary Button silhouette; we deliberately
+          // avoid the accent green so this reads as a routine action,
+          // not a "promotion".
           <span
             aria-hidden
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: theme.space[1],
-              padding: `${theme.space[1]}px ${theme.space[3]}px`,
+              gap: theme.space[2],
+              height: 36,
+              padding: `0 ${theme.space[4]}px`,
               borderRadius: theme.radius.pill,
-              background: busy ? theme.color.accentBg : theme.color.accent,
-              color: busy ? theme.color.accent : theme.color.surface,
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.semibold,
-              letterSpacing: theme.type.tracking.wide,
-              textTransform: 'uppercase',
+              background: theme.color.ink,
+              color: theme.color.surface,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
               flexShrink: 0,
               whiteSpace: 'nowrap',
-              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              opacity: busy ? 0.7 : 1,
+              transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
             }}
           >
-            <Plus size={14} aria-hidden />
+            <ShoppingBag size={14} aria-hidden />
             {busy ? 'Adding' : 'Add to bag'}
           </span>
         ) : (

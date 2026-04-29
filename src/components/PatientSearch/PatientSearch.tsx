@@ -1,7 +1,8 @@
 import { type ReactNode, useMemo, useState } from 'react';
-import { Phone, Search, User, Mail, ShoppingBag } from 'lucide-react';
+import { Info, Phone, Search, User, Mail, ShoppingBag } from 'lucide-react';
 import { Input } from '../Input/Input.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
+import { Tooltip } from '../Tooltip/Tooltip.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   type PatientRow,
@@ -196,29 +197,62 @@ function ShopifyResultsBlock({
           display: 'flex',
           alignItems: 'center',
           gap: theme.space[2],
-          marginTop: theme.space[2],
+          marginTop: theme.space[3],
         }}
       >
         <img
           src="/one-click-logo-icon.png"
           alt=""
           aria-hidden
-          width={14}
-          height={14}
+          width={18}
+          height={18}
           style={{ display: 'block', flexShrink: 0 }}
         />
-        <p
+        <h3
           style={{
             margin: 0,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
+            fontSize: theme.type.size.base,
+            color: theme.color.ink,
             fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.wide,
-            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.tight,
           }}
         >
-          From venneir.com (not yet a patient)
-        </p>
+          From venneir.com
+        </h3>
+        <Tooltip
+          align="start"
+          maxWidth={300}
+          content={
+            <span>
+              They've shopped on venneir.com but aren't yet registered as a
+              patient on Lounge. Tap <strong>Register &amp; continue</strong> to
+              add them. This is the standard first-visit flow for anyone
+              arriving from the website, no special handling needed.
+            </span>
+          }
+        >
+          <button
+            type="button"
+            aria-label="Why is this person here?"
+            style={{
+              appearance: 'none',
+              border: 'none',
+              background: 'transparent',
+              padding: theme.space[1],
+              margin: `0 0 0 -${theme.space[1]}px`,
+              borderRadius: theme.radius.pill,
+              color: theme.color.inkSubtle,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minWidth: 32,
+              minHeight: 32,
+            }}
+          >
+            <Info size={16} aria-hidden />
+          </button>
+        </Tooltip>
       </div>
       {loading && results.length === 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>

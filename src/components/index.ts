@@ -21,6 +21,9 @@ export type { SegmentedControlOption, SegmentedControlProps } from './SegmentedC
 export { DropdownSelect } from './DropdownSelect/DropdownSelect.tsx';
 export type { DropdownSelectProps, DropdownSelectOption } from './DropdownSelect/DropdownSelect.tsx';
 
+export { Tooltip } from './Tooltip/Tooltip.tsx';
+export type { TooltipProps } from './Tooltip/Tooltip.tsx';
+
 export { Toast } from './Toast/Toast.tsx';
 export type { ToastProps, ToastTone } from './Toast/Toast.tsx';
 
