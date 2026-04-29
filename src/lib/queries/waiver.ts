@@ -131,6 +131,101 @@ export function usePatientWaiverState(patientId: string | null | undefined): Pat
   return { latest, loading, error, refresh };
 }
 
+// One row out of lng_waiver_signatures, joined to its section + witness
+// account so the patient profile can render the full history without an
+// N+1.
+export interface SignedWaiverRow {
+  id: string;
+  section_key: string;
+  section_title: string | null;
+  section_version: string;
+  signed_at: string;
+  signature_svg: string;
+  terms_snapshot: string[] | null;
+  witness_name: string | null;
+  visit_id: string | null;
+}
+
+interface SignedWaiversResult {
+  rows: SignedWaiverRow[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+// Full signature history for one patient, ordered newest first. Used by
+// the patient profile's "Signed waivers" table — supports download +
+// print of each individual signing event.
+export function useSignedWaivers(patientId: string | null | undefined): SignedWaiversResult {
+  const [rows, setRows] = useState<SignedWaiverRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    if (!patientId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    let cancelled = false;
+    (async () => {
+      // Inner-join to lng_waiver_sections so we always have a title to
+      // print, even for sections that admin has since deactivated.
+      // Left-join to accounts on witnessed_by — null is fine and reads
+      // as 'no witness recorded'.
+      const { data, error: err } = await supabase
+        .from('lng_waiver_signatures')
+        .select(
+          `id, section_key, section_version, signed_at, signature_svg, terms_snapshot, visit_id,
+           section:section_key(title),
+           witness:witnessed_by(full_name)`
+        )
+        .eq('patient_id', patientId)
+        .order('signed_at', { ascending: false });
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setRows([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+      const mapped: SignedWaiverRow[] = ((data ?? []) as Array<Record<string, unknown>>).map(
+        (r) => {
+          const section = (r.section as { title?: string } | null) ?? null;
+          const witness = (r.witness as { full_name?: string } | null) ?? null;
+          const termsSnapshot = r.terms_snapshot;
+          return {
+            id: r.id as string,
+            section_key: r.section_key as string,
+            section_title: section?.title ?? null,
+            section_version: r.section_version as string,
+            signed_at: r.signed_at as string,
+            signature_svg: r.signature_svg as string,
+            terms_snapshot: Array.isArray(termsSnapshot)
+              ? (termsSnapshot as string[])
+              : null,
+            witness_name: witness?.full_name ?? null,
+            visit_id: (r.visit_id as string | null) ?? null,
+          };
+        }
+      );
+      setRows(mapped);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId, tick]);
+
+  return { rows, loading, error, refresh };
+}
+
 // ---------- Pure section-resolution helpers ----------
 //
 // Required-sections logic is deliberately extracted from the React hooks
