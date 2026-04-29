@@ -614,18 +614,31 @@ interface FieldDef {
   label: string;
   value: string | null;
   mono?: boolean;
+  // Number of grid columns the cell occupies. Default 1. Use 2 for
+  // values that routinely outrun a single quarter-width column —
+  // emails, address lines — so they don't crammed-wrap. Pair the
+  // wide cells so each row stays full-width (4 of 4 cols).
+  span?: 1 | 2;
 }
 
 function buildHeroFields(p: PatientProfileRow): FieldDef[] {
   return [
+    // Row 1 — four single-col cells.
     { label: 'First name', value: properCase(p.first_name) || null },
     { label: 'Last name', value: properCase(p.last_name) || null },
     { label: 'Date of birth', value: formatDate(p.date_of_birth) },
     { label: 'Sex', value: p.sex ? properCase(p.sex) : null },
-    { label: 'Email', value: p.email },
-    { label: 'Phone', value: p.phone },
-    { label: 'Address line 1', value: p.portal_ship_line1 },
-    { label: 'Address line 2', value: p.portal_ship_line2 },
+    // Row 2 — contact pair, each spanning two cols. Emails routinely
+    // exceed a quarter-width slot; pairing phone alongside keeps the
+    // row symmetric.
+    { label: 'Email', value: p.email, span: 2 },
+    { label: 'Phone', value: p.phone, span: 2 },
+    // Row 3 — address pair, each spanning two cols. Address line 1
+    // is often a long combined string ("BioCity Glasgow - Pioneer
+    // Groupz") that wraps awkwardly in a single col.
+    { label: 'Address line 1', value: p.portal_ship_line1, span: 2 },
+    { label: 'Address line 2', value: p.portal_ship_line2, span: 2 },
+    // Row 4 + 5 — single-col cells for the rest.
     { label: 'City', value: p.portal_ship_city },
     { label: 'Postcode', value: p.portal_ship_postcode },
     { label: 'Country', value: p.portal_ship_country_code },
@@ -650,8 +663,18 @@ function FieldGrid({ fields, isMobile }: { fields: FieldDef[]; isMobile: boolean
     >
       {fields.map((f) => {
         const empty = f.value == null || f.value === '';
+        const span = f.span ?? 1;
         return (
-          <div key={f.label} style={{ minWidth: 0 }}>
+          <div
+            key={f.label}
+            style={{
+              minWidth: 0,
+              // span:2 cells take two columns. On mobile the grid is
+              // already 2 cols, so span:2 becomes full row, which is
+              // the right behaviour there too.
+              gridColumn: span === 2 ? 'span 2' : undefined,
+            }}
+          >
             <div
               style={{
                 fontSize: theme.type.size.xs,
