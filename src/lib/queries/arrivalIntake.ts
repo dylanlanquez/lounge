@@ -12,8 +12,8 @@ import { supabase } from '../supabase.ts';
 //      are not touched.
 //   2. lng_appointments stamp (jb_ref + appointment_ref). The
 //      appointment_ref is generated server-side via
-//      generate_appointment_ref() so the LNGE-APT counter stays
-//      monotonic per day. The guard trigger refuses to re-stamp.
+//      generate_appointment_ref() so the LAP counter stays monotonic.
+//      The guard trigger refuses to re-stamp.
 //   3. The caller then runs markAppointmentArrived() which creates the
 //      lng_visits row and the patient_events row.
 

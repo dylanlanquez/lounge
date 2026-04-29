@@ -496,20 +496,31 @@ export function Arrival() {
         position: 'relative',
       }}
     >
-      <StepperBar
-        steps={STEPS}
-        currentIndex={currentStepIndex}
-      />
-
-      {patient && (step === 'service' || step === 'start') ? (
-        <StaffOnlyBanner
-          subtitle={
-            step === 'service'
-              ? `Set up ${patient.first_name}'s appointment, then hand the device over.`
-              : 'Final check. Tap Start appointment to open the till for this patient.'
-          }
+      {/* Sticky chrome row: stepper + (when on staff steps) the staff-only
+          announcement, both glued together so they stay pinned under the
+          KioskStatusBar as the receptionist scrolls. */}
+      <div
+        style={{
+          position: 'sticky',
+          top: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
+          zIndex: 20,
+        }}
+      >
+        <StepperBar
+          steps={STEPS}
+          currentIndex={currentStepIndex}
         />
-      ) : null}
+
+        {patient && (step === 'service' || step === 'start') ? (
+          <StaffOnlyBanner
+            subtitle={
+              step === 'service'
+                ? `Set up ${patient.first_name}'s appointment, then hand the device over.`
+                : 'Final check. Tap Start appointment to open the till for this patient.'
+            }
+          />
+        ) : null}
+      </div>
 
       <div
         // Re-keying on step makes React remount the children, which
@@ -729,11 +740,9 @@ function StepperBar({
   return (
     <header
       style={{
-        position: 'sticky',
-        // Sit immediately below the KioskStatusBar so it never gets
-        // clipped behind the device chrome row.
-        top: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
-        zIndex: 20,
+        // Sticky positioning lives on the parent chrome wrapper in
+        // Arrival's main return, so this element sits in normal flow
+        // and just paints the row.
         background: theme.color.surface,
         borderBottom: `1px solid ${theme.color.border}`,
         padding: `${theme.space[3]}px ${theme.space[4]}px`,
@@ -2229,7 +2238,9 @@ function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
           margin: '0 auto',
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'center',
           gap: theme.space[3],
+          textAlign: 'center',
         }}
       >
         <span
