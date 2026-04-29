@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { UserPlus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
@@ -53,7 +53,29 @@ export function BottomNav() {
   const navVisible = shouldShowBottomNav(location.pathname, !!user);
   const inClinicCount = useActiveVisitCount(navVisible);
 
+  // Hide the floating pill while the iPad on-screen keyboard is up. The
+  // visual viewport shrinks when the keyboard slides in; on iPadOS the
+  // gap to layout-viewport height is reliably > 150px for both docked
+  // and split keyboards. Keep the count hook running through the hide
+  // so the badge is fresh the moment the keyboard closes.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      setKeyboardOpen(window.innerHeight - vv.height > 150);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+
   if (!navVisible) return null;
+  if (keyboardOpen) return null;
 
   const onSchedule = () => navigate('/schedule');
   const onPatients = () => navigate('/patients');

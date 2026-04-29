@@ -23,7 +23,11 @@ export function applyGlobalStyles(): void {
       text-rendering: optimizeLegibility;
     }
     button { font-family: inherit; }
-    input, textarea, select { font-family: inherit; font-size: inherit; }
+    /* iOS/iPadOS auto-zooms onto any focused input that's smaller than
+       16px. Pin the floor at 16 across input, textarea and select so
+       the kiosk never scales the page on focus. Components that want
+       larger can override; smaller is what we're locking out. */
+    input, textarea, select { font-family: inherit; font-size: 16px; }
     a { color: inherit; text-decoration: none; }
     :focus-visible {
       outline: 2px solid ${theme.color.accent};
