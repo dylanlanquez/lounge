@@ -319,6 +319,8 @@ export function walkInServiceLabel(serviceType: string | null): string | null {
       return 'Same-day appliance';
     case 'click_in_veneers':
       return 'Click-in veneers';
+    case 'impression_appointment':
+      return 'In-person Impression Appointment';
     default:
       return null;
   }

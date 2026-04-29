@@ -156,11 +156,13 @@ const SEX_OPTIONS = ['Female', 'Male', 'Other', 'Prefer not to say'] as const;
 // basket spans multiple service categories. The visit row stores a
 // single service_type (it gates JB ref, waivers, and clinic-board lane
 // bucketing), so we pick the highest-priority value present. Repairs
-// come first because they're JB- and time-sensitive; click-in veneers
-// next (lab-coupled); same-day appliance after that; everything else
-// falls through to "other".
+// come first because they're JB- and time-sensitive; impression
+// appointments next (they always need a JB); click-in veneers after
+// (lab-coupled); same-day appliance after that; everything else falls
+// through to "other".
 const SERVICE_TYPE_PRIORITY = [
   'denture_repair',
+  'impression_appointment',
   'click_in_veneers',
   'same_day_appliance',
   'other',
@@ -1003,6 +1005,19 @@ function ServiceStep({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+      <h1
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.xxl,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.tight,
+          color: theme.color.ink,
+          lineHeight: 1.1,
+        }}
+      >
+        Service details
+      </h1>
+
       {mode === 'appointment' && appointment?.event_type_label ? (
         <Section title="Booking">
           <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink }}>
@@ -1014,7 +1029,7 @@ function ServiceStep({
       {jbRequired ? (
         <Section
           title="Job box"
-          sub="The number on the box where the impression sits. We check Checkpoint as you type."
+          sub="The number on the box where the impression sits. If the patient hasn't given you the impression yet, still grab a fresh job box now and put its number here. This is the only point we can pin a JB to this appointment. We check Checkpoint as you type."
         >
           <JbBoxInput
             value={jbRef}
@@ -1055,7 +1070,7 @@ function ServiceStep({
               <Package size={24} />
             </span>
             <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-              Choose products
+              Choose products or services
             </span>
             <span style={{ marginTop: theme.space[1], fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
               Pick from the catalogue. The patient sees the list before they sign.

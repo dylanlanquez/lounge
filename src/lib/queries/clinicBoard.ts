@@ -107,6 +107,7 @@ const WALK_IN_BUCKETS: Record<string, ClinicSectionKey> = {
   denture_repair: 'repair',
   same_day_appliance: 'appliance',
   click_in_veneers: 'sameDay',
+  impression_appointment: 'impression',
 };
 
 export function bucketForVisit(input: {
@@ -178,6 +179,7 @@ function inferServiceTypeFromBooking(input: {
   if (input.service_type === 'denture_repair') return 'denture_repair';
   if (input.service_type === 'same_day_appliance') return 'same_day_appliance';
   if (input.service_type === 'click_in_veneers') return 'click_in_veneers';
+  if (input.service_type === 'impression_appointment') return 'impression_appointment';
   if (input.service_type === 'other') return null;
   const label = input.event_type_label;
   if (!label) return null;

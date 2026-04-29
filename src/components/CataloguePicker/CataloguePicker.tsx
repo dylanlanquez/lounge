@@ -125,11 +125,11 @@ export function CataloguePicker({
       <BottomSheet
         open={open}
         onClose={onClose}
-        title="Choose product"
+        title="Choose product or service"
         description={
           trimmedSearch
             ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`
-            : 'Tap a product to set arch, shade and quantity, then add it to the bag.'
+            : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
