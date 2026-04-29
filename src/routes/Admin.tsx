@@ -1312,12 +1312,31 @@ function CatalogueRowEditor({
         />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
-        <Input
-          label="Service type"
-          value={draft.service_type}
-          onChange={(e) => set('service_type', e.target.value)}
-          placeholder="denture_repair / same_day_appliance / click_in_veneers"
-        />
+        <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+            Service type
+          </span>
+          <select
+            value={draft.service_type}
+            onChange={(e) => set('service_type', e.target.value)}
+            style={{
+              height: theme.layout.inputHeight,
+              padding: `0 ${theme.space[3]}px`,
+              fontSize: theme.type.size.base,
+              fontFamily: 'inherit',
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              background: theme.color.surface,
+            }}
+          >
+            <option value="">— any (wildcard) —</option>
+            <option value="denture_repair">Denture repair</option>
+            <option value="same_day_appliance">Same-day appliance</option>
+            <option value="click_in_veneers">Click-in veneers</option>
+            <option value="impression_appointment">Impression appointment</option>
+            <option value="other">Other / consultation</option>
+          </select>
+        </label>
         <Input
           label="Product key"
           value={draft.product_key}

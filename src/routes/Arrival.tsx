@@ -152,12 +152,44 @@ const EMPTY_FORM: FormState = {
 
 const SEX_OPTIONS = ['Female', 'Male', 'Other', 'Prefer not to say'] as const;
 
-const SERVICE_OPTIONS: { id: string; label: string }[] = [
-  { id: 'denture_repair', label: 'Denture repair' },
-  { id: 'same_day_appliance', label: 'Same-day appliance' },
-  { id: 'click_in_veneers', label: 'Click-in veneers' },
-  { id: 'other', label: 'Other / consultation' },
-];
+// Priority order for picking the primary service type when a walk-in
+// basket spans multiple service categories. The visit row stores a
+// single service_type (it gates JB ref, waivers, and clinic-board lane
+// bucketing), so we pick the highest-priority value present. Repairs
+// come first because they're JB- and time-sensitive; click-in veneers
+// next (lab-coupled); same-day appliance after that; everything else
+// falls through to "other".
+const SERVICE_TYPE_PRIORITY = [
+  'denture_repair',
+  'click_in_veneers',
+  'same_day_appliance',
+  'other',
+] as const;
+
+const SERVICE_TYPE_LABELS: Record<string, string> = {
+  denture_repair: 'Denture repair',
+  same_day_appliance: 'Same-day appliance',
+  click_in_veneers: 'Click-in veneers',
+  impression_appointment: 'Impression appointment',
+  other: 'Other / consultation',
+};
+
+function recognisedServiceTypes(items: StagedItem[]): string[] {
+  const set = new Set<string>();
+  for (const it of items) {
+    const t = it.catalogue.service_type;
+    if (t) set.add(t);
+  }
+  return [...set].sort((a, b) => {
+    const ia = (SERVICE_TYPE_PRIORITY as readonly string[]).indexOf(a);
+    const ib = (SERVICE_TYPE_PRIORITY as readonly string[]).indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+}
+
+function primaryServiceType(items: StagedItem[]): string | null {
+  return recognisedServiceTypes(items)[0] ?? null;
+}
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'service', label: 'Service' },
@@ -183,7 +215,6 @@ export function Arrival() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [serviceType, setServiceType] = useState<string>('denture_repair');
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [jbRef, setJbRef] = useState('');
@@ -209,10 +240,23 @@ export function Arrival() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Walk-ins: derive the service type from whatever's been staged in the
+  // bag. The primary type drives JB ref / waiver gating; the full set is
+  // surfaced in the UI so the receptionist can see when a basket spans
+  // multiple categories.
+  const inferredServiceType = useMemo(
+    () => primaryServiceType(stagedItems),
+    [stagedItems]
+  );
+  const recognisedTypes = useMemo(
+    () => recognisedServiceTypes(stagedItems),
+    [stagedItems]
+  );
+
   const eventTypeLabel = useMemo(() => {
     if (mode === 'appointment') return appointment?.event_type_label ?? null;
-    return walkInServiceLabel(serviceType);
-  }, [mode, appointment, serviceType]);
+    return walkInServiceLabel(inferredServiceType);
+  }, [mode, appointment, inferredServiceType]);
 
   const jbRequired = useMemo(() => appointmentRequiresJbRef(eventTypeLabel), [eventTypeLabel]);
 
@@ -451,7 +495,7 @@ export function Arrival() {
         const r = await createWalkInVisit({
           patient_id: patient.id,
           location_id: patient.location_id ?? '',
-          service_type: serviceType,
+          service_type: inferredServiceType ?? 'other',
           appointment_ref: intakeResult.appointment_ref,
           jb_ref: jbRequired ? jbRef.trim() || null : null,
           notes: notes.trim() || undefined,
@@ -552,8 +596,7 @@ export function Arrival() {
           <ServiceStep
             mode={mode}
             appointment={appointment}
-            serviceType={serviceType}
-            onChangeServiceType={setServiceType}
+            recognisedTypes={recognisedTypes}
             stagedItems={stagedItems}
             stagedTotalPence={stagedTotalPence}
             onIncrement={(key) =>
@@ -924,8 +967,7 @@ function ActionBar({
 function ServiceStep({
   mode,
   appointment,
-  serviceType,
-  onChangeServiceType,
+  recognisedTypes,
   stagedItems,
   stagedTotalPence,
   onIncrement,
@@ -943,8 +985,7 @@ function ServiceStep({
 }: {
   mode: Mode;
   appointment: AppointmentContext | null;
-  serviceType: string;
-  onChangeServiceType: (v: string) => void;
+  recognisedTypes: string[];
   stagedItems: StagedItem[];
   stagedTotalPence: number;
   onIncrement: (key: string) => void;
@@ -962,31 +1003,7 @@ function ServiceStep({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
-      {mode === 'walk_in' ? (
-        <Section title="Service type" sub="Pick what's being worked on today.">
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-              gap: theme.space[2],
-            }}
-          >
-            {SERVICE_OPTIONS.map((o) => {
-              const selected = serviceType === o.id;
-              return (
-                <button
-                  key={o.id}
-                  type="button"
-                  onClick={() => onChangeServiceType(o.id)}
-                  style={selectChipStyle(selected)}
-                >
-                  {o.label}
-                </button>
-              );
-            })}
-          </div>
-        </Section>
-      ) : appointment?.event_type_label ? (
+      {mode === 'appointment' && appointment?.event_type_label ? (
         <Section title="Booking">
           <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink }}>
             {appointment.event_type_label}
@@ -1057,6 +1074,34 @@ function ServiceStep({
             ))}
           </ul>
         )}
+        {mode === 'walk_in' && recognisedTypes.length > 0 ? (
+          <div
+            style={{
+              marginTop: theme.space[3],
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: theme.space[2],
+            }}
+          >
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Recognised as
+            </span>
+            {recognisedTypes.map((t) => (
+              <span key={t} style={recognisedChipStyle}>
+                {SERVICE_TYPE_LABELS[t] ?? t}
+              </span>
+            ))}
+          </div>
+        ) : null}
         {stagedItems.length > 0 ? (
           <div
             style={{
@@ -2283,22 +2328,16 @@ function pillButton(selected: boolean): CSSProperties {
 // Selectable chip used by the service-type grid. Reads as a card-like
 // affordance — taller, slightly more prominent than a pill — so it
 // holds its weight in a 4-up grid without looking like a chiclet.
-function selectChipStyle(selected: boolean): CSSProperties {
-  return {
-    appearance: 'none',
-    border: `1px solid ${selected ? theme.color.ink : theme.color.border}`,
-    background: selected ? theme.color.ink : theme.color.surface,
-    color: selected ? theme.color.surface : theme.color.ink,
-    borderRadius: theme.radius.input,
-    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-    fontSize: theme.type.size.base,
-    fontWeight: theme.type.weight.semibold,
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontFamily: 'inherit',
-    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-  };
-}
+const recognisedChipStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: `${theme.space[1]}px ${theme.space[2]}px`,
+  borderRadius: theme.radius.pill,
+  background: theme.color.accentBg,
+  color: theme.color.accent,
+  fontSize: theme.type.size.xs,
+  fontWeight: theme.type.weight.semibold,
+};
 
 const subtleLinkStyle: CSSProperties = {
   appearance: 'none',
