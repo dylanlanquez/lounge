@@ -41,6 +41,7 @@ import {
   type CartRow,
 } from '../lib/queries/carts.ts';
 import { totalForQtyPence } from '../lib/catalogueMatch.ts';
+import { properCase } from '../lib/queries/appointments.ts';
 import {
   appointmentRequiresJbRef,
   checkJbAvailability,
@@ -1463,18 +1464,6 @@ function CustomerStep({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
       <header>
-        <p
-          style={{
-            margin: `0 0 ${theme.space[2]}px`,
-            fontSize: theme.type.size.xs,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.accent,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          Welcome to Venneir
-        </p>
         <h1
           style={{
             margin: 0,
@@ -2003,6 +1992,7 @@ function inputAttributesForKind(kind: FieldKind): {
   autoCapitalize?: 'off' | 'none' | 'on' | 'sentences' | 'words' | 'characters';
   autoComplete?: string;
   spellCheck?: boolean;
+  maxLength?: number;
 } {
   switch (kind) {
     case 'email':
@@ -2012,6 +2002,10 @@ function inputAttributesForKind(kind: FieldKind): {
         autoCapitalize: 'none',
         autoComplete: 'email',
         spellCheck: false,
+        // RFC 5321 caps the local-part at 64 + the domain at 255 + '@'
+        // = 320, but in practice nobody types past 100 — clamp here
+        // so a stuck key can't fill the box.
+        maxLength: 254,
       };
     case 'phone':
       return {
@@ -2019,6 +2013,11 @@ function inputAttributesForKind(kind: FieldKind): {
         inputMode: 'tel',
         autoComplete: 'tel',
         spellCheck: false,
+        // E.164 caps at 15 digits. With country code, dial separators
+        // (+, spaces, parens, hyphens) we floor at 20 chars total —
+        // more than enough for "+44 7700 900 000" and country codes,
+        // but stops the 23-digit junk Dylan saw.
+        maxLength: 20,
       };
     case 'postcode':
       return {
@@ -2026,6 +2025,9 @@ function inputAttributesForKind(kind: FieldKind): {
         autoCapitalize: 'characters',
         autoComplete: 'postal-code',
         spellCheck: false,
+        // UK postcodes are at most 8 chars (e.g. "SW1W 0NY"). Allow
+        // a couple of extra for pasted variants with stray spaces.
+        maxLength: 10,
       };
     case 'name':
       return {
@@ -2033,6 +2035,7 @@ function inputAttributesForKind(kind: FieldKind): {
         autoCapitalize: 'words',
         autoComplete: 'name',
         spellCheck: false,
+        maxLength: 60,
       };
     default:
       return { type: 'text' };
@@ -2171,7 +2174,19 @@ function EditableFieldCard({
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onBlur={() => {
+          setFocused(false);
+          // Title-case names + cities on blur. Doing this on blur
+          // (not every keystroke) lets the receptionist type freely
+          // without fighting in-progress edits — the cleanup happens
+          // when the field commits. properCase handles hyphenated
+          // (Smith-Jones), apostrophe (O'Brien) and honorific (Dr,
+          // Mrs) cases correctly.
+          if (kind === 'name' && value) {
+            const cased = properCase(value);
+            if (cased !== value) onChange(cased);
+          }
+        }}
         aria-required={required || undefined}
         style={{
           appearance: 'none',
