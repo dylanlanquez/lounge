@@ -41,6 +41,11 @@ export interface DropdownSelectProps<T extends string> {
   // and `ariaLabel` is required for screen readers.
   label?: string;
   ariaLabel?: string;
+  // When true (only meaningful with `label`), renders a subtle red
+  // asterisk after the label. The trigger button gets aria-required
+  // so assistive tech surfaces the constraint without relying on the
+  // visual marker.
+  required?: boolean;
   value: T | '';
   options: ReadonlyArray<DropdownSelectOption<T> | T>;
   placeholder?: string;
@@ -51,6 +56,7 @@ export interface DropdownSelectProps<T extends string> {
 export function DropdownSelect<T extends string>({
   label,
   ariaLabel,
+  required = false,
   value,
   options,
   placeholder = 'Choose',
@@ -174,6 +180,7 @@ export function DropdownSelect<T extends string>({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-label={cardVariant ? undefined : ariaLabel}
+        aria-required={required || undefined}
         style={trigger}
       >
         {cardVariant ? (
@@ -187,6 +194,18 @@ export function DropdownSelect<T extends string>({
               }}
             >
               {label}
+              {required ? (
+                <span
+                  aria-hidden
+                  style={{
+                    color: theme.color.alert,
+                    marginLeft: 4,
+                    fontWeight: theme.type.weight.semibold,
+                  }}
+                >
+                  *
+                </span>
+              ) : null}
             </span>
             <span
               style={{

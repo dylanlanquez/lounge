@@ -18,6 +18,7 @@ import {
 import {
   Button,
   Card,
+  DateOfBirthRow,
   DropdownSelect,
   Skeleton,
   Toast,
@@ -1502,53 +1503,67 @@ function CustomerStep({
       <section>
         <SectionHeading title="Your details" sub="Just the missing pieces. Anything we already have is shown below." />
 
-        {linkedToShopify ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: theme.space[3],
-              padding: `${theme.space[3]}px ${theme.space[4]}px`,
-              borderRadius: theme.radius.input,
-              background: theme.color.accentBg,
-              border: `1px solid ${theme.color.accent}`,
-              marginBottom: theme.space[4],
-            }}
-          >
-            <span style={{ display: 'inline-flex', color: theme.color.accent, marginTop: 2, flexShrink: 0 }}>
-              <ShoppingBag size={18} />
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.accent,
-                }}
-              >
-                Linked to your venneir.com account
-              </p>
-              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
-                Anything you change here updates your account across the whole of Venneir: venneir.com, the One Click app, and future orders. The same email signs you in everywhere. We'll only save these changes back to your venneir.com profile once this appointment is created.
-              </p>
-            </div>
+        {/* Sync notice — shown for every patient, not just those
+            already linked to venneir.com. For unlinked walk-ins it
+            describes what will happen at submit time; for linked
+            patients it describes what already does. Single notice,
+            single piece of copy, no conditional shape changes. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: theme.space[3],
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            background: theme.color.accentBg,
+            border: `1px solid ${theme.color.accent}`,
+            marginBottom: theme.space[4],
+          }}
+        >
+          <span style={{ display: 'inline-flex', color: theme.color.accent, marginTop: 2, flexShrink: 0 }}>
+            <ShoppingBag size={18} />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.accent,
+              }}
+            >
+              {linkedToShopify
+                ? 'Linked to your venneir.com account'
+                : 'These details flow across Venneir'}
+            </p>
+            <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
+              {linkedToShopify
+                ? "Anything you change here updates your account across the whole of Venneir: venneir.com, the One Click app, and any future orders. The same email signs you in everywhere. We'll only save these changes back to your venneir.com profile once this appointment is created."
+                : "Once this appointment is created, these details set up your venneir.com profile. From then on the same details are used across venneir.com, the One Click app, and any future orders, signed in with the same email."}
+            </p>
           </div>
-        ) : null}
+        </div>
 
         <FormGrid isMobile={isMobile}>
-          <FieldRow label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
-          <FieldRow label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
-          <FieldRow label="Date of birth" current={snapshot.date_of_birth} value={form.date_of_birth} onChange={(v) => onUpdate('date_of_birth', v)} type="date" editing={isEditing('date_of_birth')} onBeginEdit={() => onBeginEdit('date_of_birth')} />
+          <FieldRow required label="First name" current={snapshot.first_name} value={form.first_name} onChange={(v) => onUpdate('first_name', v)} editing={isEditing('first_name')} onBeginEdit={() => onBeginEdit('first_name')} />
+          <FieldRow required label="Last name" current={snapshot.last_name} value={form.last_name} onChange={(v) => onUpdate('last_name', v)} editing={isEditing('last_name')} onBeginEdit={() => onBeginEdit('last_name')} />
+          <DateOfBirthFieldRow
+            current={snapshot.date_of_birth}
+            value={form.date_of_birth}
+            editing={isEditing('date_of_birth')}
+            onChange={(v) => onUpdate('date_of_birth', v)}
+            onBeginEdit={() => onBeginEdit('date_of_birth')}
+          />
           <SexRow current={snapshot.sex} value={form.sex} onChange={(v) => onUpdate('sex', v)} editing={isEditing('sex')} onBeginEdit={() => onBeginEdit('sex')} />
-          <FieldRow label="Address line 1" current={snapshot.portal_ship_line1} value={form.portal_ship_line1} onChange={(v) => onUpdate('portal_ship_line1', v)} fullSpan editing={isEditing('portal_ship_line1')} onBeginEdit={() => onBeginEdit('portal_ship_line1')} />
+          <FieldRow required label="Address line 1" current={snapshot.portal_ship_line1} value={form.portal_ship_line1} onChange={(v) => onUpdate('portal_ship_line1', v)} fullSpan editing={isEditing('portal_ship_line1')} onBeginEdit={() => onBeginEdit('portal_ship_line1')} />
           <FieldRow label="Address line 2" current={snapshot.portal_ship_line2} value={form.portal_ship_line2} onChange={(v) => onUpdate('portal_ship_line2', v)} fullSpan editing={isEditing('portal_ship_line2')} onBeginEdit={() => onBeginEdit('portal_ship_line2')} />
-          <FieldRow label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
-          <FieldRow label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
-          <FieldRow label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
-          <FieldRow label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
+          <FieldRow required label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
+          <FieldRow required label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
+          <FieldRow required label="Email" current={snapshot.email} value={form.email} onChange={(v) => onUpdate('email', v)} type="email" editing={isEditing('email')} onBeginEdit={() => onBeginEdit('email')} />
+          <FieldRow required label="Phone" current={snapshot.phone} value={form.phone} onChange={(v) => onUpdate('phone', v)} type="tel" editing={isEditing('phone')} onBeginEdit={() => onBeginEdit('phone')} />
 
           <FieldRow
+            required
             label="Allergies & sensitivities"
             multiline
             fullSpan
@@ -1558,8 +1573,8 @@ function CustomerStep({
             editing={isEditing('allergies')}
             onBeginEdit={() => onBeginEdit('allergies')}
           />
-          <FieldRow label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
-          <FieldRow label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
+          <FieldRow required label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
+          <FieldRow required label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} type="tel" editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
         </FormGrid>
       </section>
 
@@ -1928,6 +1943,7 @@ function FieldRow({
   multiline = false,
   alwaysEditable = false,
   fullSpan = false,
+  required = false,
   editing = false,
   onBeginEdit,
 }: {
@@ -1940,6 +1956,7 @@ function FieldRow({
   multiline?: boolean;
   alwaysEditable?: boolean;
   fullSpan?: boolean;
+  required?: boolean;
   editing?: boolean;
   onBeginEdit?: () => void;
 }) {
@@ -1950,6 +1967,7 @@ function FieldRow({
       <div style={wrapper}>
         <OnFileCard
           label={label}
+          required={required}
           value={formatOnFileValue(label, current!)}
           onEdit={onBeginEdit}
         />
@@ -1959,7 +1977,10 @@ function FieldRow({
   if (multiline) {
     return (
       <label style={{ ...wrapper, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-        <span style={cardLabelStyle}>{label}</span>
+        <span style={cardLabelStyle}>
+          {label}
+          {required ? <RequiredMark /> : null}
+        </span>
         {helper ? <span style={helperStyle}>{helper}</span> : null}
         <textarea value={value} onChange={(e) => onChange(e.currentTarget.value)} rows={3} style={textareaStyle} />
       </label>
@@ -1969,12 +1990,32 @@ function FieldRow({
     <div style={wrapper}>
       <EditableFieldCard
         label={label}
+        required={required}
         helper={helper}
         type={type}
         value={value}
         onChange={onChange}
       />
     </div>
+  );
+}
+
+// Subtle red asterisk, used by every required-field label across the
+// arrival customer step. aria-hidden because the underlying input also
+// gets aria-required (or, for dropdowns, the field-level required is
+// communicated structurally via the surrounding required label).
+function RequiredMark() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        color: theme.color.alert,
+        marginLeft: 4,
+        fontWeight: theme.type.weight.semibold,
+      }}
+    >
+      *
+    </span>
   );
 }
 
@@ -1986,12 +2027,14 @@ function FieldRow({
 // on-file tiles either side of it.
 function EditableFieldCard({
   label,
+  required = false,
   helper,
   type = 'text',
   value,
   onChange,
 }: {
   label: string;
+  required?: boolean;
   helper?: string;
   type?: string;
   value: string;
@@ -2012,13 +2055,17 @@ function EditableFieldCard({
         cursor: 'text',
       }}
     >
-      <span style={cardLabelStyle}>{label}</span>
+      <span style={cardLabelStyle}>
+        {label}
+        {required ? <RequiredMark /> : null}
+      </span>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        aria-required={required || undefined}
         style={{
           appearance: 'none',
           border: 'none',
@@ -2039,6 +2086,40 @@ function EditableFieldCard({
   );
 }
 
+// Date-of-birth slot in the customer details FormGrid. Uses the same
+// on-file / edit split as FieldRow: when the patient already has a
+// DOB on file the row collapses to OnFileCard with a pencil; when the
+// receptionist is editing or the field is blank it expands to the
+// three-dropdown DateOfBirthRow.
+function DateOfBirthFieldRow({
+  current,
+  value,
+  editing,
+  onChange,
+  onBeginEdit,
+}: {
+  current: string | null;
+  value: string;
+  editing: boolean;
+  onChange: (v: string) => void;
+  onBeginEdit: () => void;
+}) {
+  const onFile = current !== null && current !== '' && !editing;
+  if (onFile) {
+    return (
+      <div>
+        <OnFileCard
+          label="Date of birth"
+          required
+          value={formatOnFileValue('Date of birth', current!)}
+          onEdit={onBeginEdit}
+        />
+      </div>
+    );
+  }
+  return <DateOfBirthRow value={value} onChange={onChange} />;
+}
+
 function SexRow({
   current,
   value,
@@ -2056,13 +2137,14 @@ function SexRow({
   if (showOnFile) {
     return (
       <div>
-        <OnFileCard label="Sex" value={current!} onEdit={onBeginEdit} />
+        <OnFileCard label="Sex" required value={current!} onEdit={onBeginEdit} />
       </div>
     );
   }
   return (
     <DropdownSelect
       label="Sex"
+      required
       value={value}
       options={SEX_OPTIONS}
       onChange={onChange}
@@ -2077,10 +2159,12 @@ function SexRow({
 // mode so the patient can correct anything wrong on file.
 function OnFileCard({
   label,
+  required = false,
   value,
   onEdit,
 }: {
   label: string;
+  required?: boolean;
   value: string;
   onEdit?: () => void;
 }) {
@@ -2107,6 +2191,7 @@ function OnFileCard({
         }}
       >
         {label}
+        {required ? <RequiredMark /> : null}
       </span>
       <span
         style={{
