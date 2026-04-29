@@ -528,17 +528,25 @@ function PaymentPill({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Loading skeleton — single card placeholder. We don't know how many
-// visits will resolve, so rendering N tiles up front would lie about
-// volume on quiet days (often only one or two people in clinic). One
-// card communicates "loading something card-shaped" without
-// overstating. The actual section + card list grows in once data
-// lands.
+// Loading skeleton — single card-shaped placeholder. We don't know
+// how many visits will resolve, so rendering N tiles up front would
+// lie about volume on quiet days. One card communicates "loading
+// something card-shaped" without overstating. The grid mirrors the
+// real Section layout (auto-fill, minmax 280) so the placeholder
+// renders at card width on desktop, not as a full-row stripe; on
+// mobile a single track expands to the row, matching the real
+// single-column flow there too.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LoadingGrid({ isMobile: _isMobile }: { isMobile: boolean }) {
+function LoadingGrid({ isMobile }: { isMobile: boolean }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
+        gap: theme.space[3],
+      }}
+    >
       <Skeleton height={148} radius={theme.radius.card} />
     </div>
   );
