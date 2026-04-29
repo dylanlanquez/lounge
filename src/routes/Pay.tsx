@@ -29,7 +29,16 @@ interface PayEntryState {
   from?: 'visit';
   visitId?: string;
   visitOpenedAt?: string;
-  visitEntry?: { from?: 'patient' | 'schedule' | 'in_clinic' } | null;
+  // Full preview of the visit's own entry state, mirrored from
+  // VisitDetail's VisitEntryState. Carries patientName and
+  // visitOpenedAt so navigating back to the visit pre-renders
+  // every breadcrumb crumb on first paint.
+  visitEntry?: {
+    from?: 'patient' | 'schedule' | 'in_clinic';
+    patientId?: string;
+    patientName?: string;
+    visitOpenedAt?: string;
+  } | null;
 }
 
 export function Pay() {
@@ -39,6 +48,14 @@ export function Pay() {
   const { cart, items } = useCart(id);
   const navigate = useNavigate();
   const location = useLocation();
+  // Hop back to the visit page with its original entry chain intact.
+  // VisitDetail forwarded its own state when sending us here; passing
+  // it back through means the visit's breadcrumb pre-renders every
+  // crumb (origin / patient / timestamp) on first paint with no
+  // shimmer transition.
+  const visitState = (location.state as PayEntryState | null)?.visitEntry ?? undefined;
+  const goBackToVisit = () =>
+    navigate(`/visit/${id}`, visitState ? { state: visitState } : undefined);
   const [stage, setStage] = useState<Stage>('choose');
   const [tendered, setTendered] = useState('');
   const [busy, setBusy] = useState(false);
@@ -119,7 +136,7 @@ export function Pay() {
   const sendReceipt = async () => {
     if (!paymentId || receiptChannel === 'none') {
       await closeVisit();
-      navigate(`/visit/${id}`);
+      goBackToVisit();
       return;
     }
     setBusy(true);
@@ -157,7 +174,7 @@ export function Pay() {
       }
 
       await closeVisit();
-      navigate(`/visit/${id}`);
+      goBackToVisit();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
@@ -194,7 +211,7 @@ export function Pay() {
             <EmptyState
               title="Nothing to pay for"
               description="Cart has no line items. Add some, then come back."
-              action={<Button variant="primary" onClick={() => navigate(`/visit/${id}`)}>Back to appointment</Button>}
+              action={<Button variant="primary" onClick={goBackToVisit}>Back to appointment</Button>}
             />
           </Card>
         </div>

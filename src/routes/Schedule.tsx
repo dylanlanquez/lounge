@@ -520,9 +520,15 @@ export function Schedule() {
                             if (!selected) return;
                             setBusy(true);
                             try {
-                              const { visit_id } = await reverseNoShow(selected.id);
+                              const { visit_id, opened_at } = await reverseNoShow(selected.id);
                               if (visit_id && !isVirtual) {
-                                navigate(`/visit/${visit_id}`, { state: { from: 'schedule' } });
+                                navigate(`/visit/${visit_id}`, {
+                                  state: {
+                                    from: 'schedule',
+                                    patientName: patientDisplayName(selected),
+                                    visitOpenedAt: opened_at,
+                                  },
+                                });
                               } else {
                                 setSelected(null);
                                 window.location.reload();

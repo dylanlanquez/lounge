@@ -165,7 +165,18 @@ export function InClinic() {
                     key={v.id}
                     visit={v}
                     now={now}
-                    onClick={() => navigate(`/visit/${v.id}`, { state: { from: 'in_clinic' } })}
+                    onClick={() =>
+                      navigate(`/visit/${v.id}`, {
+                        state: {
+                          from: 'in_clinic',
+                          // Forward the row's denormalised patient name + opened_at
+                          // so the visit page's breadcrumb renders both crumbs on
+                          // first paint without any shimmer transition.
+                          patientName: `${properCase(v.patient_first_name ?? '')} ${properCase(v.patient_last_name ?? '')}`.trim(),
+                          visitOpenedAt: v.opened_at,
+                        },
+                      })
+                    }
                   />
                 ))}
               </Section>

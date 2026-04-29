@@ -33,7 +33,9 @@ export interface CreateWalkInInput {
 // Returns the new visit + walk-in ids; the human-readable reference
 // is the appointment_ref (LAP-NNNNN) already stamped on lng_walk_ins
 // at intake-submit time.
-export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ visit_id: string; walk_in_id: string }> {
+export async function createWalkInVisit(
+  input: CreateWalkInInput
+): Promise<{ visit_id: string; opened_at: string; walk_in_id: string }> {
   const { data: walkIn, error: walkInErr } = await supabase
     .from('lng_walk_ins')
     .insert({
@@ -48,6 +50,10 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
     .single();
   if (walkInErr || !walkIn) throw new Error(walkInErr?.message ?? 'Could not create walk-in');
 
+  // Return opened_at so the caller can pre-render the visit page's
+  // breadcrumb timestamp on first paint instead of shimmering until
+  // the post-navigation visit query resolves. The server's now() is
+  // the canonical truth here, not a client-side new Date().
   const { data: visit, error: visitErr } = await supabase
     .from('lng_visits')
     .insert({
@@ -58,7 +64,7 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
       status: 'opened',
       notes: input.notes ?? null,
     })
-    .select('id')
+    .select('id, opened_at')
     .single();
   if (visitErr || !visit) throw new Error(visitErr?.message ?? 'Could not create visit');
 
@@ -95,7 +101,11 @@ export async function createWalkInVisit(input: CreateWalkInInput): Promise<{ vis
     status: 'arrived',
   });
 
-  return { visit_id: visit.id, walk_in_id: walkIn.id };
+  return {
+    visit_id: visit.id,
+    opened_at: (visit as { opened_at: string }).opened_at,
+    walk_in_id: walkIn.id,
+  };
 }
 
 // The reasons a receptionist can pick when flipping an appointment to
@@ -153,7 +163,9 @@ export async function markNoShow(
 // would have got from Mark as arrived, so the receptionist can drop
 // straight into the EPOS / cart flow. Returns visit_id when one was
 // created or already existed.
-export async function reverseNoShow(appointmentId: string): Promise<{ visit_id?: string }> {
+export async function reverseNoShow(
+  appointmentId: string
+): Promise<{ visit_id?: string; opened_at?: string }> {
   const { data: appt, error } = await supabase
     .from('lng_appointments')
     .update({ status: 'arrived' })
@@ -170,11 +182,12 @@ export async function reverseNoShow(appointmentId: string): Promise<{ visit_id?:
   // so they can flow through to /visit.
   const { data: existingVisit } = await supabase
     .from('lng_visits')
-    .select('id')
+    .select('id, opened_at')
     .eq('appointment_id', appointmentId)
     .maybeSingle();
 
-  let visitId: string | undefined = (existingVisit as { id: string } | null)?.id;
+  let visitId: string | undefined = (existingVisit as { id: string; opened_at: string } | null)?.id;
+  let openedAt: string | undefined = (existingVisit as { id: string; opened_at: string } | null)?.opened_at;
 
   const isVirtual = !!apptRow.join_url;
   if (!visitId && !isVirtual) {
@@ -187,10 +200,12 @@ export async function reverseNoShow(appointmentId: string): Promise<{ visit_id?:
         arrival_type: 'scheduled',
         status: 'opened',
       })
-      .select('id')
+      .select('id, opened_at')
       .single();
     if (!visitErr && visit) {
-      visitId = (visit as { id: string }).id;
+      const v = visit as { id: string; opened_at: string };
+      visitId = v.id;
+      openedAt = v.opened_at;
     }
   }
 
@@ -206,7 +221,7 @@ export async function reverseNoShow(appointmentId: string): Promise<{ visit_id?:
     },
   });
 
-  return { visit_id: visitId };
+  return { visit_id: visitId, opened_at: openedAt };
 }
 
 // Records that staff joined a virtual meeting. Flips the appointment to
@@ -236,7 +251,9 @@ export async function markVirtualMeetingJoined(appointmentId: string): Promise<v
   });
 }
 
-export async function markAppointmentArrived(appointmentId: string): Promise<{ visit_id: string }> {
+export async function markAppointmentArrived(
+  appointmentId: string
+): Promise<{ visit_id: string; opened_at: string }> {
   const { data: appt, error: apptErr } = await supabase
     .from('lng_appointments')
     .update({ status: 'arrived' })
@@ -245,6 +262,9 @@ export async function markAppointmentArrived(appointmentId: string): Promise<{ v
     .single();
   if (apptErr || !appt) throw new Error(apptErr?.message ?? 'Could not mark arrived');
 
+  // Returning opened_at lets the caller pass it through router state
+  // so the visit page's breadcrumb renders the timestamp on first
+  // paint — no shimmer-then-pop transition.
   const { data: visit, error: visitErr } = await supabase
     .from('lng_visits')
     .insert({
@@ -254,7 +274,7 @@ export async function markAppointmentArrived(appointmentId: string): Promise<{ v
       arrival_type: 'scheduled',
       status: 'opened',
     })
-    .select('id')
+    .select('id, opened_at')
     .single();
   if (visitErr || !visit) throw new Error(visitErr?.message ?? 'Could not create visit');
 
@@ -264,7 +284,10 @@ export async function markAppointmentArrived(appointmentId: string): Promise<{ v
     payload: { visit_id: visit.id, appointment_id: appt.id, source: 'calendly' },
   });
 
-  return { visit_id: visit.id };
+  return {
+    visit_id: visit.id,
+    opened_at: (visit as { opened_at: string }).opened_at,
+  };
 }
 
 // Calendly deposit captured at booking time, surfaced through the visit
