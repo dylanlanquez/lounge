@@ -63,3 +63,5 @@ export { BeforeAfterGallery, MarketingGallery } from './PhotoGallery/PhotoGaller
 
 export { StickyPageHeader } from './StickyPageHeader/StickyPageHeader.tsx';
 export type { StickyPageHeaderProps } from './StickyPageHeader/StickyPageHeader.tsx';
+
+export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
