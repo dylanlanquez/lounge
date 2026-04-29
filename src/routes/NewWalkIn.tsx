@@ -16,6 +16,33 @@ import { supabase } from '../lib/supabase.ts';
 
 type Step = 'find' | 'create';
 
+// What kind of identifier did the receptionist search for? Drives the
+// auto-fill on the "create new patient" form so we don't drop an email
+// into the First name box.
+//
+//   "alex@venneir.com"           -> email
+//   "07700 900 000"              -> phone
+//   "+44 7700 900000"            -> phone
+//   "Alex Smith"                 -> name
+//   "Alex"                       -> name
+//
+// Pure function, exported so it can be unit-tested.
+export function classifySearchTerm(term: string): 'email' | 'phone' | 'name' {
+  const trimmed = term.trim();
+  // Email: anything containing an @. We don't validate the full RFC,
+  // and a half-typed address like "alex@" still seeds the email
+  // field (the alternative is dropping it into First name, which is
+  // worse). Receptionist almost always types complete addresses.
+  if (trimmed.includes('@')) return 'email';
+  // Phone: 7–15 digits with only digit-friendly punctuation in between
+  // (spaces, +, -, parentheses). Letters anywhere bumps it to a name.
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length >= 7 && digits.length <= 15 && /^[\d\s+()\-]+$/.test(trimmed)) {
+    return 'phone';
+  }
+  return 'name';
+}
+
 function humanizePatientSaveError(err: { message?: string; code?: string } | null | undefined): string {
   const msg = err?.message ?? '';
   const code = err?.code;
@@ -59,12 +86,14 @@ export function NewWalkIn() {
   };
 
   const onCreateNew = (term: string) => {
-    // Heuristic: if term is mostly digits, treat as phone. Otherwise split as name.
-    const digitsOnly = term.replace(/\D/g, '');
-    if (digitsOnly.length >= 7 && digitsOnly.length <= 15) {
-      setNewPatient((s) => ({ ...s, phone: term }));
+    const trimmed = term.trim();
+    const kind = classifySearchTerm(trimmed);
+    if (kind === 'email') {
+      setNewPatient((s) => ({ ...s, email: trimmed }));
+    } else if (kind === 'phone') {
+      setNewPatient((s) => ({ ...s, phone: trimmed }));
     } else {
-      const parts = term.split(/\s+/);
+      const parts = trimmed.split(/\s+/);
       setNewPatient((s) => ({
         ...s,
         first_name: parts[0] ?? '',
