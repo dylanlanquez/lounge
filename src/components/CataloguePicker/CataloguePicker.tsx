@@ -248,11 +248,11 @@ export function CataloguePicker({
         <div
           style={{
             position: 'fixed',
-            // ~160px above the bottom safe area — clear of the kiosk
-            // bottom nav and the BottomSheet's footer rhythm, but still
-            // bottom-anchored so it reads as a confirmation tied to
-            // the action just taken (not a system banner).
-            bottom: `calc(env(safe-area-inset-bottom, 0px) + ${theme.space[16] + theme.space[24]}px)`,
+            // 7.5px gap above the bottom footer. Footer height is 96px
+            // (Arrival's ActionBar; matches BottomNav's chrome on
+            // routes that show it). 96 + 7.5 = 103.5 below the safe-
+            // area-aware footer, anchored from the viewport bottom.
+            bottom: `calc(env(safe-area-inset-bottom, 0px) + 103.5px)`,
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 1100,
