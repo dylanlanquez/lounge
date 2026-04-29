@@ -632,7 +632,6 @@ export function Arrival() {
         ) : step === 'service' ? (
           <ServiceStep
             mode={mode}
-            appointment={appointment}
             recognisedTypes={recognisedTypes}
             stagedItems={stagedItems}
             stagedTotalPence={stagedTotalPence}
@@ -1022,7 +1021,6 @@ function ActionBar({
 
 function ServiceStep({
   mode,
-  appointment,
   recognisedTypes,
   stagedItems,
   stagedTotalPence,
@@ -1040,7 +1038,6 @@ function ServiceStep({
   onChangeNotes,
 }: {
   mode: Mode;
-  appointment: AppointmentContext | null;
   recognisedTypes: string[];
   stagedItems: StagedItem[];
   stagedTotalPence: number;
@@ -1072,14 +1069,13 @@ function ServiceStep({
         Service details
       </h1>
 
-      {mode === 'appointment' && appointment?.event_type_label ? (
-        <Section title="Booking">
-          <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink }}>
-            {appointment.event_type_label}
-          </p>
-        </Section>
-      ) : null}
-
+      {/* The Calendly booking type used to render here as a "Booking"
+          section, auto-populated from appointment.event_type_label.
+          Per design: don't auto-add it to the arrival form — the
+          receptionist chooses what's actually being worked on via
+          the picker below. The label still drives JB-ref + waiver
+          inference behind the scenes (eventTypeLabel above), but
+          isn't surfaced as a form field. */}
       <Section
         title="Items"
         sub={stagedItems.length === 0 ? 'What are we doing today?' : undefined}
