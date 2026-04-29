@@ -35,6 +35,8 @@ export interface DropdownSelectOption<T extends string> {
   label?: string;
 }
 
+export type DropdownSelectVariant = 'card' | 'inline' | 'text';
+
 export interface DropdownSelectProps<T extends string> {
   // When provided, renders the card-style trigger with the label
   // inside. When omitted, renders the slimmer inline-style trigger
@@ -46,6 +48,11 @@ export interface DropdownSelectProps<T extends string> {
   // so assistive tech surfaces the constraint without relying on the
   // visual marker.
   required?: boolean;
+  // Defaults to 'card' when `label` is set, otherwise 'inline'.
+  // 'text' renders the trigger as chrome-less inline text + chevron
+  // for use inside another card's value row (e.g. the three DOB
+  // segments share a single outer card and read as one value line).
+  variant?: DropdownSelectVariant;
   value: T | '';
   options: ReadonlyArray<DropdownSelectOption<T> | T>;
   placeholder?: string;
@@ -57,12 +64,15 @@ export function DropdownSelect<T extends string>({
   label,
   ariaLabel,
   required = false,
+  variant,
   value,
   options,
   placeholder = 'Choose',
   disabled = false,
   onChange,
 }: DropdownSelectProps<T>) {
+  const effectiveVariant: DropdownSelectVariant =
+    variant ?? (label !== undefined ? 'card' : 'inline');
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -130,47 +140,74 @@ export function DropdownSelect<T extends string>({
   const selected = items.find((i) => i.value === value);
   const displayLabel = selected?.label ?? placeholder;
 
-  const cardVariant = label !== undefined;
-
-  const trigger: CSSProperties = cardVariant
-    ? {
-        appearance: 'none',
-        width: '100%',
-        textAlign: 'left',
-        fontFamily: 'inherit',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        background: theme.color.surface,
-        border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
-        borderRadius: theme.radius.input,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        paddingRight: theme.space[8],
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-        position: 'relative',
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        opacity: disabled ? 0.5 : 1,
-      }
-    : {
-        appearance: 'none',
-        width: '100%',
-        height: theme.layout.inputHeight,
-        textAlign: 'left',
-        fontFamily: 'inherit',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        background: theme.color.surface,
-        border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
-        borderRadius: theme.radius.input,
-        padding: `0 ${theme.space[8]}px 0 ${theme.space[3]}px`,
-        display: 'flex',
-        alignItems: 'center',
-        position: 'relative',
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        opacity: disabled ? 0.5 : 1,
-      };
+  const trigger: CSSProperties =
+    effectiveVariant === 'card'
+      ? {
+          appearance: 'none',
+          width: '100%',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          background: theme.color.surface,
+          border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
+          borderRadius: theme.radius.input,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          paddingRight: theme.space[8],
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+          position: 'relative',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          opacity: disabled ? 0.5 : 1,
+        }
+      : effectiveVariant === 'inline'
+        ? {
+            appearance: 'none',
+            width: '100%',
+            height: theme.layout.inputHeight,
+            textAlign: 'left',
+            fontFamily: 'inherit',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            background: theme.color.surface,
+            border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
+            borderRadius: theme.radius.input,
+            padding: `0 ${theme.space[8]}px 0 ${theme.space[3]}px`,
+            display: 'flex',
+            alignItems: 'center',
+            position: 'relative',
+            transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            opacity: disabled ? 0.5 : 1,
+          }
+        : {
+            // 'text' variant — chrome-less inline trigger that lives
+            // inside another card's value row. Reads as a tappable
+            // value phrase + small chevron, no border, no background.
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            padding: 0,
+            margin: 0,
+            fontFamily: 'inherit',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[1],
+            opacity: disabled ? 0.5 : 1,
+            color: theme.color.ink,
+          };
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative' }}>
+    <div
+      ref={wrapperRef}
+      style={{
+        position: 'relative',
+        // inline-flex so the text variant can sit alongside siblings
+        // on a single value row; for the card/inline variants the
+        // parent already controls width, so this has no visual effect.
+        display: effectiveVariant === 'text' ? 'inline-flex' : 'block',
+        width: effectiveVariant === 'text' ? 'auto' : '100%',
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -179,11 +216,11 @@ export function DropdownSelect<T extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
-        aria-label={cardVariant ? undefined : ariaLabel}
+        aria-label={effectiveVariant !== 'card' ? ariaLabel : undefined}
         aria-required={required || undefined}
         style={trigger}
       >
-        {cardVariant ? (
+        {effectiveVariant === 'card' ? (
           <>
             <span
               style={{
@@ -218,7 +255,7 @@ export function DropdownSelect<T extends string>({
               {displayLabel}
             </span>
           </>
-        ) : (
+        ) : effectiveVariant === 'inline' ? (
           <span
             style={{
               fontSize: theme.type.size.base,
@@ -228,20 +265,44 @@ export function DropdownSelect<T extends string>({
           >
             {displayLabel}
           </span>
+        ) : (
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: hasValue ? theme.color.ink : theme.color.inkSubtle,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {displayLabel}
+          </span>
         )}
-        <ChevronDown
-          size={18}
-          aria-hidden
-          style={{
-            position: 'absolute',
-            right: theme.space[4],
-            top: '50%',
-            color: theme.color.inkSubtle,
-            transform: `translateY(-50%) rotate(${open ? 180 : 0}deg)`,
-            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            pointerEvents: 'none',
-          }}
-        />
+        {effectiveVariant === 'text' ? (
+          <ChevronDown
+            size={14}
+            aria-hidden
+            style={{
+              color: theme.color.inkSubtle,
+              transform: `rotate(${open ? 180 : 0}deg)`,
+              transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <ChevronDown
+            size={18}
+            aria-hidden
+            style={{
+              position: 'absolute',
+              right: theme.space[4],
+              top: '50%',
+              color: theme.color.inkSubtle,
+              transform: `translateY(-50%) rotate(${open ? 180 : 0}deg)`,
+              transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              pointerEvents: 'none',
+            }}
+          />
+        )}
       </button>
 
       {open && triggerRect
