@@ -155,8 +155,8 @@ export function usePatientList(
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id, registered_at'
           )
-          .order('last_name', { ascending: true })
           .order('first_name', { ascending: true })
+          .order('last_name', { ascending: true })
           .range(startIdx, endIdx);
 
         if (cleaned.length >= 2) {
@@ -185,8 +185,8 @@ export function usePatientList(
               : supabase
                   .from('patients')
                   .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id')
-                  .order('last_name', { ascending: true })
                   .order('first_name', { ascending: true })
+                  .order('last_name', { ascending: true })
                   .range(startIdx, endIdx));
             if (cancelled) return;
             if (err2) {
@@ -250,8 +250,8 @@ function buildFallback(term: string) {
     .from('patients')
     .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id')
     .or(filters.join(','))
-    .order('last_name', { ascending: true })
-    .order('first_name', { ascending: true });
+    .order('first_name', { ascending: true })
+    .order('last_name', { ascending: true });
 }
 
 export function patientShortName(p: Pick<PatientRow, 'first_name' | 'last_name'>): string {

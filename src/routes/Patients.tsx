@@ -64,6 +64,7 @@ export function Patients() {
           body={<SearchInput value={term} onChange={setTerm} />}
           outerPaddingX={outerPaddingX}
           innerMaxWidth={innerMaxWidth}
+          bodyMarginBottom={theme.space[3]}
         />
 
         {error ? (
@@ -232,7 +233,6 @@ function PatientList({ data, onPick }: { data: PatientListRow[]; onPick: (id: st
         padding: 0,
         display: 'flex',
         flexDirection: 'column',
-        borderTop: `1px solid ${theme.color.border}`,
       }}
     >
       {data.map((p) => (
