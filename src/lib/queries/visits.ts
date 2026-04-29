@@ -162,59 +162,45 @@ export async function markNoShow(
 }
 
 // Reverses a no-show flag. Patient turned up late after staff already
-// flipped them — flip status back to 'arrived' and record a
-// no_show_reversed event so the timeline preserves the full
-// booked → no_show → reversed audit trail.
+// flipped them — restore the appointment's pre-no-show state so the
+// normal arrival flow can run.
 //
-// For in-person no_shows we also create the lng_visit that the patient
-// would have got from Mark as arrived, so the receptionist can drop
-// straight into the EPOS / cart flow. Returns visit_id when one was
-// created or already existed.
+// We do *not* create or reopen a visit here. Earlier behaviour
+// auto-created the lng_visit and bounced the receptionist straight
+// to /visit/:id, skipping the entire arrival form (intake, JB ref,
+// waivers). That meant a reversed no-show looked nothing like a
+// proper arrival in the audit trail. Now: flip the status back and
+// stop. The receptionist sees the appointment in its normal booked
+// or arrived state on the schedule, and clicks Mark as arrived
+// from there to re-enter the arrival flow.
+//
+// Status target:
+//   • Visit already exists (rare — staff re-flagged after arrival
+//     completed): restore to 'arrived', the visit is real.
+//   • No visit: 'booked' — pre-arrival state, ready for the normal
+//     Mark-as-arrived flow.
 export async function reverseNoShow(
   appointmentId: string
-): Promise<{ visit_id?: string; opened_at?: string }> {
-  const { data: appt, error } = await supabase
-    .from('lng_appointments')
-    .update({ status: 'arrived' })
-    .eq('id', appointmentId)
-    .select('id, patient_id, location_id, join_url')
-    .single();
-  if (error || !appt) throw new Error(error?.message ?? 'Could not undo no-show');
-  const apptRow = appt as { id: string; patient_id: string; location_id: string; join_url: string | null };
-
-  const { data: accountId } = await supabase.rpc('auth_account_id');
-
-  // If a visit already exists (e.g. Patient previously arrived then was
-  // re-flagged), reuse it. Otherwise, in-person bookings need one created
-  // so they can flow through to /visit.
+): Promise<{ status: 'arrived' | 'booked'; has_visit: boolean }> {
   const { data: existingVisit } = await supabase
     .from('lng_visits')
-    .select('id, opened_at')
+    .select('id')
     .eq('appointment_id', appointmentId)
     .maybeSingle();
 
-  let visitId: string | undefined = (existingVisit as { id: string; opened_at: string } | null)?.id;
-  let openedAt: string | undefined = (existingVisit as { id: string; opened_at: string } | null)?.opened_at;
+  const hasVisit = !!(existingVisit as { id: string } | null);
+  const targetStatus: 'arrived' | 'booked' = hasVisit ? 'arrived' : 'booked';
 
-  const isVirtual = !!apptRow.join_url;
-  if (!visitId && !isVirtual) {
-    const { data: visit, error: visitErr } = await supabase
-      .from('lng_visits')
-      .insert({
-        patient_id: apptRow.patient_id,
-        location_id: apptRow.location_id,
-        appointment_id: apptRow.id,
-        arrival_type: 'scheduled',
-        status: 'opened',
-      })
-      .select('id, opened_at')
-      .single();
-    if (!visitErr && visit) {
-      const v = visit as { id: string; opened_at: string };
-      visitId = v.id;
-      openedAt = v.opened_at;
-    }
-  }
+  const { data: appt, error } = await supabase
+    .from('lng_appointments')
+    .update({ status: targetStatus })
+    .eq('id', appointmentId)
+    .select('id, patient_id, join_url')
+    .single();
+  if (error || !appt) throw new Error(error?.message ?? 'Could not undo no-show');
+  const apptRow = appt as { id: string; patient_id: string; join_url: string | null };
+
+  const { data: accountId } = await supabase.rpc('auth_account_id');
 
   await supabase.from('patient_events').insert({
     patient_id: apptRow.patient_id,
@@ -223,12 +209,12 @@ export async function reverseNoShow(
       appointment_id: apptRow.id,
       staff_account_id: accountId ?? null,
       reversed_at: new Date().toISOString(),
-      visit_id: visitId ?? null,
-      was_virtual: isVirtual,
+      restored_status: targetStatus,
+      was_virtual: !!apptRow.join_url,
     },
   });
 
-  return { visit_id: visitId, opened_at: openedAt };
+  return { status: targetStatus, has_visit: hasVisit };
 }
 
 // Records that staff joined a virtual meeting. Flips the appointment to
