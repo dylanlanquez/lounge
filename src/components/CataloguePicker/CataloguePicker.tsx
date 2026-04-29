@@ -90,14 +90,25 @@ export function CataloguePicker({
     });
   }, [rows, trimmedSearch]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, CatalogueRow[]>();
+  // Top-level grouping: Services on top, Products underneath. Until the
+  // catalogue gets a dedicated is_service column (next PR), we infer
+  // service-ness from service_type — denture repair work and impression
+  // appointments read as services; everything else (click-in veneers,
+  // same-day appliances, retainers, whitening) is a product.
+  const { servicesGrouped, productsGrouped } = useMemo(() => {
+    const services: CatalogueRow[] = [];
+    const products: CatalogueRow[] = [];
     for (const r of filtered) {
-      const list = map.get(r.category) ?? [];
-      list.push(r);
-      map.set(r.category, list);
+      if (r.service_type === 'denture_repair' || r.service_type === 'impression_appointment') {
+        services.push(r);
+      } else {
+        products.push(r);
+      }
     }
-    return [...map.entries()];
+    return {
+      servicesGrouped: groupByCategory(services),
+      productsGrouped: groupByCategory(products),
+    };
   }, [filtered]);
 
   const handleAdded = () => {
@@ -156,11 +167,33 @@ export function CataloguePicker({
                   <ul style={listStyle}>{suggestions.map(renderRow)}</ul>
                 </Section>
               ) : null}
-              {grouped.map(([category, categoryRows]) => (
-                <Section key={category} title={category}>
-                  <ul style={listStyle}>{categoryRows.map(renderRow)}</ul>
-                </Section>
-              ))}
+              {servicesGrouped.length > 0 ? (
+                <TopGroup title="Services">
+                  {servicesGrouped.map(([category, categoryRows]) => (
+                    <Section key={`svc-${category}`} title={category}>
+                      <ul style={listStyle}>{categoryRows.map(renderRow)}</ul>
+                    </Section>
+                  ))}
+                </TopGroup>
+              ) : null}
+              {servicesGrouped.length > 0 && productsGrouped.length > 0 ? (
+                <hr
+                  style={{
+                    margin: 0,
+                    border: 'none',
+                    borderTop: `1px solid ${theme.color.border}`,
+                  }}
+                />
+              ) : null}
+              {productsGrouped.length > 0 ? (
+                <TopGroup title="Products">
+                  {productsGrouped.map(([category, categoryRows]) => (
+                    <Section key={`prd-${category}`} title={category}>
+                      <ul style={listStyle}>{categoryRows.map(renderRow)}</ul>
+                    </Section>
+                  ))}
+                </TopGroup>
+              ) : null}
             </>
           )}
         </div>
@@ -256,6 +289,42 @@ function SearchField({ value, onChange }: { value: string; onChange: (v: string)
 // ─────────────────────────────────────────────────────────────────────────────
 // Section — sentence-case heading + optional accent eyebrow + ul slot.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Pure helper — reused for both top-level buckets so a category that
+// straddles services and products doesn't accidentally collapse into
+// one list.
+function groupByCategory(rows: CatalogueRow[]): [string, CatalogueRow[]][] {
+  const map = new Map<string, CatalogueRow[]>();
+  for (const r of rows) {
+    const list = map.get(r.category) ?? [];
+    list.push(r);
+    map.set(r.category, list);
+  }
+  return [...map.entries()];
+}
+
+// Top-level "Services" / "Products" container. Larger eyebrow heading
+// than the inner category Section so the two layers of grouping read
+// as distinct.
+function TopGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      <h2
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
 
 function Section({
   title,

@@ -320,7 +320,7 @@ export function walkInServiceLabel(serviceType: string | null): string | null {
     case 'click_in_veneers':
       return 'Click-in veneers';
     case 'impression_appointment':
-      return 'In-person Impression Appointment';
+      return 'Impression Appointment';
     default:
       return null;
   }
