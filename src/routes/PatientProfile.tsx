@@ -1029,7 +1029,7 @@ function ApptTable({
         <thead>
           <tr>
             <th style={headerStyle}>Date</th>
-            <th style={headerStyle}>LWO ref</th>
+            <th style={headerStyle}>LAP ref</th>
             <th style={headerStyle}>Service</th>
             <th style={headerStyle}>Status</th>
             <th style={{ ...headerStyle, textAlign: 'right' }}>Payment</th>
@@ -1060,7 +1060,7 @@ function ApptTable({
                     color: theme.color.inkMuted,
                   }}
                 >
-                  {isVisit ? r.visit?.lwo_ref ?? '—' : r.appointment?.appointment_ref ?? '—'}
+                  {isVisit ? r.visit?.lap_ref ?? '—' : r.appointment?.appointment_ref ?? '—'}
                 </td>
                 <td style={cellStyle}>
                   {isVisit
@@ -1109,8 +1109,8 @@ function ApptRowMobile({
     ? row.visit?.service_label ?? 'Appointment'
     : humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ?? 'Appointment';
   const ref = isVisit
-    ? row.visit?.lwo_ref ?? 'no LWO ref'
-    : row.appointment?.appointment_ref ?? 'no ref';
+    ? row.visit?.lap_ref ?? 'no LAP ref'
+    : row.appointment?.appointment_ref ?? 'no LAP ref';
   return (
     <button
       type="button"
