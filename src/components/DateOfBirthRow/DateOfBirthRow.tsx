@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useEffect, useId, useMemo, useState } from 'react';
 import { theme } from '../../theme/index.ts';
 import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 
@@ -64,6 +64,7 @@ export function DateOfBirthRow({
   fullSpan = false,
 }: DateOfBirthRowProps) {
   const [parts, setParts] = useState<Parts>(() => parseIsoDate(value));
+  const labelId = useId();
 
   // Sync from prop when the parent's value diverges from local — handles
   // async hydrate (initial load fills in the patient's existing DOB).
@@ -125,6 +126,12 @@ export function DateOfBirthRow({
     return out;
   }, [parts.month, parts.year]);
 
+  // Match EditableFieldCard's silhouette exactly so the row sits on
+  // the same baseline as the other field cards — same padding, same
+  // border, same label rhythm. We use a div + role=group instead of
+  // a native <fieldset>/<legend> because the browser's UA legend
+  // renders into the top border, which broke the card's outline
+  // rectangle in the FormGrid.
   const wrapper: CSSProperties = {
     ...(fullSpan ? { gridColumn: '1 / -1' } : {}),
     display: 'flex',
@@ -144,19 +151,8 @@ export function DateOfBirthRow({
   };
 
   return (
-    <fieldset
-      style={{
-        ...wrapper,
-        // Reset native fieldset chrome — we want it as a semantic
-        // grouping for screen readers, not a styled box on top of
-        // the card we're already drawing.
-        margin: 0,
-        minWidth: 0,
-        // Cast through unknown so the strict CSSProperties typing
-        // accepts the native `border: 0` shorthand.
-      }}
-    >
-      <legend style={{ ...labelStyle, padding: 0, marginBottom: theme.space[1] }}>
+    <div role="group" aria-labelledby={labelId} style={wrapper}>
+      <span id={labelId} style={labelStyle}>
         Date of birth
         <span
           aria-hidden
@@ -168,7 +164,7 @@ export function DateOfBirthRow({
         >
           *
         </span>
-      </legend>
+      </span>
       <div
         style={{
           display: 'grid',
@@ -198,6 +194,6 @@ export function DateOfBirthRow({
           onChange={(v) => setParts((p) => ({ ...p, year: v }))}
         />
       </div>
-    </fieldset>
+    </div>
   );
 }
