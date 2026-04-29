@@ -212,25 +212,41 @@ function PatientCount({
   );
 }
 
+// Skeleton mirrors PatientRow exactly — same padding, gaps, avatar
+// size (40, matching Avatar md), name + ref inline, trailing
+// chevron — and renders PATIENT_LIST_PAGE_SIZE rows so the loading
+// state's height matches the rendered page on data arrival. No
+// layout jump.
 function SkeletonList() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {[0, 1, 2, 3, 4, 5].map((i) => (
+      {Array.from({ length: PATIENT_LIST_PAGE_SIZE }).map((_, i) => (
         <div
           key={i}
           style={{
+            padding: `${theme.space[3]}px ${theme.space[3]}px`,
             display: 'flex',
             alignItems: 'center',
-            gap: theme.space[3],
-            padding: `${theme.space[3]}px 0`,
+            gap: theme.space[4],
             borderBottom: `1px solid ${theme.color.border}`,
           }}
         >
-          <Skeleton height={36} width={36} radius={999} />
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <Skeleton height={14} width="40%" radius={4} />
-            <Skeleton height={12} width="20%" radius={4} />
+          <Skeleton width={40} height={40} radius={999} />
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[3],
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Skeleton width="50%" height={16} radius={4} />
+            </div>
+            <Skeleton width={64} height={12} radius={4} />
           </div>
+          <Skeleton width={18} height={18} radius={4} />
         </div>
       ))}
     </div>
