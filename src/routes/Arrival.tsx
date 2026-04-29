@@ -1571,8 +1571,9 @@ function CustomerStep({
                     <span>{formatItemDescriptor(it)}</span>
                     <span
                       style={{
+                        fontSize: theme.type.size.sm,
                         fontVariantNumeric: 'tabular-nums',
-                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.inkMuted,
                         whiteSpace: 'nowrap',
                       }}
                     >
@@ -1613,10 +1614,10 @@ function CustomerStep({
                     display: 'inline-flex',
                     color: theme.color.accent,
                     flexShrink: 0,
-                    marginTop: 1,
+                    marginTop: 2,
                   }}
                 >
-                  <ShoppingBag size={16} />
+                  <ShoppingBag size={22} />
                 </span>
                 <p
                   style={{
@@ -1627,7 +1628,7 @@ function CustomerStep({
                   }}
                 >
                   {linkedToShopify
-                    ? 'Changes to your details update your venneir.com account, the One Click app, and any future orders. Saved once this appointment is created.'
+                    ? "Changes here update your venneir.com account, the One Click app, and any future orders. A new delivery address applies to your next online order; a new email changes how you sign in everywhere."
                     : 'Once this appointment is created, your venneir.com profile is set up. Your details then flow across venneir.com, the One Click app, and any future orders.'}
                 </p>
               </div>
