@@ -7,6 +7,7 @@ import {
   Card,
   CollapsibleCard,
   EmptyState,
+  FinalDeliveries,
   MarketingGallery,
   PatientFilesGrid,
   Skeleton,
@@ -112,6 +113,7 @@ export function PatientProfile() {
               patient={patient}
               refresh={refreshFiles}
             />
+            <FinalDeliveries patientId={patient.id} />
             <WalkInAppointments
               visits={visits}
               loading={visitsLoading}

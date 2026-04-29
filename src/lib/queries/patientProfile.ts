@@ -240,6 +240,166 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Delivery files — Meridian's "Final delivery" surface, view-only.
+// Reads patient_files where is_delivery=true, joins to
+// case_file_attachments → cases → case_types so each accepted /
+// rejected delivery shows under its appliance type. Mirrors the
+// loadAll fetch in Meridian's PatientDetail.jsx exactly so receptionists
+// see the same set of files on both surfaces.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DeliveryFileEntry {
+  id: string; // attachment id (one delivery row per attachment)
+  caseRef: string | null;
+  reviewStatus: 'accepted' | 'rejected' | 'pending_review' | string | null;
+  reviewedAt: string | null;
+  reviewerName: string | null;
+  rejectionNote: string | null;
+  // The underlying patient_files row, ready to feed the existing
+  // PreviewModal (which expects PatientFileEntry shape).
+  file: PatientFileEntry;
+}
+
+export interface DeliveryGroup {
+  applianceLabel: string;
+  accepted: DeliveryFileEntry[];
+  rejected: DeliveryFileEntry[];
+}
+
+interface DeliveryResult {
+  groups: DeliveryGroup[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+export function usePatientDeliveryFiles(patientId: string | null | undefined): DeliveryResult {
+  const [groups, setGroups] = useState<DeliveryGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    if (!patientId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data: rows, error: err } = await supabase
+        .from('patient_files')
+        .select(
+          `id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path,
+           file_labels:label_id(key, label),
+           uploader:uploaded_by(first_name, last_name),
+           attachments:case_file_attachments(
+             id, attachment_status, review_status, reviewed_at, rejection_note, review_note,
+             reviewer:reviewed_by(first_name, last_name),
+             case:case_id(case_reference, case_type:case_type_id(label))
+           )`
+        )
+        .eq('patient_id', patientId)
+        .eq('is_delivery', true)
+        .order('uploaded_at', { ascending: false });
+      if (cancelled) return;
+      if (err) {
+        // 42703 (column missing) and PGRST200 (no relation) both mean
+        // the deploy doesn't have the delivery tables wired yet —
+        // treat as 'no deliveries' rather than crash the profile.
+        if (err.code === 'PGRST200' || err.code === '42P01' || err.code === '42703') {
+          setGroups([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Group attachments by appliance label, splitting accepted vs
+      // rejected. attachment_status='current' or review_status='accepted'
+      // = accepted; rejected likewise. Pending reviews are dropped from
+      // the lounge surface — receptionists don't act on them.
+      const map = new Map<string, DeliveryGroup>();
+      for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
+        const lbl = (r.file_labels as { key?: string; label?: string } | null) ?? null;
+        const up = (r.uploader as { first_name?: string; last_name?: string } | null) ?? null;
+        const uploaderName = up
+          ? `${up.first_name ?? ''} ${up.last_name ?? ''}`.trim() || null
+          : null;
+        const file: PatientFileEntry = {
+          id: r.id as string,
+          patient_id: r.patient_id as string,
+          label_key: lbl?.key ?? null,
+          label_display: lbl?.label ?? null,
+          custom_label: (r.custom_label as string | null) ?? null,
+          file_url: r.file_url as string,
+          file_name: r.file_name as string,
+          file_size_bytes: (r.file_size_bytes as number | null) ?? null,
+          mime_type: (r.mime_type as string | null) ?? null,
+          status: r.status as string,
+          uploaded_at: r.uploaded_at as string,
+          uploaded_by_name: uploaderName,
+          version: (r.version as number | null) ?? null,
+          thumbnail_path: (r.thumbnail_path as string | null) ?? null,
+        };
+        const attachments = (r.attachments as Array<Record<string, unknown>>) ?? [];
+        for (const att of attachments) {
+          const c = (att.case as { case_reference?: string; case_type?: { label?: string } } | null) ?? null;
+          if (!c) continue;
+          const applianceLabel = c.case_type?.label || 'Unknown appliance';
+          const reviewStatus = (att.review_status as string | null) ?? null;
+          const attStatus = (att.attachment_status as string | null) ?? null;
+          const reviewer =
+            (att.reviewer as { first_name?: string; last_name?: string } | null) ?? null;
+          const reviewerName = reviewer
+            ? `${reviewer.first_name ?? ''} ${reviewer.last_name ?? ''}`.trim() || null
+            : null;
+          const entry: DeliveryFileEntry = {
+            id: att.id as string,
+            caseRef: c.case_reference ?? null,
+            reviewStatus,
+            reviewedAt: (att.reviewed_at as string | null) ?? null,
+            reviewerName,
+            rejectionNote:
+              (att.rejection_note as string | null) ?? (att.review_note as string | null) ?? null,
+            file,
+          };
+          let g = map.get(applianceLabel);
+          if (!g) {
+            g = { applianceLabel, accepted: [], rejected: [] };
+            map.set(applianceLabel, g);
+          }
+          if (reviewStatus === 'accepted' || attStatus === 'current') {
+            g.accepted.push(entry);
+          } else if (reviewStatus === 'rejected' || attStatus === 'rejected') {
+            g.rejected.push(entry);
+          }
+        }
+      }
+      const sortByReviewedDesc = (a: DeliveryFileEntry, b: DeliveryFileEntry) =>
+        (b.reviewedAt ?? '').localeCompare(a.reviewedAt ?? '');
+      for (const g of map.values()) {
+        g.accepted.sort(sortByReviewedDesc);
+        g.rejected.sort(sortByReviewedDesc);
+      }
+      const sorted = [...map.values()].sort((a, b) =>
+        a.applianceLabel.localeCompare(b.applianceLabel)
+      );
+      setGroups(sorted);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId, tick]);
+
+  return { groups, loading, error, refresh };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Walk-in appointments table — every visit this patient has had at this
 // clinic. Joined to lng_appointments for the LWO ref / service / status
 // where available.

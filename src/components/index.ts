@@ -70,3 +70,5 @@ export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
 export type { CollapsibleCardProps } from './CollapsibleCard/CollapsibleCard.tsx';
 
 export { PatientFilesGrid } from './PatientFilesGrid/PatientFilesGrid.tsx';
+
+export { FinalDeliveries } from './FinalDeliveries/FinalDeliveries.tsx';
