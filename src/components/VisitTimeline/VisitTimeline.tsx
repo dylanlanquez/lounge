@@ -7,7 +7,7 @@ import {
   ShoppingBag,
   UserCheck,
 } from 'lucide-react';
-import { CollapsibleCard } from '../CollapsibleCard/CollapsibleCard.tsx';
+import { Card } from '../Card/Card.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { theme } from '../../theme/index.ts';
 import {
@@ -16,15 +16,18 @@ import {
 } from '../../lib/queries/visitTimeline.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VisitTimeline — vertical audit trail rendered as a CollapsibleCard
-// on the visit page. Stripe-Dashboard timeline pattern: each event
-// gets a small icon dot on the left + a connector line, with the
-// title and detail aligned to the right of the line.
+// VisitTimeline — the visit page's audit trail. Always-visible card,
+// not collapsed behind a toggle: this surface IS the receptionist's
+// reference for what's happened on the visit, and a chevron-to-
+// reveal pattern would treat it as ancillary detail when it isn't.
 //
-// Empty state: a single "No events yet." line. Loading: three
-// skeleton rows. Errors render as a quiet inline message; unlike a
-// payment or upload, a missing timeline is non-fatal — the rest of
-// the visit page still works.
+// Each row:
+//   • icon dot on the left, connected by a vertical line to the next
+//   • title (bold) on the right
+//   • detail line (muted) summarising the event's facts
+//   • optional "by Dylan Lane" suffix when the source row carries a
+//     staff actor (lng_visits.receptionist_id, lng_payments.taken_by,
+//     lng_waiver_signatures.witnessed_by, patient_events.actor_account_id)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface VisitTimelineProps {
@@ -41,11 +44,15 @@ export function VisitTimeline({ visitId }: VisitTimelineProps) {
   }, [loading, error, events.length]);
 
   return (
-    <CollapsibleCard
-      icon={<Flag size={18} />}
-      title="Timeline"
-      meta={meta}
-    >
+    <Card padding="lg">
+      <Header meta={meta} />
+      <div
+        style={{
+          height: 1,
+          background: theme.color.border,
+          margin: `${theme.space[4]}px 0 ${theme.space[5]}px`,
+        }}
+      />
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
           <Skeleton height={48} radius={12} />
@@ -87,7 +94,52 @@ export function VisitTimeline({ visitId }: VisitTimelineProps) {
           })}
         </ol>
       )}
-    </CollapsibleCard>
+    </Card>
+  );
+}
+
+function Header({ meta }: { meta: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          minWidth: 0,
+        }}
+      >
+        <Flag size={18} aria-hidden />
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+          }}
+        >
+          Timeline
+        </h2>
+      </span>
+      <span
+        style={{
+          color: theme.color.inkMuted,
+          fontSize: theme.type.size.sm,
+          fontVariantNumeric: 'tabular-nums',
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        {meta}
+      </span>
+    </div>
   );
 }
 
@@ -166,7 +218,7 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             {relativeTimestamp(event.timestamp)}
           </span>
         </div>
-        {event.detail ? (
+        {event.detail || event.actor ? (
           <p
             style={{
               margin: `${theme.space[1]}px 0 0`,
@@ -176,6 +228,12 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             }}
           >
             {event.detail}
+            {event.detail && event.actor ? (
+              <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
+            ) : null}
+            {event.actor ? (
+              <span style={{ color: theme.color.inkSubtle }}>by {event.actor}</span>
+            ) : null}
           </p>
         ) : null}
       </div>
