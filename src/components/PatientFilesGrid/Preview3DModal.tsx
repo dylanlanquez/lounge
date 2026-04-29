@@ -54,9 +54,9 @@ interface ViewportSettings {
 }
 
 const DEFAULT_SETTINGS: ViewportSettings = {
-  background: 'dark',
+  background: 'studio',
   customColor: '',
-  meshColor: '#6d9dc5',
+  meshColor: '#ffffff',
   intensity: 0.85,
   keyDirection: 'front',
 };
@@ -164,22 +164,42 @@ export function Preview3DModal({
       role="dialog"
       aria-modal="true"
       aria-label={file.file_name}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       style={{
         position: 'fixed',
         inset: 0,
         zIndex: 200,
-        overflow: 'hidden',
-        background: '#000',
+        background: 'rgba(10, 24, 48, 0.40)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
       }}
     >
-      <PreviewBackground
-        variant={settings.background}
-        customColor={settings.customColor || null}
-        filename={file.file_name}
-      />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          width: 'min(1200px, 100%)',
+          height: 'min(800px, 100%)',
+          borderRadius: 16,
+          overflow: 'hidden',
+          boxShadow: '0 24px 80px -16px rgba(0, 0, 0, 0.55)',
+          background: '#000',
+        }}
+      >
+        <PreviewBackground
+          variant={settings.background}
+          customColor={settings.customColor || null}
+          filename={file.file_name}
+        />
 
-      <div style={{ position: 'absolute', inset: 0, zIndex: 2 }}>
-        <ModelViewer
+        <div style={{ position: 'absolute', inset: 0, zIndex: 2 }}>
+          <ModelViewer
           url={fileUrl}
           ext={ext}
           meshColor={settings.meshColor}
@@ -271,6 +291,7 @@ export function Preview3DModal({
           Drag to rotate · Scroll to zoom · Right click to pan
         </div>
       ) : null}
+      </div>
     </div>
   );
 }
