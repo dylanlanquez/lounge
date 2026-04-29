@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, ChevronLeft, ChevronRight, Download, FileSignature, Info, Layers, Pencil, Printer, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Info, Layers, Pencil, Printer, ShieldAlert, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import {
   BeforeAfterGallery,
   Breadcrumb,
@@ -1065,6 +1065,18 @@ function SignedWaiversHistory({
   isMobile: boolean;
 }) {
   const { rows, loading, error } = useSignedWaivers(patientId);
+  const { sections } = useWaiverSections();
+  // Map section_key → the live current version. Used by the table to
+  // decide whether each row's version chip should render green (this
+  // signature is at the published terms) or muted (the patient signed
+  // an earlier version and re-sign would be required).
+  const currentByKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of sections) {
+      if (s.active) m.set(s.key, s.version);
+    }
+    return m;
+  }, [sections]);
   const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
 
   return (
@@ -1105,12 +1117,20 @@ function SignedWaiversHistory({
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {pager.visible.map((r) => (
                 <li key={r.id}>
-                  <SignedWaiverCard row={r} patientName={patientName} />
+                  <SignedWaiverCard
+                    row={r}
+                    patientName={patientName}
+                    isCurrent={currentByKey.get(r.section_key) === r.section_version}
+                  />
                 </li>
               ))}
             </ul>
           ) : (
-            <SignedWaiverTable rows={pager.visible} patientName={patientName} />
+            <SignedWaiverTable
+              rows={pager.visible}
+              patientName={patientName}
+              currentByKey={currentByKey}
+            />
           )}
           <ListPager
             page={pager.page}
@@ -1127,9 +1147,11 @@ function SignedWaiversHistory({
 function SignedWaiverTable({
   rows,
   patientName,
+  currentByKey,
 }: {
   rows: SignedWaiverRow[];
   patientName: string;
+  currentByKey: Map<string, string>;
 }) {
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -1159,9 +1181,10 @@ function SignedWaiverTable({
                 </span>
               </td>
               <td style={tableCellStyle}>
-                <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                  {r.section_version}
-                </code>
+                <VersionPill
+                  version={r.section_version}
+                  isCurrent={currentByKey.get(r.section_key) === r.section_version}
+                />
               </td>
               <td style={tableCellStyle}>{formatLongDateTime(r.signed_at)}</td>
               <td style={tableCellStyle}>
@@ -1178,7 +1201,15 @@ function SignedWaiverTable({
   );
 }
 
-function SignedWaiverCard({ row, patientName }: { row: SignedWaiverRow; patientName: string }) {
+function SignedWaiverCard({
+  row,
+  patientName,
+  isCurrent,
+}: {
+  row: SignedWaiverRow;
+  patientName: string;
+  isCurrent: boolean;
+}) {
   return (
     <div
       style={{
@@ -1191,13 +1222,11 @@ function SignedWaiverCard({ row, patientName }: { row: SignedWaiverRow; patientN
         gap: theme.space[2],
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[2] }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[2] }}>
         <span style={{ fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
           {row.section_title ?? row.section_key}
         </span>
-        <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-          {row.section_version}
-        </code>
+        <VersionPill version={row.section_version} isCurrent={isCurrent} />
       </div>
       <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
         Signed {formatLongDateTime(row.signed_at)}
@@ -1207,6 +1236,41 @@ function SignedWaiverCard({ row, patientName }: { row: SignedWaiverRow; patientN
         <SignatureActions row={row} patientName={patientName} />
       </div>
     </div>
+  );
+}
+
+// Tiny pill that flips green-with-tick when the signed version matches
+// the section's published version. Muted code-style otherwise so older
+// signatures still print the version legibly without competing with
+// the live ones.
+function VersionPill({ version, isCurrent }: { version: string; isCurrent: boolean }) {
+  if (!isCurrent) {
+    return (
+      <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums' }}>
+        {version}
+      </code>
+    );
+  }
+  return (
+    <span
+      title="Signed at the current published version"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: `2px ${theme.space[2]}px`,
+        borderRadius: theme.radius.pill,
+        background: theme.color.accentBg,
+        color: theme.color.accent,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        fontVariantNumeric: 'tabular-nums',
+        border: `1px solid ${theme.color.accent}`,
+      }}
+    >
+      <Check size={12} strokeWidth={3} aria-hidden />
+      {version}
+    </span>
   );
 }
 
