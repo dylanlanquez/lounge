@@ -962,19 +962,6 @@ function ServiceStep({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
-      <h1
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.xxl,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.tight,
-          color: theme.color.ink,
-          lineHeight: 1.1,
-        }}
-      >
-        Service details
-      </h1>
-
       {mode === 'walk_in' ? (
         <Section title="Service type" sub="Pick what's being worked on today.">
           <div
