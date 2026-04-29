@@ -572,26 +572,27 @@ function WaiverRow({
   let icon;
   let statusText: string;
   let statusColor: string;
-  // Signed rows weight semibold so they pop against the rest of the
-  // list — receptionist's eye lands on what's done immediately. The
-  // pending / stale rows stay at medium so they read as quieter
-  // outstanding items rather than competing for attention.
+  // Signed rows render bold (700) and pending / stale fall back to
+  // regular (400). The 600 vs 500 split before was too subtle on iOS
+  // Safari — Inter's mid-weights are close in stroke. Pulling them
+  // three steps apart makes the receptionist's eye land on the
+  // signed rows immediately.
   let statusWeight: number;
   if (state === 'current') {
     icon = <ShieldCheck size={18} color={theme.color.accent} aria-hidden />;
     statusText = sig ? `Signed ${formatShortDate(sig.signed_at)}` : 'Signed';
     statusColor = theme.color.accent;
-    statusWeight = theme.type.weight.semibold;
+    statusWeight = theme.type.weight.bold;
   } else if (state === 'stale') {
     icon = <ShieldAlert size={18} color={theme.color.warn} aria-hidden />;
     statusText = 'Re-sign needed';
     statusColor = theme.color.warn;
-    statusWeight = theme.type.weight.medium;
+    statusWeight = theme.type.weight.regular;
   } else {
     icon = <Shield size={18} color={theme.color.inkSubtle} aria-hidden />;
     statusText = 'Not signed';
     statusColor = theme.color.inkSubtle;
-    statusWeight = theme.type.weight.medium;
+    statusWeight = theme.type.weight.regular;
   }
 
   return (
