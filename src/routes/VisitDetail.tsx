@@ -206,7 +206,16 @@ export function VisitDetail() {
                     letterSpacing: theme.type.tracking.tight,
                   }}
                 >
-                  {patient ? patientFullName(patient) : 'Patient'}
+                  {/* Title reads as "Ewa Deb's Appointment" so staff
+                      glancing at the page know exactly what they're
+                      looking at. Falls back to plain "Appointment"
+                      when the patient row hasn't resolved or the name
+                      is blank — saves us rendering "'s Appointment"
+                      with nothing in front. */}
+                  {(() => {
+                    const name = patient ? patientFullName(patient) : '';
+                    return name ? `${name}'s Appointment` : 'Appointment';
+                  })()}
                 </h1>
                 {patient ? (
                   <Button
