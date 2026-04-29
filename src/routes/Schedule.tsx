@@ -255,7 +255,6 @@ export function Schedule() {
             <ChevronLeft size={20} />
           </IconNavButton>
           <WeekStrip
-            anchorIso={selectedDate}
             selectedIso={selectedDate}
             todayIso={todayIso}
             counts={weekCounts.counts}
