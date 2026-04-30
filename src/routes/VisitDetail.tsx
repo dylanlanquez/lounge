@@ -923,40 +923,40 @@ export function VisitDetail() {
             </Card>
             </div>
 
-            {items.length > 0 || isUnsuitable ? (
-              // Right-aligned row: Mark unsuitable, tech note, Print
-              // LWO, Take payment. Mark unsuitable is a visible CTA
-              // for the heavy "patient won't proceed" decision; the
-              // per-line trash icon stays for granular fixes (wrong
-              // product, patient changed mind on one item). When the
-              // visit is unsuitable, the secondaries dim and Take
-              // payment becomes Reverse.
-              <div
-                style={{
-                  marginTop: theme.space[6],
-                  display: 'flex',
-                  gap: theme.space[2],
-                  justifyContent: 'flex-end',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                }}
-              >
-                {canEndEarly ? (
-                  <Button variant="tertiary" onClick={openEndEarly}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <Ban size={16} aria-hidden />
-                      End visit early
-                    </span>
-                  </Button>
-                ) : null}
-                <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-                  <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <StickyNote size={16} aria-hidden />
-                      {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
-                    </span>
-                  </Button>
-                </span>
+            {/* Action row is always visible when the visit exists.
+                Each button decides for itself whether it's relevant:
+                - End visit early shows whenever the visit is active,
+                  including on an empty cart (key exit ramp).
+                - Tech note is always available.
+                - Print LWO / Take payment only render with items.
+                - Resume replaces Take payment when terminated. */}
+            <div
+              style={{
+                marginTop: theme.space[6],
+                display: 'flex',
+                gap: theme.space[2],
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
+              {canEndEarly ? (
+                <Button variant="tertiary" onClick={openEndEarly}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <Ban size={16} aria-hidden />
+                    End visit early
+                  </span>
+                </Button>
+              ) : null}
+              <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
+                <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <StickyNote size={16} aria-hidden />
+                    {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
+                  </span>
+                </Button>
+              </span>
+              {items.length > 0 ? (
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
                   <Button
                     variant="secondary"
@@ -974,38 +974,38 @@ export function VisitDetail() {
                     </span>
                   </Button>
                 </span>
-                {isUnsuitable ? (
-                  <Button variant="primary" onClick={submitReverseUnsuitable} loading={reverseBusy}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <RotateCcw size={16} aria-hidden />
-                      Resume visit
-                    </span>
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    showArrow
-                    disabled={cartLocked}
-                    onClick={() =>
-                      navigate(`/visit/${visit.id}/pay`, {
-                        state: {
-                          from: 'visit',
-                          visitId: visit.id,
-                          visitOpenedAt: visit.opened_at,
-                          // Pass the visit's own entry through so
-                          // Pay's breadcrumb can render the full
-                          // chain and the visit-link can pop back
-                          // with the right state.
-                          visitEntry: location.state,
-                        },
-                      })
-                    }
-                  >
-                    Take payment
-                  </Button>
-                )}
-              </div>
-            ) : null}
+              ) : null}
+              {isUnsuitable ? (
+                <Button variant="primary" onClick={submitReverseUnsuitable} loading={reverseBusy}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <RotateCcw size={16} aria-hidden />
+                    Resume visit
+                  </span>
+                </Button>
+              ) : items.length > 0 ? (
+                <Button
+                  variant="primary"
+                  showArrow
+                  disabled={cartLocked}
+                  onClick={() =>
+                    navigate(`/visit/${visit.id}/pay`, {
+                      state: {
+                        from: 'visit',
+                        visitId: visit.id,
+                        visitOpenedAt: visit.opened_at,
+                        // Pass the visit's own entry through so
+                        // Pay's breadcrumb can render the full
+                        // chain and the visit-link can pop back
+                        // with the right state.
+                        visitEntry: location.state,
+                      },
+                    })
+                  }
+                >
+                  Take payment
+                </Button>
+              ) : null}
+            </div>
 
             {patient ? (
               <>
