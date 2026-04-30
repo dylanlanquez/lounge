@@ -74,6 +74,19 @@ export function PatientProfile() {
   const { data: scheduledAppointments, loading: apptsLoading } =
     usePatientScheduledAppointments(id);
   const { data: cases, loading: casesLoading } = usePatientCases(id);
+  // Signed-waiver history lives at the route level so the WaiverStatus
+  // card (top of the page) and the SignedWaiversHistory card (further
+  // down) can refresh in lockstep when the receptionist signs a section
+  // via the inline pencil. Realtime-postgres_changes alone wasn't enough
+  // here — the upper card got an imperative refresh on
+  // WaiverSheet.onAllSigned, so it updated instantly while the history
+  // table waited on the realtime stream and trailed behind.
+  const {
+    rows: signedWaiverRows,
+    loading: signedWaiversLoading,
+    error: signedWaiversError,
+    refresh: refreshSignedWaivers,
+  } = useSignedWaivers(id ?? null);
   // Which section's pencil opened the edit modal — drives which
   // fieldset the modal renders. null when closed.
   const [editSection, setEditSection] = useState<'profile' | 'care' | null>(null);
@@ -112,6 +125,7 @@ export function PatientProfile() {
                 user.email ??
                 'Staff'
               }
+              onSigned={refreshSignedWaivers}
             />
             <BeforeAfterGallery
               patient={patient}
@@ -149,6 +163,9 @@ export function PatientProfile() {
               patient={patient}
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
               isMobile={isMobile}
+              rows={signedWaiverRows}
+              loading={signedWaiversLoading}
+              error={signedWaiversError}
             />
           </div>
         )}
@@ -730,6 +747,7 @@ function WaiverStatus({
   patientId,
   patientName,
   staffName,
+  onSigned,
 }: {
   patientId: string;
   patientName: string;
@@ -738,6 +756,13 @@ function WaiverStatus({
   // route-level useAuth() instead of re-resolving here so a future
   // kiosk-mode parent can override it.
   staffName: string;
+  // Sibling-state hook on PatientProfile (the Signed waivers history
+  // table) needs to refresh in lockstep with this card whenever a
+  // section gets signed. Calling the parent's refresh imperatively
+  // sidesteps the realtime stream's variable lag — the user sees
+  // both surfaces update on the same paint as the WaiverSheet
+  // closes, the way the rest of the app behaves.
+  onSigned?: () => void;
 }) {
   const { sections, loading: sectionsLoading } = useWaiverSections();
   const { latest, loading: latestLoading, refresh } = usePatientWaiverState(patientId);
@@ -822,6 +847,7 @@ function WaiverStatus({
         onAllSigned={() => {
           setSigningSection(null);
           refresh();
+          onSigned?.();
         }}
       />
     </Card>
@@ -1701,12 +1727,20 @@ function SignedWaiversHistory({
   patient,
   patientName,
   isMobile,
+  rows,
+  loading,
+  error,
 }: {
   patient: PatientProfileRow;
   patientName: string;
   isMobile: boolean;
+  // Lifted up to PatientProfile so the inline-sign flow on
+  // WaiverStatus can refresh this list in the same tick it refreshes
+  // its own. See the useSignedWaivers call at the route level.
+  rows: SignedWaiverRow[];
+  loading: boolean;
+  error: string | null;
 }) {
-  const { rows, loading, error } = useSignedWaivers(patient.id);
   const { sections } = useWaiverSections();
   // Single dialog instance for the section. Selecting a row sets the
   // viewer's input; closing it clears the row. The dialog itself is
