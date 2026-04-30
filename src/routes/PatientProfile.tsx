@@ -1549,11 +1549,13 @@ function VisitStatusPill({ visit }: { visit: PatientVisitRow }) {
   const tone =
     visit.status === 'complete'
       ? 'complete'
-      : visit.status === 'cancelled' || visit.status === 'unsuitable'
-        ? 'cancelled'
-        : visit.status === 'in_progress'
-          ? 'in_progress'
-          : 'arrived';
+      : visit.status === 'unsuitable'
+        ? 'unsuitable'
+        : visit.status === 'cancelled'
+          ? 'cancelled'
+          : visit.status === 'in_progress'
+            ? 'in_progress'
+            : 'arrived';
   const label = humaniseVisitStatus(visit.status);
   return <StatusPill tone={tone} size="sm">{label}</StatusPill>;
 }
