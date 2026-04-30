@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ageBracketFor,
   aggregateBookingsVsWalkIns,
+  aggregateLifetimeValue,
   aggregateOverview,
   aggregatePatientReports,
+  aggregateServiceMix,
   outwardPostcode,
   type BookingsAppointment,
   type BookingsVisit,
@@ -11,6 +13,7 @@ import {
   type ReportsOverviewItem,
   type ReportsOverviewPayment,
   type ReportsOverviewVisit,
+  type ServiceMixItem,
 } from './reports.ts';
 import { makeCustomRange } from '../dateRange.ts';
 
@@ -744,5 +747,239 @@ describe('aggregatePatientReports', () => {
     expect(r.postcode_areas).toHaveLength(10);
     expect(r.postcode_other.count).toBe(4);
     expect(r.postcode_other.revenue_pence).toBe(4000);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// aggregateServiceMix
+// ────────────────────────────────────────────────────────────────────────────
+
+const serviceItem = (over: Partial<ServiceMixItem>): ServiceMixItem => ({
+  id: 'i',
+  name: 'Item',
+  catalogue_id: null,
+  line_total_pence: 1000,
+  unit_price_pence: 1000,
+  discount_pence: 0,
+  quantity: 1,
+  cart: {
+    id: 'c1',
+    status: 'paid',
+    discount_pence: 0,
+    visit: { id: 'v1', opened_at: '2026-04-15T10:00:00Z' },
+  },
+  catalogue: { service_type: 'denture_repair', category: 'Repairs' },
+  ...over,
+});
+
+describe('aggregateServiceMix', () => {
+  it('returns empty totals on empty input', () => {
+    const r = aggregateServiceMix([]);
+    expect(r.total_items).toBe(0);
+    expect(r.total_revenue_pence).toBe(0);
+    expect(r.category_distribution).toEqual([]);
+    expect(r.top_lines).toEqual([]);
+  });
+
+  it('groups by category, falling back to humanised service_type', () => {
+    const r = aggregateServiceMix([
+      serviceItem({ id: 'i1', catalogue: { service_type: null, category: 'Custom Cat' }, line_total_pence: 1000 }),
+      serviceItem({ id: 'i2', catalogue: { service_type: 'click_in_veneers', category: null }, line_total_pence: 2000 }),
+      serviceItem({ id: 'i3', catalogue: null, line_total_pence: 500 }), // no catalogue → "Other"
+    ]);
+    const cats = r.category_distribution.map((c) => c.category);
+    expect(cats).toContain('Custom Cat');
+    expect(cats).toContain('Click-in veneers');
+    expect(cats).toContain('Other');
+  });
+
+  it('sorts categories by revenue desc', () => {
+    const r = aggregateServiceMix([
+      serviceItem({ id: 'i1', catalogue: { service_type: null, category: 'A' }, line_total_pence: 100 }),
+      serviceItem({ id: 'i2', catalogue: { service_type: null, category: 'B' }, line_total_pence: 1000 }),
+    ]);
+    expect(r.category_distribution[0]?.category).toBe('B');
+  });
+
+  it('computes per-line discount_share (line OR cart-level discount counts)', () => {
+    const r = aggregateServiceMix([
+      serviceItem({
+        id: 'i1',
+        catalogue_id: 'cat1',
+        name: 'Click-in veneers',
+        cart: { id: 'c1', status: 'paid', discount_pence: 5000, visit: { id: 'v', opened_at: '2026-04-15T09:00:00Z' } },
+      }),
+      serviceItem({
+        id: 'i2',
+        catalogue_id: 'cat1',
+        name: 'Click-in veneers',
+        cart: { id: 'c2', status: 'paid', discount_pence: 0, visit: { id: 'v', opened_at: '2026-04-15T10:00:00Z' } },
+      }),
+    ]);
+    const veneers = r.top_lines.find((l) => l.catalogue_id === 'cat1');
+    expect(veneers?.discount_share).toBe(0.5);
+  });
+
+  it('caps top lines at 10', () => {
+    const items: ServiceMixItem[] = [];
+    for (let i = 0; i < 14; i += 1) {
+      items.push(
+        serviceItem({
+          id: `i${i}`,
+          catalogue_id: `cat${i}`,
+          name: `Item ${i}`,
+          line_total_pence: (14 - i) * 100,
+        }),
+      );
+    }
+    const r = aggregateServiceMix(items);
+    expect(r.top_lines).toHaveLength(10);
+    expect(r.top_lines[0]?.name).toBe('Item 0'); // largest revenue
+  });
+
+  it('skips items whose joined cart visit is missing (defensive)', () => {
+    const r = aggregateServiceMix([
+      serviceItem({ id: 'i1', cart: { id: 'c1', status: 'paid', discount_pence: 0, visit: null } }),
+      serviceItem({ id: 'i2', cart: null }),
+    ]);
+    expect(r.total_items).toBe(0);
+    expect(r.category_distribution).toEqual([]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// aggregateLifetimeValue
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('aggregateLifetimeValue', () => {
+  const ltvVisit = (
+    over: {
+      id?: string;
+      patient_id?: string;
+      opened_at?: string;
+      paid?: number; // shorthand: total_pence on a paid cart
+      open?: boolean; // shorthand: total_pence on an open cart (excluded from spend)
+      patientName?: { first?: string | null; last?: string | null };
+    } = {},
+  ) => {
+    const cart = over.open
+      ? { id: 'c', status: 'open' as const, total_pence: 99999 }
+      : { id: 'c', status: 'paid' as const, total_pence: over.paid ?? 0 };
+    return {
+      id: over.id ?? 'v',
+      patient_id: over.patient_id ?? 'p1',
+      opened_at: over.opened_at ?? '2026-04-15T10:00:00Z',
+      patient: {
+        id: over.patient_id ?? 'p1',
+        first_name: over.patientName?.first ?? 'Beth',
+        last_name: over.patientName?.last ?? 'Mackay',
+        name: null,
+      },
+      cart,
+    };
+  };
+
+  it('returns the empty shape when cohort is empty', () => {
+    const r = aggregateLifetimeValue([], []);
+    expect(r.cohort_size).toBe(0);
+    expect(r.cohort_revenue_pence).toBe(0);
+    expect(r.median_days_between_visits).toBeNull();
+    expect(r.top_spenders).toEqual([]);
+  });
+
+  it('only counts visits whose patient is in the cohort', () => {
+    const r = aggregateLifetimeValue(
+      ['p1'],
+      [
+        ltvVisit({ patient_id: 'p1', paid: 5000 }),
+        ltvVisit({ patient_id: 'p2', paid: 9999 }), // not in cohort
+      ],
+    );
+    expect(r.cohort_size).toBe(1);
+    expect(r.cohort_revenue_pence).toBe(5000);
+  });
+
+  it('sums all-time spend per cohort patient', () => {
+    const r = aggregateLifetimeValue(
+      ['p1'],
+      [
+        ltvVisit({ id: 'v1', patient_id: 'p1', opened_at: '2024-01-01T10:00:00Z', paid: 1000 }),
+        ltvVisit({ id: 'v2', patient_id: 'p1', opened_at: '2025-01-01T10:00:00Z', paid: 2000 }),
+        ltvVisit({ id: 'v3', patient_id: 'p1', opened_at: '2026-04-15T10:00:00Z', paid: 3000 }),
+      ],
+    );
+    expect(r.cohort_revenue_pence).toBe(6000);
+    expect(r.top_spenders[0]?.all_time_spend_pence).toBe(6000);
+    expect(r.top_spenders[0]?.visits).toBe(3);
+  });
+
+  it('excludes open carts from all_time_spend (paid only)', () => {
+    const r = aggregateLifetimeValue(
+      ['p1'],
+      [
+        ltvVisit({ id: 'v1', patient_id: 'p1', paid: 5000 }),
+        ltvVisit({ id: 'v2', patient_id: 'p1', open: true }),
+      ],
+    );
+    expect(r.cohort_revenue_pence).toBe(5000);
+    expect(r.top_spenders[0]?.visits).toBe(2); // visit count includes both
+  });
+
+  it('computes median days-between-visits across patients with 2+ visits', () => {
+    // p1: visits 1 + 30 + 31 = 30 days, 1 day → gaps [30, 1]
+    // p2: visits 1 + 60 = 60 days → gap [60]
+    // pooled: [30, 1, 60] → sorted [1, 30, 60] → median 30
+    const r = aggregateLifetimeValue(
+      ['p1', 'p2'],
+      [
+        ltvVisit({ id: 'a1', patient_id: 'p1', opened_at: '2026-01-01T10:00:00Z' }),
+        ltvVisit({ id: 'a2', patient_id: 'p1', opened_at: '2026-01-31T10:00:00Z' }),
+        ltvVisit({ id: 'a3', patient_id: 'p1', opened_at: '2026-02-01T10:00:00Z' }),
+        ltvVisit({ id: 'b1', patient_id: 'p2', opened_at: '2026-01-01T10:00:00Z' }),
+        ltvVisit({ id: 'b2', patient_id: 'p2', opened_at: '2026-03-02T10:00:00Z' }),
+      ],
+    );
+    expect(r.median_days_between_visits).toBe(30);
+  });
+
+  it('classifies repeat-visit distribution correctly', () => {
+    const r = aggregateLifetimeValue(
+      ['p1', 'p2', 'p3', 'p4'],
+      [
+        // p1: 1 visit
+        ltvVisit({ id: 'a', patient_id: 'p1' }),
+        // p2: 3 visits
+        ltvVisit({ id: 'b1', patient_id: 'p2', opened_at: '2026-01-01' }),
+        ltvVisit({ id: 'b2', patient_id: 'p2', opened_at: '2026-02-01' }),
+        ltvVisit({ id: 'b3', patient_id: 'p2', opened_at: '2026-03-01' }),
+        // p3: 5 visits → 4-6 bucket
+        ltvVisit({ id: 'c1', patient_id: 'p3', opened_at: '2026-01-01' }),
+        ltvVisit({ id: 'c2', patient_id: 'p3', opened_at: '2026-02-01' }),
+        ltvVisit({ id: 'c3', patient_id: 'p3', opened_at: '2026-03-01' }),
+        ltvVisit({ id: 'c4', patient_id: 'p3', opened_at: '2026-04-01' }),
+        ltvVisit({ id: 'c5', patient_id: 'p3', opened_at: '2026-05-01' }),
+        // p4: 8 visits → 7+ bucket
+        ...Array.from({ length: 8 }, (_, i) =>
+          ltvVisit({ id: `d${i}`, patient_id: 'p4', opened_at: `2026-0${i + 1}-01T10:00:00Z` }),
+        ),
+      ],
+    );
+    const map = Object.fromEntries(r.repeat_distribution.map((b) => [b.bucket, b.patients]));
+    expect(map['1 visit']).toBe(1);
+    expect(map['2–3']).toBe(1);
+    expect(map['4–6']).toBe(1);
+    expect(map['7+']).toBe(1);
+  });
+
+  it('top_spenders excludes patients with zero spend', () => {
+    const r = aggregateLifetimeValue(
+      ['p1', 'p2'],
+      [
+        ltvVisit({ id: 'a', patient_id: 'p1', open: true }),
+        ltvVisit({ id: 'b', patient_id: 'p2', paid: 1000 }),
+      ],
+    );
+    expect(r.top_spenders).toHaveLength(1);
+    expect(r.top_spenders[0]?.patient_id).toBe('p2');
   });
 });

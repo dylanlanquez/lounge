@@ -783,6 +783,473 @@ export function useReportsPatients(range: DateRange): PatientReportsResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Service mix
+//
+// Slices catalogue line items by category + service_type and surfaces
+// per-service revenue, count, average price, and the share of carts
+// where that service was discounted (helpful for spotting services
+// that frequently need a price adjustment).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ServiceMixItem {
+  id: string;
+  name: string;
+  catalogue_id: string | null;
+  line_total_pence: number;
+  unit_price_pence: number;
+  discount_pence: number; // line-level discount
+  quantity: number;
+  cart:
+    | { id: string; status: string; discount_pence: number | null; visit: { id: string; opened_at: string } | { id: string; opened_at: string }[] | null }
+    | { id: string; status: string; discount_pence: number | null; visit: { id: string; opened_at: string } | { id: string; opened_at: string }[] | null }[]
+    | null;
+  catalogue:
+    | { service_type: string | null; category: string | null }
+    | { service_type: string | null; category: string | null }[]
+    | null;
+}
+
+export interface ServiceCategoryEntry {
+  // Group key: catalogue.category, falling back to catalogue.service_type,
+  // falling back to "Other".
+  category: string;
+  count: number;
+  revenue_pence: number;
+}
+
+export interface ServiceLineEntry {
+  catalogue_id: string | null;
+  name: string;
+  count: number;
+  revenue_pence: number;
+  avg_price_pence: number;
+  discount_share: number; // 0..1 fraction of carts where the line had a discount
+}
+
+export interface ServiceMixData {
+  total_items: number;
+  total_revenue_pence: number;
+  category_distribution: ServiceCategoryEntry[];
+  top_lines: ServiceLineEntry[]; // top 10 individual catalogue items by revenue
+}
+
+export function aggregateServiceMix(items: ServiceMixItem[]): ServiceMixData {
+  const categoryAgg = new Map<string, ServiceCategoryEntry>();
+  const lineAgg = new Map<
+    string,
+    {
+      catalogue_id: string | null;
+      name: string;
+      count: number;
+      revenue_pence: number;
+      unit_prices: number[];
+      carts_with_discount: number;
+      total_carts: number;
+    }
+  >();
+
+  let total_items = 0;
+  let total_revenue_pence = 0;
+
+  for (const it of items) {
+    const cat = pickOne(it.catalogue);
+    const cart = pickOne(it.cart);
+    if (!cart || !pickOne(cart.visit)) continue;
+    const groupKey =
+      (cat?.category && cat.category.trim().length > 0 && cat.category.trim()) ||
+      (cat?.service_type && humaniseServiceType(cat.service_type)) ||
+      'Other';
+    total_items += it.quantity;
+    total_revenue_pence += it.line_total_pence;
+
+    const prior = categoryAgg.get(groupKey);
+    if (prior) {
+      prior.count += it.quantity;
+      prior.revenue_pence += it.line_total_pence;
+    } else {
+      categoryAgg.set(groupKey, {
+        category: groupKey,
+        count: it.quantity,
+        revenue_pence: it.line_total_pence,
+      });
+    }
+
+    const lineKey = it.catalogue_id ?? `__ad_hoc__${it.name}`;
+    const priorLine = lineAgg.get(lineKey);
+    const hadDiscount = it.discount_pence > 0 || (cart.discount_pence ?? 0) > 0;
+    if (priorLine) {
+      priorLine.count += it.quantity;
+      priorLine.revenue_pence += it.line_total_pence;
+      priorLine.unit_prices.push(it.unit_price_pence);
+      priorLine.total_carts += 1;
+      if (hadDiscount) priorLine.carts_with_discount += 1;
+    } else {
+      lineAgg.set(lineKey, {
+        catalogue_id: it.catalogue_id,
+        name: it.name,
+        count: it.quantity,
+        revenue_pence: it.line_total_pence,
+        unit_prices: [it.unit_price_pence],
+        carts_with_discount: hadDiscount ? 1 : 0,
+        total_carts: 1,
+      });
+    }
+  }
+
+  const category_distribution = Array.from(categoryAgg.values()).sort(
+    (a, b) => b.revenue_pence - a.revenue_pence,
+  );
+
+  const top_lines = Array.from(lineAgg.values())
+    .map((l) => ({
+      catalogue_id: l.catalogue_id,
+      name: l.name,
+      count: l.count,
+      revenue_pence: l.revenue_pence,
+      avg_price_pence:
+        l.unit_prices.length > 0
+          ? Math.round(l.unit_prices.reduce((s, n) => s + n, 0) / l.unit_prices.length)
+          : 0,
+      discount_share: l.total_carts > 0 ? l.carts_with_discount / l.total_carts : 0,
+    }))
+    .sort((a, b) => b.revenue_pence - a.revenue_pence)
+    .slice(0, 10);
+
+  return { total_items, total_revenue_pence, category_distribution, top_lines };
+}
+
+function humaniseServiceType(st: string): string {
+  switch (st) {
+    case 'denture_repair':
+      return 'Denture repair';
+    case 'click_in_veneers':
+      return 'Click-in veneers';
+    case 'same_day_appliance':
+      return 'Same-day appliance';
+    case 'impression_appointment':
+      return 'Impression';
+    default:
+      return st.replace(/_/g, ' ');
+  }
+}
+
+interface ServiceMixResult {
+  data: ServiceMixData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useReportsServices(range: DateRange): ServiceMixResult {
+  const [data, setData] = useState<ServiceMixData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const itemsRes = await supabase
+          .from('lng_cart_items')
+          .select(
+            `id, name, catalogue_id, line_total_pence, unit_price_pence, discount_pence, quantity,
+             cart:lng_carts!inner ( id, status, discount_pence, visit:lng_visits!inner ( id, opened_at ) ),
+             catalogue:lwo_catalogue ( service_type, category )`,
+          )
+          .is('removed_at', null)
+          .gte('cart.visit.opened_at', fromIso)
+          .lte('cart.visit.opened_at', toIso);
+        if (cancelled) return;
+        if (itemsRes.error) throw new Error(`service_mix: ${itemsRes.error.message}`);
+        const items = (itemsRes.data ?? []) as ServiceMixItem[];
+        const out = aggregateServiceMix(items);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load service mix';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.service_mix',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Patient lifetime value
+//
+// "What's the patient base for this period worth all-time, and what
+// does their engagement loop look like?" Two queries:
+//
+//   1. lng_visits in range — picks the patient population.
+//   2. For those patients, all-time succeeded payments + visit
+//      counts.
+//
+// Surfaces top spenders, repeat-visit distribution, days-between-
+// visits as a median.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LifetimeValuePatientRow {
+  patient_id: string;
+  display_name: string;
+  visits: number;
+  all_time_spend_pence: number;
+  first_visit: string | null;
+  last_visit: string | null;
+}
+
+export interface RepeatBucket {
+  bucket: string; // "1 visit", "2-3", "4-6", "7+"
+  patients: number;
+}
+
+export interface LifetimeValueData {
+  cohort_size: number;
+  cohort_revenue_pence: number;
+  median_days_between_visits: number | null;
+  repeat_distribution: RepeatBucket[];
+  top_spenders: LifetimeValuePatientRow[];
+}
+
+interface LtvCohortVisit {
+  patient_id: string;
+}
+
+interface LtvAllTimeVisit {
+  id: string;
+  patient_id: string;
+  opened_at: string;
+  patient:
+    | { id: string; first_name: string | null; last_name: string | null; name: string | null }
+    | { id: string; first_name: string | null; last_name: string | null; name: string | null }[]
+    | null;
+  cart:
+    | { id: string; status: string; total_pence: number | null }
+    | { id: string; status: string; total_pence: number | null }[]
+    | null;
+}
+
+export function aggregateLifetimeValue(
+  cohortPatientIds: string[],
+  allTimeVisits: LtvAllTimeVisit[],
+): LifetimeValueData {
+  const cohort = new Set(cohortPatientIds);
+  const perPatient = new Map<
+    string,
+    {
+      patient_id: string;
+      display_name: string;
+      visits: number;
+      all_time_spend_pence: number;
+      visit_dates: number[]; // ms timestamps for median-gap calc
+    }
+  >();
+  for (const v of allTimeVisits) {
+    if (!cohort.has(v.patient_id)) continue;
+    const p = pickOne(v.patient);
+    const cart = pickOne(v.cart);
+    const paid = cart && cart.status === 'paid' && typeof cart.total_pence === 'number'
+      ? cart.total_pence
+      : 0;
+    const display = composeDisplay(p);
+    const t = new Date(v.opened_at).getTime();
+    const prior = perPatient.get(v.patient_id);
+    if (prior) {
+      prior.visits += 1;
+      prior.all_time_spend_pence += paid;
+      prior.visit_dates.push(t);
+    } else {
+      perPatient.set(v.patient_id, {
+        patient_id: v.patient_id,
+        display_name: display,
+        visits: 1,
+        all_time_spend_pence: paid,
+        visit_dates: [t],
+      });
+    }
+  }
+
+  const patients = Array.from(perPatient.values());
+  const cohort_size = patients.length;
+  const cohort_revenue_pence = patients.reduce((s, p) => s + p.all_time_spend_pence, 0);
+
+  // Days-between-visits across every patient with 2+ visits. Pool
+  // all gaps then take the median — robust to outliers.
+  const allGaps: number[] = [];
+  for (const p of patients) {
+    if (p.visit_dates.length < 2) continue;
+    const sorted = [...p.visit_dates].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i += 1) {
+      const a = sorted[i - 1];
+      const b = sorted[i];
+      if (typeof a !== 'number' || typeof b !== 'number') continue;
+      allGaps.push((b - a) / (1000 * 60 * 60 * 24));
+    }
+  }
+  const median_days_between_visits = allGaps.length === 0 ? null : median(allGaps);
+
+  // Repeat-visit distribution buckets.
+  const buckets = [
+    { bucket: '1 visit', match: (n: number) => n === 1 },
+    { bucket: '2–3', match: (n: number) => n === 2 || n === 3 },
+    { bucket: '4–6', match: (n: number) => n >= 4 && n <= 6 },
+    { bucket: '7+', match: (n: number) => n >= 7 },
+  ];
+  const repeat_distribution: RepeatBucket[] = buckets.map((b) => ({
+    bucket: b.bucket,
+    patients: patients.filter((p) => b.match(p.visits)).length,
+  }));
+
+  const top_spenders = patients
+    .filter((p) => p.all_time_spend_pence > 0)
+    .map((p) => ({
+      patient_id: p.patient_id,
+      display_name: p.display_name,
+      visits: p.visits,
+      all_time_spend_pence: p.all_time_spend_pence,
+      first_visit: p.visit_dates.length > 0
+        ? new Date(Math.min(...p.visit_dates)).toISOString()
+        : null,
+      last_visit: p.visit_dates.length > 0
+        ? new Date(Math.max(...p.visit_dates)).toISOString()
+        : null,
+    }))
+    .sort((a, b) => b.all_time_spend_pence - a.all_time_spend_pence)
+    .slice(0, 20);
+
+  return {
+    cohort_size,
+    cohort_revenue_pence,
+    median_days_between_visits,
+    repeat_distribution,
+    top_spenders,
+  };
+}
+
+function composeDisplay(
+  p: { first_name: string | null; last_name: string | null; name: string | null } | null,
+): string {
+  if (!p) return 'Unknown patient';
+  const fn = p.first_name?.trim();
+  const ln = p.last_name?.trim();
+  if (fn && ln) return `${fn} ${ln}`;
+  return fn ?? ln ?? p.name?.trim() ?? 'Unknown patient';
+}
+
+function median(xs: number[]): number {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    const a = sorted[mid - 1];
+    const b = sorted[mid];
+    if (typeof a !== 'number' || typeof b !== 'number') return 0;
+    return (a + b) / 2;
+  }
+  const m = sorted[mid];
+  return typeof m === 'number' ? m : 0;
+}
+
+interface LifetimeValueResult {
+  data: LifetimeValueData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useReportsLifetimeValue(range: DateRange): LifetimeValueResult {
+  const [data, setData] = useState<LifetimeValueData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        // 1) Identify the cohort: patients with a visit in the range.
+        const cohortRes = await supabase
+          .from('lng_visits')
+          .select('patient_id')
+          .gte('opened_at', fromIso)
+          .lte('opened_at', toIso);
+        if (cancelled) return;
+        if (cohortRes.error) throw new Error(`cohort: ${cohortRes.error.message}`);
+        const cohortIds = Array.from(
+          new Set(
+            ((cohortRes.data ?? []) as LtvCohortVisit[]).map((r) => r.patient_id),
+          ),
+        );
+        if (cohortIds.length === 0) {
+          if (cancelled) return;
+          setData({
+            cohort_size: 0,
+            cohort_revenue_pence: 0,
+            median_days_between_visits: null,
+            repeat_distribution: [
+              { bucket: '1 visit', patients: 0 },
+              { bucket: '2–3', patients: 0 },
+              { bucket: '4–6', patients: 0 },
+              { bucket: '7+', patients: 0 },
+            ],
+            top_spenders: [],
+          });
+          setLoading(false);
+          return;
+        }
+        // 2) All-time visits for those patients (no time filter), so
+        //    we can compute their lifetime spend + visit cadence.
+        const allRes = await supabase
+          .from('lng_visits')
+          .select(
+            `id, patient_id, opened_at,
+             patient:patients!inner ( id, first_name, last_name, name ),
+             cart:lng_carts ( id, status, total_pence )`,
+          )
+          .in('patient_id', cohortIds);
+        if (cancelled) return;
+        if (allRes.error) throw new Error(`ltv: ${allRes.error.message}`);
+        const allVisits = (allRes.data ?? []) as LtvAllTimeVisit[];
+        const out = aggregateLifetimeValue(cohortIds, allVisits);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load lifetime value';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.lifetime_value',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function useReportsOverview(range: DateRange): OverviewResult {
   const [data, setData] = useState<ReportsOverview | null>(null);
