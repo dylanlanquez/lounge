@@ -13,6 +13,7 @@ import {
   Hash,
   Loader2,
   Plus,
+  Printer,
   ShoppingCart,
   UserPlus,
 } from 'lucide-react';
@@ -54,13 +55,14 @@ import {
   usePatientWaiverState,
   type WaiverSection,
 } from '../lib/queries/waiver.ts';
+import { printLwo, type PrintableLwoItem } from '../lib/printLwo.ts';
 
 export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { visit, patient, deposit, appointment, loading } = useVisitDetail(id);
+  const { visit, patient, deposit, appointment, receptionistName, loading } = useVisitDetail(id);
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
@@ -158,6 +160,38 @@ export function VisitDetail() {
       refresh();
     } finally {
       setBusyItem(null);
+    }
+  };
+
+  const handlePrintLwo = () => {
+    setError(null);
+    if (!visit || !patient) {
+      setError('Visit not loaded yet — try again in a moment.');
+      return;
+    }
+    if (!appointment?.appointment_ref) {
+      // The LAP ref is stamped at intake-submit (lng_appointments.appointment_ref
+      // for booked rows, lng_walk_ins.appointment_ref for walk-ins). If it
+      // isn't there yet the visit was opened without going through arrival
+      // intake — refuse to print rather than emit a label with a blank ref.
+      setError(
+        'No LAP reference on this visit. The lab work order can only print after arrival intake has stamped a reference.',
+      );
+      return;
+    }
+    try {
+      printLwo({
+        lapRef: appointment.appointment_ref,
+        arrivalType: visit.arrival_type === 'walk_in' ? 'WALK-IN' : 'PRE-BOOKED',
+        patientName: patientFullName(patient),
+        jobBox: appointment.jb_ref ? `JB${appointment.jb_ref}` : null,
+        staffName: receptionistName,
+        checkedInAt: visit.opened_at,
+        notes: visit.notes,
+        items: items.map((it) => buildPrintableItem(it)),
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not open the printable LWO.');
     }
   };
 
@@ -372,7 +406,23 @@ export function VisitDetail() {
             </Card>
 
             {items.length > 0 ? (
-              <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+              <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={handlePrintLwo}
+                  disabled={!appointment?.appointment_ref}
+                  title={
+                    appointment?.appointment_ref
+                      ? undefined
+                      : 'A LAP reference is stamped during arrival intake — open arrival before printing.'
+                  }
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <Printer size={18} aria-hidden />
+                    Print LWO
+                  </span>
+                </Button>
                 <Button
                   variant="primary"
                   size="lg"
@@ -1022,6 +1072,45 @@ function composeBannerBody(flag: ReturnType<typeof summariseWaiverFlag>): string
 // snapshot — arch / shade / notes / upgrades — so the receptionist
 // sees what was configured without opening the row. Upgrade prices
 // are already baked into unit_price_pence; this is name-only.
+// Map one cart line to the printable LWO item shape. Rules ported
+// 1:1 from Checkpoint's parseRepairNotes:
+//
+//   - service_type === 'denture_repair'  → category 'denture'.
+//     The Device column is literally "Denture"; the row's catalogue
+//     name (e.g. "Broken tooth on denture") goes in the Repair Type
+//     column. Lounge's catalogue rename moved this from "Broken
+//     tooth" so it reads on its own; the print stays in lockstep.
+//   - everything else                    → category 'appliance'.
+//     The Device column carries the catalogue name and Repair Type
+//     stays empty (the column itself is hidden when no row has one).
+//
+// Thickness is sourced from the per-line upgrades — the catalogue
+// upgrade names (e.g. "Thicker 1.5mm") carry their own millimetre
+// suffix, so we just pick the first one whose name ends in "mm".
+function buildPrintableItem(item: {
+  name: string;
+  service_type: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  shade: string | null;
+  quantity: number;
+  upgrades: { upgrade_name: string }[];
+}): PrintableLwoItem {
+  const isDenture = item.service_type === 'denture_repair';
+  const thicknessUpgrade = item.upgrades.find((u) => /\d+(?:\.\d+)?\s*mm/i.test(u.upgrade_name));
+  const thickness = thicknessUpgrade
+    ? thicknessUpgrade.upgrade_name.match(/\d+(?:\.\d+)?\s*mm/i)?.[0] ?? null
+    : null;
+  return {
+    qty: item.quantity,
+    device: isDenture ? 'Denture' : item.name,
+    repairType: isDenture ? item.name : '',
+    arch: item.arch,
+    shade: item.shade,
+    thickness,
+    category: isDenture ? 'denture' : 'appliance',
+  };
+}
+
 function cartItemSubtitle(item: {
   description: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
