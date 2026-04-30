@@ -28,13 +28,16 @@ Deno.serve(async (req) => {
   const auth = req.headers.get('authorization') ?? '';
   if (!auth.startsWith('Bearer ')) return j(401, { ok: false, error: 'Missing token' });
 
-  let body: { payment_id?: string; reason?: string };
+  let body: { payment_id?: string; reason?: string; approver_account_id?: string };
   try {
     body = await req.json();
   } catch {
     return j(400, { ok: false, error: 'Bad JSON' });
   }
   if (!body.payment_id) return j(400, { ok: false, error: 'payment_id required' });
+  if (!body.approver_account_id) {
+    return j(400, { ok: false, error: 'Manager approval is required to void a payment.' });
+  }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -48,6 +51,13 @@ Deno.serve(async (req) => {
   });
   const { data: meRow } = await userClient.rpc('auth_account_id');
   const refundedBy = (meRow as string | null) ?? null;
+
+  // 2-staff sign-off: approver must differ from the voider.
+  // Otherwise a lone cashier could record cash, pocket it, and
+  // self-approve a void. Hard-block.
+  if (refundedBy && body.approver_account_id === refundedBy) {
+    return j(403, { ok: false, error: 'Approver must be a different staff member.' });
+  }
 
   const { data: payment, error: pErr } = await supabase
     .from('lng_payments')
@@ -102,6 +112,7 @@ Deno.serve(async (req) => {
         patient_id: (visit as { patient_id: string }).patient_id,
         event_type: 'refund_issued',
         actor_account_id: refundedBy,
+        notes: body.reason ?? null,
         payload: {
           payment_id: payment.id,
           amount_pence: payment.amount_pence,
@@ -109,6 +120,7 @@ Deno.serve(async (req) => {
           payment_journey: payment.payment_journey,
           reason: body.reason ?? 'requested_by_customer',
           staff_account_id: refundedBy,
+          approver_account_id: body.approver_account_id,
         },
       });
     }

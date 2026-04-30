@@ -4,14 +4,21 @@ import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
+import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
 import { useCart, formatPence } from '../lib/queries/carts.ts';
-import { recordCashPayment, useVisitPaidStatus } from '../lib/queries/payments.ts';
+import {
+  approveAsManager,
+  recordCashPayment,
+  useCartPayments,
+  useVisitPaidStatus,
+  voidPayment,
+  type CartPaymentRow,
+} from '../lib/queries/payments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
@@ -111,6 +118,54 @@ export function Pay() {
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
   const outstandingPence = Math.max(0, billAfterDeposit - amountPaidPence);
+  // Captured payments on this cart, used for the "Already collected"
+  // list with per-row Void buttons. Refreshes alongside paidStatus
+  // after a successful void / new payment.
+  const { data: cartPayments, refresh: refreshCartPayments } = useCartPayments(cart?.id ?? null);
+  const succeededPayments = cartPayments.filter((p) => p.status === 'succeeded');
+
+  // Void sheet state. Captures the reason + the approving manager's
+  // credentials. The cashier can't approve their own void — the
+  // manager re-auths in a parallel client and we capture their
+  // accounts.id without disturbing the cashier's session.
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidTarget, setVoidTarget] = useState<CartPaymentRow | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [voidApproverEmail, setVoidApproverEmail] = useState('');
+  const [voidApproverPassword, setVoidApproverPassword] = useState('');
+  const [voidBusy, setVoidBusy] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
+  const openVoidSheet = (p: CartPaymentRow) => {
+    setVoidTarget(p);
+    setVoidReason('');
+    setVoidApproverEmail('');
+    setVoidApproverPassword('');
+    setVoidError(null);
+    setVoidOpen(true);
+  };
+  const submitVoid = async () => {
+    if (!voidTarget) return;
+    setVoidBusy(true);
+    setVoidError(null);
+    try {
+      const approverId = await approveAsManager(voidApproverEmail, voidApproverPassword);
+      await voidPayment(voidTarget.id, voidTarget.method, voidReason, approverId);
+      setVoidOpen(false);
+      setVoidTarget(null);
+      // Both the paid roll-up and the captured-payments list need
+      // refreshing — voiding drops the succeeded sum and reopens
+      // the cart, so the next render shows the new outstanding.
+      refreshPaid();
+      refreshCartPayments();
+      // Drop the user back to the choose stage if they were on
+      // the success/cash/etc. stage — the bill isn't settled now.
+      setStage('choose');
+    } catch (e) {
+      setVoidError(e instanceof Error ? e.message : 'Could not void');
+    } finally {
+      setVoidBusy(false);
+    }
+  };
 
   // chargeAmountPence: what the next single payment will be for.
   // Defaults to outstanding so the common case (single full
@@ -350,6 +405,80 @@ export function Pay() {
 
         {stage === 'choose' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            {/* Already-collected list. Each succeeded payment is
+                voidable but only with manager sign-off. Reasons
+                land in the audit trail; the row itself stays as
+                'cancelled' rather than being deleted. */}
+            {succeededPayments.length > 0 ? (
+              <Card padding="md" style={{ background: theme.color.surface }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkMuted,
+                    fontWeight: theme.type.weight.medium,
+                    textTransform: 'uppercase',
+                    letterSpacing: theme.type.tracking.wide,
+                    marginBottom: theme.space[3],
+                  }}
+                >
+                  Already collected
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                  {succeededPayments.map((p) => {
+                    const methodLabel =
+                      p.method === 'cash' ? 'Cash' : p.method === 'card_terminal' ? 'Card' : p.method;
+                    const journeyBit =
+                      p.payment_journey === 'klarna'
+                        ? ' · Klarna'
+                        : p.payment_journey === 'clearpay'
+                          ? ' · Clearpay'
+                          : '';
+                    return (
+                      <div
+                        key={p.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: theme.space[3],
+                          padding: theme.space[3],
+                          borderRadius: theme.radius.input,
+                          border: `1px solid ${theme.color.border}`,
+                          background: theme.color.bg,
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                          <span
+                            style={{
+                              fontSize: theme.type.size.base,
+                              fontWeight: theme.type.weight.semibold,
+                              color: theme.color.ink,
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {formatPence(p.amount_pence)} · {methodLabel}
+                            {journeyBit}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: theme.type.size.xs,
+                              color: theme.color.inkMuted,
+                            }}
+                          >
+                            {p.taken_by_name ? `by ${p.taken_by_name}` : 'Cashier unknown'}
+                          </span>
+                        </div>
+                        <Button variant="tertiary" size="sm" onClick={() => openVoidSheet(p)}>
+                          Void
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            ) : null}
+
             {/* Charge-amount input — defaults to outstanding so the
                 common single-payment case needs no extra clicks.
                 Edit it down to take a partial (split payment): the
@@ -594,6 +723,96 @@ export function Pay() {
           <Toast tone="error" title="Could not record payment" description={error} duration={8000} onDismiss={() => setError(null)} />
         </div>
       ) : null}
+
+      {/* Void payment sheet. Required reason + manager email/password
+          for the 2-staff sign-off. The manager signs in to a
+          parallel Supabase client (no session swap) so we can
+          capture their accounts.id without disturbing the cashier
+          who's running the till. */}
+      <BottomSheet
+        open={voidOpen}
+        onClose={() => !voidBusy && setVoidOpen(false)}
+        dismissable={!voidBusy}
+        title={voidTarget ? `Void ${formatPence(voidTarget.amount_pence)} payment` : 'Void payment'}
+        description="Voiding requires a manager sign-off. Both you and the manager will be on the audit row."
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button variant="secondary" onClick={() => setVoidOpen(false)} disabled={voidBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitVoid} loading={voidBusy}>
+              Void payment
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <Input
+            label="Reason"
+            value={voidReason}
+            onChange={(e) => setVoidReason(e.target.value)}
+            placeholder="e.g. Customer changed mind on method, retake as card"
+          />
+          <div
+            style={{
+              padding: theme.space[3],
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.bg,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[3],
+            }}
+          >
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Manager sign-off
+            </p>
+            <Input
+              label="Manager email"
+              type="email"
+              value={voidApproverEmail}
+              onChange={(e) => setVoidApproverEmail(e.target.value)}
+              placeholder="manager@venneir.com"
+            />
+            <Input
+              label="Manager password"
+              type="password"
+              value={voidApproverPassword}
+              onChange={(e) => setVoidApproverPassword(e.target.value)}
+            />
+          </div>
+          {voidError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {voidError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
     </main>
   );
 }
