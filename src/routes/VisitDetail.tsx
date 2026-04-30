@@ -706,6 +706,12 @@ export function VisitDetail() {
               // feedback_no_load_flicker.
               signaturesLoading={!patient || patientSignaturesLoading}
               onOpen={() => setWaiverOpen(true)}
+              // Surface the "View" affordance only when a doc is
+              // buildable — every required section has a matching
+              // signature. The bottom action row used to host this
+              // button; pulling it into the ready banner frees a
+              // slot in that row.
+              onView={waiverDoc ? () => setWaiverViewerOpen(true) : undefined}
             />
 
             <Card padding="lg">
@@ -786,21 +792,6 @@ export function VisitDetail() {
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                     <StickyNote size={16} aria-hidden />
                     {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
-                  </span>
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => setWaiverViewerOpen(true)}
-                  disabled={!waiverDoc}
-                  title={
-                    waiverDoc
-                      ? undefined
-                      : 'Available once a waiver has been signed for this visit.'
-                  }
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <FileText size={16} aria-hidden />
-                    View waiver
                   </span>
                 </Button>
                 <Button
@@ -1356,6 +1347,7 @@ function WaiverCard({
   schemaEmpty,
   signaturesLoading,
   onOpen,
+  onView,
 }: {
   flag: ReturnType<typeof summariseWaiverFlag>;
   requiredCount: number;
@@ -1370,6 +1362,11 @@ function WaiverCard({
   // that makes the surface feel broken. See feedback_no_load_flicker.
   signaturesLoading: boolean;
   onOpen: () => void;
+  // Optional: when supplied, the ready-state banner renders a "View"
+  // button that opens the printable waiver dialog. Caller passes this
+  // only when a doc is actually buildable (every required section has
+  // a matching signature) so we don't surface a disabled action.
+  onView?: () => void;
 }) {
   const wrapStyle = (border: string): React.CSSProperties => ({
     display: 'flex',
@@ -1455,6 +1452,13 @@ function WaiverCard({
             Every required section is current.
           </p>
         </div>
+        {onView ? (
+          <Button variant="secondary" size="sm" onClick={onView}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <FileText size={14} aria-hidden /> View
+            </span>
+          </Button>
+        ) : null}
       </div>
     );
   }
