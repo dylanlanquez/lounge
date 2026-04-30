@@ -978,7 +978,7 @@ export function VisitDetail() {
                   <Button variant="primary" onClick={submitReverseUnsuitable} loading={reverseBusy}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <RotateCcw size={16} aria-hidden />
-                      Reverse unsuitable
+                      {visit.status === 'unsuitable' ? 'Reverse unsuitable' : 'Reverse end'}
                     </span>
                   </Button>
                 ) : (
