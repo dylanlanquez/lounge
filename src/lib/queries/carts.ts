@@ -124,10 +124,14 @@ export function useCart(visitId: string | undefined): UseCartResult {
       const cartRow = (c as CartRow | null) ?? null;
       setCart(cartRow);
       if (cartRow) {
+        // Active cart lines only — soft-deleted rows (removed_at IS
+        // NOT NULL) are kept for audit + Reverse but stay out of the
+        // cart UI. The active partial index makes this filter cheap.
         const { data: rows } = await supabase
           .from('lng_cart_items')
           .select('*')
           .eq('cart_id', cartRow.id)
+          .is('removed_at', null)
           .order('sort_order', { ascending: true })
           .order('created_at', { ascending: true });
         const baseItems = (rows ?? []) as Omit<CartItemRow, 'upgrades'>[];
@@ -315,17 +319,52 @@ export async function addCatalogueItemsToCart(
   return inserted;
 }
 
+// Quantity stepper. Refuses to go below 1 — the only way to remove a
+// line is the explicit Remove sheet (trash icon) which captures a
+// reason. This closes the audit-bypass loophole where staff could
+// silently zero-out a line.
 export async function updateCartItemQuantity(itemId: string, quantity: number): Promise<void> {
-  if (quantity <= 0) {
-    await removeCartItem(itemId);
-    return;
-  }
-  const { error } = await supabase.from('lng_cart_items').update({ quantity }).eq('id', itemId);
+  const safeQty = Math.max(1, quantity);
+  const { error } = await supabase.from('lng_cart_items').update({ quantity: safeQty }).eq('id', itemId);
   if (error) throw new Error(error.message);
 }
 
-export async function removeCartItem(itemId: string): Promise<void> {
-  const { error } = await supabase.from('lng_cart_items').delete().eq('id', itemId);
+export type CartLineRemoveReason = 'mistake' | 'changed_mind' | 'unsuitable';
+
+export interface RemoveCartLineInput {
+  itemId: string;
+  reason: CartLineRemoveReason;
+  // Required for 'unsuitable', optional for 'changed_mind', unused
+  // for 'mistake'. Caller validates per-reason; this function only
+  // persists what it's given.
+  note?: string;
+}
+
+// Soft-delete a cart line with a reason. The line stays in the
+// lng_cart_items table (filtered out of the cart UI by the
+// removed_at IS NULL clause in useCart) so that
+// reverseVisitTermination can un-flag it and bring the line back
+// exactly as it was. Hard-DELETE would lose the original arch /
+// shade / upgrades / qty.
+//
+// The visit-status flip and the lng_unsuitability_records write
+// happen at a higher level — call recordUnsuitability separately
+// when reason is 'unsuitable'. Keeping this function single-purpose
+// means callers can soft-delete in different contexts (e.g. a
+// future bulk-clear on cart reset) without each having to know the
+// unsuitability semantics.
+export async function removeCartLine(input: RemoveCartLineInput): Promise<void> {
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+  const note = input.note?.trim() ?? '';
+  const { error } = await supabase
+    .from('lng_cart_items')
+    .update({
+      removed_at: new Date().toISOString(),
+      removed_reason: input.reason,
+      removed_by: (accountId as string | null) ?? null,
+      removed_note: note.length > 0 ? note : null,
+    })
+    .eq('id', input.itemId);
   if (error) throw new Error(error.message);
 }
 

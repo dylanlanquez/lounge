@@ -722,13 +722,154 @@ export interface ReverseUnsuitabilityInput {
   visit_id: string;
 }
 
-// Reverses the visit-level "unsuitable" terminus. Records in
-// lng_unsuitability_records stay as audit (we never mutate signed-off
-// records). Visit goes back to in_progress with closed_at cleared so
-// the cart is workable again. A patient_events row carries the
-// reverse for the timeline.
+// Single entry point for the cart-line Remove sheet. Handles all
+// three reason categories in one call: soft-deletes the line,
+// writes the right audit row(s), and decides whether the visit
+// should terminate as a result.
+//
+// Termination rule: visit flips to status='unsuitable' when the
+// cart becomes empty AND at least one unsuitability record exists
+// on this visit (in this removal or a prior one). Mixed visits
+// where some removals were mistakes and at least one was
+// unsuitable still terminate. Cart-empty-by-mistake-only visits
+// stay active so staff can re-add.
+export interface RemoveCartLineWithReasonInput {
+  cart_item_id: string;
+  catalogue_id: string | null; // required for 'unsuitable'
+  visit_id: string;
+  patient_id: string;
+  reason: 'mistake' | 'changed_mind' | 'unsuitable';
+  note?: string;
+}
+
+export async function removeCartLineWithReason(
+  input: RemoveCartLineWithReasonInput
+): Promise<{ visit_terminated: boolean }> {
+  const note = input.note?.trim() ?? '';
+  if (input.reason === 'unsuitable' && note.length === 0) {
+    throw new Error('A reason is required for unsuitable removals');
+  }
+  if (input.reason === 'unsuitable' && !input.catalogue_id) {
+    throw new Error('Unsuitable removal requires a catalogue-backed line');
+  }
+
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+
+  // 1. Soft-delete the cart line. Writes the cart-item-level audit.
+  const { error: removeErr } = await supabase
+    .from('lng_cart_items')
+    .update({
+      removed_at: new Date().toISOString(),
+      removed_reason: input.reason,
+      removed_by: (accountId as string | null) ?? null,
+      removed_note: note.length > 0 ? note : null,
+    })
+    .eq('id', input.cart_item_id);
+  if (removeErr) throw new Error(removeErr.message);
+
+  // 2. Reason-specific audit:
+  if (input.reason === 'unsuitable' && input.catalogue_id) {
+    // Immutable per-product unsuitability record. Used by the
+    // header to render "By [name]" and by future "this patient was
+    // previously unsuitable for this product" warnings.
+    const { error: recErr } = await supabase.from('lng_unsuitability_records').insert({
+      patient_id: input.patient_id,
+      visit_id: input.visit_id,
+      catalogue_id: input.catalogue_id,
+      reason: note,
+      recorded_by: (accountId as string | null) ?? null,
+    });
+    if (recErr) throw new Error(recErr.message);
+  }
+
+  // Timeline event for every removal regardless of reason. The
+  // event_type carries the category so a downstream consumer can
+  // bucket without re-reading the cart row.
+  await supabase.from('patient_events').insert({
+    patient_id: input.patient_id,
+    event_type: 'cart_line_removed',
+    actor_account_id: (accountId as string | null) ?? null,
+    notes: note.length > 0 ? note : null,
+    payload: {
+      visit_id: input.visit_id,
+      cart_item_id: input.cart_item_id,
+      catalogue_id: input.catalogue_id,
+      reason: input.reason,
+      note: note.length > 0 ? note : null,
+    },
+  });
+
+  // 3. Termination check. Visit flips to 'unsuitable' when the cart
+  //    is empty AND at least one unsuitability record exists on the
+  //    visit. Cart-empty-by-mistake-only visits stay active.
+  const { data: cartRow } = await supabase
+    .from('lng_carts')
+    .select('id')
+    .eq('visit_id', input.visit_id)
+    .maybeSingle();
+  if (!cartRow?.id) return { visit_terminated: false };
+
+  const { count: activeCount, error: countErr } = await supabase
+    .from('lng_cart_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('cart_id', cartRow.id)
+    .is('removed_at', null);
+  if (countErr) throw new Error(countErr.message);
+
+  if ((activeCount ?? 0) > 0) return { visit_terminated: false };
+
+  const { count: unsuitableCount, error: unsErr } = await supabase
+    .from('lng_unsuitability_records')
+    .select('id', { count: 'exact', head: true })
+    .eq('visit_id', input.visit_id);
+  if (unsErr) throw new Error(unsErr.message);
+  if ((unsuitableCount ?? 0) === 0) return { visit_terminated: false };
+
+  const { error: visitErr } = await supabase
+    .from('lng_visits')
+    .update({ status: 'unsuitable', closed_at: new Date().toISOString() })
+    .eq('id', input.visit_id);
+  if (visitErr) throw new Error(visitErr.message);
+
+  return { visit_terminated: true };
+}
+
+// Reverses the visit-level "unsuitable" terminus AND restores every
+// soft-deleted cart line on this visit (regardless of removal
+// reason). lng_unsuitability_records rows stay as audit — we never
+// mutate signed-off records — but the cart-item soft-delete is
+// un-flagged so the cart returns exactly as it was before the
+// removal sequence began.
+//
+// "Restore everything" is deliberate per Dylan's call: a "wrong
+// product" mistake reappears alongside the unsuitable lines, and
+// staff has to re-remove it. The trade-off buys a clean mental
+// model — Reverse really resets this visit, no surprises about
+// which lines come back.
 export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Promise<void> {
   const { data: accountId } = await supabase.rpc('auth_account_id');
+
+  // Find the visit's cart so we can target its lines for un-flag.
+  const { data: cartRow, error: cartErr } = await supabase
+    .from('lng_carts')
+    .select('id')
+    .eq('visit_id', input.visit_id)
+    .maybeSingle();
+  if (cartErr) throw new Error(cartErr.message);
+
+  // Un-flag every soft-deleted line on this cart. Belt-and-braces
+  // null-out of the trio so a future direct read can't see a
+  // half-restored row. No-op when the visit has no cart yet (rare;
+  // would mean a visit was marked unsuitable before any items were
+  // ever added).
+  if (cartRow?.id) {
+    const { error: restoreErr } = await supabase
+      .from('lng_cart_items')
+      .update({ removed_at: null, removed_reason: null, removed_by: null, removed_note: null })
+      .eq('cart_id', cartRow.id)
+      .not('removed_at', 'is', null);
+    if (restoreErr) throw new Error(restoreErr.message);
+  }
 
   const { error: visitErr } = await supabase
     .from('lng_visits')

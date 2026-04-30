@@ -184,6 +184,8 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Marked unsuitable';
     case 'patient_unsuitable_reversed':
       return 'Unsuitable reversed';
+    case 'cart_line_removed':
+      return 'Cart line removed';
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -653,6 +655,24 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     // payload still has the text.
     const reason = typeof payload.reason === 'string' ? payload.reason : row.notes ?? null;
     return reason && reason.trim().length > 0 ? reason : undefined;
+  }
+  if (row.event_type === 'cart_line_removed') {
+    // Surface the reason category and any free-text note so the
+    // timeline reads as the audit it is. Categories: mistake,
+    // changed_mind, unsuitable. Free-text note appended when present.
+    const reason = typeof payload.reason === 'string' ? payload.reason : null;
+    const label =
+      reason === 'mistake'
+        ? 'Added by mistake'
+        : reason === 'changed_mind'
+          ? 'Patient changed mind'
+          : reason === 'unsuitable'
+            ? 'Patient unsuitable'
+            : null;
+    const note = typeof payload.note === 'string' && payload.note.trim().length > 0 ? payload.note : null;
+    if (label && note) return `${label}. ${note}`;
+    if (label) return label;
+    return note ?? undefined;
   }
   // Fall back to the row's free-text notes for unrecognised events.
   return row.notes ?? undefined;
