@@ -771,6 +771,19 @@ export async function removeCartLineWithReason(
 
   const { data: accountId } = await supabase.rpc('auth_account_id');
 
+  // Read the line's display name BEFORE soft-deleting so the
+  // patient_events row can carry "Removed [name]" without a join
+  // back to lng_cart_items at read time. The frozen catalogue
+  // snapshot on the cart row is the source of truth (matches what
+  // staff saw in the cart at removal time).
+  const { data: lineRow, error: lineErr } = await supabase
+    .from('lng_cart_items')
+    .select('name')
+    .eq('id', input.cart_item_id)
+    .maybeSingle();
+  if (lineErr) throw new Error(lineErr.message);
+  const lineName = (lineRow as { name: string } | null)?.name ?? null;
+
   // 1. Soft-delete the cart line. Writes the cart-item-level audit.
   const { error: removeErr } = await supabase
     .from('lng_cart_items')
@@ -810,6 +823,9 @@ export async function removeCartLineWithReason(
       visit_id: input.visit_id,
       cart_item_id: input.cart_item_id,
       catalogue_id: input.catalogue_id,
+      // Line's display name at removal time. Lets the timeline
+      // render "Removed [name]" without joining back to cart_items.
+      line_name: lineName,
       reason: input.reason,
       note: note.length > 0 ? note : null,
     },

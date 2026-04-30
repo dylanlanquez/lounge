@@ -215,9 +215,9 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap',
             }}
-            title={absoluteTimestamp(event.timestamp)}
+            title={relativeTimestamp(event.timestamp)}
           >
-            {relativeTimestamp(event.timestamp)}
+            {compactTimestamp(event.timestamp)}
           </span>
         </div>
         {event.detail || event.actor ? (
@@ -336,14 +336,28 @@ function relativeTimestamp(iso: string): string {
   });
 }
 
-function absoluteTimestamp(iso: string): string {
+// Compact absolute timestamp for the right column. Format depends
+// on how recent the event is so the column stays scannable:
+//   today          → "18:30"
+//   this year      → "30 Apr · 18:30"
+//   earlier years  → "30 Apr 2025 · 18:30"
+// 24-hour clock throughout (en-GB).
+function compactTimestamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-GB', {
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return time;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const date = d.toLocaleDateString('en-GB', {
     day: '2-digit',
     month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+    ...(sameYear ? {} : { year: 'numeric' }),
   });
+  return `${date} · ${time}`;
 }
+
