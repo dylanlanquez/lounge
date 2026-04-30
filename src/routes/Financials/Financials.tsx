@@ -18,6 +18,8 @@ import { OverviewTab } from './OverviewTab.tsx';
 import { SalesTab } from './SalesTab.tsx';
 import { DiscountsTab } from './DiscountsTab.tsx';
 import { VoidsTab } from './VoidsTab.tsx';
+import { AnomaliesTab } from './AnomaliesTab.tsx';
+import { CashReconciliationTab } from './CashReconciliationTab.tsx';
 
 type Tab =
   | 'overview'
@@ -119,6 +121,10 @@ export function Financials() {
           <DiscountsTab range={range} />
         ) : tab === 'voids' ? (
           <VoidsTab range={range} />
+        ) : tab === 'anomalies' ? (
+          <AnomaliesTab range={range} />
+        ) : tab === 'cash_reconciliation' ? (
+          <CashReconciliationTab />
         ) : (
           <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
         )}
