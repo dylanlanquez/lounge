@@ -116,10 +116,10 @@ export function PatientSearch({
               <Skeleton height={88} radius={12} />
             </div>
           ) : data.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginTop: theme.space[3] }}>
               <SearchSectionHeading
                 icon={<Users size={18} aria-hidden style={{ color: theme.color.ink }} />}
-                title="Existing patients"
+                title="Existing patients on Lounge"
               />
               <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
                 {data.map((p) => (
