@@ -172,14 +172,13 @@ export function printLwo(input: PrintableLwoInput): void {
     // either side. We want it stretched. The ref text below centers
     // itself via its own text-align:center.
     '.bc-bar{flex:1 1 0;min-height:64px;max-height:130px;margin-top:auto;padding:6px 0 0;display:flex;flex-direction:column;overflow:hidden}' +
-    // SVG stretches to fill .bc-bar both ways. preserveAspectRatio:none
-    // (set in script below) keeps bar:space ratios (which is all CODE128
-    // cares about) while letting the bars get wider on shorter refs and
-    // shorter on tighter labels. width:100% is belt-and-braces against
-    // any browser that resolves a flex item's main-axis width from
-    // intrinsic SVG sizing. min-width:0 / min-height:0 so the flex
-    // parent can squeeze it.
-    '.bc-bar svg{display:block;flex:1 1 0;width:100%;min-width:0;min-height:0}' +
+    // SVG width="100%" height="100%" + preserveAspectRatio="none"
+    // attributes (set in the script below) handle the actual stretch.
+    // The CSS here just stops the inline-svg baseline gap (display:
+    // block) and lets the flex parent squeeze its height when the
+    // cart is full. The flex:1 1 0 makes the SVG share the bc-bar's
+    // free vertical space with the ref text below.
+    '.bc-bar svg{display:block;flex:1 1 0;min-width:0;min-height:0}' +
     '.bc-ref{flex-shrink:0;font-family:Arial,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.18em;text-align:center;margin-top:2px;color:#000}';
 
   const logoUrl = window.location.origin + '/black-venneir-logo.png';
@@ -217,16 +216,20 @@ export function printLwo(input: PrintableLwoInput): void {
     (escapedNotes ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>' : '') +
     // Barcode
     '<div class="bc-bar"><svg id="order-barcode"></svg><div id="bc-ref" class="bc-ref"></div></div>' +
-    // After JsBarcode renders, strip the explicit width/height attributes
-    // it sets and swap them for a viewBox + preserveAspectRatio="none".
-    // That's what lets the CSS width:100% / height:100% actually stretch
-    // the bars in both axes — without the swap the SVG renders at its
-    // native pixel size and ignores the flex sizing. CODE128 readers
-    // tolerate non-uniform stretch fine because their decode is based
-    // on bar:space ratios, not absolute widths. Fall back to leaving the
-    // SVG alone if the script noscripts (we still get a barcode, just
-    // not a full-width one) — better than no print at all.
-    '<script>window.onload=function(){if(typeof JsBarcode==="undefined")return;JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});var svg=document.getElementById("order-barcode");var w=svg.getAttribute("width");var h=svg.getAttribute("height");if(w&&h){svg.setAttribute("viewBox","0 0 "+w+" "+h);svg.removeAttribute("width");svg.removeAttribute("height");svg.setAttribute("preserveAspectRatio","none")}document.getElementById("bc-ref").textContent="' + safeRef + '";window.print()}<\/script>' +
+    // After JsBarcode renders, swap the SVG's intrinsic pixel sizing
+    // for a viewBox + preserveAspectRatio="none" + width="100%" /
+    // height="100%" expressed as SVG ATTRIBUTES. CSS width:100% alone
+    // won't stretch an SVG inside a flex container — the SVG keeps
+    // its intrinsic aspect ratio when only one dimension is CSS-set,
+    // which left the bars indented in the middle of the bar with
+    // white margin either side. Setting both as SVG attributes is
+    // the canonical responsive-SVG recipe and bypasses the
+    // intrinsic-ratio sizing entirely.
+    //
+    // CODE128 readers decode on bar:space ratios, not absolute widths,
+    // so the non-uniform stretch (bars wider on a short ref, shorter
+    // bars on a tight label) reads back to the original string fine.
+    '<script>window.onload=function(){if(typeof JsBarcode==="undefined")return;JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});var svg=document.getElementById("order-barcode");var w=svg.getAttribute("width");var h=svg.getAttribute("height");if(w&&h){svg.setAttribute("viewBox","0 0 "+w+" "+h);svg.setAttribute("preserveAspectRatio","none");svg.setAttribute("width","100%");svg.setAttribute("height","100%")}document.getElementById("bc-ref").textContent="' + safeRef + '";window.print()}<\/script>' +
     '</body></html>';
 
   const win = window.open('', '_blank', 'width=500,height=650');
