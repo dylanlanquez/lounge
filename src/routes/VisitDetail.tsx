@@ -15,6 +15,7 @@ import {
   Plus,
   Printer,
   ShoppingCart,
+  StickyNote,
   UserPlus,
 } from 'lucide-react';
 import {
@@ -30,6 +31,8 @@ import {
   VisitTimeline,
   WaiverSheet,
 } from '../components/index.ts';
+import { Dialog } from '../components/Dialog/Dialog.tsx';
+import { supabase } from '../lib/supabase.ts';
 import { usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
@@ -70,6 +73,16 @@ export function VisitDetail() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Tech-note edit dialog. Reuses the visit's notes column — same field
+  // step 1 of the arrival form writes to and the printed LWO reads
+  // from. Once the visit is open it's read-only on this page until
+  // the receptionist taps "Edit tech note" to amend it (e.g. after a
+  // call from the lab asking for shade clarification).
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const isMobile = useIsMobile(640);
 
@@ -160,6 +173,41 @@ export function VisitDetail() {
       refresh();
     } finally {
       setBusyItem(null);
+    }
+  };
+
+  const openNoteEditor = () => {
+    setNoteDraft(visit?.notes ?? '');
+    setNoteError(null);
+    setNoteOpen(true);
+  };
+
+  const saveNote = async () => {
+    if (!visit) return;
+    setNoteError(null);
+    setNoteSaving(true);
+    try {
+      const trimmed = noteDraft.trim();
+      // 4000-char ceiling matches the longest free-text columns we
+      // already accept on the patients row (allergies, notes). The
+      // value goes straight into the printed LWO Notes box, so longer
+      // input would silently get clipped on the label — better to
+      // refuse the save here than emit a truncated note to the lab.
+      if (trimmed.length > 4000) {
+        throw new Error('Tech note is too long. Please trim to 4000 characters or fewer.');
+      }
+      const { error: err } = await supabase
+        .from('lng_visits')
+        .update({ notes: trimmed.length > 0 ? trimmed : null })
+        .eq('id', visit.id);
+      if (err) throw new Error(err.message);
+      // Realtime subscription on lng_visits (filter id=eq.<visit>)
+      // refreshes useVisitDetail; the dialog closes immediately.
+      setNoteOpen(false);
+    } catch (e: unknown) {
+      setNoteError(e instanceof Error ? e.message : 'Could not save tech note.');
+    } finally {
+      setNoteSaving(false);
     }
   };
 
@@ -429,6 +477,12 @@ export function VisitDetail() {
 
             {items.length > 0 ? (
               <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <Button variant="secondary" size="lg" onClick={openNoteEditor}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <StickyNote size={18} aria-hidden />
+                    {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
+                  </span>
+                </Button>
                 <Button
                   variant="secondary"
                   size="lg"
@@ -529,6 +583,63 @@ export function VisitDetail() {
         patientName={patient ? patientFullName(patient) : 'Patient'}
         onAllSigned={refreshSignatures}
       />
+
+      <Dialog
+        open={noteOpen}
+        onClose={() => !noteSaving && setNoteOpen(false)}
+        title="Tech note for the lab"
+        description="Prints in the Notes box of the LWO. Same field that step 1 of the arrival form writes to."
+        width={560}
+        dismissable={!noteSaving}
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setNoteOpen(false)} disabled={noteSaving}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={saveNote} loading={noteSaving}>
+              Save
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            rows={6}
+            placeholder="Anything the lab needs (shade clarification, urgency, special handling). Leave blank to clear."
+            style={{
+              width: '100%',
+              minHeight: 140,
+              padding: theme.space[3],
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.ink,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.base,
+              lineHeight: 1.5,
+              resize: 'vertical',
+              outline: 'none',
+            }}
+          />
+          {noteError ? (
+            <div
+              role="alert"
+              style={{
+                padding: theme.space[3],
+                borderRadius: theme.radius.input,
+                background: theme.color.alert,
+                color: theme.color.surface,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {noteError}
+            </div>
+          ) : null}
+        </div>
+      </Dialog>
     </main>
   );
 }
