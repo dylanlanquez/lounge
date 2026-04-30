@@ -715,8 +715,15 @@ export function Schedule() {
                   }}
                 >
                   <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
+                  {/* Earlier copy said "to join the meeting and
+                      record attendance", which staff read as
+                      covering no-show — they thought the No-show
+                      button needed desktop too and stopped tapping
+                      it. Only the meeting join is desktop-only;
+                      no-show works from anywhere. Spell that out so
+                      the action below is reachable. */}
                   <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-                    Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting and record attendance.
+                    Virtual appointment. Joining the meeting needs a desktop browser at <strong>lounge.venneir.com</strong>. You can still tap <strong>No-show</strong> below if the patient never connected.
                   </p>
                 </div>
               ) : null}
