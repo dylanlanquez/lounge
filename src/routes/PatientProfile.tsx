@@ -70,7 +70,9 @@ export function PatientProfile() {
   const { data: scheduledAppointments, loading: apptsLoading } =
     usePatientScheduledAppointments(id);
   const { data: cases, loading: casesLoading } = usePatientCases(id);
-  const [editOpen, setEditOpen] = useState(false);
+  // Which section's pencil opened the edit modal — drives which
+  // fieldset the modal renders. null when closed.
+  const [editSection, setEditSection] = useState<'profile' | 'care' | null>(null);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -96,9 +98,9 @@ export function PatientProfile() {
           <ProfileSkeleton isMobile={isMobile} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-            <Hero patient={patient} cases={cases} onEdit={() => setEditOpen(true)} />
+            <Hero patient={patient} cases={cases} onEdit={() => setEditSection('profile')} />
+            <CareDetails patient={patient} onEdit={() => setEditSection('care')} />
             <WaiverStatus patientId={patient.id} />
-            <NotesAndFlags patient={patient} />
             <BeforeAfterGallery
               patient={patient}
               files={files}
@@ -139,11 +141,12 @@ export function PatientProfile() {
           </div>
         )}
 
-        {patient ? (
+        {patient && editSection ? (
           <PatientEditModal
-            open={editOpen}
+            open
             patient={patient}
-            onClose={() => setEditOpen(false)}
+            section={editSection}
+            onClose={() => setEditSection(null)}
             onSaved={async () => {
               await refreshPatient();
             }}
@@ -305,14 +308,12 @@ function ProfileSkeleton({ isMobile }: { isMobile: boolean }) {
           style={{
             marginTop: theme.space[5],
             display: 'grid',
-            // Match the FieldGrid below: uniform 2-col so the
-            // skeleton's collapsed-card height tracks the real
-            // hero's vertical density.
-            gridTemplateColumns: 'repeat(2, 1fr)',
+            // Match the real Hero: 3-col grid, 9 short cells.
+            gridTemplateColumns: 'repeat(3, 1fr)',
             gap: theme.space[4],
           }}
         >
-          {Array.from({ length: 8 }).map((_, i) => (
+          {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               <Skeleton height={12} width="60%" radius={4} />
               <Skeleton height={18} width="80%" radius={4} />
@@ -615,33 +616,33 @@ interface FieldDef {
   label: string;
   value: string | null;
   mono?: boolean;
-  // True = the cell takes the whole row (both cols of the 2-col
-  // grid). Default false. Used for orphan / naturally long values
-  // (Shopify customer id) so the grid never has a half-empty row.
+  // True = the cell takes the whole row (all cols). Default false.
+  // Used for the trailing Shopify id so the orphan reads as a
+  // dedicated admin row rather than a lone cell next to gaps.
   fullRow?: boolean;
 }
 
-// Fields ordered into 2-col rows. The grid below renders pairs in
-// document order, so each consecutive two entries land on one row.
-// Pairings group semantically: identity, dates, contact, postal
-// (twice), kin, admin. The Shopify id sits alone at the end and
-// takes the full row so the trailing orphan doesn't read as a
-// half-empty slot.
+// Profile-card fields. DoB, Sex, Emergency contact, Emergency
+// phone moved to the Care details section — they're vitals /
+// kin info, not identity. Country dropped entirely from the UI:
+// Shopify sync owns it, and surfacing it on the profile (and in
+// the staff edit form) just invited accidental edits. Order is
+// chosen so each row reads as a sensible 3-tuple.
+//
+//   Row 1: First name | Last name      | Email
+//   Row 2: Phone      | Address line 1 | Address line 2
+//   Row 3: City       | Postcode       | Registered
+//   Row 4: Shopify customer (full row)
 function buildHeroFields(p: PatientProfileRow): FieldDef[] {
   return [
     { label: 'First name', value: properCase(p.first_name) || null },
     { label: 'Last name', value: properCase(p.last_name) || null },
-    { label: 'Date of birth', value: formatDate(p.date_of_birth) },
-    { label: 'Sex', value: p.sex ? properCase(p.sex) : null },
     { label: 'Email', value: p.email },
     { label: 'Phone', value: p.phone },
     { label: 'Address line 1', value: p.portal_ship_line1 },
     { label: 'Address line 2', value: p.portal_ship_line2 },
     { label: 'City', value: p.portal_ship_city },
     { label: 'Postcode', value: p.portal_ship_postcode },
-    { label: 'Country', value: p.portal_ship_country_code },
-    { label: 'Emergency contact', value: p.emergency_contact_name },
-    { label: 'Emergency phone', value: p.emergency_contact_phone },
     { label: 'Registered', value: formatDate(p.registered_at) },
     { label: 'Shopify customer', value: p.shopify_customer_id, mono: true, fullRow: true },
   ];
@@ -653,19 +654,14 @@ function FieldGrid({ fields }: { fields: FieldDef[] }) {
     <div
       style={{
         display: 'grid',
-        // Uniform 2-col grid at every viewport width. Earlier the
-        // desktop variant was 4-col with a few fields marked span:2
-        // (email, address lines, phone), but mixing 1-col and 2-col
-        // cells in one grid produced an oscillating rhythm — Row 1
-        // looked like four narrow cells, Row 2 jumped to two wide
-        // ones, Row 3 same, Row 4 back to four — and the eye reads
-        // the structure as broken even though the columns line up.
-        // 2-col uniform is the correct architecture: every value
-        // gets ~half the card width (plenty for long emails and
-        // addresses), and the rhythm is identical on every row.
-        // Mobile already used 2-col, so this collapses the
-        // responsive branch too.
-        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        // Uniform 3-col grid. Two columns made the page feel
+        // sparse and pushed everything down; four with selective
+        // span:2s oscillated visually. Three is the goldilocks
+        // for the trimmed field list — 9 short cells in 3 neat
+        // rows plus a full-row Shopify id at the bottom. Long
+        // emails / addresses still fit at ~33% width with
+        // wordBreak as a fallback for the rare overrun.
+        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
         columnGap: theme.space[6],
         rowGap: theme.space[4],
         minWidth: 0,
@@ -940,7 +936,22 @@ function PatientFilesPanel({
 // Notes and flags — three muted read-only fields.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function NotesAndFlags({ patient }: { patient: PatientProfileRow }) {
+// Care details — vitals, kin, and operational notes the clinic
+// needs at hand but that don't belong on the profile-identity card.
+// Renamed from "Notes & flags" once DoB / Sex / Emergency contact
+// fields moved here from the Hero — the section is now broader
+// than just notes. Pencil opens the edit modal scoped to 'care'.
+function CareDetails({
+  patient,
+  onEdit,
+}: {
+  patient: PatientProfileRow;
+  onEdit: () => void;
+}) {
+  const dob = formatDate(patient.date_of_birth);
+  const sex = patient.sex ? properCase(patient.sex) : null;
+  const emergencyName = (patient.emergency_contact_name ?? '').trim();
+  const emergencyPhone = (patient.emergency_contact_phone ?? '').trim();
   const allergies = (patient.allergies ?? '').trim();
   const comms = (patient.communication_preferences ?? '').trim();
   const permanent = (patient.notes ?? '').trim();
@@ -957,25 +968,25 @@ function NotesAndFlags({ patient }: { patient: PatientProfileRow }) {
             color: theme.color.ink,
           }}
         >
-          Notes &amp; flags
+          Care details
         </h2>
         <button
           type="button"
-          aria-label="Edit notes and flags"
-          title="Edit notes and flags (coming soon)"
-          disabled
+          aria-label="Edit care details"
+          title="Edit care details"
+          onClick={onEdit}
           style={{
             appearance: 'none',
-            width: 32,
-            height: 32,
+            width: 36,
+            height: 36,
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
             background: 'transparent',
             border: `1px solid ${theme.color.border}`,
             borderRadius: theme.radius.input,
-            color: theme.color.inkSubtle,
-            cursor: 'not-allowed',
+            color: theme.color.inkMuted,
+            cursor: 'pointer',
           }}
         >
           <Pencil size={14} />
@@ -987,23 +998,40 @@ function NotesAndFlags({ patient }: { patient: PatientProfileRow }) {
       <div
         style={{
           display: 'grid',
+          // 2-col is the right rhythm here: short paired vitals up
+          // top (DoB / Sex, contact name / phone), then long
+          // free-text fields each take a full row via fullRow.
           gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
           columnGap: theme.space[6],
           rowGap: theme.space[4],
         }}
       >
-        <NotesField label="Allergies & sensitivities" value={allergies} />
-        <NotesField label="Communication preferences" value={comms} />
-        <NotesField label="Permanent notes" value={permanent} multiline />
+        <NotesField label="Date of birth" value={dob ?? ''} />
+        <NotesField label="Sex" value={sex ?? ''} />
+        <NotesField label="Emergency contact" value={emergencyName} />
+        <NotesField label="Emergency phone" value={emergencyPhone} />
+        <NotesField label="Allergies & sensitivities" value={allergies} fullRow />
+        <NotesField label="Communication preferences" value={comms} fullRow />
+        <NotesField label="Permanent notes" value={permanent} multiline fullRow />
       </div>
     </Card>
   );
 }
 
-function NotesField({ label, value, multiline = false }: { label: string; value: string; multiline?: boolean }) {
+function NotesField({
+  label,
+  value,
+  multiline = false,
+  fullRow = false,
+}: {
+  label: string;
+  value: string;
+  multiline?: boolean;
+  fullRow?: boolean;
+}) {
   const empty = !value;
   return (
-    <div style={{ minWidth: 0 }}>
+    <div style={{ minWidth: 0, gridColumn: fullRow ? '1 / -1' : undefined }}>
       <div
         style={{
           fontSize: theme.type.size.xs,
