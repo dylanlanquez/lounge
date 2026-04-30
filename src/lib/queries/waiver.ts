@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 // One row in lng_waiver_sections. Admin-editable.
 export interface WaiverSection {
@@ -34,8 +35,8 @@ interface SectionsResult {
 
 export function useWaiverSections(): SectionsResult {
   const [sections, setSections] = useState<WaiverSection[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { loading, settle } = useStaleQueryLoading('waiver-sections');
 
   useEffect(() => {
     let cancelled = false;
@@ -55,16 +56,16 @@ export function useWaiverSections(): SectionsResult {
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       setSections((data ?? []) as WaiverSection[]);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settle]);
 
   return { sections, loading, error };
 }
@@ -80,23 +81,16 @@ interface PatientWaiverStateResult {
 
 export function usePatientWaiverState(patientId: string | null | undefined): PatientWaiverStateResult {
   const [latest, setLatest] = useState<Map<string, WaiverSignatureSummary>>(new Map());
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
-    // Reset loading to true at the start of every fetch — without
-    // this, the moment patientId flips from null → a real id the
-    // hook would briefly report `loading=false` with the previous
-    // empty Map, causing downstream banners to render the
-    // not-yet-signed default state and flicker. See
-    // feedback_no_load_flicker.
-    setLoading(true);
     let cancelled = false;
     (async () => {
       const { data, error: err } = await supabase
@@ -112,7 +106,7 @@ export function usePatientWaiverState(patientId: string | null | undefined): Pat
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const map = new Map<string, WaiverSignatureSummary>();
@@ -122,12 +116,12 @@ export function usePatientWaiverState(patientId: string | null | undefined): Pat
         if (!map.has(row.section_key)) map.set(row.section_key, row);
       }
       setLatest(map);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId, tick]);
+  }, [patientId, tick, settle]);
 
   // Auto-refresh on any new signature for this patient — used by the
   // pencil-shortcut signing flow and any future cross-device kiosk
@@ -167,17 +161,16 @@ interface SignedWaiversResult {
 // print of each individual signing event.
 export function useSignedWaivers(patientId: string | null | undefined): SignedWaiversResult {
   const [rows, setRows] = useState<SignedWaiverRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
-    setLoading(true);
     let cancelled = false;
     (async () => {
       // Inner-join to lng_waiver_sections so we always have a title to
@@ -203,7 +196,7 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const mapped: SignedWaiverRow[] = ((data ?? []) as Array<Record<string, unknown>>).map(
@@ -233,12 +226,12 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
         }
       );
       setRows(mapped);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId, tick]);
+  }, [patientId, tick, settle]);
 
   // History list refreshes whenever a new signature lands for this
   // patient — keeps the audit table on PatientProfile current without

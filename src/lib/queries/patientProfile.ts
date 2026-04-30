@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Patient profile queries — the read-side surface for /patient/:id.
@@ -58,14 +59,14 @@ interface ProfileResult {
 
 export function usePatientProfile(id: string | null | undefined): ProfileResult {
   const [data, setData] = useState<PatientProfileRow | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(id);
 
   useEffect(() => {
     if (!id) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
@@ -113,16 +114,16 @@ export function usePatientProfile(id: string | null | undefined): ProfileResult 
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       setData(row as PatientProfileRow);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [id, tick]);
+  }, [id, tick, settle]);
 
   return { data, loading, error, refresh };
 }
@@ -159,14 +160,14 @@ interface FilesResult {
 
 export function usePatientProfileFiles(patientId: string | null | undefined): FilesResult {
   const [data, setData] = useState<PatientFileEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
@@ -199,7 +200,7 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const mapped: PatientFileEntry[] = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => {
@@ -226,12 +227,12 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
         };
       });
       setData(mapped);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId, tick]);
+  }, [patientId, tick, settle]);
 
   // patient_files is in Meridian's realtime publication already, so
   // any new upload (via Meridian admin or a future Lounge upload UI)
@@ -280,19 +281,18 @@ interface DeliveryResult {
 
 export function usePatientDeliveryFiles(patientId: string | null | undefined): DeliveryResult {
   const [groups, setGroups] = useState<DeliveryGroup[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
@@ -319,7 +319,7 @@ export function usePatientDeliveryFiles(patientId: string | null | undefined): D
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
 
@@ -394,12 +394,12 @@ export function usePatientDeliveryFiles(patientId: string | null | undefined): D
         a.applianceLabel.localeCompare(b.applianceLabel)
       );
       setGroups(sorted);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId, tick]);
+  }, [patientId, tick, settle]);
 
   return { groups, loading, error, refresh };
 }
@@ -442,14 +442,14 @@ interface VisitsResult {
 
 export function usePatientVisits(patientId: string | null | undefined): VisitsResult {
   const [data, setData] = useState<PatientVisitRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
@@ -465,7 +465,7 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       if (cancelled) return;
       if (vErr) {
         setError(vErr.message);
-        setLoading(false);
+        settle();
         return;
       }
       const visitIds = ((visits ?? []) as Array<{ id: string }>).map((v) => v.id);
@@ -587,12 +587,12 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
         };
       });
       setData(mapped);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId, tick]);
+  }, [patientId, tick, settle]);
 
   // Visit list refreshes when any of its source tables changes for
   // this patient. lng_visits filtered by patient_id; cart totals come
@@ -675,14 +675,14 @@ export function usePatientScheduledAppointments(
   patientId: string | null | undefined
 ): ScheduledAppointmentsResult {
   const [data, setData] = useState<PatientScheduledAppointmentRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
@@ -721,7 +721,7 @@ export function usePatientScheduledAppointments(
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const mapped: PatientScheduledAppointmentRow[] = (rows ?? []).map((r) => ({
@@ -736,12 +736,12 @@ export function usePatientScheduledAppointments(
         walk_in_id: (r.walk_in_id as string | null) ?? null,
       }));
       setData(mapped);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId, tick]);
+  }, [patientId, tick, settle]);
 
   // New Calendly bookings, cancellations, and reschedules all flow
   // through lng_appointments. Filter by patient_id so a busy clinic
@@ -791,12 +791,12 @@ interface CasesResult {
 
 export function usePatientCases(patientId: string | null | undefined): CasesResult {
   const [data, setData] = useState<PatientCaseRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { loading, settle } = useStaleQueryLoading(patientId);
 
   useEffect(() => {
     if (!patientId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
@@ -816,7 +816,7 @@ export function usePatientCases(patientId: string | null | undefined): CasesResu
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const mapped: PatientCaseRow[] = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => {
@@ -835,12 +835,12 @@ export function usePatientCases(patientId: string | null | undefined): CasesResu
         };
       });
       setData(mapped);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, settle]);
 
   return { data, loading, error };
 }

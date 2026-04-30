@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 // Lounge upgrades catalogue. Pure registry of upgrade names (e.g.
 // "Scalloped"). Per-product pricing lives on lng_catalogue_upgrade_links
@@ -46,15 +47,14 @@ export function useUpgradesActive(): UpgradesResult {
 
 function useUpgradesQuery({ activeOnly }: { activeOnly: boolean }): UpgradesResult {
   const [rows, setRows] = useState<UpgradeRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(activeOnly ? 'upg-active' : 'upg-all');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       let q = supabase
         .from('lng_catalogue_upgrades')
         .select('id, code, name, description, sort_order, active, created_at, updated_at')
@@ -71,16 +71,16 @@ function useUpgradesQuery({ activeOnly }: { activeOnly: boolean }): UpgradesResu
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       setRows((data ?? []) as UpgradeRow[]);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [activeOnly, tick]);
+  }, [activeOnly, tick, settle]);
 
   return { rows, loading, error, refresh };
 }
@@ -133,15 +133,14 @@ interface UpgradeLinksResult {
 // a fresh query — the link table is small (rows × upgrades).
 export function useAllUpgradeLinks(): UpgradeLinksResult {
   const [links, setLinks] = useState<UpgradeLinkRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading('upgrade-links-all');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const { data, error: err } = await supabase
         .from('lng_catalogue_upgrade_links')
         .select('catalogue_id, upgrade_id, price, both_arches_price, created_at, updated_at');
@@ -153,36 +152,35 @@ export function useAllUpgradeLinks(): UpgradeLinksResult {
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       setLinks((data ?? []) as UpgradeLinkRow[]);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [tick]);
+  }, [tick, settle]);
 
   return { links, loading, error, refresh };
 }
 
 export function useUpgradeLinksForCatalogue(catalogueId: string | null): UpgradeLinksResult {
   const [links, setLinks] = useState<UpgradeLinkRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(catalogueId);
 
   useEffect(() => {
     if (!catalogueId) {
       setLinks([]);
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const { data, error: err } = await supabase
         .from('lng_catalogue_upgrade_links')
         .select('catalogue_id, upgrade_id, price, both_arches_price, created_at, updated_at')
@@ -195,16 +193,16 @@ export function useUpgradeLinksForCatalogue(catalogueId: string | null): Upgrade
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       setLinks((data ?? []) as UpgradeLinkRow[]);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [catalogueId, tick]);
+  }, [catalogueId, tick, settle]);
 
   return { links, loading, error, refresh };
 }

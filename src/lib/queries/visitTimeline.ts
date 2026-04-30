@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { formatPence } from './carts.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useVisitTimeline — derives a sorted, deduplicated audit-trail event
@@ -217,20 +218,19 @@ function formatAppointmentSlot(iso: string): string {
 
 export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(visitId);
 
   useEffect(() => {
     if (!visitId) {
       setEvents([]);
-      setLoading(false);
+      settle();
       setError(null);
       return;
     }
     let cancelled = false;
-    setLoading(true);
     setError(null);
     (async () => {
       try {
@@ -247,7 +247,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
         if (!visitRaw) {
           if (!cancelled) {
             setEvents([]);
-            setLoading(false);
+            settle();
           }
           return;
         }
@@ -350,18 +350,18 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
 
         if (!cancelled) {
           setEvents(resolved);
-          setLoading(false);
+          settle();
         }
       } catch (e: unknown) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : 'Could not load timeline');
-        setLoading(false);
+        settle();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [visitId, tick]);
+  }, [visitId, tick, settle]);
 
   // Visit timeline aggregates from many sources. We don't try to be
   // surgical here — any change to any source table refetches and

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 // Mirror of the lwo_catalogue table that Checkpoint already manages. Lounge
 // reads + writes the same rows so prices and SKUs never drift between the
@@ -68,15 +69,14 @@ export function useCatalogueActive(): CatalogueResult {
 
 function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueResult {
   const [rows, setRows] = useState<CatalogueRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(activeOnly ? 'cat-active' : 'cat-all');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       let q = supabase
         .from('lwo_catalogue')
         .select(
@@ -98,16 +98,16 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       setRows((data ?? []) as CatalogueRow[]);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [activeOnly, tick]);
+  }, [activeOnly, tick, settle]);
 
   return { rows, loading, error, refresh };
 }
