@@ -943,24 +943,13 @@ export function VisitDetail() {
                   </Button>
                 ) : null}
               </div>
-              <LifecycleStrip
-                arrivalType={visit.arrival_type}
-                bookedAt={appointment?.created_at ?? null}
-                bookingSource={appointment?.source ?? null}
-                scheduledAt={appointment?.start_at ?? null}
-                arrivedAt={visit.opened_at}
-                completedAt={visit.closed_at}
-                visitStatus={visit.status}
-                unsuitableAt={latestUnsuitable?.recorded_at ?? null}
-                unsuitableBy={latestUnsuitable?.recorded_by_name ?? null}
-                unsuitableCategory={latestUnsuitable?.category ?? null}
-                unsuitableEndReason={latestUnsuitable?.end_reason ?? null}
-              />
-              <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', marginTop: theme.space[4] }}>
-                {/* All meta pills except the visit-status one dim
-                    when the visit is unsuitable. The status pill
-                    keeps full opacity (orange "Unsuitable") so it's
-                    the one chip that reads as live. */}
+              {/* Identity pills sit directly under the patient name —
+                  refs, JB, walk-in vs scheduled, visit status, cart
+                  status. Glanceable across the row before the eye
+                  drops to the dates. All except the visit-status
+                  pill dim when the visit is unsuitable; the status
+                  pill keeps full opacity so it reads as live. */}
+              <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', marginTop: theme.space[3] }}>
                 {showableRef(patient?.internal_ref) ? (
                   <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
                     <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
@@ -1008,6 +997,21 @@ export function VisitDetail() {
                     {cartStatusLabel(cart.status)}
                   </MetaPill>
                 ) : null}
+              </div>
+              <div style={{ marginTop: theme.space[4] }}>
+                <LifecycleStrip
+                  arrivalType={visit.arrival_type}
+                  bookedAt={appointment?.created_at ?? null}
+                  bookingSource={appointment?.source ?? null}
+                  scheduledAt={appointment?.start_at ?? null}
+                  arrivedAt={visit.opened_at}
+                  completedAt={visit.closed_at}
+                  visitStatus={visit.status}
+                  unsuitableAt={latestUnsuitable?.recorded_at ?? null}
+                  unsuitableBy={latestUnsuitable?.recorded_by_name ?? null}
+                  unsuitableCategory={latestUnsuitable?.category ?? null}
+                  unsuitableEndReason={latestUnsuitable?.end_reason ?? null}
+                />
               </div>
             </div>
 
