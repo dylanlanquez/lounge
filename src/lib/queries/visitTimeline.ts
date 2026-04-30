@@ -101,6 +101,7 @@ interface CartItemEventRow {
   shade: string | null;
   notes: string | null;
   created_at: string;
+  created_by: string | null;
 }
 
 interface PaymentRow {
@@ -306,6 +307,10 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             timestamp: visit.opened_at,
             title: 'Job box assigned',
             detail: `JB${visit.jb_ref}`,
+            // Same staff who checked the patient in — JB lives on the
+            // appointment and gets captured into the visit at insert,
+            // and arrival is the moment both happen together.
+            actorAccountId: visit.receptionist_id,
             hint: 'box',
           });
           if (visit.closed_at) {
@@ -509,7 +514,7 @@ async function fetchCartItemEvents(visitId: string): Promise<RawTimelineEvent[]>
   const { data: items, error: itemErr } = await supabase
     .from('lng_cart_items')
     .select(
-      'id, name, quantity, unit_price_pence, line_total_pence, arch, shade, notes, created_at'
+      'id, name, quantity, unit_price_pence, line_total_pence, arch, shade, notes, created_at, created_by'
     )
     .eq('cart_id', (cart as { id: string }).id)
     .order('created_at', { ascending: true });
@@ -536,6 +541,7 @@ async function fetchCartItemEvents(visitId: string): Promise<RawTimelineEvent[]>
         it.shade ? `shade ${it.shade}` : null,
         it.notes
       ),
+      actorAccountId: it.created_by,
       hint: 'cart' as const,
     };
   });

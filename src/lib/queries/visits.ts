@@ -59,6 +59,11 @@ export async function createWalkInVisit(
     .single();
   if (walkInErr || !walkIn) throw new Error(walkInErr?.message ?? 'Could not create walk-in');
 
+  // Stamp the receptionist who took the walk-in so the timeline's
+  // "Walk-in arrived" + "Job box assigned" events attribute by
+  // [name]. NULL on resolver failure rather than blocking arrival.
+  const { data: walkInAccountId } = await supabase.rpc('auth_account_id');
+
   // Return opened_at so the caller can pre-render the visit page's
   // breadcrumb timestamp on first paint instead of shimmering until
   // the post-navigation visit query resolves. The server's now() is
@@ -72,6 +77,7 @@ export async function createWalkInVisit(
       arrival_type: 'walk_in',
       status: 'arrived',
       notes: input.notes ?? null,
+      receptionist_id: (walkInAccountId as string | null) ?? null,
     })
     .select('id, opened_at')
     .single();
@@ -286,6 +292,14 @@ export async function markAppointmentArrived(
     .single();
   if (apptErr || !appt) throw new Error(apptErr?.message ?? 'Could not mark arrived');
 
+  // Stamp the receptionist who checked the patient in so the
+  // timeline's "Patient checked in" + "Job box assigned" events can
+  // attribute by [name]. Best-effort: if the account resolver fails
+  // (kiosk session edge case) the column lands NULL rather than
+  // blocking arrival.
+  const { data: accountIdAtArrival } = await supabase.rpc('auth_account_id');
+  const receptionistId = (accountIdAtArrival as string | null) ?? null;
+
   // Returning opened_at lets the caller pass it through router state
   // so the visit page's breadcrumb renders the timestamp on first
   // paint — no shimmer-then-pop transition.
@@ -297,6 +311,7 @@ export async function markAppointmentArrived(
       appointment_id: appt.id,
       arrival_type: 'scheduled',
       status: 'arrived',
+      receptionist_id: receptionistId,
     })
     .select('id, opened_at')
     .single();
