@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  Ban,
   Box,
   CalendarCheck,
   CheckCircle2,
@@ -18,12 +19,15 @@ import {
   ShoppingCart,
   StickyNote,
   UserPlus,
+  X,
 } from 'lucide-react';
 import {
   BeforeAfterGallery,
+  BottomSheet,
   Breadcrumb,
   Button,
   Card,
+  DropdownSelect,
   EmptyState,
   MarketingGallery,
   Skeleton,
@@ -45,7 +49,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
+import { formatVisitCrumb, recordUnsuitability, useVisitDetail } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
@@ -137,6 +141,15 @@ export function VisitDetail() {
   const [waiverViewerOpen, setWaiverViewerOpen] = useState(false);
   const { rows: patientSignedRows } = useSignedWaivers(patient?.id ?? null);
   const [waiverOpen, setWaiverOpen] = useState(false);
+  // Unsuitability sheet — staff records that the patient cannot
+  // proceed with one of the items in their basket. Reason is required
+  // (schema enforces non-empty too). Submit terminates the visit by
+  // flipping status to 'unsuitable'.
+  const [unsuitableOpen, setUnsuitableOpen] = useState(false);
+  const [unsuitableCatalogueId, setUnsuitableCatalogueId] = useState<string>('');
+  const [unsuitableReason, setUnsuitableReason] = useState('');
+  const [unsuitableBusy, setUnsuitableBusy] = useState(false);
+  const [unsuitableError, setUnsuitableError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
 
   // Waiver state. Required sections are derived from the cart's
@@ -357,6 +370,55 @@ export function VisitDetail() {
   // the over-deposit case so we never produce a negative charge here.
   const total = Math.max(0, subtotal - discount - depositPence);
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
+
+  // Visits that have already terminated (complete / unsuitable /
+  // cancelled) are read-only for unsuitability — no second mark.
+  const visitTerminated =
+    visit?.status === 'complete' || visit?.status === 'unsuitable' || visit?.status === 'cancelled';
+
+  // Items that can be picked in the dropdown — only catalogue-backed
+  // lines (ad-hoc rows have no catalogue_id and the schema requires
+  // one). We surface them in the order they sit in the cart.
+  const unsuitableEligibleItems = useMemo(
+    () => items.filter((it): it is typeof it & { catalogue_id: string } => !!it.catalogue_id),
+    [items]
+  );
+  const canMarkUnsuitable = !visitTerminated && unsuitableEligibleItems.length > 0;
+
+  const openUnsuitable = () => {
+    setUnsuitableError(null);
+    setUnsuitableReason('');
+    setUnsuitableCatalogueId(unsuitableEligibleItems[0]?.catalogue_id ?? '');
+    setUnsuitableOpen(true);
+  };
+
+  const submitUnsuitable = async () => {
+    if (!visit || !patient) return;
+    if (!unsuitableCatalogueId) {
+      setUnsuitableError('Pick the product the patient was unsuitable for.');
+      return;
+    }
+    if (unsuitableReason.trim().length === 0) {
+      setUnsuitableError('A reason is required.');
+      return;
+    }
+    setUnsuitableBusy(true);
+    setUnsuitableError(null);
+    try {
+      await recordUnsuitability({
+        patient_id: patient.id,
+        visit_id: visit.id,
+        catalogue_id: unsuitableCatalogueId,
+        reason: unsuitableReason,
+      });
+      setUnsuitableOpen(false);
+      refresh();
+    } catch (e) {
+      setUnsuitableError(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setUnsuitableBusy(false);
+    }
+  };
 
   const openPicker = async () => {
     setError(null);
@@ -695,6 +757,14 @@ export function VisitDetail() {
 
             {items.length > 0 ? (
               <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                {canMarkUnsuitable ? (
+                  <Button variant="tertiary" size="lg" onClick={openUnsuitable}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <Ban size={18} aria-hidden />
+                      Mark unsuitable
+                    </span>
+                  </Button>
+                ) : null}
                 <Button variant="secondary" size="lg" onClick={openNoteEditor}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                     <StickyNote size={18} aria-hidden />
@@ -936,6 +1006,99 @@ export function VisitDetail() {
           ) : null}
         </div>
       </Dialog>
+
+      {/* Mark unsuitable sheet. Required reason + product dropdown
+          (cart catalogue items only). Submit terminates the visit. */}
+      <BottomSheet
+        open={unsuitableOpen}
+        onClose={() => !unsuitableBusy && setUnsuitableOpen(false)}
+        dismissable={!unsuitableBusy}
+        title="Mark patient unsuitable"
+        description="Captured for the patient timeline. Reason and product are required. The visit ends here — this can only be reversed by an admin."
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button variant="secondary" onClick={() => setUnsuitableOpen(false)} disabled={unsuitableBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Cancel
+              </span>
+            </Button>
+            <Button variant="primary" onClick={submitUnsuitable} loading={unsuitableBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Ban size={16} aria-hidden /> Mark unsuitable
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <DropdownSelect<string>
+            label="Product"
+            required
+            value={unsuitableCatalogueId}
+            options={unsuitableEligibleItems.map((it) => ({
+              value: it.catalogue_id,
+              label: it.name,
+            }))}
+            onChange={(v) => setUnsuitableCatalogueId(v)}
+            placeholder="Pick a product from the basket"
+          />
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Reason <span style={{ color: theme.color.alert }}>*</span>
+            </span>
+            <textarea
+              value={unsuitableReason}
+              onChange={(e) => setUnsuitableReason(e.target.value)}
+              rows={5}
+              placeholder="Why is the patient unsuitable for this product? Be specific — this lands on the patient timeline."
+              style={{
+                width: '100%',
+                padding: theme.space[3],
+                fontSize: theme.type.size.base,
+                fontFamily: 'inherit',
+                lineHeight: theme.type.leading.normal,
+                color: theme.color.ink,
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+                resize: 'vertical',
+                minHeight: 120,
+              }}
+            />
+          </label>
+
+          {unsuitableError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {unsuitableError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
     </main>
   );
 }
@@ -1420,7 +1583,7 @@ function showableRef(value: string | null | undefined): value is string {
   return true;
 }
 
-function visitStatusIcon(s: 'opened' | 'in_progress' | 'complete' | 'cancelled') {
+function visitStatusIcon(s: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable') {
   switch (s) {
     case 'opened':
       return <Circle size={12} />;
@@ -1430,6 +1593,8 @@ function visitStatusIcon(s: 'opened' | 'in_progress' | 'complete' | 'cancelled')
       return <CheckCircle size={12} />;
     case 'cancelled':
       return <CircleSlash size={12} />;
+    case 'unsuitable':
+      return <Ban size={12} />;
   }
 }
 
@@ -1447,7 +1612,7 @@ function cartStatusIcon(s: 'open' | 'paid' | 'voided') {
 // Visit-status helpers. The DB stores the raw enum (opened /
 // in_progress / complete / cancelled); the UI shows humanised copy
 // to match the other status pills in the app.
-function visitStatusLabel(s: 'opened' | 'in_progress' | 'complete' | 'cancelled'): string {
+function visitStatusLabel(s: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable'): string {
   switch (s) {
     case 'opened':
       return 'Opened';
@@ -1457,9 +1622,11 @@ function visitStatusLabel(s: 'opened' | 'in_progress' | 'complete' | 'cancelled'
       return 'Complete';
     case 'cancelled':
       return 'Cancelled';
+    case 'unsuitable':
+      return 'Unsuitable';
   }
 }
-function visitStatusTone(s: 'opened' | 'in_progress' | 'complete' | 'cancelled') {
+function visitStatusTone(s: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable') {
   switch (s) {
     case 'opened':
       return 'in_progress' as const;
@@ -1468,6 +1635,8 @@ function visitStatusTone(s: 'opened' | 'in_progress' | 'complete' | 'cancelled')
     case 'complete':
       return 'complete' as const;
     case 'cancelled':
+      return 'cancelled' as const;
+    case 'unsuitable':
       return 'cancelled' as const;
   }
 }
