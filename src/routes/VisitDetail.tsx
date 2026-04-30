@@ -30,7 +30,6 @@ import {
   Card,
   EmptyState,
   MarketingGallery,
-  MultiSelectDropdown,
   Skeleton,
   StatusPill,
   Toast,
@@ -52,7 +51,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   formatVisitCrumb,
-  recordUnsuitability,
+  removeCartLineWithReason,
   reverseUnsuitability,
   useLatestUnsuitability,
   useVisitDetail,
@@ -61,7 +60,6 @@ import type { VisitRow } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
-  removeCartItem,
   updateCartItemQuantity,
   useCart,
 } from '../lib/queries/carts.ts';
@@ -153,12 +151,14 @@ export function VisitDetail() {
   // proceed with one or more items in their basket. Reason is shared
   // across the selected products (one submit = one finding for each
   // chosen line, all with the same reason). Submit terminates the
-  // visit by flipping status to 'unsuitable'.
-  const [unsuitableOpen, setUnsuitableOpen] = useState(false);
-  const [unsuitableCatalogueIds, setUnsuitableCatalogueIds] = useState<string[]>([]);
-  const [unsuitableReason, setUnsuitableReason] = useState('');
-  const [unsuitableBusy, setUnsuitableBusy] = useState(false);
-  const [unsuitableError, setUnsuitableError] = useState<string | null>(null);
+  // visit by flipping status to 'unsuitable' iff the cart ends empty
+  // and the removal was unsuitable (handled by removeCartLineWithReason).
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeItemId, setRemoveItemId] = useState<string | null>(null);
+  const [removeReason, setRemoveReason] = useState<'mistake' | 'changed_mind' | 'unsuitable'>('mistake');
+  const [removeNote, setRemoveNote] = useState('');
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
   // Drives the unsuitable header line + reverse-flow toast wording.
   // Re-fetched whenever the visit refreshes.
@@ -391,64 +391,24 @@ export function VisitDetail() {
   // forever, unsuitable visits are immutable until reversed.
   const productiveLocked = cartLocked || isUnsuitable;
 
-  // Visits that have already terminated (complete / unsuitable /
-  // cancelled) are read-only for unsuitability — no second mark.
-  const visitTerminated =
-    visit?.status === 'complete' || visit?.status === 'unsuitable';
-
-  // Items that can be picked in the dropdown — only catalogue-backed
-  // lines (ad-hoc rows have no catalogue_id and the schema requires
-  // one). We surface them in the order they sit in the cart.
-  const unsuitableEligibleItems = useMemo(
-    () => items.filter((it): it is typeof it & { catalogue_id: string } => !!it.catalogue_id),
-    [items]
-  );
-  const canMarkUnsuitable = !visitTerminated && unsuitableEligibleItems.length > 0;
-
-  const openUnsuitable = () => {
-    setUnsuitableError(null);
-    setUnsuitableReason('');
-    // Default-empty selection so staff has to consciously pick — no
-    // chance of submitting against the wrong line through inertia.
-    setUnsuitableCatalogueIds([]);
-    setUnsuitableOpen(true);
+  // Open the Remove sheet for a specific cart line. Staff picks one
+  // of three reasons; submit routes to removeCartLineWithReason.
+  const openRemoveSheet = (itemId: string) => {
+    setRemoveItemId(itemId);
+    // Default to 'mistake' — most common removal reason; staff can
+    // switch to changed_mind / unsuitable if it warrants more weight.
+    setRemoveReason('mistake');
+    setRemoveNote('');
+    setRemoveError(null);
+    setRemoveOpen(true);
   };
 
-  // True when every catalogue-backed line on the visit has been
-  // ticked. Submitting in this state ends the visit; the sheet warns
-  // staff before they confirm.
-  const unsuitableEndsVisit =
-    unsuitableEligibleItems.length > 0 &&
-    unsuitableCatalogueIds.length === unsuitableEligibleItems.length;
-
-  const submitUnsuitable = async () => {
-    if (!visit || !patient) return;
-    if (unsuitableCatalogueIds.length === 0) {
-      setUnsuitableError('Pick at least one product the patient was unsuitable for.');
-      return;
-    }
-    if (unsuitableReason.trim().length === 0) {
-      setUnsuitableError('A reason is required.');
-      return;
-    }
-    setUnsuitableBusy(true);
-    setUnsuitableError(null);
-    try {
-      await recordUnsuitability({
-        patient_id: patient.id,
-        visit_id: visit.id,
-        catalogue_ids: unsuitableCatalogueIds,
-        reason: unsuitableReason,
-        endsVisit: unsuitableEndsVisit,
-      });
-      setUnsuitableOpen(false);
-      refresh();
-    } catch (e) {
-      setUnsuitableError(e instanceof Error ? e.message : 'Could not save');
-    } finally {
-      setUnsuitableBusy(false);
-    }
-  };
+  // True only when the chosen reason is unsuitable AND removing this
+  // line would leave the cart empty. Used to surface the "this will
+  // end the visit" amber alert in the Remove sheet.
+  const itemBeingRemoved = items.find((it) => it.id === removeItemId) ?? null;
+  const removeWillEndVisit =
+    removeReason === 'unsuitable' && items.length === 1 && itemBeingRemoved !== null;
 
   const openPicker = async () => {
     setError(null);
@@ -494,13 +454,35 @@ export function VisitDetail() {
       setBusyItem(null);
     }
   };
-  const rm = async (id: string) => {
-    setBusyItem(id);
+  // Trash icon on a cart line opens the Remove sheet rather than
+  // hard-deleting. Every removal goes through reason capture so
+  // staff can't silently zero-out a line and bypass the audit.
+  const rm = (id: string) => openRemoveSheet(id);
+
+  const submitRemove = async () => {
+    if (!visit || !patient || !removeItemId || !itemBeingRemoved) return;
+    if (removeReason === 'unsuitable' && removeNote.trim().length === 0) {
+      setRemoveError('A reason is required when marking the patient unsuitable.');
+      return;
+    }
+    setRemoveBusy(true);
+    setRemoveError(null);
     try {
-      await removeCartItem(id);
+      await removeCartLineWithReason({
+        cart_item_id: removeItemId,
+        catalogue_id: itemBeingRemoved.catalogue_id,
+        visit_id: visit.id,
+        patient_id: patient.id,
+        reason: removeReason,
+        note: removeNote,
+      });
+      setRemoveOpen(false);
+      setRemoveItemId(null);
       refresh();
+    } catch (e) {
+      setRemoveError(e instanceof Error ? e.message : 'Could not remove');
     } finally {
-      setBusyItem(null);
+      setRemoveBusy(false);
     }
   };
 
@@ -837,14 +819,15 @@ export function VisitDetail() {
             </Card>
             </div>
 
-            {items.length > 0 ? (
-              // Single right-aligned row: Mark unsuitable, tech
-              // note, Print LWO, Take payment. When the visit is
-              // unsuitable, Mark unsuitable hides, the secondaries
-              // dim individually (so the primary Reverse button can
-              // stay full opacity), and Take payment becomes Reverse.
-              // No total amount on the Take payment label — the
-              // Cart card already shows it, putting it on the button
+            {items.length > 0 || isUnsuitable ? (
+              // Right-aligned row: tech note, Print LWO, Take
+              // payment. Unsuitable removals happen per-line via the
+              // trash icon (which opens the Remove sheet); there's
+              // no separate Mark-unsuitable affordance any more.
+              // When the visit is unsuitable, the secondaries dim
+              // individually so the primary Reverse button stays
+              // full opacity. Take payment carries no total — the
+              // Cart card shows it; putting it on the button
               // duplicated the figure.
               <div
                 style={{
@@ -856,14 +839,6 @@ export function VisitDetail() {
                   flexWrap: 'wrap',
                 }}
               >
-                {canMarkUnsuitable ? (
-                  <Button variant="tertiary" onClick={openUnsuitable}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <Ban size={16} aria-hidden />
-                      Mark unsuitable
-                    </span>
-                  </Button>
-                ) : null}
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
                   <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
@@ -1102,17 +1077,25 @@ export function VisitDetail() {
         </div>
       </Dialog>
 
-      {/* Mark unsuitable sheet. Required reason + product dropdown
-          (cart catalogue items only). Submit terminates the visit. */}
+      {/* Per-line Remove sheet. Trash icon on a cart line opens
+          this; staff picks one of three reasons and (for unsuitable
+          / changed_mind) optionally adds a note. Submit routes to
+          removeCartLineWithReason which soft-deletes the line,
+          writes the right audit, and decides whether the visit
+          should terminate. */}
       <BottomSheet
-        open={unsuitableOpen}
-        onClose={() => !unsuitableBusy && setUnsuitableOpen(false)}
-        dismissable={!unsuitableBusy}
-        title="Mark patient unsuitable"
+        open={removeOpen}
+        onClose={() => !removeBusy && setRemoveOpen(false)}
+        dismissable={!removeBusy}
+        title={itemBeingRemoved ? `Remove ${itemBeingRemoved.name}` : 'Remove item'}
         description={
-          unsuitableEndsVisit
-            ? 'Every product on this visit will be marked unsuitable. The visit ends here. Only an admin can reverse it.'
-            : 'Captured for the patient timeline. The visit stays open for the products you don’t tick, so the rest can still be paid for.'
+          removeReason === 'unsuitable'
+            ? removeWillEndVisit
+              ? 'This is the last item on the visit. Submitting will end the visit. The patient won’t be charged. An admin can reverse this later.'
+              : 'Records on the patient timeline that the patient was unsuitable for this product. Reason is required.'
+            : removeReason === 'changed_mind'
+              ? 'Records on the patient timeline that the patient declined this product. A note is optional.'
+              : 'Removes the line from the cart. Use this when staff picked the wrong product. Logged for audit.'
         }
         footer={
           <div
@@ -1124,38 +1107,89 @@ export function VisitDetail() {
               flexWrap: 'wrap',
             }}
           >
-            <Button variant="secondary" onClick={() => setUnsuitableOpen(false)} disabled={unsuitableBusy}>
+            <Button variant="secondary" onClick={() => setRemoveOpen(false)} disabled={removeBusy}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <X size={16} aria-hidden /> Cancel
               </span>
             </Button>
-            <Button variant="primary" onClick={submitUnsuitable} loading={unsuitableBusy}>
+            <Button variant="primary" onClick={submitRemove} loading={removeBusy}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <Ban size={16} aria-hidden />
-                {unsuitableEndsVisit ? 'Mark unsuitable & end visit' : 'Mark unsuitable'}
+                {removeReason === 'unsuitable' && removeWillEndVisit
+                  ? 'Remove & end visit'
+                  : 'Remove'}
               </span>
             </Button>
           </div>
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          {/* Multi-select dropdown for the basket items the patient is
-              unsuitable for. Same reason applies to every ticked
-              product (one submit = one record per ticked product). */}
-          <MultiSelectDropdown<string>
-            label="Products"
-            required
-            values={unsuitableCatalogueIds}
-            options={unsuitableEligibleItems.map((it) => ({
-              value: it.catalogue_id,
-              label: it.name,
-            }))}
-            onChange={(next) => setUnsuitableCatalogueIds(next)}
-            placeholder="Pick from the basket"
-            totalNoun="products"
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Reason <span style={{ color: theme.color.alert }}>*</span>
+            </span>
+            {/* Three radio-style cards. Click flips the selection;
+                the chosen reason drives the sheet description and
+                whether the note textarea is required. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {([
+                { value: 'mistake', label: 'Added by mistake', sub: 'Staff picked the wrong product. No clinical meaning.' },
+                { value: 'changed_mind', label: 'Patient changed mind', sub: 'Patient declined this product today.' },
+                { value: 'unsuitable', label: 'Patient unsuitable', sub: 'Clinical decision. Reason required, lands on timeline.' },
+              ] as const).map((opt) => {
+                const isSel = removeReason === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setRemoveReason(opt.value)}
+                    style={{
+                      appearance: 'none',
+                      width: '100%',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      padding: theme.space[3],
+                      borderRadius: theme.radius.input,
+                      border: `1.5px solid ${isSel ? theme.color.ink : theme.color.border}`,
+                      background: isSel ? 'rgba(14, 20, 20, 0.03)' : theme.color.surface,
+                      color: theme.color.ink,
+                      fontFamily: 'inherit',
+                      transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: theme.type.size.base,
+                        fontWeight: isSel ? theme.type.weight.semibold : theme.type.weight.medium,
+                      }}
+                    >
+                      {opt.label}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: theme.type.size.sm,
+                        color: theme.color.inkMuted,
+                        fontWeight: theme.type.weight.regular,
+                      }}
+                    >
+                      {opt.sub}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-          {unsuitableEndsVisit ? (
+          {removeWillEndVisit ? (
             <div
               role="status"
               style={{
@@ -1172,46 +1206,53 @@ export function VisitDetail() {
             >
               <AlertTriangle size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
               <span>
-                All basket items are selected. Submitting will end the visit. The patient won’t be charged for
-                these lines and the visit drops off the in-clinic board.
+                Last item on the visit. Submitting will end the visit. The patient won’t be charged and the visit
+                drops off the in-clinic board.
               </span>
             </div>
           ) : null}
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <span
-              style={{
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-              }}
-            >
-              Reason <span style={{ color: theme.color.alert }}>*</span>
-            </span>
-            <textarea
-              value={unsuitableReason}
-              onChange={(e) => setUnsuitableReason(e.target.value)}
-              rows={5}
-              placeholder="Why is the patient unsuitable for these products? Be specific. This lands on the patient timeline."
-              style={{
-                width: '100%',
-                padding: theme.space[3],
-                fontSize: theme.type.size.base,
-                fontFamily: 'inherit',
-                lineHeight: theme.type.leading.normal,
-                color: theme.color.ink,
-                background: theme.color.surface,
-                border: `1px solid ${theme.color.border}`,
-                borderRadius: theme.radius.input,
-                resize: 'vertical',
-                minHeight: 120,
-              }}
-            />
-          </label>
+          {removeReason !== 'mistake' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              <span
+                style={{
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontWeight: theme.type.weight.medium,
+                  textTransform: 'uppercase',
+                  letterSpacing: theme.type.tracking.wide,
+                }}
+              >
+                {removeReason === 'unsuitable' ? 'Reason' : 'Note'}
+                {removeReason === 'unsuitable' ? <span style={{ color: theme.color.alert }}> *</span> : null}
+              </span>
+              <textarea
+                value={removeNote}
+                onChange={(e) => setRemoveNote(e.target.value)}
+                rows={4}
+                placeholder={
+                  removeReason === 'unsuitable'
+                    ? 'Why is the patient unsuitable for this product? Be specific. This lands on the patient timeline.'
+                    : 'Optional. Anything worth recording about why the patient declined.'
+                }
+                style={{
+                  width: '100%',
+                  padding: theme.space[3],
+                  fontSize: theme.type.size.base,
+                  fontFamily: 'inherit',
+                  lineHeight: theme.type.leading.normal,
+                  color: theme.color.ink,
+                  background: theme.color.surface,
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  resize: 'vertical',
+                  minHeight: 100,
+                }}
+              />
+            </label>
+          ) : null}
 
-          {unsuitableError ? (
+          {removeError ? (
             <p
               role="alert"
               style={{
@@ -1221,7 +1262,7 @@ export function VisitDetail() {
                 fontWeight: theme.type.weight.medium,
               }}
             >
-              {unsuitableError}
+              {removeError}
             </p>
           ) : null}
         </div>
