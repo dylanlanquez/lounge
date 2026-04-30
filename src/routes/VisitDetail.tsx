@@ -401,6 +401,13 @@ export function VisitDetail() {
     );
   };
 
+  // True when every catalogue-backed line on the visit has been
+  // ticked. Submitting in this state ends the visit; the sheet warns
+  // staff before they confirm.
+  const unsuitableEndsVisit =
+    unsuitableEligibleItems.length > 0 &&
+    unsuitableCatalogueIds.length === unsuitableEligibleItems.length;
+
   const submitUnsuitable = async () => {
     if (!visit || !patient) return;
     if (unsuitableCatalogueIds.length === 0) {
@@ -419,6 +426,7 @@ export function VisitDetail() {
         visit_id: visit.id,
         catalogue_ids: unsuitableCatalogueIds,
         reason: unsuitableReason,
+        endsVisit: unsuitableEndsVisit,
       });
       setUnsuitableOpen(false);
       refresh();
@@ -1020,7 +1028,11 @@ export function VisitDetail() {
         onClose={() => !unsuitableBusy && setUnsuitableOpen(false)}
         dismissable={!unsuitableBusy}
         title="Mark patient unsuitable"
-        description="Captured for the patient timeline. Reason and product are required. The visit ends here — this can only be reversed by an admin."
+        description={
+          unsuitableEndsVisit
+            ? 'Every product on this visit will be marked unsuitable. The visit ends here — only an admin can reverse it.'
+            : 'Captured for the patient timeline. The visit stays open for the products you don’t tick, so the rest can still be paid for.'
+        }
         footer={
           <div
             style={{
@@ -1038,7 +1050,8 @@ export function VisitDetail() {
             </Button>
             <Button variant="primary" onClick={submitUnsuitable} loading={unsuitableBusy}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <Ban size={16} aria-hidden /> Mark unsuitable
+                <Ban size={16} aria-hidden />
+                {unsuitableEndsVisit ? 'Mark unsuitable & end visit' : 'Mark unsuitable'}
               </span>
             </Button>
           </div>
@@ -1083,6 +1096,28 @@ export function VisitDetail() {
                 />
               ))}
             </div>
+            {unsuitableEndsVisit ? (
+              <div
+                role="status"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'flex-start',
+                  gap: theme.space[2],
+                  padding: theme.space[3],
+                  borderRadius: theme.radius.input,
+                  background: 'rgba(179, 104, 21, 0.08)',
+                  color: theme.color.warn,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                }}
+              >
+                <AlertTriangle size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>
+                  All basket items selected — submitting will end the visit. The patient won’t be charged for these
+                  lines and the visit drops off the in-clinic board.
+                </span>
+              </div>
+            ) : null}
           </div>
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
