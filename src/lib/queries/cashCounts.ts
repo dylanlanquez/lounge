@@ -84,12 +84,14 @@ interface CashCountsResult {
   data: CashCountRow[] | null;
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 export function useCashCounts(): CashCountsResult {
   const [data, setData] = useState<CashCountRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,9 +130,9 @@ export function useCashCounts(): CashCountsResult {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tick]);
 
-  return { data, loading, error };
+  return { data, loading, error, refresh: () => setTick((t) => t + 1) };
 }
 
 // ── Current outstanding cash position ───────────────────────────────────────
@@ -635,4 +637,300 @@ function ensureNumber(v: number | undefined, key: string): number {
     throw new Error(`Missing or invalid lng_settings entry: ${key}`);
   }
   return v;
+}
+
+// ── Write mutations ─────────────────────────────────────────────────────────
+// Three-step flow:
+//   1. createCashCount — opens a pending count for a period, snapshots
+//      every cash payment in that period as an immutable line row,
+//      records expected_pence at snapshot time. The counter is the
+//      caller. Returns the new count id.
+//   2. updateCashCountActual — counter enters the physical amount
+//      they observed in the safe. Variance is the generated column,
+//      so we just write actual_pence + notes. Allowed only while the
+//      count is pending.
+//   3. signCashCount — manager re-auths with their password (parallel
+//      Supabase client, doesn't disturb the cashier session — same
+//      pattern as discount + void approvals). Status flips to signed
+//      with both timestamps + accounts ids landed.
+//
+// Each step throws on validation failure with a meaningful message,
+// no silent fallback.
+
+import { approveAsManager } from './payments.ts';
+
+export interface CreateCashCountInput {
+  location_id: string;
+  period_start: string; // ISO timestamptz
+  period_end: string;   // ISO timestamptz
+}
+
+export async function createCashCount(input: CreateCashCountInput): Promise<{ count_id: string; expected_pence: number; lines_count: number }> {
+  if (input.period_end <= input.period_start) {
+    throw new Error('Period end must be after period start.');
+  }
+  const { data: meId } = await supabase.rpc('auth_account_id');
+  const counterId = (meId as string | null) ?? null;
+  if (!counterId) throw new Error('Could not resolve current account.');
+
+  // Snapshot the cash payments that fall in this period. We do this
+  // BEFORE inserting the count row so we know expected_pence up front.
+  // Once the count is signed the lines are immutable; even if
+  // payments are voided afterwards, the count's record stays exact.
+  const paymentsRes = await supabase
+    .from('lng_payments')
+    .select(
+      `id, amount_pence, succeeded_at,
+       cart:lng_carts (
+         total_pence,
+         visit:lng_visits (
+           patient:patients ( first_name, last_name, name ),
+           appointment:lng_appointments ( appointment_ref ),
+           walk_in:lng_walk_ins ( appointment_ref )
+         )
+       )`,
+    )
+    .eq('method', 'cash')
+    .eq('status', 'succeeded')
+    .gte('succeeded_at', input.period_start)
+    .lte('succeeded_at', input.period_end);
+  if (paymentsRes.error) throw new Error(paymentsRes.error.message);
+
+  interface RawSnapshot {
+    id: string;
+    amount_pence: number;
+    succeeded_at: string;
+    cart:
+      | {
+          total_pence: number | null;
+          visit:
+            | {
+                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
+                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+              }
+            | {
+                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
+                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+              }[]
+            | null;
+        }
+      | {
+          total_pence: number | null;
+          visit:
+            | {
+                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
+                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+              }
+            | {
+                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
+                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+              }[]
+            | null;
+        }[]
+      | null;
+  }
+  const raw = (paymentsRes.data ?? []) as RawSnapshot[];
+  const expected_pence = raw.reduce((s, r) => s + r.amount_pence, 0);
+
+  // Insert the count row. lines come next.
+  const { data: insertedCount, error: countErr } = await supabase
+    .from('lng_cash_counts')
+    .insert({
+      location_id: input.location_id,
+      period_start: input.period_start,
+      period_end: input.period_end,
+      expected_pence,
+      counted_by: counterId,
+    })
+    .select('id')
+    .single();
+  if (countErr) throw new Error(`Could not create count: ${countErr.message}`);
+  const count_id = (insertedCount as { id: string }).id;
+
+  if (raw.length > 0) {
+    const lineRows = raw.map((r) => {
+      const cart = pickOne(r.cart);
+      const visit = pickOne(cart?.visit ?? null);
+      const patient = pickOne(visit?.patient ?? null);
+      const appt = pickOne(visit?.appointment ?? null);
+      const walkIn = pickOne(visit?.walk_in ?? null);
+      return {
+        count_id,
+        payment_id: r.id,
+        amount_pence: r.amount_pence,
+        taken_at: r.succeeded_at,
+        patient_name_snapshot: composePersonName(patient),
+        cart_total_pence_snapshot: cart?.total_pence ?? null,
+        appointment_ref_snapshot: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
+      };
+    });
+    const { error: linesErr } = await supabase.from('lng_cash_count_lines').insert(lineRows);
+    if (linesErr) {
+      throw new Error(`Lines insert failed (count ${count_id}): ${linesErr.message}`);
+    }
+  }
+  return { count_id, expected_pence, lines_count: raw.length };
+}
+
+export async function updateCashCountActual(
+  countId: string,
+  actualPence: number,
+  notes: string | null,
+): Promise<void> {
+  if (!Number.isFinite(actualPence) || actualPence < 0) {
+    throw new Error('Actual amount must be a non-negative integer (pence).');
+  }
+  const trimmedNotes = notes?.trim() ?? null;
+  const { error } = await supabase
+    .from('lng_cash_counts')
+    .update({ actual_pence: actualPence, notes: trimmedNotes && trimmedNotes.length > 0 ? trimmedNotes : null })
+    .eq('id', countId)
+    .eq('status', 'pending');
+  if (error) throw new Error(`Could not update count: ${error.message}`);
+}
+
+export async function signCashCount(input: {
+  count_id: string;
+  signer_email: string;
+  signer_password: string;
+}): Promise<void> {
+  if (!input.signer_email || !input.signer_password) {
+    throw new Error('Signer email and password are required.');
+  }
+  // Manager re-auths via parallel client (doesn't disturb the
+  // counter's session). approveAsManager throws on bad credentials.
+  const verifiedAccountId = await approveAsManager(input.signer_email, input.signer_password);
+
+  // Sanity: the row must exist and the signer can't be the counter.
+  const { data: row, error: readErr } = await supabase
+    .from('lng_cash_counts')
+    .select('id, status, counted_by, actual_pence')
+    .eq('id', input.count_id)
+    .maybeSingle();
+  if (readErr) throw new Error(readErr.message);
+  if (!row) throw new Error('Count not found.');
+  const c = row as { id: string; status: string; counted_by: string; actual_pence: number | null };
+  if (c.status !== 'pending') {
+    throw new Error(`Count is ${c.status}; only pending counts can be signed.`);
+  }
+  if (c.actual_pence === null) {
+    throw new Error('Enter the actual amount in the safe before signing.');
+  }
+  if (c.counted_by === verifiedAccountId) {
+    throw new Error('Signer must be a different staff member than the counter.');
+  }
+
+  const { error: updErr } = await supabase
+    .from('lng_cash_counts')
+    .update({
+      status: 'signed',
+      signed_off_by: verifiedAccountId,
+      signed_off_at: new Date().toISOString(),
+    })
+    .eq('id', input.count_id)
+    .eq('status', 'pending');
+  if (updErr) throw new Error(`Sign failed: ${updErr.message}`);
+}
+
+// ── Per-count statement read ───────────────────────────────────────────────
+
+export interface CashCountStatementLine {
+  payment_id: string;
+  amount_pence: number;
+  taken_at: string;
+  patient_name: string;
+  appointment_ref: string | null;
+}
+
+export interface CashCountStatement {
+  count: CashCountRow;
+  lines: CashCountStatementLine[];
+}
+
+interface RawStatementCount extends RawCashCount {}
+
+interface StatementResult {
+  data: CashCountStatement | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useCashCountStatement(countId: string | null): StatementResult {
+  const [data, setData] = useState<CashCountStatement | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!countId) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const [countRes, linesRes] = await Promise.all([
+          supabase
+            .from('lng_cash_counts')
+            .select(
+              `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
+               status, notes, counted_at, signed_off_at,
+               counted_by:accounts!counted_by ( first_name, last_name, name ),
+               signed_off_by:accounts!signed_off_by ( first_name, last_name, name )`,
+            )
+            .eq('id', countId)
+            .maybeSingle(),
+          supabase
+            .from('lng_cash_count_lines')
+            .select('payment_id, amount_pence, taken_at, patient_name_snapshot, appointment_ref_snapshot')
+            .eq('count_id', countId)
+            .order('taken_at', { ascending: true }),
+        ]);
+        if (cancelled) return;
+        if (countRes.error) throw new Error(countRes.error.message);
+        if (linesRes.error) throw new Error(linesRes.error.message);
+        if (!countRes.data) throw new Error('Count not found');
+        const [shaped] = shapeCashCounts([countRes.data as RawStatementCount]);
+        if (!shaped) throw new Error('Count not found');
+        const lines: CashCountStatementLine[] = ((linesRes.data ?? []) as Array<{
+          payment_id: string;
+          amount_pence: number;
+          taken_at: string;
+          patient_name_snapshot: string | null;
+          appointment_ref_snapshot: string | null;
+        }>).map((l) => ({
+          payment_id: l.payment_id,
+          amount_pence: l.amount_pence,
+          taken_at: l.taken_at,
+          patient_name: l.patient_name_snapshot ?? '—',
+          appointment_ref: l.appointment_ref_snapshot,
+        }));
+        if (cancelled) return;
+        setData({ count: shaped, lines });
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load count statement';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'cash.statement',
+          severity: 'error',
+          message,
+          context: { countId },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [countId]);
+
+  return { data, loading, error };
 }
