@@ -166,16 +166,20 @@ export function printLwo(input: PrintableLwoInput): void {
     // run long. flex:1 1 0 lets it grow into free space and shrink when
     // content above demands more. min-height keeps the bar scannable on
     // a packed label; max-height stops a sparse label rendering one
-    // giant barcode that dwarfs the meta. The 4.13in × 4.13in @page +
-    // body { height:4.13in; overflow:hidden } means anything that
-    // would have spilled to page 2 instead clips the bar at min-height.
-    '.bc-bar{flex:1 1 0;min-height:64px;max-height:130px;margin-top:auto;padding:6px 0 0;text-align:center;display:flex;flex-direction:column;align-items:center;overflow:hidden}' +
+    // giant barcode that dwarfs the meta. NO align-items:center here —
+    // that would override the SVG's default align-self:stretch and
+    // shrink-wrap it to its viewBox content width, leaving white margin
+    // either side. We want it stretched. The ref text below centers
+    // itself via its own text-align:center.
+    '.bc-bar{flex:1 1 0;min-height:64px;max-height:130px;margin-top:auto;padding:6px 0 0;display:flex;flex-direction:column;overflow:hidden}' +
     // SVG stretches to fill .bc-bar both ways. preserveAspectRatio:none
     // (set in script below) keeps bar:space ratios (which is all CODE128
     // cares about) while letting the bars get wider on shorter refs and
-    // shorter on tighter labels. Display:block to drop the inline-svg
-    // baseline gap; min-height:0 so the flex parent can squeeze it.
-    '.bc-bar svg{display:block;flex:1 1 0;width:100%;height:100%;min-height:0}' +
+    // shorter on tighter labels. width:100% is belt-and-braces against
+    // any browser that resolves a flex item's main-axis width from
+    // intrinsic SVG sizing. min-width:0 / min-height:0 so the flex
+    // parent can squeeze it.
+    '.bc-bar svg{display:block;flex:1 1 0;width:100%;min-width:0;min-height:0}' +
     '.bc-ref{flex-shrink:0;font-family:Arial,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.18em;text-align:center;margin-top:2px;color:#000}';
 
   const logoUrl = window.location.origin + '/black-venneir-logo.png';
