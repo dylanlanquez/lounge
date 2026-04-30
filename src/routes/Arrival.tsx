@@ -28,6 +28,7 @@ import {
   Toast,
 } from '../components/index.ts';
 import { WaiverInline, type WaiverInlineHandle } from '../components/WaiverInline/WaiverInline.tsx';
+import { MAX_TECH_NOTE_LENGTH } from '../lib/printLwo.ts';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -1392,9 +1393,37 @@ function ServiceStep({
           value={notes}
           onChange={(e) => onChangeNotes(e.currentTarget.value)}
           rows={3}
+          // The note prints in the LWO's small Notes box on a 4.13in
+          // label. Capping at MAX_TECH_NOTE_LENGTH stops staff
+          // accidentally writing more than the label can show — the
+          // edit-in-place dialog on VisitDetail enforces the same
+          // ceiling so an arrival note can't grow past it later.
+          maxLength={MAX_TECH_NOTE_LENGTH}
           placeholder="Anything the lab or clinician should know"
           style={textareaStyle}
         />
+        <div
+          aria-live="polite"
+          style={{
+            marginTop: theme.space[1],
+            display: 'flex',
+            justifyContent: 'flex-end',
+            fontSize: theme.type.size.xs,
+            fontVariantNumeric: 'tabular-nums',
+            color:
+              notes.length >= MAX_TECH_NOTE_LENGTH
+                ? theme.color.alert
+                : notes.length >= MAX_TECH_NOTE_LENGTH * 0.9
+                  ? theme.color.warn
+                  : theme.color.inkMuted,
+            fontWeight:
+              notes.length >= MAX_TECH_NOTE_LENGTH * 0.9
+                ? theme.type.weight.semibold
+                : theme.type.weight.regular,
+          }}
+        >
+          {notes.length} / {MAX_TECH_NOTE_LENGTH}
+        </div>
       </Section>
     </div>
   );

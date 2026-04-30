@@ -31,6 +31,16 @@ export interface PrintableLwoItem {
   category: 'denture' | 'appliance';
 }
 
+// Maximum tech-note length that prints cleanly inside the LWO Notes
+// box on a 4.13in × 4.13in label. The box renders at 8px Arial with
+// word-break, which fits ~80 chars per line and ~3 lines before the
+// flex layout has to start eating into the barcode area. 200 lands
+// inside that envelope with safety margin on every printer we've
+// tested. Both the in-place editor on VisitDetail and the arrival
+// form's Notes textarea import this so the limit stays in lockstep
+// with the label geometry — change the label, change this constant.
+export const MAX_TECH_NOTE_LENGTH = 200;
+
 export interface PrintableLwoInput {
   lapRef: string;                           // e.g. "LAP-00130"
   arrivalType: 'PRE-BOOKED' | 'WALK-IN';

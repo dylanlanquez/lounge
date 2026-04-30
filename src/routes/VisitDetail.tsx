@@ -58,7 +58,7 @@ import {
   usePatientWaiverState,
   type WaiverSection,
 } from '../lib/queries/waiver.ts';
-import { printLwo, type PrintableLwoItem } from '../lib/printLwo.ts';
+import { printLwo, MAX_TECH_NOTE_LENGTH, type PrintableLwoItem } from '../lib/printLwo.ts';
 
 export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
@@ -188,13 +188,14 @@ export function VisitDetail() {
     setNoteSaving(true);
     try {
       const trimmed = noteDraft.trim();
-      // 4000-char ceiling matches the longest free-text columns we
-      // already accept on the patients row (allergies, notes). The
-      // value goes straight into the printed LWO Notes box, so longer
-      // input would silently get clipped on the label — better to
-      // refuse the save here than emit a truncated note to the lab.
-      if (trimmed.length > 4000) {
-        throw new Error('Tech note is too long. Please trim to 4000 characters or fewer.');
+      // MAX_TECH_NOTE_LENGTH matches the LWO label's Notes box capacity
+      // exactly. textarea maxLength stops typing past the limit, but
+      // a paste can still overrun — we re-validate here and refuse
+      // the save rather than emit a truncated label to the lab.
+      if (trimmed.length > MAX_TECH_NOTE_LENGTH) {
+        throw new Error(
+          `Tech note is too long for the label (${trimmed.length} / ${MAX_TECH_NOTE_LENGTH}). Please trim and try again.`,
+        );
       }
       const { error: err } = await supabase
         .from('lng_visits')
@@ -592,25 +593,50 @@ export function VisitDetail() {
         width={560}
         dismissable={!noteSaving}
         footer={
-          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={() => setNoteOpen(false)} disabled={noteSaving}>
-              Cancel
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            {/* Clear sits on the left so it reads as a destructive
+                action away from the primary save. Disabled when the
+                draft is already empty so the affordance only appears
+                when there's something to clear. */}
+            <Button
+              variant="tertiary"
+              onClick={() => setNoteDraft('')}
+              disabled={noteSaving || noteDraft.length === 0}
+            >
+              Clear
             </Button>
-            <Button variant="primary" onClick={saveNote} loading={noteSaving}>
-              Save
-            </Button>
+            <div style={{ display: 'flex', gap: theme.space[3] }}>
+              <Button variant="secondary" onClick={() => setNoteOpen(false)} disabled={noteSaving}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={saveNote} loading={noteSaving}>
+                Save
+              </Button>
+            </div>
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
           <textarea
             value={noteDraft}
             onChange={(e) => setNoteDraft(e.target.value)}
-            rows={6}
+            rows={5}
+            // maxLength stops typing past the label's capacity. Paste
+            // events can still overrun in some browsers, so saveNote
+            // re-validates server-side-style and throws.
+            maxLength={MAX_TECH_NOTE_LENGTH}
             placeholder="Anything the lab needs (shade clarification, urgency, special handling). Leave blank to clear."
             style={{
               width: '100%',
-              minHeight: 140,
+              minHeight: 120,
               padding: theme.space[3],
               borderRadius: theme.radius.input,
               border: `1px solid ${theme.color.border}`,
@@ -623,6 +649,34 @@ export function VisitDetail() {
               outline: 'none',
             }}
           />
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+            }}
+          >
+            <span>It's a small label — keep it short.</span>
+            <span
+              aria-live="polite"
+              style={{
+                fontVariantNumeric: 'tabular-nums',
+                color:
+                  noteDraft.length >= MAX_TECH_NOTE_LENGTH
+                    ? theme.color.alert
+                    : noteDraft.length >= MAX_TECH_NOTE_LENGTH * 0.9
+                      ? theme.color.warn
+                      : theme.color.inkMuted,
+                fontWeight:
+                  noteDraft.length >= MAX_TECH_NOTE_LENGTH * 0.9
+                    ? theme.type.weight.semibold
+                    : theme.type.weight.regular,
+              }}
+            >
+              {noteDraft.length} / {MAX_TECH_NOTE_LENGTH}
+            </span>
+          </div>
           {noteError ? (
             <div
               role="alert"
