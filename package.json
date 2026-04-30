@@ -22,7 +22,6 @@
   "dependencies": {
     "@stripe/stripe-js": "5.4.0",
     "@supabase/supabase-js": "^2.50.0",
-    "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "0.469.0",
     "react": "19.0.0",
