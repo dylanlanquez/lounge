@@ -241,7 +241,7 @@ export function VisitDetail() {
       items: docItems,
       notes: visit.notes,
       sections: docSections,
-      signatureSvgPath: latestSig?.signature_svg ?? null,
+      signatureSvg: latestSig?.signature_svg ?? null,
       // Payment: cart status + total once the till closes. Cart's
       // own status is the source of truth; nothing populated when
       // payment hasn't been taken yet.
