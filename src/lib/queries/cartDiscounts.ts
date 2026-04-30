@@ -291,6 +291,111 @@ export async function removeCartDiscount(input: RemoveDiscountInput): Promise<vo
   if (cartErr) throw new Error(cartErr.message);
 }
 
+export interface AmendDiscountInput {
+  cart_id: string;
+  amount_pence: number;
+  reason: string;
+  approver_id: string;
+  approver_password: string;
+}
+
+// Amends an active discount: same approval shape, soft-deletes the
+// existing audit row with removed_reason='Amended (was £X · old
+// reason)' and inserts a fresh row with the new amount + new reason.
+// The audit trail then reads as a clear pair: the old discount was
+// retired, a new one was applied, both attributed to the approving
+// manager. Cart.discount_pence is updated to the new amount in the
+// same call.
+//
+// Why a dedicated mutation rather than asking staff to remove + re-
+// apply manually: the unique partial index lng_cart_discounts_one_
+// active_per_cart enforces one active row at a time, so the
+// remove-then-insert sequencing matters. Doing it server-side via
+// one entry point keeps the order correct and avoids the chance of
+// staff abandoning halfway through and leaving the cart with no
+// discount at all.
+export async function amendCartDiscount(input: AmendDiscountInput): Promise<void> {
+  const reason = input.reason.trim();
+  if (reason.length === 0) throw new Error('A reason is required.');
+  if (input.amount_pence <= 0) throw new Error('Discount amount must be positive.');
+  if (!input.approver_id) throw new Error('Pick a manager to approve.');
+  if (!input.approver_password) throw new Error('Manager password is required.');
+
+  const { data: meId } = await supabase.rpc('auth_account_id');
+  const cashierId = (meId as string | null) ?? null;
+  if (cashierId && cashierId === input.approver_id) {
+    throw new Error('Approver must be a different staff member.');
+  }
+
+  const verifiedId = await approveAsManager(_emailOf(input.approver_id), input.approver_password);
+  if (verifiedId !== input.approver_id) {
+    throw new Error('That password belongs to a different manager than the one selected.');
+  }
+
+  // Read cart for state + subtotal so we can validate amount doesn't
+  // overshoot. Same checks as applyCartDiscount.
+  const { data: cart, error: cartErr } = await supabase
+    .from('lng_carts')
+    .select('status, subtotal_pence, discount_pence')
+    .eq('id', input.cart_id)
+    .maybeSingle();
+  if (cartErr) throw new Error(cartErr.message);
+  if (!cart) throw new Error('Cart not found');
+  const c = cart as { status: string; subtotal_pence: number; discount_pence: number };
+  if (c.status !== 'open') {
+    throw new Error(`Cart is ${c.status}; discounts can only be amended on open carts.`);
+  }
+  if (input.amount_pence > c.subtotal_pence) {
+    throw new Error('Discount cannot exceed subtotal.');
+  }
+
+  // Locate the active row so we can soft-delete it before inserting
+  // the replacement. The unique partial index would otherwise reject
+  // the new row.
+  const { data: active, error: readErr } = await supabase
+    .from('lng_cart_discounts')
+    .select('id, amount_pence, reason')
+    .eq('cart_id', input.cart_id)
+    .is('removed_at', null)
+    .maybeSingle();
+  if (readErr) throw new Error(readErr.message);
+  if (!active) throw new Error('No active discount on this cart to amend.');
+  const a = active as { id: string; amount_pence: number; reason: string };
+
+  // Soft-delete the old row with a derived reason so the audit shows
+  // *what* it was before the amend. Staff don't have to type a
+  // separate reason for the retirement step — the new reason is the
+  // canonical "why" for the new amount.
+  const retireReason = `Amended (was £${(a.amount_pence / 100).toFixed(2)} · ${a.reason})`;
+  const { error: retireErr } = await supabase
+    .from('lng_cart_discounts')
+    .update({
+      removed_at: new Date().toISOString(),
+      removed_by: cashierId,
+      removed_reason: retireReason,
+    })
+    .eq('id', a.id);
+  if (retireErr) throw new Error(retireErr.message);
+
+  // Insert the new audit row. The unique partial index allows this
+  // now that the previous row is removed_at IS NOT NULL.
+  const { error: insErr } = await supabase.from('lng_cart_discounts').insert({
+    cart_id: input.cart_id,
+    amount_pence: input.amount_pence,
+    reason,
+    applied_by: cashierId,
+    approved_by: input.approver_id,
+  });
+  if (insErr) throw new Error(insErr.message);
+
+  // Sync cart.discount_pence to the new amount.
+  const { error: updErr } = await supabase
+    .from('lng_carts')
+    .update({ discount_pence: input.amount_pence })
+    .eq('id', input.cart_id);
+  if (updErr) throw new Error(updErr.message);
+}
+
 // Email lookup is needed because approveAsManager signs in with
 // email + password (Supabase auth model). We have approver_id
 // from the dropdown but need their login_email to authenticate.
