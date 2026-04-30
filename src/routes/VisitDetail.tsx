@@ -12,6 +12,7 @@ import {
   CreditCard,
   Hash,
   Loader2,
+  FileText,
   Plus,
   Printer,
   ShoppingCart,
@@ -32,7 +33,10 @@ import {
   WaiverSheet,
 } from '../components/index.ts';
 import { Dialog } from '../components/Dialog/Dialog.tsx';
+import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
 import { supabase } from '../lib/supabase.ts';
+import { useVisitWaiverSignatures } from '../lib/queries/waiver.ts';
+import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from '../lib/waiverDocument.ts';
 import { usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
@@ -83,6 +87,13 @@ export function VisitDetail() {
   const [noteDraft, setNoteDraft] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
+
+  // Signed-waiver viewer. Reads visit's waiver signatures from
+  // lng_waiver_signatures via useVisitWaiverSignatures (filter
+  // visit_id=eq.<id>). The button is hidden when no signature
+  // exists — there's nothing to view yet.
+  const [waiverViewerOpen, setWaiverViewerOpen] = useState(false);
+  const { rows: visitSignatures } = useVisitWaiverSignatures(visit?.id ?? null);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const isMobile = useIsMobile(640);
 
@@ -122,6 +133,104 @@ export function VisitDetail() {
       ),
     [requiredSections, patientSignatures]
   );
+
+  // Compose the WaiverDocInput from the loaded visit / patient /
+  // appointment / items / signatures. Memoised so opening and
+  // closing the dialog doesn't rebuild the document HTML on every
+  // render. Returns null until every dependency is loaded — the
+  // View Waiver button is gated on this not being null below.
+  const waiverDoc = useMemo<WaiverDocInput | null>(() => {
+    if (!visit || !patient || visitSignatures.length === 0) return null;
+    if (!appointment?.appointment_ref) return null;
+
+    // Items: filter impression-appointment placeholders the same
+    // way the LWO does — they're scheduling-only, not work to
+    // sign for. Map cart shape → printable shape using the same
+    // logic buildPrintableItem uses for the LWO.
+    const docItems: WaiverDocItem[] = items
+      .filter((it) => it.service_type !== 'impression_appointment')
+      .map((it) => {
+        const isDenture = it.service_type === 'denture_repair';
+        const thicknessUpgrade = it.upgrades.find((u) => /\d+(?:\.\d+)?\s*mm/i.test(u.upgrade_name));
+        const thickness = thicknessUpgrade
+          ? thicknessUpgrade.upgrade_name.match(/\d+(?:\.\d+)?\s*mm/i)?.[0] ?? null
+          : null;
+        return {
+          qty: it.quantity,
+          device: isDenture ? 'Denture' : it.name,
+          repairType: isDenture ? it.name : '',
+          arch: it.arch,
+          shade: it.shade,
+          thickness,
+          category: isDenture ? ('denture' as const) : ('appliance' as const),
+        };
+      });
+
+    // Signed sections — one row per lng_waiver_signatures with the
+    // section title joined and frozen terms snapshot. Throw at
+    // render time if any signature lacks its terms_snapshot
+    // (legacy rows pre-snapshot column) so we never emit a
+    // waiver document with empty terms.
+    const docSections: WaiverDocSection[] = visitSignatures.map((s) => {
+      if (!s.terms_snapshot || s.terms_snapshot.length === 0) {
+        // Surface as a thrown render error rather than a silent
+        // empty section — admin can fix the underlying row.
+        throw new Error(
+          `Signed-waiver row ${s.id} has no terms_snapshot — re-sign the section to refresh the snapshot before printing.`,
+        );
+      }
+      return {
+        title: s.section_title ?? s.section_key,
+        version: s.section_version,
+        terms: s.terms_snapshot,
+        signedAt: s.signed_at,
+        witnessName: s.witness_name,
+      };
+    });
+
+    // Use the latest signature's SVG path for the document's
+    // signature box. The audit table on PatientProfile keeps the
+    // per-section originals; the printed/emailed document just
+    // shows the most recent one. visitSignatures.length === 0 was
+    // ruled out at the top of the memo, so [0] is non-nullable.
+    const seedSig = visitSignatures[0]!;
+    const latestSig = visitSignatures.reduce((acc, s) => (s.signed_at > acc.signed_at ? s : acc), seedSig);
+
+    return {
+      lapRef: appointment.appointment_ref,
+      patient: {
+        fullName: patientFullName(patient),
+        dateOfBirth: patient.date_of_birth,
+        sex: (patient as { sex?: string | null }).sex ?? null,
+        email: patient.email,
+        phone: patient.phone,
+        addressLine1: (patient as { portal_ship_line1?: string | null }).portal_ship_line1 ?? null,
+        addressLine2: (patient as { portal_ship_line2?: string | null }).portal_ship_line2 ?? null,
+        city: (patient as { portal_ship_city?: string | null }).portal_ship_city ?? null,
+        postcode: (patient as { portal_ship_postcode?: string | null }).portal_ship_postcode ?? null,
+      },
+      visitOpenedAt: visit.opened_at,
+      staffName: receptionistName,
+      jobBox: appointment.jb_ref ? `JB${appointment.jb_ref}` : null,
+      items: docItems,
+      notes: visit.notes,
+      sections: docSections,
+      signatureSvgPath: latestSig?.signature_svg ?? null,
+      // Payment: cart status + total once the till closes. Cart's
+      // own status is the source of truth; nothing populated when
+      // payment hasn't been taken yet.
+      payment:
+        cart && cart.status === 'paid'
+          ? {
+              amountPence: cart.total_pence,
+              method: 'card',
+              takenAt: cart.closed_at ?? visit.opened_at,
+              status: 'paid',
+            }
+          : null,
+      logoUrl: window.location.origin + '/black-venneir-logo.png',
+    };
+  }, [visit, patient, appointment, receptionistName, items, visitSignatures, cart]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -487,6 +596,22 @@ export function VisitDetail() {
                 <Button
                   variant="secondary"
                   size="lg"
+                  onClick={() => setWaiverViewerOpen(true)}
+                  disabled={!waiverDoc}
+                  title={
+                    waiverDoc
+                      ? undefined
+                      : 'Available once a waiver has been signed for this visit.'
+                  }
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <FileText size={18} aria-hidden />
+                    View waiver
+                  </span>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="lg"
                   onClick={handlePrintLwo}
                   disabled={!appointment?.appointment_ref}
                   title={
@@ -583,6 +708,14 @@ export function VisitDetail() {
         sections={sectionsToSign}
         patientName={patient ? patientFullName(patient) : 'Patient'}
         onAllSigned={refreshSignatures}
+      />
+
+      <WaiverViewerDialog
+        open={waiverViewerOpen}
+        onClose={() => setWaiverViewerOpen(false)}
+        doc={waiverDoc}
+        visitId={visit?.id ?? null}
+        patientEmail={patient?.email ?? null}
       />
 
       <Dialog
