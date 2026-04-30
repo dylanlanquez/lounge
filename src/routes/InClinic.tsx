@@ -440,9 +440,9 @@ function ActiveVisitCard({
       >
         <span
           style={{
-            fontSize: theme.type.size.base,
-            fontWeight: theme.type.weight.semibold,
-            color: visit.jb_ref ? theme.color.ink : theme.color.inkSubtle,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkMuted,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
