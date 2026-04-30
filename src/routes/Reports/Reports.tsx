@@ -16,6 +16,8 @@ import { defaultDateRange, type DateRange } from '../../lib/dateRange.ts';
 import { BarChart3 } from 'lucide-react';
 import { OverviewTab } from './OverviewTab.tsx';
 import { BookingsVsWalkInsTab } from './BookingsVsWalkInsTab.tsx';
+import { DemographicsTab } from './DemographicsTab.tsx';
+import { MarketingTab } from './MarketingTab.tsx';
 
 // Reports — operational dashboards. Visible to anyone with
 // can_view_reports (default true for every Lounge staff member).
@@ -120,6 +122,10 @@ export function Reports() {
           <OverviewTab range={range} />
         ) : tab === 'bookings_vs_walkins' ? (
           <BookingsVsWalkInsTab range={range} />
+        ) : tab === 'demographics' ? (
+          <DemographicsTab range={range} />
+        ) : tab === 'marketing' ? (
+          <MarketingTab range={range} />
         ) : (
           <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
         )}

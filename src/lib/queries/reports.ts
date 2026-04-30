@@ -427,6 +427,362 @@ export function useReportsBookingsVsWalkIns(range: DateRange): BookingsVsWalkIns
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Patient demographics + Marketing attribution
+//
+// One shared query backing two tabs. Both surfaces care about
+// "patients who came in during this period and what they paid us"
+// — demographics slices by age / sex / postcode / new-vs-returning;
+// marketing slices by patients.referred_by. Aggregations are pure
+// and unit-tested.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PatientReportVisit {
+  id: string;
+  patient_id: string;
+  arrival_type: 'walk_in' | 'scheduled';
+  opened_at: string;
+  patient:
+    | {
+        id: string;
+        date_of_birth: string | null;
+        sex: string | null;
+        portal_ship_postcode: string | null;
+        referred_by: string | null;
+        registered_at: string | null;
+      }
+    | {
+        id: string;
+        date_of_birth: string | null;
+        sex: string | null;
+        portal_ship_postcode: string | null;
+        referred_by: string | null;
+        registered_at: string | null;
+      }[]
+    | null;
+  cart:
+    | { id: string; status: string; total_pence: number | null }
+    | { id: string; status: string; total_pence: number | null }[]
+    | null;
+}
+
+export type AgeBracket = 'under_18' | '18_29' | '30_44' | '45_59' | '60_74' | '75_plus' | 'unknown';
+
+export const AGE_BRACKETS: { id: AgeBracket; label: string }[] = [
+  { id: 'under_18', label: 'Under 18' },
+  { id: '18_29', label: '18–29' },
+  { id: '30_44', label: '30–44' },
+  { id: '45_59', label: '45–59' },
+  { id: '60_74', label: '60–74' },
+  { id: '75_plus', label: '75+' },
+  { id: 'unknown', label: 'Unknown' },
+];
+
+export interface AgeDistributionEntry {
+  bracket: AgeBracket;
+  label: string;
+  count: number;
+}
+
+export interface SexDistributionEntry {
+  key: string; // raw value from patients.sex (or 'unknown')
+  label: string;
+  count: number;
+}
+
+export interface PostcodeAreaEntry {
+  outward: string; // e.g. "SW1A"; "Unknown" when patient has no postcode
+  count: number;
+  revenue_pence: number;
+}
+
+export interface ReferralSourceEntry {
+  source: string; // grouped value of patients.referred_by; 'Unspecified' for null/empty
+  patients: number; // unique patients
+  visits: number; // visits in period
+  revenue_pence: number; // total of paid carts attributed to those patients in period
+}
+
+export interface PatientReports {
+  // Demographics — counts unique patients seen in the period.
+  total_unique_patients: number;
+  new_patients: number; // registered_at within range
+  returning_patients: number;
+  age_distribution: AgeDistributionEntry[];
+  sex_distribution: SexDistributionEntry[];
+  postcode_areas: PostcodeAreaEntry[]; // top 10 + Other aggregator separate
+  postcode_other: { count: number; revenue_pence: number };
+  // Marketing — referred_by aggregations, revenue based on paid carts
+  // for visits in the period.
+  referral_sources: ReferralSourceEntry[];
+  // Headline numbers
+  visits_in_period: number;
+  revenue_in_period_pence: number;
+}
+
+export function aggregatePatientReports(
+  range: DateRange,
+  visits: PatientReportVisit[],
+): PatientReports {
+  // Per-patient bookkeeping.
+  const seenPatients = new Map<
+    string,
+    {
+      visits: number;
+      revenue_pence: number;
+      referred_by: string;
+      sex: string;
+      ageBracket: AgeBracket;
+      postcode: string; // outward or "Unknown"
+      isNew: boolean;
+    }
+  >();
+
+  const rangeStart = new Date(`${range.start}T00:00:00`).getTime();
+  const rangeEnd = new Date(`${range.end}T23:59:59.999`).getTime();
+  const refDate = new Date(`${range.end}T00:00:00`); // age computed at end of range
+
+  for (const v of visits) {
+    const p = pickOne(v.patient);
+    if (!p) continue;
+    const cart = pickOne(v.cart);
+    const paid = cart && cart.status === 'paid' && typeof cart.total_pence === 'number'
+      ? cart.total_pence
+      : 0;
+    const existing = seenPatients.get(v.patient_id);
+    if (existing) {
+      existing.visits += 1;
+      existing.revenue_pence += paid;
+      continue;
+    }
+    seenPatients.set(v.patient_id, {
+      visits: 1,
+      revenue_pence: paid,
+      referred_by: normaliseReferral(p.referred_by),
+      sex: normaliseSex(p.sex),
+      ageBracket: ageBracketFor(p.date_of_birth, refDate),
+      postcode: outwardPostcode(p.portal_ship_postcode),
+      isNew: isNewIn(p.registered_at, rangeStart, rangeEnd),
+    });
+  }
+
+  // ── Top-line counts ───────────────────────────────────────────────
+  const total_unique_patients = seenPatients.size;
+  let new_patients = 0;
+  let revenue_in_period_pence = 0;
+  let visits_in_period = 0;
+  for (const p of seenPatients.values()) {
+    if (p.isNew) new_patients += 1;
+    revenue_in_period_pence += p.revenue_pence;
+    visits_in_period += p.visits;
+  }
+  const returning_patients = total_unique_patients - new_patients;
+
+  // ── Age distribution ──────────────────────────────────────────────
+  const ageBuckets = new Map<AgeBracket, number>();
+  for (const def of AGE_BRACKETS) ageBuckets.set(def.id, 0);
+  for (const p of seenPatients.values()) {
+    ageBuckets.set(p.ageBracket, (ageBuckets.get(p.ageBracket) ?? 0) + 1);
+  }
+  const age_distribution: AgeDistributionEntry[] = AGE_BRACKETS.map((def) => ({
+    bracket: def.id,
+    label: def.label,
+    count: ageBuckets.get(def.id) ?? 0,
+  }));
+
+  // ── Sex distribution ──────────────────────────────────────────────
+  const sexCounts = new Map<string, number>();
+  for (const p of seenPatients.values()) {
+    sexCounts.set(p.sex, (sexCounts.get(p.sex) ?? 0) + 1);
+  }
+  const sex_distribution: SexDistributionEntry[] = Array.from(sexCounts.entries())
+    .map(([key, count]) => ({ key, label: humaniseSex(key), count }))
+    .sort((a, b) => b.count - a.count);
+
+  // ── Postcode areas ────────────────────────────────────────────────
+  const postcodeAgg = new Map<string, { count: number; revenue_pence: number }>();
+  for (const p of seenPatients.values()) {
+    const prior = postcodeAgg.get(p.postcode);
+    if (prior) {
+      prior.count += 1;
+      prior.revenue_pence += p.revenue_pence;
+    } else {
+      postcodeAgg.set(p.postcode, { count: 1, revenue_pence: p.revenue_pence });
+    }
+  }
+  const sortedPostcodes = Array.from(postcodeAgg.entries())
+    .map(([outward, agg]) => ({ outward, count: agg.count, revenue_pence: agg.revenue_pence }))
+    .sort((a, b) => b.count - a.count);
+  const postcode_areas = sortedPostcodes.slice(0, 10);
+  const postcode_other = sortedPostcodes.slice(10).reduce(
+    (acc, e) => ({ count: acc.count + e.count, revenue_pence: acc.revenue_pence + e.revenue_pence }),
+    { count: 0, revenue_pence: 0 },
+  );
+
+  // ── Referral sources (marketing) ─────────────────────────────────
+  const referralAgg = new Map<string, ReferralSourceEntry>();
+  for (const [, p] of seenPatients) {
+    const entry = referralAgg.get(p.referred_by);
+    if (entry) {
+      entry.patients += 1;
+      entry.visits += p.visits;
+      entry.revenue_pence += p.revenue_pence;
+    } else {
+      referralAgg.set(p.referred_by, {
+        source: p.referred_by,
+        patients: 1,
+        visits: p.visits,
+        revenue_pence: p.revenue_pence,
+      });
+    }
+  }
+  const referral_sources = Array.from(referralAgg.values()).sort(
+    (a, b) => b.revenue_pence - a.revenue_pence || b.patients - a.patients,
+  );
+
+  return {
+    total_unique_patients,
+    new_patients,
+    returning_patients,
+    age_distribution,
+    sex_distribution,
+    postcode_areas,
+    postcode_other,
+    referral_sources,
+    visits_in_period,
+    revenue_in_period_pence,
+  };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+// UK outward code. Strips spaces, takes the chars before the 2nd-last
+// digit-letter pair. Returns "Unknown" when the input doesn't look
+// like a postcode at all. Case-insensitive input → upper-case output.
+export function outwardPostcode(input: string | null | undefined): string {
+  if (!input) return 'Unknown';
+  const cleaned = input.replace(/\s+/g, '').toUpperCase();
+  if (cleaned.length < 5) return 'Unknown';
+  // Standard UK format: outward (2-4 chars) + space + inward (3 chars)
+  // After stripping spaces, the inward is the last 3 chars.
+  return cleaned.slice(0, cleaned.length - 3);
+}
+
+// Years between birth and refDate, integer. Null DOB → 'unknown'.
+export function ageBracketFor(
+  dob: string | null | undefined,
+  refDate: Date,
+): AgeBracket {
+  if (!dob) return 'unknown';
+  const d = new Date(`${dob}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return 'unknown';
+  let years = refDate.getFullYear() - d.getFullYear();
+  // Adjust for not-yet-had-birthday-this-year
+  const m = refDate.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && refDate.getDate() < d.getDate())) years -= 1;
+  if (years < 0) return 'unknown';
+  if (years < 18) return 'under_18';
+  if (years < 30) return '18_29';
+  if (years < 45) return '30_44';
+  if (years < 60) return '45_59';
+  if (years < 75) return '60_74';
+  return '75_plus';
+}
+
+function isNewIn(registeredAt: string | null | undefined, rangeStart: number, rangeEnd: number): boolean {
+  if (!registeredAt) return false; // unknown registration → assume returning
+  const r = new Date(registeredAt).getTime();
+  if (Number.isNaN(r)) return false;
+  return r >= rangeStart && r <= rangeEnd;
+}
+
+function normaliseSex(sex: string | null | undefined): string {
+  if (!sex) return 'unknown';
+  const trimmed = sex.trim().toLowerCase();
+  if (trimmed.length === 0) return 'unknown';
+  return trimmed;
+}
+
+function humaniseSex(key: string): string {
+  switch (key) {
+    case 'male':
+      return 'Male';
+    case 'female':
+      return 'Female';
+    case 'other':
+      return 'Other';
+    case 'unknown':
+      return 'Unknown / not stated';
+    default:
+      // Unrecognised values render as their raw form, title-cased.
+      return key.charAt(0).toUpperCase() + key.slice(1);
+  }
+}
+
+function normaliseReferral(value: string | null | undefined): string {
+  if (!value) return 'Unspecified';
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return 'Unspecified';
+  return trimmed;
+}
+
+interface PatientReportsResult {
+  data: PatientReports | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useReportsPatients(range: DateRange): PatientReportsResult {
+  const [data, setData] = useState<PatientReports | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+
+    (async () => {
+      try {
+        const visitsRes = await supabase
+          .from('lng_visits')
+          .select(
+            `id, patient_id, arrival_type, opened_at,
+             patient:patients!inner ( id, date_of_birth, sex, portal_ship_postcode, referred_by, registered_at ),
+             cart:lng_carts ( id, status, total_pence )`,
+          )
+          .gte('opened_at', fromIso)
+          .lte('opened_at', toIso);
+        if (cancelled) return;
+        if (visitsRes.error) throw new Error(`patients: ${visitsRes.error.message}`);
+        const visits = (visitsRes.data ?? []) as PatientReportVisit[];
+        const out = aggregatePatientReports(range, visits);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load patient reports';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.patients',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function useReportsOverview(range: DateRange): OverviewResult {
   const [data, setData] = useState<ReportsOverview | null>(null);
