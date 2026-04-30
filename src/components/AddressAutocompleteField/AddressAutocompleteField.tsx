@@ -54,15 +54,20 @@ export function AddressAutocompleteField({
     active: focused,
     onSelect: (parsed) => {
       onSelectPlace(parsed);
-      // Pull focus to address line 2 so the patient can type a
-      // flat / unit number if they have one. Same handoff Meridian
-      // portal uses.
       setActiveIndex(-1);
+      // Blur synchronously so `focused` flips to false and the
+      // dropdown hides immediately. Without this the parent's
+      // onSelectPlace updates `value` to the picked address, the
+      // autocomplete hook sees a new query while still active,
+      // and re-fires the fetch — repopulating the dropdown right
+      // back over the field. (The form-element lookup we used to
+      // do for the line-2 handoff returned null because the
+      // <input> isn't wrapped in a <form>; we now query the DOM
+      // by name so the focus jump actually lands.)
+      inputRef.current?.blur();
       window.setTimeout(() => {
-        const form = inputRef.current?.form;
-        if (!form) return;
-        const next = form.elements.namedItem('portal_ship_line2');
-        if (next instanceof HTMLElement) next.focus();
+        const next = document.querySelector<HTMLElement>('[name="portal_ship_line2"]');
+        next?.focus();
       }, 0);
     },
   });
