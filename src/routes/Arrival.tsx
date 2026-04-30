@@ -45,7 +45,7 @@ import {
   type CatalogueAddOptions,
   type CartRow,
 } from '../lib/queries/carts.ts';
-import { totalForQtyPence } from '../lib/catalogueMatch.ts';
+import { totalForQtyWithArch } from '../lib/catalogueMatch.ts';
 import { properCase } from '../lib/queries/appointments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
@@ -202,6 +202,20 @@ const SERVICE_TYPE_LABELS: Record<string, string> = {
   impression_appointment: 'Impression appointment',
   other: 'Other / consultation',
 };
+
+// Pence total for a staged line: arch-aware catalogue total + upgrade
+// pence riding every quantity tick. Mirrors what addCatalogueItemsToCart
+// will write — same formula in two places, but the cart writer rolls
+// upgrades into unit_price_pence at insert and we reproduce it here so
+// the staged subtotal matches the cart subtotal once the visit opens.
+function stagedLineTotalPence(it: StagedItem): number {
+  const upgradePerInstancePence = (it.options.upgrades ?? []).reduce(
+    (sum, u) => sum + u.price_pence,
+    0
+  );
+  const base = totalForQtyWithArch(it.catalogue, it.qty, it.options.arch ?? null);
+  return Math.round(base * 100) + upgradePerInstancePence * it.qty;
+}
 
 function recognisedServiceTypes(items: StagedItem[]): string[] {
   const set = new Set<string>();
@@ -510,7 +524,7 @@ export function Arrival() {
   }, [jbRef, jbRequired, jbCheck]);
 
   const stagedTotalPence = useMemo(
-    () => stagedItems.reduce((sum, it) => sum + totalForQtyPence(it.catalogue, it.qty), 0),
+    () => stagedItems.reduce((sum, it) => sum + stagedLineTotalPence(it), 0),
     [stagedItems]
   );
 
@@ -1783,7 +1797,7 @@ function CustomerStep({
 }) {
   const isEditing = (k: keyof FormState) => editingFields.has(k);
   const stagedTotalPence = stagedItems.reduce(
-    (sum, it) => sum + totalForQtyPence(it.catalogue, it.qty),
+    (sum, it) => sum + stagedLineTotalPence(it),
     0
   );
 
@@ -1909,7 +1923,7 @@ function CustomerStep({
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {formatPence(totalForQtyPence(it.catalogue, it.qty))}
+                      {formatPence(stagedLineTotalPence(it))}
                     </span>
                   </li>
                 ))}
@@ -1991,7 +2005,9 @@ function formatItemDescriptor(item: StagedItem): string {
   }
   const shade = item.options.shade ? ` (${item.options.shade})` : '';
   const qtyPrefix = item.qty > 1 ? `${item.qty} × ` : '';
-  return `${qtyPrefix}${name}${shade}`;
+  const upgrades = (item.options.upgrades ?? []).map((u) => u.name).join(', ');
+  const upgradeSuffix = upgrades ? ` + ${upgrades}` : '';
+  return `${qtyPrefix}${name}${shade}${upgradeSuffix}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2107,9 +2123,12 @@ function StartStep({
                     {it.qty > 1 ? `${it.qty} × ` : ''}
                     {it.catalogue.name}
                     {it.options.arch ? ` · ${capitalise(it.options.arch)}` : ''}
+                    {(it.options.upgrades ?? []).length > 0
+                      ? ` · ${(it.options.upgrades ?? []).map((u) => u.name).join(' · ')}`
+                      : ''}
                   </span>
                   <span style={{ fontVariantNumeric: 'tabular-nums', color: theme.color.inkMuted }}>
-                    {formatPence(totalForQtyPence(it.catalogue, it.qty))}
+                    {formatPence(stagedLineTotalPence(it))}
                   </span>
                 </li>
               ))}
@@ -2136,7 +2155,12 @@ function ItemRow({
   onDecrement: () => void;
   onRemove: () => void;
 }) {
-  const lineTotal = totalForQtyPence(item.catalogue, item.qty);
+  const lineTotal = stagedLineTotalPence(item);
+  const subtitleParts = [
+    item.options.arch ? capitalise(item.options.arch) : null,
+    item.options.shade ? `Shade ${item.options.shade}` : null,
+    ...(item.options.upgrades ?? []).map((u) => u.name),
+  ].filter(Boolean) as string[];
   return (
     <li
       style={{
@@ -2155,9 +2179,9 @@ function ItemRow({
           {item.catalogue.name}
         </p>
         <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-          {[item.options.arch ? capitalise(item.options.arch) : null, item.options.shade ? `Shade ${item.options.shade}` : null]
-            .filter(Boolean)
-            .join(' · ') || formatPence(Math.round(item.catalogue.unit_price * 100))}
+          {subtitleParts.length > 0
+            ? subtitleParts.join(' · ')
+            : formatPence(Math.round(item.catalogue.unit_price * 100))}
         </p>
       </div>
       {item.catalogue.quantity_enabled ? (
