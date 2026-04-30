@@ -11,6 +11,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
 
 Deno.serve(async (req) => {
@@ -36,6 +37,17 @@ Deno.serve(async (req) => {
   if (!body.payment_id) return j(400, { ok: false, error: 'payment_id required' });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // Resolve the staff member who initiated the refund. Mirrors the
+  // pattern in terminal-start-payment: anon-key client carrying the
+  // request's bearer token, which RLS resolves into the auth user,
+  // which auth_account_id() maps to accounts.id. Used as the
+  // patient_events actor below.
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: auth } },
+  });
+  const { data: meRow } = await userClient.rpc('auth_account_id');
+  const refundedBy = (meRow as string | null) ?? null;
 
   const { data: payment, error: pErr } = await supabase
     .from('lng_payments')
@@ -89,12 +101,14 @@ Deno.serve(async (req) => {
       await supabase.from('patient_events').insert({
         patient_id: (visit as { patient_id: string }).patient_id,
         event_type: 'refund_issued',
+        actor_account_id: refundedBy,
         payload: {
           payment_id: payment.id,
           amount_pence: payment.amount_pence,
           method: payment.method,
           payment_journey: payment.payment_journey,
           reason: body.reason ?? 'requested_by_customer',
+          staff_account_id: refundedBy,
         },
       });
     }
