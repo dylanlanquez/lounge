@@ -182,12 +182,14 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
     (async () => {
       // Inner-join to lng_waiver_sections so we always have a title to
       // print, even for sections that admin has since deactivated.
-      // Left-join to accounts on witnessed_by — null is fine and reads
-      // as 'no witness recorded'.
+      // witness_name is the column-level witness captured at sign time
+      // (migration 20260430000006). The account-side join stays as a
+      // fallback for any historical row whose witness_name didn't get
+      // backfilled — pre-migration deploys also fall back to it.
       const { data, error: err } = await supabase
         .from('lng_waiver_signatures')
         .select(
-          `id, section_key, section_version, signed_at, signature_svg, terms_snapshot, visit_id,
+          `id, section_key, section_version, signed_at, signature_svg, terms_snapshot, visit_id, witness_name,
            section:section_key(title),
            witness:witnessed_by(first_name, last_name)`
         )
@@ -209,9 +211,11 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
           const section = (r.section as { title?: string } | null) ?? null;
           const witness =
             (r.witness as { first_name?: string; last_name?: string } | null) ?? null;
-          const witnessName = witness
+          const accountWitnessName = witness
             ? `${witness.first_name ?? ''} ${witness.last_name ?? ''}`.trim() || null
             : null;
+          const explicitWitness = (r.witness_name as string | null) ?? null;
+          const witnessName = explicitWitness?.trim() || accountWitnessName;
           const termsSnapshot = r.terms_snapshot;
           return {
             id: r.id as string,
@@ -464,6 +468,12 @@ export interface SignWaiverInput {
   visit_id: string | null;
   section: WaiverSection;
   signature_svg: string;
+  // Free-text name of the staff member witnessing this signature.
+  // Persisted on lng_waiver_signatures.witness_name so the audit row
+  // owns the witness name verbatim, independent of the auth account
+  // (witnessed_by). null is accepted (kiosk self-sign or pre-witness
+  // deploys) and reads as 'not recorded' downstream.
+  witness_name: string | null;
 }
 
 export async function signWaiver(input: SignWaiverInput): Promise<void> {
@@ -472,6 +482,7 @@ export async function signWaiver(input: SignWaiverInput): Promise<void> {
   // references the latter). null is acceptable when no staff is signed
   // in — e.g. patient self-sign on a kiosk in future.
   const { data: accountId } = await supabase.rpc('auth_account_id');
+  const trimmedWitness = input.witness_name?.trim() ?? '';
   const { error } = await supabase.from('lng_waiver_signatures').insert({
     patient_id: input.patient_id,
     visit_id: input.visit_id,
@@ -479,6 +490,7 @@ export async function signWaiver(input: SignWaiverInput): Promise<void> {
     section_version: input.section.version,
     signature_svg: input.signature_svg,
     witnessed_by: (accountId as string | null) ?? null,
+    witness_name: trimmedWitness.length > 0 ? trimmedWitness : null,
     // Snapshot the terms at sign time so future audit can reproduce the
     // exact agreement even if the section row is later edited.
     terms_snapshot: input.section.terms,

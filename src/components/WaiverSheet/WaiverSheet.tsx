@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { Checkbox } from '../Checkbox/Checkbox.tsx';
+import { Input } from '../Input/Input.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
 import { SignaturePad, svgFromPath } from '../SignaturePad/SignaturePad.tsx';
 import { theme } from '../../theme/index.ts';
@@ -33,6 +35,11 @@ export interface WaiverSheetProps {
   // Patient name for the header copy. Helps the witnessing receptionist
   // confirm they have the right person on the pad.
   patientName: string;
+  // Pre-filled "Witnessed by" — the staff member viewing the sheet.
+  // Editable in case a colleague is the actual witness on the day.
+  // Mirrors the Arrival flow's WaiverInline so the audit row stamps a
+  // real human-meaningful witness, not just the signed-in account FK.
+  defaultWitnessName: string;
   onAllSigned: () => void;
 }
 
@@ -43,6 +50,7 @@ export function WaiverSheet({
   visitId,
   sections,
   patientName,
+  defaultWitnessName,
   onAllSigned,
 }: WaiverSheetProps) {
   const [stepIndex, setStepIndex] = useState(0);
@@ -54,6 +62,11 @@ export function WaiverSheet({
   const [signedKeys, setSignedKeys] = useState<Set<string>>(new Set());
   // Reset the pad between sections by remounting it with a fresh key.
   const [padKey, setPadKey] = useState(0);
+  // Witness + receptionist confirmation. Persists across the
+  // section-by-section walk — the same staff member witnesses every
+  // section in one sitting, so we don't reset between steps.
+  const [witness, setWitness] = useState(defaultWitnessName);
+  const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -63,12 +76,16 @@ export function WaiverSheet({
       setError(null);
       setSignedKeys(new Set());
       setPadKey((k) => k + 1);
+      setWitness(defaultWitnessName);
+      setConfirmed(false);
     }
-  }, [open]);
+  }, [open, defaultWitnessName]);
 
   const currentSection = sections[stepIndex];
   const isLast = stepIndex === sections.length - 1;
   const empty = path.trim().length === 0;
+  const witnessReady = witness.trim().length > 0;
+  const ready = !empty && confirmed && witnessReady && !busy;
 
   const headerCopy = useMemo(() => {
     if (!currentSection) return { title: 'Waiver', sub: '' };
@@ -86,7 +103,7 @@ export function WaiverSheet({
   }
 
   const submit = async () => {
-    if (!patientId || empty) return;
+    if (!patientId || !ready) return;
     setBusy(true);
     setError(null);
     try {
@@ -96,6 +113,7 @@ export function WaiverSheet({
         visit_id: visitId,
         section: currentSection,
         signature_svg: svg,
+        witness_name: witness.trim(),
       });
       const nextSigned = new Set(signedKeys);
       nextSigned.add(currentSection.key);
@@ -107,6 +125,9 @@ export function WaiverSheet({
         setStepIndex(stepIndex + 1);
         setPath('');
         setPadKey((k) => k + 1);
+        // Witness + confirmation persist into the next section — the
+        // receptionist already attested they're witnessing this
+        // sitting, no reason to make them re-tick for every section.
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save signature');
@@ -126,7 +147,7 @@ export function WaiverSheet({
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={submit} disabled={empty || busy} showArrow={!isLast}>
+          <Button variant="primary" onClick={submit} disabled={!ready} showArrow={!isLast}>
             {busy ? 'Saving…' : isLast ? 'Sign and finish' : 'Sign and continue'}
           </Button>
         </div>
@@ -162,6 +183,29 @@ export function WaiverSheet({
             height={PAD_HEIGHT}
             ariaLabel={`Signature for ${currentSection.title}`}
             onChange={(d) => setPath(d)}
+          />
+        </div>
+
+        <Input
+          label="Witnessed by"
+          value={witness}
+          onChange={(e) => setWitness(e.currentTarget.value)}
+          disabled={busy}
+        />
+
+        <div
+          style={{
+            padding: theme.space[3],
+            borderRadius: theme.radius.input,
+            border: `1px solid ${confirmed ? theme.color.ink : theme.color.border}`,
+            background: theme.color.surface,
+          }}
+        >
+          <Checkbox
+            checked={confirmed}
+            onChange={setConfirmed}
+            label="I confirm the customer has read and signed the waiver"
+            disabled={busy}
           />
         </div>
 
