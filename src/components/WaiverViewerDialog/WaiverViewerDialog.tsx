@@ -217,8 +217,8 @@ export function WaiverViewerDialog({
       open={open}
       onClose={() => !busy && onClose()}
       title="View signed waiver"
-      description={`A4 document built from ${doc.sections.length} signed section${doc.sections.length === 1 ? '' : 's'}.`}
-      width={780}
+      description={`A4 visit summary and signed waiver, ${doc.sections.length} section${doc.sections.length === 1 ? '' : 's'}.`}
+      width={960}
       dismissable={!busy}
       footer={
         <div
@@ -366,35 +366,80 @@ function StatusBanner({ status }: { status: Status }) {
   );
 }
 
-// A4 preview frame. Aspect ratio is locked so the iframe always
-// renders the document at the right portrait shape; max-height
-// caps it on tablet/mobile so the dialog body stays scrollable
-// rather than the iframe pushing the action row off-screen.
+// Canonical document width. The waiver doc is authored at A4 portrait
+// at 96 DPI = 210mm = 794 CSS pixels. We render the iframe at this
+// width and use a CSS transform to scale-to-fit the dialog viewport,
+// so the on-screen preview matches the printed PDF byte-for-byte.
+const A4_WIDTH_PX = 794;
+// Two A4 pages stacked: 297mm × 2 = 594mm = 2244 CSS px @ 96 DPI.
+const A4_TWO_PAGES_PX = 2244;
+
+// A4 preview that scales to whatever width the dialog gives it.
+// Uses a ResizeObserver to keep transform scale in lockstep with
+// the container width so the document never crops or letterboxes.
 const PreviewFrame = forwardRef<HTMLIFrameElement, { mobile: boolean }>(
   function PreviewFrame({ mobile }, ref) {
+    const wrapRef = useRef<HTMLDivElement | null>(null);
+    const [scale, setScale] = useState(0.6);
+    useEffect(() => {
+      const el = wrapRef.current;
+      if (!el) return;
+      const measure = (): void => {
+        const w = el.clientWidth;
+        if (w > 0) setScale(w / A4_WIDTH_PX);
+      };
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, []);
+
+    const scaledHeight = A4_TWO_PAGES_PX * scale;
+    const visibleHeight = mobile ? '60dvh' : '70dvh';
+
     return (
       <div
+        ref={wrapRef}
         style={{
           width: '100%',
+          maxHeight: visibleHeight,
+          overflow: 'auto',
+          borderRadius: theme.radius.card,
           background: theme.color.bg,
-          borderRadius: theme.radius.input,
-          border: `1px solid ${theme.color.border}`,
+          // Subtle inner shadow to give the canvas depth without
+          // competing with the document's own card chrome.
+          boxShadow: 'inset 0 1px 0 rgba(14, 20, 20, 0.04)',
           padding: theme.space[3],
         }}
       >
-        <iframe
-          ref={ref}
-          title="Waiver preview"
+        <div
           style={{
-            display: 'block',
+            // Scaled doc height drives the wrapper so the inner
+            // overflow scroll exposes both pages at their visual
+            // size (not the unscaled 2244px).
             width: '100%',
-            aspectRatio: '210 / 297',
-            maxHeight: mobile ? '60dvh' : '70dvh',
-            background: '#fff',
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.input,
+            height: scaledHeight,
+            position: 'relative',
           }}
-        />
+        >
+          <iframe
+            ref={ref}
+            title="Waiver preview"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: A4_WIDTH_PX,
+              height: A4_TWO_PAGES_PX,
+              transform: `scale(${scale})`,
+              transformOrigin: 'top left',
+              border: 0,
+              background: '#fff',
+              boxShadow: theme.shadow.card,
+              borderRadius: theme.radius.input,
+            }}
+          />
+        </div>
       </div>
     );
   },

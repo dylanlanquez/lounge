@@ -189,6 +189,7 @@ export function VisitDetail() {
           shade: it.shade,
           thickness,
           category: isDenture ? ('denture' as const) : ('appliance' as const),
+          unitPricePence: it.unit_price_pence,
         };
       });
 
@@ -224,6 +225,10 @@ export function VisitDetail() {
 
     return {
       lapRef: appointment.appointment_ref,
+      // Visit type drives the page-1 hero deck ("following your in-person
+      // impression appointment on …"). Falls back to null which makes the
+      // hero use the simpler date-only deck.
+      visitType: appointment.event_type_label ?? null,
       patient: {
         fullName: patientFullName(patient),
         dateOfBirth: patient.date_of_birth,
@@ -236,8 +241,11 @@ export function VisitDetail() {
         postcode: (patient as { portal_ship_postcode?: string | null }).portal_ship_postcode ?? null,
       },
       visitOpenedAt: visit.opened_at,
-      staffName: receptionistName,
-      jobBox: appointment.jb_ref ? `JB${appointment.jb_ref}` : null,
+      // The receptionist who opened the visit witnesses the signature
+      // on the patient's behalf. Surfaces only on the signature card,
+      // not the visit summary metadata where a generic "Staff" field
+      // would have meant nothing to the patient.
+      witnessName: receptionistName,
       items: docItems,
       notes: visit.notes,
       sections: docSections,
@@ -254,7 +262,18 @@ export function VisitDetail() {
               status: 'paid',
             }
           : null,
-      logoUrl: window.location.origin + '/black-venneir-logo.png',
+      // Brand block is built here rather than read from the location
+      // row because the lng_ schema doesn't yet carry a patient-facing
+      // contact email or address. When that lands the values can move
+      // to a useLocationForBrand() hook without touching the renderer.
+      brand: {
+        name: 'Venneir Lounge',
+        contactEmail: 'hello@venneir.com',
+        vatNumber: 'GB406459983',
+        logoUrl: window.location.origin + '/black-venneir-logo.png',
+        addressLine: null,
+      },
+      accentColor: theme.color.accent,
     };
   }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart]);
 
