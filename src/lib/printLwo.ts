@@ -171,23 +171,35 @@ export function printLwo(input: PrintableLwoInput): void {
     '.notes-box{border:1px dashed #000;padding:3px 6px;margin-top:2px;flex-shrink:0}' +
     '.notes-lbl{font-size:6px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:1px}' +
     '.notes-val{font-size:8px;line-height:1.3;word-break:break-word}' +
-    // Barcode bar — fills the remainder of the page so the bar always
-    // spans full width AND its height shrinks-to-fit when items / notes
-    // run long. flex:1 1 0 lets it grow into free space and shrink when
-    // content above demands more. min-height keeps the bar scannable on
-    // a packed label; max-height stops a sparse label rendering one
-    // giant barcode that dwarfs the meta. NO align-items:center here —
-    // that would override the SVG's default align-self:stretch and
-    // shrink-wrap it to its viewBox content width, leaving white margin
-    // either side. We want it stretched. The ref text below centers
-    // itself via its own text-align:center.
-    '.bc-bar{flex:1 1 0;min-height:64px;max-height:130px;margin-top:auto;padding:6px 0 0;display:flex;flex-direction:column;overflow:hidden}' +
-    // SVG is rendered by JsBarcode at the exact pixel width its
-    // container can take — see the script below. CSS just nukes the
-    // inline-svg baseline gap and lets the flex parent squeeze the
-    // barcode vertically when other content takes the page.
-    '.bc-bar svg{display:block;max-width:100%;max-height:100%}' +
-    '.bc-ref{flex-shrink:0;font-family:Arial,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.18em;text-align:center;margin-top:2px;color:#000}';
+    // Middle content area — items tables + notes. flex:1 1 0 +
+    // overflow:hidden + min-height:0 are load-bearing. They turn
+    // this region into the only thing that absorbs vertical
+    // pressure when the order is heavy. The header above and the
+    // barcode below stay rigid; if scrollHeight > clientHeight,
+    // the cascade below hides chrome to free room — but the
+    // barcode never changes size.
+    '.middle{flex:1 1 0;overflow:hidden;min-height:0;display:flex;flex-direction:column}' +
+    // Barcode block: fixed 85mm wide, never shrinks. flex-shrink:0
+    // is what enforces "barcode width is constant; everything
+    // above flexes around it." Centred horizontally on the label.
+    '.bc-bar{flex-shrink:0;padding:6px 0 0;display:flex;flex-direction:column;align-items:center}' +
+    '.bc-bar-inner{width:85mm;flex-shrink:0;text-align:center}' +
+    // SVG fills its 85mm container at width:100%; height:auto
+    // preserves the bar:space aspect ratio (CODE128 readers
+    // decode on bar:space ratios, so non-uniform scaling would
+    // break scanning — we explicitly avoid that here).
+    '.bc-bar svg{display:block;width:100%;height:auto;margin:0 auto}' +
+    '.bc-ref{font-family:Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.05em;text-align:center;margin-top:3px;color:#000}' +
+    // Progressive-degradation cascade. The cascade JS at the end
+    // of the document toggles these body classes when the
+    // .middle region is still overflowing after the previous
+    // step. The barcode is never touched.
+    //
+    //   normal       : everything visible
+    //   compact      : DENTURE SERVICES / APPLIANCES bars hidden
+    //   extra-compact: also LAP-ref text under the barcode hidden
+    'body.compact .tbl-subhdr{display:none}' +
+    'body.extra-compact .bc-ref{display:none}';
 
   const logoUrl = window.location.origin + '/black-venneir-logo.png';
   const safeRef = escapeHtml(input.lapRef);
@@ -218,60 +230,47 @@ export function printLwo(input: PrintableLwoInput): void {
       '<div><div class="sl">Staff</div><div class="meta-val">' + safeStaff + '</div></div>' +
       '<div><div class="sl">Checked in</div><div class="meta-val">' + checkinTime + '</div></div>' +
     '</div>' +
-    // Items — one table per category when the order is a combo, otherwise one.
-    tablesHtml +
-    // Notes
-    (escapedNotes ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>' : '') +
-    // Barcode
-    '<div class="bc-bar"><svg id="order-barcode"></svg><div id="bc-ref" class="bc-ref"></div></div>' +
-    // Render the barcode at exactly the per-bar width its container
-    // can take. Two-pass approach:
+    // Middle area — items + notes. The only region that gets
+    // squeezed when the cart is heavy. The header above and the
+    // barcode below never move.
+    '<div class="middle">' +
+      tablesHtml +
+      (escapedNotes ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>' : '') +
+    '</div>' +
+    // Barcode block — fixed 85mm wide, never shrinks. The LAP ref
+    // is rendered as separate JSX (not baked into the SVG via
+    // displayValue) so the cascade can hide it independently.
+    '<div class="bc-bar">' +
+      '<div class="bc-bar-inner">' +
+        '<svg id="order-barcode"></svg>' +
+        '<div id="bc-ref" class="bc-ref">' + safeRef + '</div>' +
+      '</div>' +
+    '</div>' +
+    // Cascade JS:
+    //   1. Render the barcode at fixed width:2 / height:70.
+    //      displayValue:false keeps the LAP-ref text rendered as
+    //      separate HTML (so step 3 can hide it).
+    //   2. Force a layout reflow (read offsetHeight) and check
+    //      whether .middle is overflowing.
+    //   3. If yes, body.compact (hides DENTURE / APPLIANCES black
+    //      bars). Reflow + re-check.
+    //   4. If still overflowing, body.extra-compact (also hides
+    //      the LAP-ref text under the barcode, freeing ~16px).
+    //   5. window.print().
     //
-    //   1. Render JsBarcode once at width=2 to measure how wide the
-    //      encoded data wants to be (CODE128 bar count varies by
-    //      character class — letters use Set B = 11 bars/char,
-    //      digit-pairs use Set C = 11 bars per two digits, plus a
-    //      start + checksum + stop pattern).
-    //   2. Compute the per-bar width that fills the container exactly:
-    //      newWidth = 2 * (containerWidth / measuredWidth). Re-render
-    //      at that width.
-    //   3. The same recipe also computes the height — if the cart
-    //      packed the page, .bc-bar will have shrunk via flex:1 1 0,
-    //      and we render the bars proportionally shorter so they
-    //      stay inside the page.
-    //
-    // Why this is the right approach: Checkpoint's print works because
-    // its LWO refs are 17 chars and naturally produce a 444px barcode
-    // that overflows the 377px container — the visible bars happen to
-    // span full width by coincidence. Lounge's LAP refs are 9 chars
-    // → 268px barcode → 109px of slack on either side. CSS / SVG
-    // sizing tricks don't beat measuring the actual layout.
-    //
-    // Failure posture: if JsBarcode hasn't loaded (CDN blocked), throw
-    // loudly. Same for any size that doesn't measure — silent
-    // fallback to a half-sized barcode is exactly the kind of rot
-    // we don't ship.
+    // The barcode's own width never changes through any of this —
+    // it's locked at 85mm via .bc-bar-inner.
     '<script>window.onload=function(){' +
       'if(typeof JsBarcode==="undefined"){throw new Error("JsBarcode failed to load — check CDN access and pop-up settings.");}' +
-      'var ref="' + safeRef + '";' +
-      'var opts={format:"CODE128",height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"};' +
-      // Pass 1: render at width:2 to measure.
-      'JsBarcode("#order-barcode",ref,Object.assign({width:2},opts));' +
-      'var svg=document.getElementById("order-barcode");' +
-      'var measuredW=parseFloat(svg.getAttribute("width"));' +
-      'var measuredH=parseFloat(svg.getAttribute("height"));' +
-      'var bar=svg.parentElement;' +
-      'var availW=bar.clientWidth;' +
-      // Available height = the .bc-bar's box minus the ref text below.
-      'var refEl=document.getElementById("bc-ref");' +
-      'refEl.textContent=ref;' +
-      'var availH=bar.clientHeight-refEl.offsetHeight-2;' +
-      'if(!(measuredW>0&&measuredH>0&&availW>0&&availH>0)){throw new Error("Could not measure barcode container — flex layout returned zero size.");}' +
-      // Pass 2: scale per-bar width and bar height to the container.
-      // Floor by a hair to avoid sub-pixel overflow on Chrome.
-      'var newBarW=Math.max(0.5,(availW/measuredW)*2-0.001);' +
-      'var newBarH=Math.max(40,Math.min(100,Math.floor(availH)));' +
-      'JsBarcode("#order-barcode",ref,Object.assign({width:newBarW,height:newBarH},opts));' +
+      'JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:70,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});' +
+      'var middle=document.getElementById("middle")||document.querySelector(".middle");' +
+      'function overflowing(){return middle&&middle.scrollHeight>middle.clientHeight+1;}' +
+      // Reading offsetHeight forces a sync layout reflow so the
+      // overflow check sees the post-class-change layout.
+      'function reflow(){return document.body.offsetHeight;}' +
+      'reflow();' +
+      'if(overflowing()){document.body.classList.add("compact");reflow();}' +
+      'if(overflowing()){document.body.classList.add("extra-compact");reflow();}' +
       'window.print();' +
     '}<\/script>' +
     '</body></html>';

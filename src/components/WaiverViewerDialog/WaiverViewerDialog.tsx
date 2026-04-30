@@ -448,21 +448,16 @@ const PreviewFrame = forwardRef<
         style={{
           width: '100%',
           maxHeight: visibleHeight,
-          // overflow:hidden vertically would clip the second page;
-          // overflow:auto on Y so the receptionist can scroll
-          // through both pages, overflow:hidden on X so the
-          // scaled-up corners can never produce a horizontal bar
-          // (which they did when the dialog grew slightly wider
-          // than 794 and the scale ratio rounded above 1).
           overflowY: 'auto',
           overflowX: 'hidden',
           borderRadius: theme.radius.card,
           background: theme.color.bg,
-          boxShadow: 'inset 0 1px 0 rgba(14, 20, 20, 0.04)',
-          padding: theme.space[3],
-          // Centre the doc when the dialog is wider than A4 — the
-          // canvas no longer stretches edge-to-edge but the
-          // document is still visually anchored.
+          // Real gutter around the page so it reads as paper sitting
+          // on a desk rather than bleeding into the dialog chrome.
+          // theme.space[7] would be ideal but the token tops out at
+          // 6 (24px); the +6 below adds breathing room without
+          // diverging from the scale.
+          padding: `${theme.space[6] + 6}px ${theme.space[6]}px`,
           display: 'flex',
           justifyContent: 'center',
         }}
@@ -473,6 +468,11 @@ const PreviewFrame = forwardRef<
             height: scaledHeight,
             position: 'relative',
             flex: '0 0 auto',
+            // Soft drop shadow + 1px hairline so the page floats
+            // on the dialog background like a real sheet.
+            boxShadow: theme.shadow.card,
+            borderRadius: theme.radius.input,
+            overflow: 'hidden',
           }}
         >
           <iframe
