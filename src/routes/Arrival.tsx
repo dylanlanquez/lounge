@@ -364,8 +364,12 @@ export function Arrival() {
   // Load context. Booked → lng_appointments. Walk-in → patients.
   useEffect(() => {
     if (!id) return;
+    // Don't reset loading=true here on a refresh tick — that flicks
+    // the wizard back to a skeleton mid-flow when an upstream realtime
+    // change re-fires the effect. The id is stable per route mount,
+    // so the initial useState(true) handles the first paint and any
+    // subsequent run keeps the previously-loaded context visible.
     let cancelled = false;
-    setLoading(true);
     setLoadError(null);
     (async () => {
       try {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { CatalogueRow } from './catalogue.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 export interface CartRow {
   id: string;
@@ -96,20 +97,19 @@ interface UseCartResult {
 export function useCart(visitId: string | undefined): UseCartResult {
   const [cart, setCart] = useState<CartRow | null>(null);
   const [items, setItems] = useState<CartItemRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const { loading, settle } = useStaleQueryLoading(visitId);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!visitId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const { data: c, error: ce } = await supabase
         .from('lng_carts')
         .select('*')
@@ -118,7 +118,7 @@ export function useCart(visitId: string | undefined): UseCartResult {
       if (cancelled) return;
       if (ce) {
         setError(ce.message);
-        setLoading(false);
+        settle();
         return;
       }
       const cartRow = (c as CartRow | null) ?? null;
@@ -157,12 +157,12 @@ export function useCart(visitId: string | undefined): UseCartResult {
       } else {
         setItems([]);
       }
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [visitId, tick]);
+  }, [visitId, tick, settle]);
 
   const ensureOpen = useCallback(async (): Promise<CartRow | null> => {
     if (!visitId) return null;

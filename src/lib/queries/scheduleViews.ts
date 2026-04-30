@@ -3,6 +3,7 @@ import { supabase } from '../supabase.ts';
 import type { AppointmentRow } from './appointments.ts';
 import { formatDateIso } from '../calendarMonth.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 interface DayResult {
   data: AppointmentRow[];
@@ -102,20 +103,23 @@ function localDayBounds(dateIso: string): { startIso: string; endIso: string } {
 
 export function useDayAppointments(dateIso: string): DayResult {
   const [data, setData] = useState<AppointmentRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Bumping this counter triggers the effect below to re-run the
   // query without changing dateIso — used by `refresh()`.
   const [refreshTick, setRefreshTick] = useState(0);
+  // dateIso IS the resource key — switching days is a real key
+  // transition (the previous day's rows are stale). Refresh ticks
+  // for the same day reuse data without flicker.
+  const { loading, settle } = useStaleQueryLoading(dateIso);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      // NOTE: data is intentionally NOT cleared here. Keeping the previous
-      // day's rows visible while the new fetch is in flight lets the parent
-      // dim them in place rather than flashing a skeleton on every tap.
+      // Data is intentionally NOT cleared here. Keeping the previous
+      // day's rows visible while the new fetch is in flight lets the
+      // parent dim them in place rather than flashing a skeleton on
+      // every tap.
       const { startIso, endIso } = localDayBounds(dateIso);
       const run = (sel: string) =>
         supabase
@@ -141,18 +145,18 @@ export function useDayAppointments(dateIso: string): DayResult {
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         setHasLoaded(true);
         return;
       }
       setData(mapRows(rows ?? []));
-      setLoading(false);
+      settle();
       setHasLoaded(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [dateIso, refreshTick]);
+  }, [dateIso, refreshTick, settle]);
 
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);
@@ -192,14 +196,13 @@ export function useDateRangeCounts(
   endIso: string
 ): DateRangeCountsResult {
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const { loading, settle } = useStaleQueryLoading(`${startIso}|${endIso}`);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const start = new Date(`${startIso}T00:00:00`);
       const end = new Date(`${endIso}T23:59:59.999`);
       const { data: rows, error: err } = await supabase
@@ -217,7 +220,7 @@ export function useDateRangeCounts(
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const m = new Map<string, number>();
@@ -227,12 +230,12 @@ export function useDateRangeCounts(
         m.set(dateIso, (m.get(dateIso) ?? 0) + 1);
       }
       setCounts(m);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [startIso, endIso, refreshTick]);
+  }, [startIso, endIso, refreshTick, settle]);
 
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);

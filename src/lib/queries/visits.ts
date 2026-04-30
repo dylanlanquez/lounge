@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { PatientRow } from './patients.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 export interface VisitRow {
   id: string;
@@ -377,15 +378,14 @@ interface ActiveVisitsResult {
 
 export function useActiveVisits(): ActiveVisitsResult {
   const [data, setData] = useState<ActiveVisitRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading('active-visits');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const { data: rows, error: err } = await supabase
         .from('lng_visits')
         .select(
@@ -401,7 +401,7 @@ export function useActiveVisits(): ActiveVisitsResult {
         } else {
           setError(err.message);
         }
-        setLoading(false);
+        settle();
         return;
       }
       const mapped: ActiveVisitRow[] = (rows ?? []).map((r) => {
@@ -429,12 +429,12 @@ export function useActiveVisits(): ActiveVisitsResult {
         };
       });
       setData(mapped);
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [tick]);
+  }, [tick, settle]);
 
   // The In-Clinic page and the BottomNav counter both consume this hook.
   // Subscribing to lng_visits covers status flips (opened → in_progress
@@ -473,20 +473,19 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
   const [deposit, setDeposit] = useState<AppointmentDeposit | null>(null);
   const [appointment, setAppointment] = useState<VisitAppointmentContext | null>(null);
   const [receptionistName, setReceptionistName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const { loading, settle } = useStaleQueryLoading(visitId);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!visitId) {
-      setLoading(false);
+      settle();
       return;
     }
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const { data: v, error: ve } = await supabase
         .from('lng_visits')
         .select('*')
@@ -495,7 +494,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
       if (cancelled) return;
       if (ve) {
         setError(ve.message);
-        setLoading(false);
+        settle();
         return;
       }
       setVisit(v as VisitRow);
@@ -620,12 +619,12 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           setReceptionistName(null);
         }
       }
-      setLoading(false);
+      settle();
     })();
     return () => {
       cancelled = true;
     };
-  }, [visitId, tick]);
+  }, [visitId, tick, settle]);
 
   // Visit detail refreshes when its visit row, the linked appointment
   // (deposit status, JB ref, intake), or the underlying patient row

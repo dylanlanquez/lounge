@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 import {
   eventTypeCategory,
   filterCareIntake,
@@ -274,14 +275,13 @@ interface SignatureRow {
 
 export function useActiveVisitsBoard(): ClinicBoardResult {
   const [visits, setVisits] = useState<EnrichedActiveVisit[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading('clinic-board');
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
 
     (async () => {
@@ -308,14 +308,14 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
       if (vErr) {
         setError(vErr.message);
         setVisits([]);
-        setLoading(false);
+        settle();
         return;
       }
 
       const rows = (rawVisits ?? []) as VisitsRowFromDb[];
       if (rows.length === 0) {
         setVisits([]);
-        setLoading(false);
+        settle();
         return;
       }
 
@@ -357,7 +357,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
       if (sectionsRes.error) {
         if (sectionsRes.error.code !== 'PGRST200' && sectionsRes.error.code !== '42P01') {
           setError(`Could not load waiver sections: ${sectionsRes.error.message}`);
-          setLoading(false);
+          settle();
           return;
         }
       } else {
@@ -374,7 +374,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           signaturesRes.error.code !== '42P01'
         ) {
           setError(`Could not load waiver signatures: ${signaturesRes.error.message}`);
-          setLoading(false);
+          settle();
           return;
         }
       } else {
@@ -462,13 +462,13 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
       });
 
       setVisits(enriched);
-      setLoading(false);
+      settle();
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [tick]);
+  }, [tick, settle]);
 
   return { visits, loading, error, refresh };
 }

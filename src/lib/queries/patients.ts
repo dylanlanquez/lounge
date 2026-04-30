@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { properCase } from './appointments.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
 export interface PatientRow {
   id: string;
@@ -49,25 +50,27 @@ export function useShopifyCustomerSearch(
   opts: { enabled: boolean }
 ): ShopifySearchResult {
   const [data, setData] = useState<ShopifyCustomerResult[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Search loading uses a constant key so typing keystrokes don't
+  // flick the UI back to a skeleton — previous results stay visible
+  // while the next request runs (stale-while-revalidate).
+  const { loading, settle } = useStaleQueryLoading('shopify-search');
 
   useEffect(() => {
     if (!opts.enabled) {
       setData([]);
-      setLoading(false);
+      settle();
       setError(null);
       return;
     }
     const cleaned = term.trim();
     if (cleaned.length < 3) {
       setData([]);
-      setLoading(false);
+      settle();
       setError(null);
       return;
     }
     let cancelled = false;
-    setLoading(true);
     const timer = setTimeout(async () => {
       try {
         const { data: res, error: err } = await supabase.functions.invoke(
@@ -78,13 +81,13 @@ export function useShopifyCustomerSearch(
         if (err) {
           setError(err.message);
           setData([]);
-          setLoading(false);
+          settle();
           return;
         }
         if (!res?.ok) {
           setError(res?.detail ?? res?.error ?? 'shopify_search_failed');
           setData([]);
-          setLoading(false);
+          settle();
           return;
         }
         const customers: ShopifyCustomerResult[] = Array.isArray(res.customers)
@@ -118,19 +121,19 @@ export function useShopifyCustomerSearch(
             : customers;
         setData(filtered);
         setError(null);
-        setLoading(false);
+        settle();
       } catch (e: unknown) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : 'Unknown error');
         setData([]);
-        setLoading(false);
+        settle();
       }
     }, 350);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [term, opts.enabled]);
+  }, [term, opts.enabled, settle]);
 
   return { data, loading, error };
 }
@@ -296,19 +299,21 @@ function applyPatientSearch<Q extends { ilike: any; or: any }>(
 
 export function usePatientSearch(term: string): SearchResult {
   const [data, setData] = useState<PatientRow[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Constant key — typing keystrokes don't flick the UI to a
+  // skeleton; the previous results stay visible while the next
+  // request runs.
+  const { loading, settle } = useStaleQueryLoading('patient-search');
 
   useEffect(() => {
     const cleaned = term.trim();
     if (cleaned.length < 2) {
       setData([]);
-      setLoading(false);
+      settle();
       setError(null);
       return;
     }
     let cancelled = false;
-    setLoading(true);
     const timer = setTimeout(async () => {
       try {
         const baseQuery = supabase
@@ -324,23 +329,23 @@ export function usePatientSearch(term: string): SearchResult {
         if (cancelled) return;
         if (err) {
           setError(err.message);
-          setLoading(false);
+          settle();
           return;
         }
         setData((rows ?? []) as PatientRow[]);
         setError(null);
-        setLoading(false);
+        settle();
       } catch (e: unknown) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : 'Unknown error');
-        setLoading(false);
+        settle();
       }
     }, 220);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [term]);
+  }, [term, settle]);
 
   return { data, loading, error };
 }
@@ -408,13 +413,16 @@ export function usePatientList(
   limit: number = PATIENT_LIST_PAGE_SIZE
 ): ListResult {
   const [data, setData] = useState<PatientListRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  // Page is part of the key — flicking pages is a real resource
+  // transition (different rows). Term is NOT in the key — typing
+  // keystrokes preserve the previous page of results on screen
+  // while the next request runs.
+  const { loading, settle } = useStaleQueryLoading(`patient-list|${page}|${limit}`);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     const cleaned = term.trim();
     const timer = setTimeout(async () => {
       try {
@@ -455,7 +463,7 @@ export function usePatientList(
             if (cancelled) return;
             if (err2) {
               setError(err2.message);
-              setLoading(false);
+              settle();
               return;
             }
             const fb = (fallback ?? []) as Array<PatientRow & { avatar_data?: string | null }>;
@@ -471,11 +479,11 @@ export function usePatientList(
                 }))
             );
             setError(null);
-            setLoading(false);
+            settle();
             return;
           }
           setError(err.message);
-          setLoading(false);
+          settle();
           return;
         }
         const list = (rows ?? []) as Array<
@@ -491,11 +499,11 @@ export function usePatientList(
           }))
         );
         setError(null);
-        setLoading(false);
+        settle();
       } catch (e: unknown) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : 'Unknown error');
-        setLoading(false);
+        settle();
       }
     }, 220);
 
@@ -503,7 +511,7 @@ export function usePatientList(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [term, page, limit]);
+  }, [term, page, limit, settle]);
 
   return { data, loading, error, hasMore };
 }
