@@ -1140,6 +1140,11 @@ function buildUnifiedAppts(
   // appointment whose id matches a visit.appointment_id so we don't show
   // both rows for the same slot.
   const visitedApptIds = new Set(visits.map((v) => v.appointment_id).filter(Boolean) as string[]);
+  // Walk-in arrivals create a calendar marker in lng_appointments with
+  // walk_in_id set (see migration 20260430000005). Drop any appointment
+  // whose walk_in_id matches a visit's walk_in_id — the visit row is
+  // the canonical surface for that arrival.
+  const visitedWalkInIds = new Set(visits.map((v) => v.walk_in_id).filter(Boolean) as string[]);
 
   const rows: UnifiedApptRow[] = [];
 
@@ -1155,6 +1160,7 @@ function buildUnifiedAppts(
 
   for (const a of appointments) {
     if (visitedApptIds.has(a.id)) continue;
+    if (a.walk_in_id && visitedWalkInIds.has(a.walk_in_id)) continue;
     const isFuture = new Date(a.start_at).getTime() >= now;
     rows.push({
       key: `a-${a.id}`,

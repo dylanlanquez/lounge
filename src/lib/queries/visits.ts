@@ -93,10 +93,12 @@ export async function createWalkInVisit(
   // walk-in shows up alongside Calendly bookings — the receptionist sees
   // a complete picture of who turned up today.
   //
-  // The visit's appointment_id stays NULL — the schema constraint on
-  // lng_visits (exactly one of appointment_id / walk_in_id) means we
-  // can't link both. Calendar surfaces just render this row with the
-  // walk-in icon based on source.
+  // walk_in_id is the FK back to lng_walk_ins so consumers that read
+  // BOTH lng_appointments and lng_visits (the patient profile timeline,
+  // for example) can dedup the marker against its visit with a single
+  // equality check. The visit's appointment_id stays NULL — the
+  // exactly-one constraint on lng_visits forces walk-ins to identify
+  // their booking via walk_in_id, not appointment_id.
   const start = new Date();
   const end = new Date(start.getTime() + 30 * 60_000);
   await supabase.from('lng_appointments').insert({
@@ -107,6 +109,7 @@ export async function createWalkInVisit(
     end_at: end.toISOString(),
     event_type_label: 'Walk-in',
     status: 'arrived',
+    walk_in_id: walkIn.id,
   });
 
   return {
