@@ -127,6 +127,55 @@ async function markStatus(
   if (extra.failure_reason) pUpdate.failure_reason = extra.failure_reason;
 
   await supabase.from('lng_payments').update(pUpdate).eq('id', (tp as { payment_id: string }).payment_id);
+
+  // On a succeeded card payment, flip the parent cart to 'paid' if
+  // (and only if) succeeded payments now meet or exceed the total.
+  // This is the same conditional flip the cash path does on the
+  // client; doing it server-side here means card payments don't
+  // depend on the client to lock the cart. Supports split payments:
+  // a £40 cash + £60 card on a £100 bill flips after the card lands.
+  if (status === 'succeeded') {
+    await maybeFlipCartPaid(supabase, (tp as { payment_id: string }).payment_id);
+  }
+}
+
+async function maybeFlipCartPaid(
+  supabase: ReturnType<typeof createClient>,
+  paymentId: string
+) {
+  const { data: pay } = await supabase
+    .from('lng_payments')
+    .select('cart_id')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (!pay) return;
+  const cartId = (pay as { cart_id: string }).cart_id;
+
+  const { data: cart } = await supabase
+    .from('lng_carts')
+    .select('total_pence, status')
+    .eq('id', cartId)
+    .maybeSingle();
+  if (!cart) return;
+  const c = cart as { total_pence: number | null; status: string };
+  if (c.status === 'paid' || c.status === 'voided') return;
+  if (c.total_pence == null || c.total_pence <= 0) return;
+
+  const { data: rows } = await supabase
+    .from('lng_payments')
+    .select('amount_pence')
+    .eq('cart_id', cartId)
+    .eq('status', 'succeeded');
+  const succeeded = ((rows ?? []) as { amount_pence: number }[]).reduce(
+    (s, r) => s + r.amount_pence,
+    0
+  );
+  if (succeeded < c.total_pence) return;
+
+  await supabase
+    .from('lng_carts')
+    .update({ status: 'paid', closed_at: new Date().toISOString() })
+    .eq('id', cartId);
 }
 
 async function emitPatientEvent(

@@ -76,8 +76,30 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (cartErr || !cart) return jsonError(404, 'Cart not found');
   if (cart.status !== 'open') return jsonError(409, `Cart status ${cart.status} not open`);
-  if (cart.total_pence !== body.amount_pence) {
-    return jsonError(409, `Amount ${body.amount_pence} does not match cart total ${cart.total_pence}`);
+  if (cart.total_pence == null || cart.total_pence <= 0) {
+    return jsonError(409, 'Cart has no total to charge');
+  }
+  // Sum succeeded payments so far so split payments work: a £100
+  // bill could already have £40 cash on it; this card amount must
+  // be ≤ the £60 outstanding, not == the £100 cart total.
+  const { data: priorRows } = await supabase
+    .from('lng_payments')
+    .select('amount_pence')
+    .eq('cart_id', cart.id)
+    .eq('status', 'succeeded');
+  const succeededSoFar = ((priorRows ?? []) as { amount_pence: number }[]).reduce(
+    (s, r) => s + r.amount_pence,
+    0
+  );
+  const outstanding = cart.total_pence - succeededSoFar;
+  if (body.amount_pence <= 0) {
+    return jsonError(409, `Amount ${body.amount_pence} must be positive`);
+  }
+  if (body.amount_pence > outstanding) {
+    return jsonError(
+      409,
+      `Amount ${body.amount_pence} exceeds outstanding balance ${outstanding}`
+    );
   }
 
   // Look up reader
