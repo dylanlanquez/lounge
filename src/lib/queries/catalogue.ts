@@ -44,6 +44,18 @@ export interface CatalogueRow {
   // purely for display copy doesn't accidentally enable the stepper.
   // Default true at the column level; admin flips it off per row.
   quantity_enabled: boolean;
+  // SLA window from "marked arrived" to "appointment complete". When
+  // sla_enabled is true the breach evaluator (a follow-up slice) reads
+  // sla_target_minutes; when false the column is dormant config.
+  sla_enabled: boolean;
+  sla_target_minutes: number | null;
+  // Gates whether this line appears on the printable Lab Work Order.
+  // Defaults true at the column level; impression-appointment rows
+  // were backfilled to false in 20260430000007.
+  include_on_lwo: boolean;
+  // Gates whether arrival demands a JB ref for this item. Defaults
+  // true; impression-appointment rows backfilled to false.
+  allocate_job_box: boolean;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -80,7 +92,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -133,6 +145,10 @@ export async function upsertCatalogueRow(
     arch_match: draft.arch_match,
     is_service: draft.is_service,
     quantity_enabled: draft.quantity_enabled,
+    sla_enabled: draft.sla_enabled,
+    sla_target_minutes: draft.sla_target_minutes,
+    include_on_lwo: draft.include_on_lwo,
+    allocate_job_box: draft.allocate_job_box,
     sort_order: draft.sort_order,
     active: draft.active,
   };

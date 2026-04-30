@@ -60,8 +60,9 @@ import {
 } from '../lib/queries/arrivalIntake.ts';
 import {
   inferServiceTypeFromEventLabel,
-  requiredSectionsForServiceTypes,
+  requiredSectionsForCart,
   summariseWaiverFlag,
+  useAllCatalogueWaiverRequirements,
   useWaiverSections,
   usePatientWaiverState,
   type WaiverFlag,
@@ -333,25 +334,38 @@ export function Arrival() {
     return walkInServiceLabel(inferredServiceType);
   }, [mode, appointment, inferredServiceType]);
 
-  const jbRequired = useMemo(() => appointmentRequiresJbRef(eventTypeLabel), [eventTypeLabel]);
+  const jbRequired = useMemo(() => {
+    // Once items are staged, the catalogue rows are the source of
+    // truth: any item flagged allocate_job_box requires a JB. The
+    // legacy event-label heuristic only kicks in pre-staging so the
+    // intake form doesn't briefly hide the JB field on a fresh load
+    // of an impression appointment with no items yet.
+    if (stagedItems.length > 0) return stagedItems.some((it) => it.catalogue.allocate_job_box);
+    return appointmentRequiresJbRef(eventTypeLabel);
+  }, [stagedItems, eventTypeLabel]);
 
   const { sections: waiverSections } = useWaiverSections();
+  const { byCatalogueId: explicitWaiverByCatalogueId } = useAllCatalogueWaiverRequirements();
   const { latest: patientSignatures, refresh: refreshSignatures } =
     usePatientWaiverState(patient?.id);
   const requiredWaiverSections = useMemo<WaiverSection[]>(() => {
     if (waiverSections.length === 0) return [];
-    // Waivers must reflect EVERYTHING the patient is about to receive,
-    // not just what their Calendly event suggested they'd booked. If
-    // staff added a denture repair on top of an impression
-    // appointment, both waivers must surface on the consent step.
-    // Union: the Calendly-inferred type + every catalogue row's
-    // service_type that's currently staged.
-    const inferred = inferServiceTypeFromEventLabel(eventTypeLabel);
-    const types = new Set<string>();
-    if (inferred) types.add(inferred);
-    for (const t of recognisedTypes) types.add(t);
-    return requiredSectionsForServiceTypes(Array.from(types), waiverSections);
-  }, [waiverSections, eventTypeLabel, recognisedTypes]);
+    // Per-cart resolution: explicit per-item waiver links (when set)
+    // win over service_type inference; items without explicit links
+    // fall back to the inference rule. Calendly-inferred type still
+    // counts as a "phantom" item so the consent step doesn't lose
+    // the appointment-level signal before any catalogue row is added.
+    const cartItems: Array<{ catalogue_id: string | null; service_type: string | null }> =
+      stagedItems.map((it) => ({
+        catalogue_id: it.catalogue.id,
+        service_type: it.catalogue.service_type,
+      }));
+    const calendlyInferred = inferServiceTypeFromEventLabel(eventTypeLabel);
+    if (calendlyInferred) {
+      cartItems.push({ catalogue_id: null, service_type: calendlyInferred });
+    }
+    return requiredSectionsForCart(cartItems, waiverSections, explicitWaiverByCatalogueId);
+  }, [waiverSections, explicitWaiverByCatalogueId, eventTypeLabel, stagedItems]);
   const waiverFlag: WaiverFlag | null = patient
     ? summariseWaiverFlag(requiredWaiverSections, patientSignatures)
     : null;

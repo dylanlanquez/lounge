@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -53,11 +53,18 @@ import {
   updateCartItemQuantity,
   useCart,
 } from '../lib/queries/carts.ts';
+import { useCatalogueActive } from '../lib/queries/catalogue.ts';
+import {
+  composeUpgradeLabel,
+  useUpgradesActive,
+  type UpgradeDisplayPosition,
+} from '../lib/queries/upgrades.ts';
 import {
   inferServiceTypeFromEventLabel,
-  requiredSectionsForServiceTypes,
+  requiredSectionsForCart,
   sectionSignatureState,
   summariseWaiverFlag,
+  useAllCatalogueWaiverRequirements,
   useWaiverSections,
   usePatientWaiverState,
   type WaiverSection,
@@ -73,6 +80,38 @@ export function VisitDetail() {
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
+  // Catalogue is the source of truth for include_on_lwo. Cart items
+  // carry catalogue_id snapshots, so we can look the live flag up at
+  // print time without snapshotting it onto cart_items (snapshotted
+  // fields are for receipts; operational behaviour stays current).
+  const { rows: catalogueRows } = useCatalogueActive();
+  const catalogueById = useMemo(() => {
+    const m = new Map<string, (typeof catalogueRows)[number]>();
+    for (const r of catalogueRows) m.set(r.id, r);
+    return m;
+  }, [catalogueRows]);
+  // Live registry of upgrade display_position so cart subtitle + LWO
+  // can place each upgrade where admin wants it.
+  const { rows: upgradeRows } = useUpgradesActive();
+  const upgradePositionById = useMemo(() => {
+    const m = new Map<string, UpgradeDisplayPosition>();
+    for (const u of upgradeRows) m.set(u.id, u.display_position);
+    return m;
+  }, [upgradeRows]);
+  // Decide whether a cart line should print on the LWO. Catalogue
+  // lookup wins; ad-hoc rows (no catalogue_id) fall back to the
+  // legacy "exclude impression appointments" rule so behaviour
+  // stays identical for non-catalogue lines.
+  const itemPrintsOnLwo = useCallback(
+    (it: { catalogue_id: string | null; service_type: string | null }): boolean => {
+      if (it.catalogue_id) {
+        const row = catalogueById.get(it.catalogue_id);
+        if (row) return row.include_on_lwo;
+      }
+      return it.service_type !== 'impression_appointment';
+    },
+    [catalogueById]
+  );
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
@@ -114,17 +153,23 @@ export function VisitDetail() {
     loading: patientSignaturesLoading,
     refresh: refreshSignatures,
   } = usePatientWaiverState(patient?.id ?? null);
+  const { byCatalogueId: explicitWaiverByCatalogueId } = useAllCatalogueWaiverRequirements();
   const requiredSections = useMemo<WaiverSection[]>(() => {
     if (waiverSections.length === 0) return [];
     if (items.length > 0) {
-      return requiredSectionsForServiceTypes(
-        items.map((it) => it.service_type),
-        waiverSections
+      return requiredSectionsForCart(
+        items.map((it) => ({ catalogue_id: it.catalogue_id, service_type: it.service_type })),
+        waiverSections,
+        explicitWaiverByCatalogueId
       );
     }
     const inferred = inferServiceTypeFromEventLabel(appointment?.event_type_label ?? null);
-    return requiredSectionsForServiceTypes(inferred ? [inferred] : [], waiverSections);
-  }, [appointment?.event_type_label, items, waiverSections]);
+    return requiredSectionsForCart(
+      inferred ? [{ catalogue_id: null, service_type: inferred }] : [],
+      waiverSections,
+      explicitWaiverByCatalogueId
+    );
+  }, [appointment?.event_type_label, items, waiverSections, explicitWaiverByCatalogueId]);
   const waiverFlag = useMemo(
     () => summariseWaiverFlag(requiredSections, patientSignatures),
     [requiredSections, patientSignatures]
@@ -169,21 +214,32 @@ export function VisitDetail() {
       .filter((r): r is NonNullable<typeof r> => r !== null);
     if (matchedRows.length === 0) return null;
 
-    // Items: filter impression-appointment placeholders the same
-    // way the LWO does — they're scheduling-only, not work to
-    // sign for. Map cart shape → printable shape using the same
-    // logic buildPrintableItem uses for the LWO.
+    // Items: same filter as the LWO — anything the catalogue says
+    // shouldn't print (e.g. impression-appointment placeholders) is
+    // skipped. The waiver doc and the printed LWO must agree on
+    // which work is being signed for.
     const docItems: WaiverDocItem[] = items
-      .filter((it) => it.service_type !== 'impression_appointment')
+      .filter((it) => itemPrintsOnLwo(it))
       .map((it) => {
         const isDenture = it.service_type === 'denture_repair';
         const thicknessUpgrade = it.upgrades.find((u) => /\d+(?:\.\d+)?\s*mm/i.test(u.upgrade_name));
         const thickness = thicknessUpgrade
           ? thicknessUpgrade.upgrade_name.match(/\d+(?:\.\d+)?\s*mm/i)?.[0] ?? null
           : null;
+        // Compose before/after_device upgrade names into the device
+        // label. Thickness is still pulled out into its own column;
+        // own_line upgrades fall back to after_device for the doc
+        // (it has no per-row break-out today).
+        const baseDevice = isDenture ? 'Denture' : it.name;
+        const composed = composeUpgradeLabel(
+          baseDevice,
+          it.upgrades.filter((u) => !/\d+(?:\.\d+)?\s*mm/i.test(u.upgrade_name)),
+          upgradePositionById
+        );
+        const device = composed.title + (composed.ownLines.length > 0 ? ', ' + composed.ownLines.join(', ') : '');
         return {
           qty: it.quantity,
-          device: isDenture ? 'Denture' : it.name,
+          device,
           repairType: isDenture ? it.name : '',
           arch: it.arch,
           shade: it.shade,
@@ -393,22 +449,15 @@ export function VisitDetail() {
       );
       return;
     }
-    // Impression-appointment lines are scheduling-only — the patient
-    // is in the chair to have an impression taken, no lab work has
-    // been spec'd. Excluding them from the LWO mirrors how Checkpoint
-    // handles its appointment placeholders: the lab only sees a row
-    // for actual work to be done. The line still appears on the
-    // visit page, the cart, and the receipt — only the printed LWO
-    // hides it.
+    // Catalogue.include_on_lwo gates per-line printing. Defaults to
+    // true; impression-appointment rows are backfilled to false so
+    // existing behaviour is preserved. Admin can flip the flag on
+    // any other row from the catalogue editor.
     const printableItems = items
-      .filter((it) => it.service_type !== 'impression_appointment')
-      .map((it) => buildPrintableItem(it));
+      .filter((it) => itemPrintsOnLwo(it))
+      .map((it) => buildPrintableItem(it, upgradePositionById));
 
     if (printableItems.length === 0) {
-      // Loud failure rather than a blank label going to the lab. The
-      // receptionist either added nothing yet, or every staged line
-      // is an impression-appointment placeholder — in both cases the
-      // lab has nothing to act on and the LWO shouldn't print.
       setError(
         'No printable work on this visit. Add at least one denture or appliance line. Impression appointments alone do not go to the lab.',
       );
@@ -611,22 +660,25 @@ export function VisitDetail() {
                 />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-                  {items.map((it) => (
-                    <CartLineItem
-                      key={it.id}
-                      name={it.name}
-                      description={cartItemSubtitle(it)}
-                      quantity={it.quantity}
-                      unitPricePence={it.unit_price_pence}
-                      lineTotalPence={it.line_total_pence}
-                      onIncrement={() => inc(it.id, it.quantity)}
-                      onDecrement={() => dec(it.id, it.quantity)}
-                      onRemove={() => rm(it.id)}
-                      disabled={busyItem === it.id || cartLocked}
-                      quantityEnabled={it.quantity_enabled}
-                      thumbnailUrl={it.image_url}
-                    />
-                  ))}
+                  {items.map((it) => {
+                    const composed = composeUpgradeLabel(it.name, it.upgrades, upgradePositionById);
+                    return (
+                      <CartLineItem
+                        key={it.id}
+                        name={composed.title}
+                        description={cartItemSubtitle(it, composed.ownLines)}
+                        quantity={it.quantity}
+                        unitPricePence={it.unit_price_pence}
+                        lineTotalPence={it.line_total_pence}
+                        onIncrement={() => inc(it.id, it.quantity)}
+                        onDecrement={() => dec(it.id, it.quantity)}
+                        onRemove={() => rm(it.id)}
+                        disabled={busyItem === it.id || cartLocked}
+                        quantityEnabled={it.quantity_enabled}
+                        thumbnailUrl={it.image_url}
+                      />
+                    );
+                  })}
                 </div>
               )}
 
@@ -1464,22 +1516,36 @@ function composeBannerBody(flag: ReturnType<typeof summariseWaiverFlag>): string
 // Thickness is sourced from the per-line upgrades — the catalogue
 // upgrade names (e.g. "Thicker 1.5mm") carry their own millimetre
 // suffix, so we just pick the first one whose name ends in "mm".
-function buildPrintableItem(item: {
-  name: string;
-  service_type: string | null;
-  arch: 'upper' | 'lower' | 'both' | null;
-  shade: string | null;
-  quantity: number;
-  upgrades: { upgrade_name: string }[];
-}): PrintableLwoItem {
+function buildPrintableItem(
+  item: {
+    name: string;
+    service_type: string | null;
+    arch: 'upper' | 'lower' | 'both' | null;
+    shade: string | null;
+    quantity: number;
+    upgrades: { upgrade_id: string | null; upgrade_name: string }[];
+  },
+  upgradePositionById: Map<string, UpgradeDisplayPosition>
+): PrintableLwoItem {
   const isDenture = item.service_type === 'denture_repair';
   const thicknessUpgrade = item.upgrades.find((u) => /\d+(?:\.\d+)?\s*mm/i.test(u.upgrade_name));
   const thickness = thicknessUpgrade
     ? thicknessUpgrade.upgrade_name.match(/\d+(?:\.\d+)?\s*mm/i)?.[0] ?? null
     : null;
+  // Compose before/after_device upgrade names into the Device column.
+  // Thickness is excluded — it has its own column. own_line upgrades
+  // fall back to after_device for the LWO label (the layout is
+  // fixed-column thermal print; restructuring is a follow-up).
+  const baseDevice = isDenture ? 'Denture' : item.name;
+  const composed = composeUpgradeLabel(
+    baseDevice,
+    item.upgrades.filter((u) => !/\d+(?:\.\d+)?\s*mm/i.test(u.upgrade_name)),
+    upgradePositionById
+  );
+  const device = composed.title + (composed.ownLines.length > 0 ? ', ' + composed.ownLines.join(', ') : '');
   return {
     qty: item.quantity,
-    device: isDenture ? 'Denture' : item.name,
+    device,
     repairType: isDenture ? item.name : '',
     arch: item.arch,
     shade: item.shade,
@@ -1488,20 +1554,26 @@ function buildPrintableItem(item: {
   };
 }
 
-function cartItemSubtitle(item: {
-  description: string | null;
-  arch: 'upper' | 'lower' | 'both' | null;
-  shade: string | null;
-  notes: string | null;
-  upgrades: { upgrade_name: string }[];
-}): string | null {
+// Cart line subtitle. Upgrades flagged display_position='own_line' are
+// passed in as `ownLines` and rendered as their own ` · ` segments;
+// before/after_device upgrades are already merged into the title by
+// composeUpgradeLabel and don't appear here.
+function cartItemSubtitle(
+  item: {
+    description: string | null;
+    arch: 'upper' | 'lower' | 'both' | null;
+    shade: string | null;
+    notes: string | null;
+  },
+  ownLines: string[]
+): string | null {
   const parts: string[] = [];
   if (item.arch === 'upper') parts.push('Upper');
   else if (item.arch === 'lower') parts.push('Lower');
   else if (item.arch === 'both') parts.push('Upper and lower');
   if (item.shade) parts.push(`shade ${item.shade}`);
   if (item.notes) parts.push(item.notes);
-  for (const u of item.upgrades) parts.push(u.upgrade_name);
+  for (const name of ownLines) parts.push(name);
   if (parts.length > 0) return parts.join(' · ');
   return item.description;
 }
