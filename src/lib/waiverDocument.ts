@@ -49,10 +49,20 @@ export interface WaiverDocSection {
 }
 
 export interface WaiverDocPaymentSummary {
+  // Final total the patient was charged at the till (after any
+  // deposit credited from a Calendly booking).
   amountPence: number;
-  method: string;         // 'card' | 'cash' | …
-  takenAt: string;        // ISO
+  method: string;          // 'card' | 'cash' | …
+  takenAt: string;         // ISO
   status: 'paid' | 'failed';
+  // Deposit paid at booking, if any. Surfaces on the waiver as a
+  // negative line in the totals breakdown so the patient sees:
+  //   Subtotal £X
+  //   Deposit (PayPal) −£Y
+  //   Total paid £Z
+  // Mirrors the same model VisitDetail's Totals component uses.
+  depositPence: number;                          // 0 when no paid deposit
+  depositProvider: 'paypal' | 'stripe' | null;
 }
 
 export interface WaiverDocInput {
@@ -226,14 +236,27 @@ const A4_CSS = (accent: string): string => `
   *{box-sizing:border-box;margin:0;padding:0}
   :root{--accent:${accent};--ink:#0E1414;--muted:rgba(14,20,20,0.62);--subtle:rgba(14,20,20,0.42);--rule:rgba(14,20,20,0.08);--soft:rgba(14,20,20,0.04);--surface:#FFFFFF}
   html,body{background:var(--surface);color:var(--ink)}
-  @page{size:A4;margin:0}
+  /* Real page margins (was margin:0 with body padding faking it) so
+     the print engine reserves the gutter and the @bottom-* boxes
+     have somewhere to render. The numbers feel like proper letter
+     stationery rather than full-bleed cramping. */
+  @page{size:A4;margin:18mm 18mm 16mm}
 
-  /* Single content flow — no fixed-height page divs. Terms naturally
-     fill whatever room is left on page 1 and continue onto page 2;
-     the signature card is forced onto its own break (page-break-
-     before: always below) so it always lands at the foot of page 2.
-     The browser print engine handles the actual sheet boundaries. */
-  body{font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10.5px;line-height:1.55;font-feature-settings:'ss01','cv11';-webkit-font-smoothing:antialiased;width:210mm;padding:14mm 18mm 18mm}
+  /* @page now owns the gutter, so body has no padding of its own.
+     Side-effect: the @page margin boxes below have somewhere to
+     render the per-page footer with the live page counter. */
+  body{font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10.5px;line-height:1.55;font-feature-settings:'ss01','cv11';-webkit-font-smoothing:antialiased;orphans:3;widows:3}
+
+  /* Per-page footer: legal line on the left, "Page N of M" on the
+     right. counter(page)/counter(pages) is automatic, every page
+     gets the same row without us having to inject it into the
+     flow. Browsers that don't support these counters degrade to
+     a blank footer rather than a blank value (Chrome / Safari /
+     Edge all support; Firefox supports counter(page)). */
+  @page{
+    @bottom-left{content:"Venneir Lounge · VAT GB406459983";font-family:'Inter','SF Pro Text',sans-serif;font-size:8.5px;color:rgba(14,20,20,0.42);letter-spacing:.02em}
+    @bottom-right{content:"Page " counter(page) " of " counter(pages);font-family:'Inter','SF Pro Text',sans-serif;font-size:8.5px;color:rgba(14,20,20,0.42);letter-spacing:.02em}
+  }
 
   /* ── Letterhead ───────────────────────────────────────────────── */
   .lh{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
@@ -290,16 +313,28 @@ const A4_CSS = (accent: string): string => `
   .items-subhead{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);padding:12px 0 4px;border-bottom:1px solid var(--rule)}
   .items-subhead:first-child{padding-top:0}
 
-  /* ── Totals strip ────────────────────────────────────────────── */
-  .totals{margin-top:10px;padding-top:10px;border-top:2px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline}
-  .totals .label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink);font-weight:600}
-  .totals .value{font-size:16px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  /* ── Totals breakdown ────────────────────────────────────────── */
+  /* Subtotal + (optional) Deposit + Total. The Total row gets a
+     2px ink rule above it so the eye lands there last; sub-lines
+     above it use the same hairline as the rest of the document.
+     Aligned right via .num column so the figures stack into a
+     neat tabular column. */
+  .totals{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+  .totals .row{display:flex;justify-content:space-between;align-items:baseline;font-size:10.5px}
+  .totals .row .label{color:var(--muted)}
+  .totals .row .value{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:500}
+  .totals .row.deposit .value{color:var(--accent);font-weight:600}
+  .totals .row.total{padding-top:8px;border-top:2px solid var(--ink);margin-top:2px}
+  .totals .row.total .label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink);font-weight:600}
+  .totals .row.total .value{font-size:16px;font-weight:700;letter-spacing:-.01em}
 
-  /* ── Payment row (single line: status + amount) ──────────────── */
-  .pay-row{margin-top:10px;display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:10px 12px;border:1px solid var(--rule);border-radius:10px}
-  .pay-row .meta{display:flex;align-items:baseline;gap:14px;color:var(--muted);font-size:10px}
+  /* ── Payment status row ──────────────────────────────────────── */
+  /* Sits beneath the totals breakdown. Status pill on the left,
+     "method · date" caption on the right — that's the receipt
+     for the till charge specifically. */
+  .pay-row{margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 12px;border:1px solid var(--rule);border-radius:10px}
+  .pay-row .meta{display:flex;align-items:baseline;gap:10px;color:var(--muted);font-size:9.5px}
   .pay-row .meta strong{color:var(--ink);font-weight:600}
-  .pay-row .amount{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
 
   /* ── Status pill ─────────────────────────────────────────────── */
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:9.5px;font-weight:600;letter-spacing:.04em}
@@ -312,9 +347,11 @@ const A4_CSS = (accent: string): string => `
   .notes .label{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:3px}
   .notes .value{font-size:10.5px;color:var(--ink);line-height:1.5;white-space:pre-wrap}
 
-  /* ── Footer (page indicator) ─────────────────────────────────── */
-  .pg-footer{margin-top:auto;padding-top:10px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline;font-size:8.5px;color:var(--subtle);letter-spacing:.02em}
-  .pg-footer .legal{color:var(--muted)}
+  /* No inline .pg-footer — the @page @bottom-* margin boxes
+     above own the per-page footer. The PDF generator
+     (waiverPdf.ts) re-creates the same row programmatically
+     after each page is added, since html2canvas captures
+     screen and doesn't respect @page rules. */
 
   /* ── Terms (single column, flows naturally across pages) ─────── */
   /* Single column (not two) so the clauses spill from the bottom
@@ -325,7 +362,14 @@ const A4_CSS = (accent: string): string => `
   .terms-section + .terms-section{margin-top:10px}
   .terms-section h3{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin:8px 0 4px}
   ol.terms{margin:0;padding-left:14px;counter-reset:term;list-style:none}
-  ol.terms li{position:relative;padding-left:14px;margin-bottom:5px;font-size:9.5px;line-height:1.5;color:var(--ink);break-inside:avoid;counter-increment:term}
+  /* page-break-inside:avoid is the legacy spelling; break-inside:
+     avoid is the modern one. Both are needed because Chrome
+     respects the modern alias inconsistently inside an <ol>.
+     orphans/widows on the <li> backstops a clause that's so
+     long it'd otherwise need to split — the print engine prefers
+     pushing the whole clause to the next page instead of cutting
+     a sentence mid-line. */
+  ol.terms li{position:relative;padding-left:14px;margin-bottom:6px;font-size:9.5px;line-height:1.5;color:var(--ink);break-inside:avoid;page-break-inside:avoid;orphans:3;widows:3;counter-increment:term}
   ol.terms li::before{content:counter(term)".";position:absolute;left:-2px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
 
   /* ── Signature card ──────────────────────────────────────────── */
@@ -368,30 +412,39 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
     0,
   );
-  const totalsStripHtml =
+  const depositPence = input.payment?.depositPence ?? 0;
+  const depositProvider = input.payment?.depositProvider ?? null;
+  const tillPence = input.payment?.amountPence ?? Math.max(0, subtotalPence - depositPence);
+
+  // Totals breakdown: Subtotal → Deposit (if any) → Total. Mirrors
+  // the same model the visit page Totals component uses.
+  const depositRow =
+    depositPence > 0
+      ? `<div class="row deposit">
+           <span class="label">Deposit${depositProvider ? ' (' + (depositProvider === 'stripe' ? 'Stripe' : 'PayPal') + ' via Calendly)' : ''}</span>
+           <span class="value">−${formatGbp(depositPence)}</span>
+         </div>`
+      : '';
+  const totalsHtml =
     input.items.length > 0
       ? `<div class="totals">
-           <span class="label">Subtotal</span>
-           <span class="value">${formatGbp(subtotalPence)}</span>
+           <div class="row"><span class="label">Subtotal</span><span class="value">${formatGbp(subtotalPence)}</span></div>
+           ${depositRow}
+           <div class="row total"><span class="label">${depositPence > 0 ? 'Total paid' : 'Total'}</span><span class="value">${formatGbp(tillPence)}</span></div>
          </div>`
       : '';
 
-  // Compact single-row payment summary: status pill + meta + amount,
-  // all on one line. Replaces the previous separate pill row + 3-up
-  // grid which was eating ~80px of vertical space.
-  const paymentRowHtml = input.payment
+  // Status row beneath the totals: pill + method · date. When the
+  // till hasn't taken payment yet, the row reads as a friendly
+  // "settle at the till before leaving".
+  const paymentStatusHtml = input.payment
     ? `<div class="pay-row">
-         <div style="display:flex;align-items:center;gap:10px">
-           <span class="pill ${input.payment.status === 'paid' ? 'pill-paid' : 'pill-failed'}">${input.payment.status === 'paid' ? 'Paid' : 'Failed'}</span>
-           <span class="meta"><strong>${escapeHtml(properCase(input.payment.method))}</strong> · ${fmtDate(input.payment.takenAt)}</span>
-         </div>
-         <span class="amount">${formatGbp(input.payment.amountPence)}</span>
+         <span class="pill ${input.payment.status === 'paid' ? 'pill-paid' : 'pill-failed'}">${input.payment.status === 'paid' ? 'Paid in full' : 'Payment failed'}</span>
+         <span class="meta"><strong>${escapeHtml(properCase(input.payment.method))}</strong> · ${fmtDate(input.payment.takenAt)}</span>
        </div>`
     : `<div class="pay-row">
-         <div style="display:flex;align-items:center;gap:10px">
-           <span class="pill pill-pending">Awaiting payment</span>
-           <span class="meta">Settle at the till before leaving</span>
-         </div>
+         <span class="pill pill-pending">Awaiting payment</span>
+         <span class="meta">Settle the balance at the till before leaving the clinic.</span>
        </div>`;
 
   // visit.notes is the lab-facing tech note (printed on the LWO).
@@ -422,10 +475,6 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
   const visitDateLabel = fmtDate(input.visitOpenedAt);
 
   const brand = input.brand;
-  const generatedAt = fmtDateTime(new Date().toISOString());
-  const legalLine = brand.vatNumber
-    ? `${escapeHtml(brand.name)} · VAT ${escapeHtml(brand.vatNumber)}`
-    : escapeHtml(brand.name);
 
   const letterhead = `
     <div class="lh">
@@ -445,12 +494,11 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     </div>
   `;
 
-  const docFooter = `
-    <div class="pg-footer">
-      <span class="legal">${legalLine}</span>
-      <span>${generatedAt}</span>
-    </div>
-  `;
+  // No inline footer — @page @bottom-* margin boxes own the
+  // per-page footer in print, and waiverPdf.ts overlays the same
+  // row in the generated PDF. Removing the inline element kept
+  // a stale "Page 1 of 2 · 30 April 2026" line from sitting at
+  // the end of the doc on screen-only renders.
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Visit summary ${ref}</title><style>${A4_CSS(input.accentColor)}</style></head><body>
 
@@ -468,11 +516,11 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
 
     <div class="sec">
       ${itemsTable}
-      ${totalsStripHtml}
+      ${totalsHtml}
     </div>
 
     <div class="sec">
-      ${paymentRowHtml}
+      ${paymentStatusHtml}
     </div>
 
     <div class="terms-h">Terms you agreed to</div>
@@ -488,8 +536,6 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
         <div><div class="label">Witnessed by</div><div class="value">${input.witnessName ? escapeHtml(properCase(input.witnessName)) : MUTED_DASH}</div></div>
       </div>
     </div>
-
-    ${docFooter}
 
   </body></html>`;
 }

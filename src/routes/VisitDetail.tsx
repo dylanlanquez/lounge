@@ -253,13 +253,20 @@ export function VisitDetail() {
       // Payment: cart status + total once the till closes. Cart's
       // own status is the source of truth; nothing populated when
       // payment hasn't been taken yet.
+      // Payment: cart status + total once the till closes. Deposit
+      // (if a Calendly booking already collected one) is threaded
+      // through so the waiver shows the same Subtotal / Deposit /
+      // Total breakdown the rest of the app uses.
       payment:
         cart && cart.status === 'paid'
           ? {
               amountPence: cart.total_pence,
               method: 'card',
               takenAt: cart.closed_at ?? visit.opened_at,
-              status: 'paid',
+              status: 'paid' as const,
+              depositPence: deposit?.status === 'paid' ? deposit.pence : 0,
+              depositProvider:
+                deposit?.status === 'paid' ? deposit.provider : null,
             }
           : null,
       // Brand block is built here rather than read from the location
@@ -279,7 +286,7 @@ export function VisitDetail() {
       },
       accentColor: theme.color.accent,
     };
-  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart]);
+  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;

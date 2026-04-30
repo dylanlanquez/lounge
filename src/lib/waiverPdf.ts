@@ -170,6 +170,11 @@ export async function buildWaiverPdf(html: string): Promise<Blob> {
     const pxPerMm = canvas.width / imgWidthMm;
     const pageHeightPx = Math.floor(A4_HEIGHT_MM * pxPerMm);
 
+    // First pass: count how many PDF pages this canvas will produce
+    // so the per-page footer can render "Page N of M". Deterministic
+    // — same arithmetic as the render loop below.
+    const totalPages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+
     let renderedPx = 0;
     let pageIndex = 0;
     while (renderedPx < canvas.height) {
@@ -195,6 +200,32 @@ export async function buildWaiverPdf(html: string): Promise<Blob> {
       const sliceHeightMm = sliceHeight / pxPerMm;
       if (pageIndex > 0) pdf.addPage('a4', 'portrait');
       pdf.addImage(dataUrl, 'JPEG', 0, 0, imgWidthMm, sliceHeightMm, undefined, 'FAST');
+
+      // Footer overlay. html2canvas captures screen output and
+      // skips @page margin boxes, so the per-page legal line +
+      // page indicator are drawn directly onto each PDF page in
+      // the same gutter the @page rule reserves on direct print.
+      // Anything we render here matches the on-screen footer
+      // visually even though the source is a different rendering
+      // pipeline.
+      const pdfAny = pdf as unknown as {
+        setFontSize: (n: number) => void;
+        setTextColor: (r: number, g: number, b: number) => void;
+        setFont: (name: string, style?: string) => void;
+        text: (s: string, x: number, y: number, opts?: { align?: string }) => void;
+      };
+      pdfAny.setFont('helvetica', 'normal');
+      pdfAny.setFontSize(8);
+      pdfAny.setTextColor(120, 124, 124);
+      const footerY = A4_HEIGHT_MM - 8;
+      pdfAny.text('Venneir Lounge · VAT GB406459983', 18, footerY);
+      pdfAny.text(
+        `Page ${pageIndex + 1} of ${totalPages}`,
+        A4_WIDTH_MM - 18,
+        footerY,
+        { align: 'right' },
+      );
+
       renderedPx += sliceHeight;
       pageIndex += 1;
     }
