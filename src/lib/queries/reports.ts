@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
+import { addDaysIso } from '../calendarMonth.ts';
 import { logFailure } from '../failureLog.ts';
 
 // Reports — read-side hooks for the Reports section.
@@ -212,6 +213,220 @@ export function aggregateOverview(
     best_day,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bookings vs walk-ins
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BookingsAppointment {
+  id: string;
+  start_at: string;
+  status: string;
+  patient_id: string;
+}
+
+export interface BookingsVisit {
+  id: string;
+  appointment_id: string | null;
+  arrival_type: 'walk_in' | 'scheduled';
+  opened_at: string;
+  status: string;
+  cart:
+    | { id: string; status: string; total_pence: number | null }
+    | { id: string; status: string; total_pence: number | null }[]
+    | null;
+}
+
+export interface BookingsVsWalkInsData {
+  daily: { date: string; booked: number; walk_in: number }[];
+  funnel: { id: string; label: string; count: number }[];
+  walk_in_hour_distribution: { hour: number; count: number }[];
+  no_show_count: number;
+  no_show_rate: number; // 0..1, null when no scheduled appointments
+  walk_in_avg_ticket_pence: number | null;
+  scheduled_avg_ticket_pence: number | null;
+  // Convenience top-line numbers for the KPI strip.
+  total_booked: number;
+  total_walk_in: number;
+}
+
+export function aggregateBookingsVsWalkIns(
+  range: DateRange,
+  appointments: BookingsAppointment[],
+  visits: BookingsVisit[],
+): BookingsVsWalkInsData {
+  // Build the inclusive date list once so the daily series has a row
+  // for every calendar day, including ones with zero events.
+  const dates: string[] = [];
+  for (let d = range.start; d <= range.end; d = addDaysIso(d, 1)) {
+    dates.push(d);
+  }
+  const bookedByDate: Record<string, number> = {};
+  const walkInByDate: Record<string, number> = {};
+  for (const d of dates) {
+    bookedByDate[d] = 0;
+    walkInByDate[d] = 0;
+  }
+
+  for (const a of appointments) {
+    const date = a.start_at.slice(0, 10);
+    if (date in bookedByDate) bookedByDate[date] = (bookedByDate[date] ?? 0) + 1;
+  }
+  for (const v of visits) {
+    if (v.arrival_type !== 'walk_in') continue;
+    const date = v.opened_at.slice(0, 10);
+    if (date in walkInByDate) walkInByDate[date] = (walkInByDate[date] ?? 0) + 1;
+  }
+  const daily = dates.map((date) => ({
+    date,
+    booked: bookedByDate[date] ?? 0,
+    walk_in: walkInByDate[date] ?? 0,
+  }));
+
+  // Funnel for booked appointments. Each stage is a strict superset
+  // of the next: complete ⊆ in-chair ⊆ arrived ⊆ booked.
+  const totalBooked = appointments.length;
+  const arrivalsByApptId = new Set<string>();
+  const inChairOrCompleteByApptId = new Set<string>();
+  const completeByApptId = new Set<string>();
+  for (const v of visits) {
+    if (v.arrival_type !== 'scheduled' || !v.appointment_id) continue;
+    arrivalsByApptId.add(v.appointment_id);
+    if (v.status === 'in_chair' || v.status === 'complete') {
+      inChairOrCompleteByApptId.add(v.appointment_id);
+    }
+    if (v.status === 'complete') {
+      completeByApptId.add(v.appointment_id);
+    }
+  }
+  // Match arrivals only against appointments that are in-range — so
+  // an appointment that scheduled for next year and arrived inside
+  // the range doesn't double-count.
+  const inRangeApptIds = new Set(appointments.map((a) => a.id));
+  const arrived = countIntersect(arrivalsByApptId, inRangeApptIds);
+  const inChair = countIntersect(inChairOrCompleteByApptId, inRangeApptIds);
+  const complete = countIntersect(completeByApptId, inRangeApptIds);
+  const funnel = [
+    { id: 'booked', label: 'Booked', count: totalBooked },
+    { id: 'arrived', label: 'Arrived', count: arrived },
+    { id: 'in_chair', label: 'Reached the chair', count: inChair },
+    { id: 'complete', label: 'Completed', count: complete },
+  ];
+
+  // No-show rate: appointments with status='no_show' as a fraction of
+  // appointments in the period. Cancelled / rescheduled don't count
+  // as no-shows — those are deliberate. 0 when there were no
+  // scheduled appointments in the period.
+  const noShowCount = appointments.filter((a) => a.status === 'no_show').length;
+  const noShowRate = totalBooked > 0 ? noShowCount / totalBooked : 0;
+
+  // Walk-in distribution by hour-of-day (0-23). Uses local time for
+  // intuition — staffing is a local-time concern.
+  const hourCounts: number[] = new Array(24).fill(0);
+  for (const v of visits) {
+    if (v.arrival_type !== 'walk_in') continue;
+    const hour = new Date(v.opened_at).getHours();
+    if (hour >= 0 && hour < 24) {
+      hourCounts[hour] = (hourCounts[hour] ?? 0) + 1;
+    }
+  }
+  const walkInHourDistribution = hourCounts.map((count, hour) => ({ hour, count }));
+
+  // Avg ticket per arrival type. Only paid carts contribute.
+  const walkInPaid: number[] = [];
+  const scheduledPaid: number[] = [];
+  for (const v of visits) {
+    const cart = pickOne(v.cart);
+    if (!cart || cart.status !== 'paid' || cart.total_pence == null) continue;
+    if (v.arrival_type === 'walk_in') walkInPaid.push(cart.total_pence);
+    else scheduledPaid.push(cart.total_pence);
+  }
+  const walkInAvg = walkInPaid.length > 0 ? Math.round(walkInPaid.reduce((s, n) => s + n, 0) / walkInPaid.length) : null;
+  const scheduledAvg = scheduledPaid.length > 0 ? Math.round(scheduledPaid.reduce((s, n) => s + n, 0) / scheduledPaid.length) : null;
+
+  return {
+    daily,
+    funnel,
+    walk_in_hour_distribution: walkInHourDistribution,
+    no_show_count: noShowCount,
+    no_show_rate: noShowRate,
+    walk_in_avg_ticket_pence: walkInAvg,
+    scheduled_avg_ticket_pence: scheduledAvg,
+    total_booked: totalBooked,
+    total_walk_in: visits.filter((v) => v.arrival_type === 'walk_in').length,
+  };
+}
+
+function countIntersect(a: Set<string>, b: Set<string>): number {
+  let n = 0;
+  for (const v of a) if (b.has(v)) n += 1;
+  return n;
+}
+
+interface BookingsVsWalkInsResult {
+  data: BookingsVsWalkInsData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useReportsBookingsVsWalkIns(range: DateRange): BookingsVsWalkInsResult {
+  const [data, setData] = useState<BookingsVsWalkInsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const [apptRes, visitRes] = await Promise.all([
+          supabase
+            .from('lng_appointments')
+            .select('id, start_at, status, patient_id')
+            .gte('start_at', fromIso)
+            .lte('start_at', toIso),
+          supabase
+            .from('lng_visits')
+            .select(
+              `id, appointment_id, arrival_type, opened_at, status,
+               cart:lng_carts ( id, status, total_pence )`,
+            )
+            .gte('opened_at', fromIso)
+            .lte('opened_at', toIso),
+        ]);
+        if (cancelled) return;
+        if (apptRes.error) throw new Error(`appointments: ${apptRes.error.message}`);
+        if (visitRes.error) throw new Error(`visits: ${visitRes.error.message}`);
+        const appointments = (apptRes.data ?? []) as BookingsAppointment[];
+        const visits = (visitRes.data ?? []) as BookingsVisit[];
+        const out = aggregateBookingsVsWalkIns(range, appointments, visits);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load bookings vs walk-ins';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.bookings_vs_walkins',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function useReportsOverview(range: DateRange): OverviewResult {
   const [data, setData] = useState<ReportsOverview | null>(null);
