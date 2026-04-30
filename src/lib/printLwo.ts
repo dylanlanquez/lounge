@@ -172,13 +172,11 @@ export function printLwo(input: PrintableLwoInput): void {
     // either side. We want it stretched. The ref text below centers
     // itself via its own text-align:center.
     '.bc-bar{flex:1 1 0;min-height:64px;max-height:130px;margin-top:auto;padding:6px 0 0;display:flex;flex-direction:column;overflow:hidden}' +
-    // SVG width="100%" height="100%" + preserveAspectRatio="none"
-    // attributes (set in the script below) handle the actual stretch.
-    // The CSS here just stops the inline-svg baseline gap (display:
-    // block) and lets the flex parent squeeze its height when the
-    // cart is full. The flex:1 1 0 makes the SVG share the bc-bar's
-    // free vertical space with the ref text below.
-    '.bc-bar svg{display:block;flex:1 1 0;min-width:0;min-height:0}' +
+    // SVG is rendered by JsBarcode at the exact pixel width its
+    // container can take — see the script below. CSS just nukes the
+    // inline-svg baseline gap and lets the flex parent squeeze the
+    // barcode vertically when other content takes the page.
+    '.bc-bar svg{display:block;max-width:100%;max-height:100%}' +
     '.bc-ref{flex-shrink:0;font-family:Arial,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.18em;text-align:center;margin-top:2px;color:#000}';
 
   const logoUrl = window.location.origin + '/black-venneir-logo.png';
@@ -216,20 +214,56 @@ export function printLwo(input: PrintableLwoInput): void {
     (escapedNotes ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>' : '') +
     // Barcode
     '<div class="bc-bar"><svg id="order-barcode"></svg><div id="bc-ref" class="bc-ref"></div></div>' +
-    // After JsBarcode renders, swap the SVG's intrinsic pixel sizing
-    // for a viewBox + preserveAspectRatio="none" + width="100%" /
-    // height="100%" expressed as SVG ATTRIBUTES. CSS width:100% alone
-    // won't stretch an SVG inside a flex container — the SVG keeps
-    // its intrinsic aspect ratio when only one dimension is CSS-set,
-    // which left the bars indented in the middle of the bar with
-    // white margin either side. Setting both as SVG attributes is
-    // the canonical responsive-SVG recipe and bypasses the
-    // intrinsic-ratio sizing entirely.
+    // Render the barcode at exactly the per-bar width its container
+    // can take. Two-pass approach:
     //
-    // CODE128 readers decode on bar:space ratios, not absolute widths,
-    // so the non-uniform stretch (bars wider on a short ref, shorter
-    // bars on a tight label) reads back to the original string fine.
-    '<script>window.onload=function(){if(typeof JsBarcode==="undefined")return;JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});var svg=document.getElementById("order-barcode");var w=svg.getAttribute("width");var h=svg.getAttribute("height");if(w&&h){svg.setAttribute("viewBox","0 0 "+w+" "+h);svg.setAttribute("preserveAspectRatio","none");svg.setAttribute("width","100%");svg.setAttribute("height","100%")}document.getElementById("bc-ref").textContent="' + safeRef + '";window.print()}<\/script>' +
+    //   1. Render JsBarcode once at width=2 to measure how wide the
+    //      encoded data wants to be (CODE128 bar count varies by
+    //      character class — letters use Set B = 11 bars/char,
+    //      digit-pairs use Set C = 11 bars per two digits, plus a
+    //      start + checksum + stop pattern).
+    //   2. Compute the per-bar width that fills the container exactly:
+    //      newWidth = 2 * (containerWidth / measuredWidth). Re-render
+    //      at that width.
+    //   3. The same recipe also computes the height — if the cart
+    //      packed the page, .bc-bar will have shrunk via flex:1 1 0,
+    //      and we render the bars proportionally shorter so they
+    //      stay inside the page.
+    //
+    // Why this is the right approach: Checkpoint's print works because
+    // its LWO refs are 17 chars and naturally produce a 444px barcode
+    // that overflows the 377px container — the visible bars happen to
+    // span full width by coincidence. Lounge's LAP refs are 9 chars
+    // → 268px barcode → 109px of slack on either side. CSS / SVG
+    // sizing tricks don't beat measuring the actual layout.
+    //
+    // Failure posture: if JsBarcode hasn't loaded (CDN blocked), throw
+    // loudly. Same for any size that doesn't measure — silent
+    // fallback to a half-sized barcode is exactly the kind of rot
+    // we don't ship.
+    '<script>window.onload=function(){' +
+      'if(typeof JsBarcode==="undefined"){throw new Error("JsBarcode failed to load — check CDN access and pop-up settings.");}' +
+      'var ref="' + safeRef + '";' +
+      'var opts={format:"CODE128",height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"};' +
+      // Pass 1: render at width:2 to measure.
+      'JsBarcode("#order-barcode",ref,Object.assign({width:2},opts));' +
+      'var svg=document.getElementById("order-barcode");' +
+      'var measuredW=parseFloat(svg.getAttribute("width"));' +
+      'var measuredH=parseFloat(svg.getAttribute("height"));' +
+      'var bar=svg.parentElement;' +
+      'var availW=bar.clientWidth;' +
+      // Available height = the .bc-bar's box minus the ref text below.
+      'var refEl=document.getElementById("bc-ref");' +
+      'refEl.textContent=ref;' +
+      'var availH=bar.clientHeight-refEl.offsetHeight-2;' +
+      'if(!(measuredW>0&&measuredH>0&&availW>0&&availH>0)){throw new Error("Could not measure barcode container — flex layout returned zero size.");}' +
+      // Pass 2: scale per-bar width and bar height to the container.
+      // Floor by a hair to avoid sub-pixel overflow on Chrome.
+      'var newBarW=Math.max(0.5,(availW/measuredW)*2-0.001);' +
+      'var newBarH=Math.max(40,Math.min(100,Math.floor(availH)));' +
+      'JsBarcode("#order-barcode",ref,Object.assign({width:newBarW,height:newBarH},opts));' +
+      'window.print();' +
+    '}<\/script>' +
     '</body></html>';
 
   const win = window.open('', '_blank', 'width=500,height=650');
