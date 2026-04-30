@@ -997,10 +997,13 @@ function CareDetails({
       <div
         style={{
           display: 'grid',
-          // 3-col to match the Hero's rhythm above. Emergency
-          // contact + phone take one cell each; the free-text
-          // fields below span the full row so paragraph content
-          // has room to breathe rather than wrap inside a third.
+          // 3-col to match the Hero's rhythm above. Allergies is
+          // typically a short value ("Penicillin", "None known")
+          // so it slots into the third cell of row 1 alongside
+          // the emergency pair — that way every visible row has
+          // three filled cells rather than the contact pair
+          // leaving a phantom gap. Permanent notes stays full
+          // row because it's paragraph content.
           gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
           columnGap: theme.space[6],
           rowGap: theme.space[4],
@@ -1008,7 +1011,7 @@ function CareDetails({
       >
         <NotesField label="Emergency contact" value={emergencyName} />
         <NotesField label="Emergency phone" value={emergencyPhone} />
-        <NotesField label="Allergies & sensitivities" value={allergies} fullRow />
+        <NotesField label="Allergies & sensitivities" value={allergies} />
         <NotesField label="Permanent notes" value={permanent} multiline fullRow />
       </div>
     </Card>
