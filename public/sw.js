@@ -7,7 +7,10 @@
 // Uses skipWaiting + clients.claim so a deploy takes effect on next
 // page reload without the old SW lingering.
 
-const VERSION = 'v1';
+// Bump this whenever the icon manifest changes — paired with the
+// ?v= query string on favicons in index.html / manifest.webmanifest
+// to force a fresh fetch through any caching layer.
+const VERSION = 'v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
