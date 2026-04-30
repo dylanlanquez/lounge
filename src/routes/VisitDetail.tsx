@@ -51,6 +51,7 @@ import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   completeVisit,
@@ -97,6 +98,7 @@ import { printLwo, MAX_TECH_NOTE_LENGTH, type PrintableLwoItem } from '../lib/pr
 export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
+  const { account: currentAccount } = useCurrentAccount();
   const navigate = useNavigate();
   const location = useLocation();
   const { visit, patient, deposit, appointment, receptionistName, loading } = useVisitDetail(id);
@@ -1277,7 +1279,7 @@ export function VisitDetail() {
         visitId={visit?.id ?? null}
         sections={sectionsToSign}
         patientName={patient ? patientFullName(patient) : 'Patient'}
-        defaultWitnessName={receptionistName ?? ''}
+        defaultWitnessName={currentAccount?.display_name ?? receptionistName ?? ''}
         onAllSigned={refreshSignatures}
       />
 

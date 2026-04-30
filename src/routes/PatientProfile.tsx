@@ -22,6 +22,7 @@ import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { properCase } from '../lib/queries/appointments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
@@ -67,6 +68,7 @@ import {
 export function PatientProfile() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
+  const { account: currentAccount } = useCurrentAccount();
   const isMobile = useIsMobile(640);
   const { data: patient, loading: patientLoading, error: patientError, refresh: refreshPatient } = usePatientProfile(id);
   const { data: files, loading: filesLoading, refresh: refreshFiles } = usePatientProfileFiles(id);
@@ -121,6 +123,7 @@ export function PatientProfile() {
               patientId={patient.id}
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
               staffName={
+                currentAccount?.display_name ??
                 (user.user_metadata?.name as string | undefined) ??
                 user.email ??
                 'Staff'
