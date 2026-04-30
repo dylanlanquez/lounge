@@ -230,6 +230,67 @@ export async function staffUpdatePatient(args: {
   };
 }
 
+// Apply phone-first / multi-word patient search filters to a Supabase
+// query builder. Single source-of-truth shared between the picker
+// (usePatientSearch) and the Patients page list (usePatientList) so a
+// receptionist gets the same matching behaviour everywhere.
+//
+// Three modes:
+//   1. Pure phone term ("07700 900123") → exact column match on
+//      patients.phone with non-digits stripped.
+//   2. Multi-word ("James DylanzasA") → tokenise on whitespace and
+//      require EACH token to match at least one of first_name,
+//      last_name, email, or internal_ref. Each chained .or() adds an
+//      AND group at the top level (PostgREST treats sibling logical
+//      filters as AND), so "James" pins first_name and "DylanzasA"
+//      pins last_name in one query.
+//   3. Single token → OR across name / email / internal_ref columns,
+//      with a phone-fragment match when there are enough digits to
+//      avoid noise (covers partial dial-pad searches like "0770").
+//
+// The function returns the chained builder so callers keep their own
+// ordering / range / limit. Doing nothing when the term is empty
+// keeps the no-search path (full list) intact.
+//
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyPatientSearch<Q extends { ilike: any; or: any }>(
+  query: Q,
+  term: string,
+): Q {
+  const cleaned = term.trim();
+  if (!cleaned) return query;
+  const phoneDigits = cleaned.replace(/\D/g, '');
+  const isPhoneSearch =
+    phoneDigits.length >= 7 &&
+    phoneDigits.length <= 15 &&
+    /^[\d\s+()\-]+$/.test(cleaned);
+  if (isPhoneSearch) {
+    return query.ilike('phone', `%${phoneDigits}%`);
+  }
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length > 1) {
+    let q = query;
+    for (const word of words) {
+      const w = escape(word);
+      q = q.or(
+        `first_name.ilike.%${w}%,last_name.ilike.%${w}%,email.ilike.%${w}%,internal_ref.ilike.%${w}%`,
+      );
+    }
+    return q;
+  }
+  const w = escape(words[0]!);
+  const filters: string[] = [
+    `last_name.ilike.%${w}%`,
+    `first_name.ilike.%${w}%`,
+    `email.ilike.%${w}%`,
+    `internal_ref.ilike.%${w}%`,
+  ];
+  if (phoneDigits.length >= 4) {
+    filters.push(`phone.ilike.%${phoneDigits}%`);
+  }
+  return query.or(filters.join(','));
+}
+
 // Phone-first search per `06-patient-identity.md §4.1`. Term can be a phone
 // number, name, or LWO ref. ILIKE matches each, LIMIT 10.
 
@@ -250,51 +311,12 @@ export function usePatientSearch(term: string): SearchResult {
     setLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const phoneDigits = cleaned.replace(/\D/g, '');
-        const isPhoneSearch =
-          phoneDigits.length >= 7 &&
-          phoneDigits.length <= 15 &&
-          /^[\d\s+()\-]+$/.test(cleaned);
-        const words = cleaned.split(/\s+/).filter(Boolean);
-
-        let query = supabase
+        const baseQuery = supabase
           .from('patients')
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
           );
-
-        if (isPhoneSearch) {
-          // The whole term is a phone — search the phone column with
-          // the digits collapsed.
-          query = query.ilike('phone', `%${phoneDigits}%`);
-        } else if (words.length > 1) {
-          // Multi-word term like "dylan lane" — no single column will
-          // contain the full phrase, so split into words and require
-          // each one to match at least one of the name / email / ref
-          // columns. Each chained .or() adds an AND-group at the top
-          // level (PostgREST treats sibling logical filters as AND).
-          for (const word of words) {
-            const w = escape(word);
-            query = query.or(
-              `first_name.ilike.%${w}%,last_name.ilike.%${w}%,email.ilike.%${w}%,internal_ref.ilike.%${w}%`
-            );
-          }
-        } else {
-          // Single token — OR across columns, including a phone-
-          // fragment match when there are enough digits (handles
-          // partial dial-pad searches like "0770").
-          const w = escape(words[0]!);
-          const filters: string[] = [
-            `last_name.ilike.%${w}%`,
-            `first_name.ilike.%${w}%`,
-            `email.ilike.%${w}%`,
-            `internal_ref.ilike.%${w}%`,
-          ];
-          if (phoneDigits.length >= 4) {
-            filters.push(`phone.ilike.%${phoneDigits}%`);
-          }
-          query = query.or(filters.join(','));
-        }
+        const query = applyPatientSearch(baseQuery, cleaned);
 
         const { data: rows, error: err } = await query
           .order('last_name', { ascending: true })
@@ -400,28 +422,21 @@ export function usePatientList(
         // PostgREST .range is inclusive on both ends. Fetching one
         // extra row tells us whether a next page exists.
         const endIdx = startIdx + limit; // limit + 1 rows total
-        let q = supabase
+        const baseQuery = supabase
           .from('patients')
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id, registered_at, avatar_data'
-          )
+          );
+        // applyPatientSearch is the single source of truth for how
+        // patient text searches behave (multi-word AND-of-ORs, phone
+        // detection, single-token OR). Sub-2-character terms produce
+        // an unfiltered list — same posture as before this refactor.
+        const filtered =
+          cleaned.length >= 2 ? applyPatientSearch(baseQuery, cleaned) : baseQuery;
+        const q = filtered
           .order('first_name', { ascending: true })
           .order('last_name', { ascending: true })
           .range(startIdx, endIdx);
-
-        if (cleaned.length >= 2) {
-          const phoneDigits = cleaned.replace(/\D/g, '');
-          const filters: string[] = [
-            `last_name.ilike.%${escape(cleaned)}%`,
-            `first_name.ilike.%${escape(cleaned)}%`,
-            `email.ilike.%${escape(cleaned)}%`,
-            `internal_ref.ilike.%${escape(cleaned)}%`,
-            ];
-          if (phoneDigits.length >= 4) {
-            filters.push(`phone.ilike.%${escape(phoneDigits)}%`);
-          }
-          q = q.or(filters.join(','));
-        }
 
         const { data: rows, error: err } = await q;
         if (cancelled) return;
@@ -494,20 +509,12 @@ export function usePatientList(
 }
 
 function buildFallback(term: string) {
-  const phoneDigits = term.replace(/\D/g, '');
-  const filters: string[] = [
-    `last_name.ilike.%${escape(term)}%`,
-    `first_name.ilike.%${escape(term)}%`,
-    `email.ilike.%${escape(term)}%`,
-    `internal_ref.ilike.%${escape(term)}%`,
-  ];
-  if (phoneDigits.length >= 4) {
-    filters.push(`phone.ilike.%${escape(phoneDigits)}%`);
-  }
-  return supabase
+  const baseQuery = supabase
     .from('patients')
-    .select('id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id')
-    .or(filters.join(','))
+    .select(
+      'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
+    );
+  return applyPatientSearch(baseQuery, term)
     .order('first_name', { ascending: true })
     .order('last_name', { ascending: true });
 }
