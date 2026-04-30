@@ -37,6 +37,13 @@ const MIN_QUERY_LENGTH = 3;
 //
 // Returns null Places when the API key is missing — UI should fall
 // back to a plain input in that case.
+// Three-state availability for the autocomplete service. Lets the
+// UI distinguish "still loading" (show a spinner) from
+// "permanently off" (hide the dropdown entirely; plain text input
+// is the only experience). Without the distinction, a missing
+// VITE_GOOGLE_MAPS_API_KEY left the dropdown spinning forever.
+type Availability = 'loading' | 'ready' | 'unavailable';
+
 export function useAddressAutocomplete(opts: {
   query: string;
   // Whether to actively fetch suggestions. Set false while the
@@ -46,7 +53,12 @@ export function useAddressAutocomplete(opts: {
 }): {
   state: AutocompleteState;
   selectSuggestion: (index: number) => Promise<void>;
-  ready: boolean;
+  // 'loading' = waiting on the Places library to finish bootstrap.
+  // 'ready'   = we can fetch suggestions for the query.
+  // 'unavailable' = no API key (or library failed to import). The
+  //                 component should hide the dropdown entirely
+  //                 and behave as a plain text input.
+  availability: Availability;
 } {
   const [state, setState] = useState<AutocompleteState>({
     loading: false,
@@ -55,7 +67,7 @@ export function useAddressAutocomplete(opts: {
   });
   const placesRef = useRef<PlacesLib | null>(null);
   const sessionTokenRef = useRef<unknown | null>(null);
-  const [ready, setReady] = useState(false);
+  const [availability, setAvailability] = useState<Availability>('loading');
 
   // Lazy-load the Places library on first activation. Subsequent
   // mounts share the same loader promise from googleMaps.ts.
@@ -67,12 +79,15 @@ export function useAddressAutocomplete(opts: {
       const lib = await loadPlacesLib();
       if (cancelled) return;
       if (!lib) {
-        setReady(false);
+        // No API key configured (or "Places API (New)" not
+        // enabled in GCP, or the library failed to import). The
+        // field must fall back to a plain input.
+        setAvailability('unavailable');
         return;
       }
       placesRef.current = lib;
       sessionTokenRef.current = new lib.AutocompleteSessionToken();
-      setReady(true);
+      setAvailability('ready');
     })();
     return () => {
       cancelled = true;
@@ -82,7 +97,7 @@ export function useAddressAutocomplete(opts: {
   // Debounced fetch. Cancelled by query/active change so a fast
   // typist never sees stale suggestions for an old keystroke.
   useEffect(() => {
-    if (!opts.active) {
+    if (!opts.active || availability !== 'ready') {
       setState({ loading: false, suggestions: [], error: null });
       return;
     }
@@ -124,7 +139,7 @@ export function useAddressAutocomplete(opts: {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [opts.query, opts.active, ready]);
+  }, [opts.query, opts.active, availability]);
 
   const selectSuggestion = async (index: number) => {
     const places = placesRef.current;
@@ -146,7 +161,7 @@ export function useAddressAutocomplete(opts: {
     }
   };
 
-  return { state, selectSuggestion, ready };
+  return { state, selectSuggestion, availability };
 }
 
 function lookupComponent(

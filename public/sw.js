@@ -10,7 +10,7 @@
 // Bump this whenever the icon manifest changes — paired with the
 // ?v= query string on favicons in index.html / manifest.webmanifest
 // to force a fresh fetch through any caching layer.
-const VERSION = 'v5';
+const VERSION = 'v6';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
@@ -20,15 +20,12 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Chrome only considers a service worker installable if there's a
-// `fetch` event listener registered. The listener does NOT need to
-// call event.respondWith — its mere presence is enough. Earlier
-// versions called fetch() inside the handler and synthesised a 504
-// when the call threw, but that masked real network errors as
-// "offline (sw vN)" and tripped on cross-origin script loads
-// (Google Maps under no-cors). The cleanest pass-through is to
-// register the listener and do absolutely nothing, letting the
-// browser handle every request natively.
-self.addEventListener('fetch', () => {
-  // intentional no-op — see comment above
-});
+// Deliberately no fetch listener. Modern Chrome considers a PWA
+// installable as long as there's a registered service worker, a
+// manifest with the right keys, and HTTPS — a fetch handler is no
+// longer required and a no-op handler triggers Chrome's "fetch
+// event handler is recognized as no-op" warning plus per-
+// navigation overhead. Lounge has no offline story (it's a
+// desk-bound, network-only app), so the right move is to skip
+// the listener entirely and let every request go through the
+// browser's native code path.
