@@ -101,14 +101,19 @@ export function Pay() {
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
-  // Subtotal = sum of line items. Only PAID deposits credit the bill; a
-  // failed deposit is informational (the receptionist sees a red badge in
-  // the schedule sheet) and the till still collects the full subtotal.
-  // Floor at 0 so a deposit larger than the bill doesn't produce a
-  // negative charge — refund handled manually in PayPal.
+  // Subtotal = sum of line items (after any per-line discount). Cart-
+  // level discount (lng_carts.discount_pence — applied via the manager-
+  // approved Apply Discount sheet on VisitDetail) comes off next, then
+  // the Calendly deposit. Only PAID deposits credit the bill; a failed
+  // deposit is informational (red badge in the schedule sheet) and the
+  // till still collects the full balance. Floor at 0 so a deposit
+  // larger than the bill doesn't produce a negative charge — refund
+  // handled manually in PayPal.
   const subtotal = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
+  const cartDiscount = cart?.discount_pence ?? 0;
+  const subtotalAfterDiscount = Math.max(0, subtotal - cartDiscount);
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
-  const billAfterDeposit = Math.max(0, subtotal - depositPence);
+  const billAfterDeposit = Math.max(0, subtotalAfterDiscount - depositPence);
 
   // Split-payment plumbing. Read the visit's paid-status view so we
   // know how much has already been collected on this cart (cash +
@@ -363,7 +368,7 @@ export function Pay() {
             {amountPaidPence > 0 ? 'outstanding' : depositPence > 0 ? 'to collect' : ''}
           </span>
         </h1>
-        {depositPence > 0 || amountPaidPence > 0 ? (
+        {cartDiscount > 0 || depositPence > 0 || amountPaidPence > 0 ? (
           <p
             style={{
               margin: `0 0 ${theme.space[3]}px`,
@@ -373,6 +378,14 @@ export function Pay() {
             }}
           >
             <span>Subtotal {formatPence(subtotal)}</span>
+            {cartDiscount > 0 ? (
+              <>
+                <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+                  Discount −{formatPence(cartDiscount)}
+                </span>
+              </>
+            ) : null}
             {depositPence > 0 ? (
               <>
                 <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>

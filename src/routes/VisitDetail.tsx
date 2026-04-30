@@ -380,6 +380,7 @@ export function VisitDetail() {
       // would have meant nothing to the patient.
       witnessName: receptionistName,
       items: docItems,
+      cartDiscountPence: cart?.discount_pence ?? 0,
       notes: visit.notes,
       sections: docSections,
       signatureSvg: latestSig?.signature_svg ?? null,
@@ -1064,6 +1065,59 @@ export function VisitDetail() {
                   total={total}
                 />
               ) : null}
+
+              {/* Discount control sits beside the totals — that's where
+                  staff already look to verify the bill, and the apply /
+                  remove flow has manager-approval friction we don't
+                  want to bury. Only renders when there's a basket and
+                  the cart is still mutable; productive locks (paid /
+                  voided / unsuitable / ended_early) hide it like the
+                  rest of the cart actions. */}
+              {items.length > 0 && !productiveLocked ? (
+                <div
+                  style={{
+                    marginTop: theme.space[4],
+                    paddingTop: theme.space[3],
+                    borderTop: `1px dashed ${theme.color.border}`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: theme.space[2],
+                  }}
+                >
+                  {activeDiscount ? (
+                    <>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: theme.space[3],
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: theme.type.size.sm,
+                            color: theme.color.inkMuted,
+                          }}
+                        >
+                          Approved by {activeDiscount.approver_name ?? 'manager'}
+                          {activeDiscount.reason ? ` · ${activeDiscount.reason}` : ''}
+                        </span>
+                        <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('remove')}>
+                          Remove discount
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('apply')}>
+                        Apply discount
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </Card>
             </div>
 
@@ -1091,21 +1145,6 @@ export function VisitDetail() {
                     End visit early
                   </span>
                 </Button>
-              ) : null}
-              {/* Discount control. Visible only when there are
-                  items + cart still open. Toggles between Apply
-                  Discount and Remove Discount based on whether one
-                  is active. Both routes through manager re-auth. */}
-              {items.length > 0 && !productiveLocked ? (
-                activeDiscount ? (
-                  <Button variant="tertiary" onClick={() => openDiscountSheet('remove')}>
-                    Remove discount
-                  </Button>
-                ) : (
-                  <Button variant="tertiary" onClick={() => openDiscountSheet('apply')}>
-                    Apply discount
-                  </Button>
-                )
               ) : null}
               {items.length > 0 ? (
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>

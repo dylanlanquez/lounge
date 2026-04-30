@@ -453,10 +453,18 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
     (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
     0,
   );
+  const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
   const depositPence = input.payment?.depositPence ?? 0;
   const depositProvider = input.payment?.depositProvider ?? null;
-  const tillPence = input.payment?.amountPence ?? Math.max(0, subtotalPence - depositPence);
-  const totalLabel = depositPence > 0 ? 'Total paid' : 'Total';
+  const tillPence =
+    input.payment?.amountPence
+    ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence);
+  const totalLabel =
+    depositPence > 0
+      ? 'Total paid'
+      : cartDiscountPence > 0
+        ? 'Total to pay'
+        : 'Total';
 
   // Subtotal row
   ensureSpace(c, 14);
@@ -465,6 +473,15 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
   setText(pdf, 9.5, INK, 'normal');
   pdf.text(formatGbp(subtotalPence), xR, c.y, { align: 'right' });
   c.y += 5;
+
+  // Optional cart-level discount row
+  if (cartDiscountPence > 0) {
+    setText(pdf, 9.5, MUTED, 'normal');
+    pdf.text('Discount', xL, c.y);
+    setText(pdf, 9.5, c.accent, 'bold');
+    pdf.text(`−${formatGbp(cartDiscountPence)}`, xR, c.y, { align: 'right' });
+    c.y += 5;
+  }
 
   // Optional deposit row
   if (depositPence > 0) {
