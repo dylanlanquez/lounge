@@ -313,7 +313,7 @@ function ProfileSkeleton({ isMobile }: { isMobile: boolean }) {
             gap: theme.space[4],
           }}
         >
-          {Array.from({ length: 9 }).map((_, i) => (
+          {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               <Skeleton height={12} width="60%" radius={4} />
               <Skeleton height={18} width="80%" radius={4} />
@@ -622,21 +622,23 @@ interface FieldDef {
   fullRow?: boolean;
 }
 
-// Profile-card fields. DoB, Sex, Emergency contact, Emergency
-// phone moved to the Care details section — they're vitals /
-// kin info, not identity. Country dropped entirely from the UI:
-// Shopify sync owns it, and surfacing it on the profile (and in
-// the staff edit form) just invited accidental edits. Order is
-// chosen so each row reads as a sensible 3-tuple.
+// Profile-card fields. Emergency contact + phone live in Care
+// details (kin info, not identity). DoB and Sex stay here on the
+// profile — they're vitals staff scan alongside the name. Country
+// is dropped entirely from the UI: Shopify sync owns it.
 //
-//   Row 1: First name | Last name      | Email
-//   Row 2: Phone      | Address line 1 | Address line 2
-//   Row 3: City       | Postcode       | Registered
-//   Row 4: Shopify customer (full row)
+//   Row 1: First name      | Last name      | Date of birth
+//   Row 2: Sex             | Email          | Phone
+//   Row 3: Address line 1  | Address line 2 | City
+//   Row 4: Postcode        | Registered     | Shopify customer
+//
+// 12 fields in 4 rows of 3 — no orphans, no full-row spans needed.
 function buildHeroFields(p: PatientProfileRow): FieldDef[] {
   return [
     { label: 'First name', value: properCase(p.first_name) || null },
     { label: 'Last name', value: properCase(p.last_name) || null },
+    { label: 'Date of birth', value: formatDate(p.date_of_birth) },
+    { label: 'Sex', value: p.sex ? properCase(p.sex) : null },
     { label: 'Email', value: p.email },
     { label: 'Phone', value: p.phone },
     { label: 'Address line 1', value: p.portal_ship_line1 },
@@ -644,7 +646,7 @@ function buildHeroFields(p: PatientProfileRow): FieldDef[] {
     { label: 'City', value: p.portal_ship_city },
     { label: 'Postcode', value: p.portal_ship_postcode },
     { label: 'Registered', value: formatDate(p.registered_at) },
-    { label: 'Shopify customer', value: p.shopify_customer_id, mono: true, fullRow: true },
+    { label: 'Shopify customer', value: p.shopify_customer_id, mono: true },
   ];
 }
 
@@ -948,12 +950,9 @@ function CareDetails({
   patient: PatientProfileRow;
   onEdit: () => void;
 }) {
-  const dob = formatDate(patient.date_of_birth);
-  const sex = patient.sex ? properCase(patient.sex) : null;
   const emergencyName = (patient.emergency_contact_name ?? '').trim();
   const emergencyPhone = (patient.emergency_contact_phone ?? '').trim();
   const allergies = (patient.allergies ?? '').trim();
-  const comms = (patient.communication_preferences ?? '').trim();
   const permanent = (patient.notes ?? '').trim();
 
   return (
@@ -998,20 +997,18 @@ function CareDetails({
       <div
         style={{
           display: 'grid',
-          // 2-col is the right rhythm here: short paired vitals up
-          // top (DoB / Sex, contact name / phone), then long
-          // free-text fields each take a full row via fullRow.
-          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+          // 3-col to match the Hero's rhythm above. Emergency
+          // contact + phone take one cell each; the free-text
+          // fields below span the full row so paragraph content
+          // has room to breathe rather than wrap inside a third.
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
           columnGap: theme.space[6],
           rowGap: theme.space[4],
         }}
       >
-        <NotesField label="Date of birth" value={dob ?? ''} />
-        <NotesField label="Sex" value={sex ?? ''} />
         <NotesField label="Emergency contact" value={emergencyName} />
         <NotesField label="Emergency phone" value={emergencyPhone} />
         <NotesField label="Allergies & sensitivities" value={allergies} fullRow />
-        <NotesField label="Communication preferences" value={comms} fullRow />
         <NotesField label="Permanent notes" value={permanent} multiline fullRow />
       </div>
     </Card>

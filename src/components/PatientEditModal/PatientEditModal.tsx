@@ -71,7 +71,6 @@ interface DraftClinical {
   allergies: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
-  communicationPreferences: string;
   notes: string;
 }
 
@@ -96,7 +95,6 @@ function emptyClinical(p: PatientEditModalPatient): DraftClinical {
     allergies: p.allergies ?? '',
     emergencyContactName: p.emergency_contact_name ?? '',
     emergencyContactPhone: p.emergency_contact_phone ?? '',
-    communicationPreferences: p.communication_preferences ?? '',
     notes: p.notes ?? '',
   };
 }
@@ -166,17 +164,25 @@ export function PatientEditModal({
           }
         : undefined;
 
-      const clinicalPayload = showCare
+      // DoB + Sex live on the Hero card now, so the Profile
+      // pencil writes them as a narrow clinical payload. The Care
+      // pencil writes the kin + notes fields. Communication
+      // preferences was dropped from the UI; the column stays in
+      // the schema but neither section sends it, so existing
+      // values are preserved untouched.
+      const clinicalPayload = showProfile
         ? {
             date_of_birth: clinical.dateOfBirth || null,
             sex: clinical.sex.trim() || null,
-            allergies: clinical.allergies.trim() || null,
-            emergency_contact_name: clinical.emergencyContactName.trim() || null,
-            emergency_contact_phone: clinical.emergencyContactPhone.trim() || null,
-            communication_preferences: clinical.communicationPreferences.trim() || null,
-            notes: clinical.notes.trim() || null,
           }
-        : undefined;
+        : showCare
+          ? {
+              allergies: clinical.allergies.trim() || null,
+              emergency_contact_name: clinical.emergencyContactName.trim() || null,
+              emergency_contact_phone: clinical.emergencyContactPhone.trim() || null,
+              notes: clinical.notes.trim() || null,
+            }
+          : undefined;
 
       await staffUpdatePatient({
         patientId: patient.id,
@@ -228,6 +234,21 @@ export function PatientEditModal({
                 label="Last name"
                 value={identity.lastName}
                 onChange={(e) => setIdentity((s) => ({ ...s, lastName: e.target.value }))}
+              />
+              {/* DoB + Sex live on the Hero card alongside the
+                  identity fields, so the profile pencil edits
+                  them too. They're written as a narrow clinical
+                  payload — see handleSave above. */}
+              <Input
+                label="Date of birth"
+                type="date"
+                value={clinical.dateOfBirth}
+                onChange={(e) => setClinical((s) => ({ ...s, dateOfBirth: e.target.value }))}
+              />
+              <Input
+                label="Sex"
+                value={clinical.sex}
+                onChange={(e) => setClinical((s) => ({ ...s, sex: e.target.value }))}
               />
               <Input
                 label="Email"
@@ -281,17 +302,6 @@ export function PatientEditModal({
             <SectionHeader title="Care details" subtitle="Stored at the lab. Not shared with the customer's online account." />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
               <Input
-                label="Date of birth"
-                type="date"
-                value={clinical.dateOfBirth}
-                onChange={(e) => setClinical((s) => ({ ...s, dateOfBirth: e.target.value }))}
-              />
-              <Input
-                label="Sex"
-                value={clinical.sex}
-                onChange={(e) => setClinical((s) => ({ ...s, sex: e.target.value }))}
-              />
-              <Input
                 label="Emergency contact name"
                 value={clinical.emergencyContactName}
                 onChange={(e) => setClinical((s) => ({ ...s, emergencyContactName: e.target.value }))}
@@ -302,17 +312,13 @@ export function PatientEditModal({
                 value={clinical.emergencyContactPhone}
                 onChange={(e) => setClinical((s) => ({ ...s, emergencyContactPhone: e.target.value }))}
               />
-              <Input
-                label="Allergies and sensitivities"
-                value={clinical.allergies}
-                onChange={(e) => setClinical((s) => ({ ...s, allergies: e.target.value }))}
-              />
-              <Input
-                label="Communication preferences"
-                value={clinical.communicationPreferences}
-                onChange={(e) => setClinical((s) => ({ ...s, communicationPreferences: e.target.value }))}
-              />
             </div>
+
+            <Input
+              label="Allergies and sensitivities"
+              value={clinical.allergies}
+              onChange={(e) => setClinical((s) => ({ ...s, allergies: e.target.value }))}
+            />
 
             <Input
               label="Permanent notes"
