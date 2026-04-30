@@ -96,7 +96,7 @@ export function PatientProfile() {
           <ProfileSkeleton isMobile={isMobile} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-            <Hero patient={patient} cases={cases} isMobile={isMobile} onEdit={() => setEditOpen(true)} />
+            <Hero patient={patient} cases={cases} onEdit={() => setEditOpen(true)} />
             <WaiverStatus patientId={patient.id} />
             <NotesAndFlags patient={patient} />
             <BeforeAfterGallery
@@ -305,7 +305,10 @@ function ProfileSkeleton({ isMobile }: { isMobile: boolean }) {
           style={{
             marginTop: theme.space[5],
             display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+            // Match the FieldGrid below: uniform 2-col so the
+            // skeleton's collapsed-card height tracks the real
+            // hero's vertical density.
+            gridTemplateColumns: 'repeat(2, 1fr)',
             gap: theme.space[4],
           }}
         >
@@ -350,12 +353,10 @@ function ProfileSkeleton({ isMobile }: { isMobile: boolean }) {
 function Hero({
   patient,
   cases: _cases,
-  isMobile,
   onEdit,
 }: {
   patient: PatientProfileRow;
   cases: PatientCaseRow[];
-  isMobile: boolean;
   onEdit: () => void;
 }) {
   // The earlier "Active / Inactive" pill mapped to whether the
@@ -458,7 +459,7 @@ function Hero({
 
       <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[5]}px 0` }} />
 
-      <FieldGrid isMobile={isMobile} fields={buildHeroFields(patient)} />
+      <FieldGrid fields={buildHeroFields(patient)} />
     </Card>
   );
 }
@@ -614,48 +615,57 @@ interface FieldDef {
   label: string;
   value: string | null;
   mono?: boolean;
-  // Number of grid columns the cell occupies. Default 1. Use 2 for
-  // values that routinely outrun a single quarter-width column —
-  // emails, address lines — so they don't crammed-wrap. Pair the
-  // wide cells so each row stays full-width (4 of 4 cols).
-  span?: 1 | 2;
+  // True = the cell takes the whole row (both cols of the 2-col
+  // grid). Default false. Used for orphan / naturally long values
+  // (Shopify customer id) so the grid never has a half-empty row.
+  fullRow?: boolean;
 }
 
+// Fields ordered into 2-col rows. The grid below renders pairs in
+// document order, so each consecutive two entries land on one row.
+// Pairings group semantically: identity, dates, contact, postal
+// (twice), kin, admin. The Shopify id sits alone at the end and
+// takes the full row so the trailing orphan doesn't read as a
+// half-empty slot.
 function buildHeroFields(p: PatientProfileRow): FieldDef[] {
   return [
-    // Row 1 — four single-col cells.
     { label: 'First name', value: properCase(p.first_name) || null },
     { label: 'Last name', value: properCase(p.last_name) || null },
     { label: 'Date of birth', value: formatDate(p.date_of_birth) },
     { label: 'Sex', value: p.sex ? properCase(p.sex) : null },
-    // Row 2 — contact pair, each spanning two cols. Emails routinely
-    // exceed a quarter-width slot; pairing phone alongside keeps the
-    // row symmetric.
-    { label: 'Email', value: p.email, span: 2 },
-    { label: 'Phone', value: p.phone, span: 2 },
-    // Row 3 — address pair, each spanning two cols. Address line 1
-    // is often a long combined string ("BioCity Glasgow - Pioneer
-    // Groupz") that wraps awkwardly in a single col.
-    { label: 'Address line 1', value: p.portal_ship_line1, span: 2 },
-    { label: 'Address line 2', value: p.portal_ship_line2, span: 2 },
-    // Row 4 + 5 — single-col cells for the rest.
+    { label: 'Email', value: p.email },
+    { label: 'Phone', value: p.phone },
+    { label: 'Address line 1', value: p.portal_ship_line1 },
+    { label: 'Address line 2', value: p.portal_ship_line2 },
     { label: 'City', value: p.portal_ship_city },
     { label: 'Postcode', value: p.portal_ship_postcode },
     { label: 'Country', value: p.portal_ship_country_code },
     { label: 'Emergency contact', value: p.emergency_contact_name },
     { label: 'Emergency phone', value: p.emergency_contact_phone },
     { label: 'Registered', value: formatDate(p.registered_at) },
-    { label: 'Shopify customer', value: p.shopify_customer_id, mono: true },
+    { label: 'Shopify customer', value: p.shopify_customer_id, mono: true, fullRow: true },
   ];
 }
 
-function FieldGrid({ fields, isMobile }: { fields: FieldDef[]; isMobile: boolean }) {
+function FieldGrid({ fields }: { fields: FieldDef[] }) {
   const monoStack = 'ui-monospace, SFMono-Regular, Menlo, monospace';
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))',
+        // Uniform 2-col grid at every viewport width. Earlier the
+        // desktop variant was 4-col with a few fields marked span:2
+        // (email, address lines, phone), but mixing 1-col and 2-col
+        // cells in one grid produced an oscillating rhythm — Row 1
+        // looked like four narrow cells, Row 2 jumped to two wide
+        // ones, Row 3 same, Row 4 back to four — and the eye reads
+        // the structure as broken even though the columns line up.
+        // 2-col uniform is the correct architecture: every value
+        // gets ~half the card width (plenty for long emails and
+        // addresses), and the rhythm is identical on every row.
+        // Mobile already used 2-col, so this collapses the
+        // responsive branch too.
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
         columnGap: theme.space[6],
         rowGap: theme.space[4],
         minWidth: 0,
@@ -663,16 +673,16 @@ function FieldGrid({ fields, isMobile }: { fields: FieldDef[]; isMobile: boolean
     >
       {fields.map((f) => {
         const empty = f.value == null || f.value === '';
-        const span = f.span ?? 1;
         return (
           <div
             key={f.label}
             style={{
               minWidth: 0,
-              // span:2 cells take two columns. On mobile the grid is
-              // already 2 cols, so span:2 becomes full row, which is
-              // the right behaviour there too.
-              gridColumn: span === 2 ? 'span 2' : undefined,
+              // fullRow: true takes the whole row (both columns).
+              // Used for the Shopify customer id at the bottom so
+              // the trailing orphan doesn't render as a lone cell
+              // next to empty space.
+              gridColumn: f.fullRow ? '1 / -1' : undefined,
             }}
           >
             <div
@@ -694,9 +704,8 @@ function FieldGrid({ fields, isMobile }: { fields: FieldDef[]; isMobile: boolean
                 fontFamily: f.mono ? monoStack : 'inherit',
                 fontWeight: theme.type.weight.medium,
                 color: empty ? theme.color.inkSubtle : theme.color.ink,
-                // Allow long values (emails, addresses) to wrap rather
-                // than ellipsis-truncate. wordBreak handles single
-                // unbroken tokens like long email locals.
+                // Long unbroken tokens (a 35-char email local, say)
+                // still need a wrap escape hatch even at 50% width.
                 wordBreak: 'break-word',
                 lineHeight: 1.4,
               }}
