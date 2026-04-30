@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Box,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Loader2,
   Minus,
@@ -732,11 +733,17 @@ export function Arrival() {
         }
         primaryLoading={(submitting && step === 'start') || (step === 'consent' && waiverBusy)}
         primaryShowArrow={step === 'consent' ? sectionsToSign.length === 0 : step !== 'start' || !submitting}
-        statusMessage={statusFor(step, {
-          service: serviceReady,
-          customer: customerReady,
-          consent: consentReady,
-        }, customerMissing.length, stagedItems.length)}
+        statusMessage={statusFor(
+          step,
+          {
+            service: serviceReady,
+            customer: customerReady,
+            consent: consentReady,
+          },
+          customerMissing.length,
+          stagedItems.length,
+          sectionsToSign.length
+        )}
         onPrimary={
           step === 'start'
             ? handleStartAppointment
@@ -786,20 +793,34 @@ function statusFor(
   step: Step,
   ready: { service: boolean; customer: boolean; consent: boolean },
   customerMissingCount: number,
-  stagedCount: number
+  stagedCount: number,
+  // Number of waiver sections still needing a fresh signature on
+  // step 3. Drives the audience-specific Next-button hint on step
+  // 2 (review the waiver vs pass back to staff).
+  sectionsToSignCount: number
 ): string {
   if (step === 'service') {
     if (stagedCount === 0) return 'Add at least one item';
     if (!ready.service) return 'Complete all required fields';
-    return '';
+    // Step 1 is staff-only; once the cart and JB are filled the
+    // device hands off to the patient for steps 2 and 3.
+    return 'Pass to the patient for steps 2 and 3';
   }
   if (step === 'customer') {
     if (customerMissingCount > 0) return `${customerMissingCount} required ${customerMissingCount === 1 ? 'field' : 'fields'} remaining`;
     if (!ready.customer) return 'Confirm the items above';
-    return '';
+    // Patient is on the device. The Next-button hint tells them
+    // what to expect on step 3: a waiver to read and sign, or
+    // nothing for them to do — in which case staff takes over.
+    return sectionsToSignCount > 0
+      ? 'Tap Next to review and sign the waiver'
+      : 'Tap Next, then pass back to staff';
   }
   if (step === 'consent') {
-    return ready.consent ? '' : 'Sign each section to continue';
+    if (!ready.consent) return 'Sign each section to continue';
+    // Waiver done (or none was needed) — patient hands the device
+    // back so staff can confirm and start the appointment.
+    return 'Pass back to staff to start';
   }
   return '';
 }
@@ -1096,28 +1117,65 @@ function ServiceStep({
         }
       >
         {stagedItems.length === 0 ? (
+          // List-cell CTA. Earlier this was a full-width dashed-
+          // border block which read as a drop-zone, not a button —
+          // staff weren't sure they could tap it. Now it has a
+          // solid hairline, a left avatar, a chevron on the right,
+          // and a max-width so it sits as a discrete "tap me" card
+          // rather than a row-spanning placeholder. Pattern matches
+          // the navigable list rows used elsewhere in the app.
           <button type="button" onClick={onOpenPicker} style={emptyItemsStyle}>
             <span
+              aria-hidden
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: 56,
-                height: 56,
+                width: 44,
+                height: 44,
                 borderRadius: theme.radius.pill,
                 background: theme.color.accentBg,
                 color: theme.color.accent,
-                marginBottom: theme.space[3],
+                flexShrink: 0,
               }}
             >
-              <Package size={24} />
+              <Package size={20} />
             </span>
-            <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-              Choose products or services
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[1],
+                textAlign: 'left',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: theme.type.size.base,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                }}
+              >
+                Choose products or services
+              </span>
+              <span
+                style={{
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                  lineHeight: theme.type.leading.snug,
+                }}
+              >
+                Pick from the catalogue. The patient sees the list before they sign.
+              </span>
             </span>
-            <span style={{ marginTop: theme.space[1], fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-              Pick from the catalogue. The patient sees the list before they sign.
-            </span>
+            <ChevronRight
+              size={18}
+              color={theme.color.inkSubtle}
+              aria-hidden
+              style={{ flexShrink: 0 }}
+            />
           </button>
         ) : (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -2563,19 +2621,23 @@ const subtleLinkStyle: CSSProperties = {
   padding: 0,
 };
 
+// List-cell button. Solid hairline (not dashed), max-width capped
+// so it doesn't span the row, and a horizontal layout (avatar +
+// text + chevron) that reads instantly as tappable.
 const emptyItemsStyle: CSSProperties = {
   width: '100%',
+  maxWidth: 520,
   appearance: 'none',
-  border: `1px dashed ${theme.color.border}`,
+  border: `1px solid ${theme.color.border}`,
   borderRadius: theme.radius.card,
   background: theme.color.surface,
-  padding: `${theme.space[8]}px ${theme.space[6]}px`,
+  padding: `${theme.space[4]}px ${theme.space[5]}px`,
   cursor: 'pointer',
   fontFamily: 'inherit',
   display: 'flex',
-  flexDirection: 'column',
   alignItems: 'center',
-  textAlign: 'center',
+  gap: theme.space[4],
+  WebkitTapHighlightColor: 'transparent',
 };
 
 const qtyButton: CSSProperties = {
