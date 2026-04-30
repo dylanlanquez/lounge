@@ -705,6 +705,8 @@ export async function recordUnsuitability(input: RecordUnsuitabilityInput): Prom
   await supabase.from('patient_events').insert({
     patient_id: input.patient_id,
     event_type: 'patient_unsuitable_recorded',
+    actor_account_id: (accountId as string | null) ?? null,
+    notes: reason,
     payload: {
       visit_id: input.visit_id,
       catalogue_ids: input.catalogue_ids,
@@ -713,4 +715,113 @@ export async function recordUnsuitability(input: RecordUnsuitabilityInput): Prom
       staff_account_id: (accountId as string | null) ?? null,
     },
   });
+}
+
+export interface ReverseUnsuitabilityInput {
+  patient_id: string;
+  visit_id: string;
+}
+
+// Reverses the visit-level "unsuitable" terminus. Records in
+// lng_unsuitability_records stay as audit (we never mutate signed-off
+// records). Visit goes back to in_progress with closed_at cleared so
+// the cart is workable again. A patient_events row carries the
+// reverse for the timeline.
+export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Promise<void> {
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+
+  const { error: visitErr } = await supabase
+    .from('lng_visits')
+    .update({ status: 'in_progress', closed_at: null })
+    .eq('id', input.visit_id);
+  if (visitErr) throw new Error(visitErr.message);
+
+  await supabase.from('patient_events').insert({
+    patient_id: input.patient_id,
+    event_type: 'patient_unsuitable_reversed',
+    actor_account_id: (accountId as string | null) ?? null,
+    payload: {
+      visit_id: input.visit_id,
+      staff_account_id: (accountId as string | null) ?? null,
+    },
+  });
+}
+
+// Latest unsuitability record on a visit, joined to the recording
+// staff member's account so the header can render "By [name]". Null
+// while no records exist yet.
+export interface LatestUnsuitability {
+  recorded_at: string;
+  reason: string;
+  recorded_by_name: string | null;
+}
+
+interface LatestUnsuitabilityResult {
+  data: LatestUnsuitability | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useLatestUnsuitability(visitId: string | null): LatestUnsuitabilityResult {
+  const [data, setData] = useState<LatestUnsuitability | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { loading, settle } = useStaleQueryLoading(visitId);
+
+  useEffect(() => {
+    if (!visitId) {
+      setData(null);
+      settle();
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data: row, error: err } = await supabase
+        .from('lng_unsuitability_records')
+        .select('recorded_at, reason, recorded_by, account:accounts!recorded_by ( first_name, last_name, name )')
+        .eq('visit_id', visitId)
+        .order('recorded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (cancelled) return;
+      if (err) {
+        if (err.code === '42P01' || err.code === 'PGRST200') {
+          setData(null);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        settle();
+        return;
+      }
+      if (!row) {
+        setData(null);
+        settle();
+        return;
+      }
+      const r = row as {
+        recorded_at: string;
+        reason: string;
+        recorded_by: string | null;
+        account:
+          | { first_name: string | null; last_name: string | null; name: string | null }
+          | { first_name: string | null; last_name: string | null; name: string | null }[]
+          | null;
+      };
+      const a = Array.isArray(r.account) ? r.account[0] ?? null : r.account ?? null;
+      const fn = a?.first_name?.trim();
+      const ln = a?.last_name?.trim();
+      const display = fn && ln ? `${fn} ${ln}` : fn ?? ln ?? a?.name?.trim() ?? null;
+      setData({
+        recorded_at: r.recorded_at,
+        reason: r.reason,
+        recorded_by_name: display,
+      });
+      settle();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visitId, settle]);
+
+  return { data, loading, error };
 }

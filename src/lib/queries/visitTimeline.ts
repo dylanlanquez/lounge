@@ -180,6 +180,10 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Patient registered from venneir.com';
     case 'deposit_failed':
       return 'Deposit failed';
+    case 'patient_unsuitable_recorded':
+      return 'Marked unsuitable';
+    case 'patient_unsuitable_reversed':
+      return 'Unsuitable reversed';
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -642,6 +646,13 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
       ? payload.shopify_customer_id
       : null;
     return id ? `Shopify customer ${id}` : undefined;
+  }
+  if (row.event_type === 'patient_unsuitable_recorded') {
+    // Reason is the headline information here; the row.notes column
+    // also carries it so a downstream consumer that ignores the
+    // payload still has the text.
+    const reason = typeof payload.reason === 'string' ? payload.reason : row.notes ?? null;
+    return reason && reason.trim().length > 0 ? reason : undefined;
   }
   // Fall back to the row's free-text notes for unrecognised events.
   return row.notes ?? undefined;
