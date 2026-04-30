@@ -264,16 +264,34 @@ interface WalkInJoin {
   jb_ref: string | null;
 }
 
-// Nested cart join used purely for SLA roll-up. We pull only the SLA
-// fields off each item's catalogue row — never names, prices, etc. —
-// so the payload stays small even on visits with many lines.
-interface CartItemSlaJoin {
-  catalogue: { sla_enabled: boolean | null; sla_target_minutes: number | null }
-    | { sla_enabled: boolean | null; sla_target_minutes: number | null }[]
+// Nested cart join used for SLA roll-up + the live in-clinic
+// descriptor + bucket re-classification. We pull each item's display
+// name + soft-delete flag plus the catalogue's service_type and SLA
+// fields so the board can:
+//   • show the live basket as the descriptor (instead of the booking
+//     intake snapshot, which goes stale once staff edits the cart)
+//   • re-categorise the visit's section from what's actually being
+//     done now (a walk-in booked as a denture repair that ends up
+//     getting a same-day appliance moves into the appliance section)
+//   • compute the SLA target as the max across active lines.
+interface CartItemBoardJoin {
+  name: string | null;
+  removed_at: string | null;
+  catalogue:
+    | {
+        service_type: string | null;
+        sla_enabled: boolean | null;
+        sla_target_minutes: number | null;
+      }
+    | {
+        service_type: string | null;
+        sla_enabled: boolean | null;
+        sla_target_minutes: number | null;
+      }[]
     | null;
 }
 interface CartSlaJoin {
-  items: CartItemSlaJoin[] | null;
+  items: CartItemBoardJoin[] | null;
 }
 
 // PostgREST returns single-row FK joins as either the row itself or
@@ -337,7 +355,8 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
            ),
            cart:lng_carts (
              items:lng_cart_items (
-               catalogue:lwo_catalogue ( sla_enabled, sla_target_minutes )
+               name, removed_at,
+               catalogue:lwo_catalogue ( service_type, sla_enabled, sla_target_minutes )
              )
            )`
         )
@@ -447,17 +466,39 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
         const appointmentRef = a?.appointment_ref ?? w?.appointment_ref ?? null;
         const jbRef = a?.jb_ref ?? w?.jb_ref ?? null;
 
-        const bucket = bucketForVisit({
-          event_type_label: eventTypeLabel,
-          service_type: serviceType,
-        });
+        // Active-only basket. Soft-deleted lines (removed_at is set)
+        // contribute nothing — they shouldn't drive the descriptor,
+        // bucket, or SLA. Mirrors the filter in useCart so the board
+        // sees the same basket the cashier sees on VisitDetail.
+        const cart = pickOne(r.cart);
+        const activeItems = (cart?.items ?? []).filter((it) => !it.removed_at);
 
-        const descriptor = computeDescriptor({
-          event_type_label: eventTypeLabel,
-          intake,
-          service_type: serviceType,
-          appliance_type: applianceType,
-        });
+        // Bucket: prefer what's actually in the basket (the live
+        // service the patient is having done), fall back to the
+        // booking metadata. A walk-in booked as a denture repair that
+        // ends up getting a same-day appliance should move into the
+        // appliance section without staff doing anything.
+        const cartBucket = bucketFromCartItems(activeItems);
+        const bucket =
+          cartBucket
+          ?? bucketForVisit({
+            event_type_label: eventTypeLabel,
+            service_type: serviceType,
+          });
+
+        // Descriptor: list the active basket lines so staff sees the
+        // current items, not the booking intake snapshot. Falls back
+        // to the booking-derived summary when the cart is still
+        // empty (just-arrived patients).
+        const cartDescriptor = composeCartDescriptor(activeItems);
+        const descriptor =
+          cartDescriptor
+          ?? computeDescriptor({
+            event_type_label: eventTypeLabel,
+            intake,
+            service_type: serviceType,
+            appliance_type: applianceType,
+          });
 
         const paid = paidByVisit.get(r.id);
         const sigs = sigsByPatient.get(r.patient_id) ?? new Map<string, WaiverSignatureSummary>();
@@ -467,14 +508,13 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           sigs
         );
 
-        // SLA roll-up: max(catalogue.sla_target_minutes) across cart
-        // items where catalogue.sla_enabled=true. Items with sla off,
-        // ad-hoc lines (no catalogue), and visits with no cart yet
-        // contribute nothing — null result means "no SLA on this
-        // visit".
-        const cart = pickOne(r.cart);
+        // SLA roll-up: max(catalogue.sla_target_minutes) across active
+        // cart items where catalogue.sla_enabled=true. Items with sla
+        // off, ad-hoc lines (no catalogue), removed lines, and visits
+        // with no cart yet contribute nothing — null result means
+        // "no SLA on this visit".
         let slaTarget: number | null = null;
-        for (const it of cart?.items ?? []) {
+        for (const it of activeItems) {
           const cat = pickOne(it.catalogue);
           if (cat?.sla_enabled && cat.sla_target_minutes != null && cat.sla_target_minutes > 0) {
             slaTarget = slaTarget == null ? cat.sla_target_minutes : Math.max(slaTarget, cat.sla_target_minutes);
@@ -525,7 +565,68 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
     };
   }, [tick, settle]);
 
+  // Realtime fan-in. The board shows derived state from six tables;
+  // any change to any of them can shift a card's price, basket,
+  // bucket, JB, or status. Each change nudges a single refetch — the
+  // hook is already cheap (one fanned-out batch on tick) and Realtime
+  // events on supabase coalesce, so storms of cart edits don't
+  // produce one round trip per row.
+  useRealtimeRefresh(
+    [
+      { table: 'lng_visits' },
+      { table: 'lng_appointments' },
+      { table: 'lng_walk_ins' },
+      { table: 'lng_carts' },
+      { table: 'lng_cart_items' },
+      { table: 'lng_payments' },
+    ],
+    refresh,
+  );
+
   return { visits, loading, error, refresh };
+}
+
+// Cart → bucket. Walks the active basket, counts hits per service
+// section, and returns the bucket with the most lines (ties broken
+// by the first match). Returns null when the cart has no items with
+// a recognised catalogue.service_type — the caller falls back to the
+// booking-derived bucket in that case.
+function bucketFromCartItems(items: CartItemBoardJoin[]): ClinicSectionKey | null {
+  if (items.length === 0) return null;
+  const counts = new Map<ClinicSectionKey, number>();
+  for (const it of items) {
+    const cat = pickOne(it.catalogue);
+    const st = cat?.service_type ?? null;
+    if (!st) continue;
+    const bucket = WALK_IN_BUCKETS[st];
+    if (!bucket) continue;
+    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+  }
+  if (counts.size === 0) return null;
+  let best: ClinicSectionKey | null = null;
+  let bestCount = -1;
+  for (const [b, c] of counts) {
+    if (c > bestCount) {
+      best = b;
+      bestCount = c;
+    }
+  }
+  return best;
+}
+
+// Cart → descriptor. Joins active item names with " · " — the same
+// separator used elsewhere in the board for compact lists. Returns
+// null when the basket is empty so the caller can fall back to the
+// booking summary.
+function composeCartDescriptor(items: CartItemBoardJoin[]): string | null {
+  const names = items
+    .map((it) => (typeof it.name === 'string' ? it.name.trim() : ''))
+    .filter((s) => s.length > 0);
+  if (names.length === 0) return null;
+  if (names.length <= 2) return names.join(' · ');
+  // Long baskets compress to first two + remainder count so the card
+  // height stays predictable on the in-clinic grid.
+  return `${names[0]} · ${names[1]} +${names.length - 2} more`;
 }
 
 // Lightweight count hook for the bottom-nav badge. Polls on an interval
