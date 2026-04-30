@@ -35,7 +35,7 @@ import {
   verifyCalendlyWebhook,
   type VerifyResult,
 } from '../lib/queries/calendlyDiagnostic.ts';
-import { formatPence } from '../lib/queries/carts.ts';
+import { formatPence, formatPounds } from '../lib/queries/carts.ts';
 import {
   type CatalogueRow,
   deleteCatalogueImage,
@@ -1150,8 +1150,8 @@ function CatalogueRowDisplay({
             color: theme.color.ink,
           }}
         >
-          £{row.unit_price.toFixed(2)}
-          {row.extra_unit_price != null ? ` (extras £${row.extra_unit_price.toFixed(2)})` : ''}
+          {formatPounds(row.unit_price)}
+          {row.extra_unit_price != null ? ` (extras ${formatPounds(row.extra_unit_price)})` : ''}
           {row.unit_label ? ` · ${row.unit_label}` : ''}
         </p>
         <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
