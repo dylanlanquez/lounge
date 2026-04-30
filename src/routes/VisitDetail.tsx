@@ -756,24 +756,23 @@ export function VisitDetail() {
             </Card>
 
             {items.length > 0 ? (
-              <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                 {canMarkUnsuitable ? (
-                  <Button variant="tertiary" size="lg" onClick={openUnsuitable}>
+                  <Button variant="tertiary" onClick={openUnsuitable}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <Ban size={18} aria-hidden />
+                      <Ban size={16} aria-hidden />
                       Mark unsuitable
                     </span>
                   </Button>
                 ) : null}
-                <Button variant="secondary" size="lg" onClick={openNoteEditor}>
+                <Button variant="secondary" onClick={openNoteEditor}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <StickyNote size={18} aria-hidden />
+                    <StickyNote size={16} aria-hidden />
                     {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
                   </span>
                 </Button>
                 <Button
                   variant="secondary"
-                  size="lg"
                   onClick={() => setWaiverViewerOpen(true)}
                   disabled={!waiverDoc}
                   title={
@@ -783,13 +782,12 @@ export function VisitDetail() {
                   }
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <FileText size={18} aria-hidden />
+                    <FileText size={16} aria-hidden />
                     View waiver
                   </span>
                 </Button>
                 <Button
                   variant="secondary"
-                  size="lg"
                   onClick={handlePrintLwo}
                   disabled={!appointment?.appointment_ref}
                   title={
@@ -799,7 +797,7 @@ export function VisitDetail() {
                   }
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <Printer size={18} aria-hidden />
+                    <Printer size={16} aria-hidden />
                     Print LWO
                   </span>
                 </Button>
