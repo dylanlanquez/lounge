@@ -21,6 +21,9 @@ export type { SegmentedControlOption, SegmentedControlProps } from './SegmentedC
 export { DropdownSelect } from './DropdownSelect/DropdownSelect.tsx';
 export type { DropdownSelectProps, DropdownSelectOption } from './DropdownSelect/DropdownSelect.tsx';
 
+export { MultiSelectDropdown } from './MultiSelectDropdown/MultiSelectDropdown.tsx';
+export type { MultiSelectDropdownProps, MultiSelectDropdownOption } from './MultiSelectDropdown/MultiSelectDropdown.tsx';
+
 export { DateOfBirthRow } from './DateOfBirthRow/DateOfBirthRow.tsx';
 export type { DateOfBirthRowProps } from './DateOfBirthRow/DateOfBirthRow.tsx';
 
