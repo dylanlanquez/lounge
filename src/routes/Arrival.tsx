@@ -21,6 +21,7 @@ import {
   Card,
   Checkbox,
   DateOfBirthRow,
+  Dialog,
   DropdownSelect,
   Skeleton,
   Toast,
@@ -102,6 +103,13 @@ interface AppointmentContext {
   location_id: string;
   event_type_label: string | null;
   start_at: string;
+  // Calendly-collected deposit. Surfaced on the staff and customer
+  // steps as a deduction from the staged total, so receptionists
+  // and patients both see what's owed at the till. Null on
+  // walk-ins and on free booking types.
+  deposit_pence: number | null;
+  deposit_status: 'paid' | 'failed' | null;
+  deposit_provider: 'paypal' | 'stripe' | null;
 }
 
 interface PatientLite {
@@ -310,7 +318,9 @@ export function Arrival() {
         if (mode === 'appointment') {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
-            .select('id, patient_id, location_id, event_type_label, start_at')
+            .select(
+              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider'
+            )
             .eq('id', id)
             .maybeSingle();
           if (apptErr || !appt) throw new Error(apptErr?.message ?? 'Appointment not found');
@@ -363,6 +373,28 @@ export function Arrival() {
 
   const onExit = () => {
     navigate(mode === 'appointment' ? '/schedule' : '/walk-in/new');
+  };
+
+  // Cancel-confirmation dialog. The flow doesn't commit anything
+  // to the database until the final Start step (markAppointment-
+  // Arrived / createWalkInVisit), so cancelling at any earlier
+  // step just throws away the in-memory drafts. Waiver
+  // signatures collected on step 3 do persist (they're stored
+  // against the patient regardless of arrival), and there's no
+  // legitimate reason to "undo" a real signature — the dialog
+  // copy is honest about what gets discarded vs kept.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const onCancelConfirm = () => {
+    setStagedItems([]);
+    setForm(EMPTY_FORM);
+    setEditingFields(new Set());
+    setItemsConfirmed(false);
+    setNotes('');
+    setJbRef('');
+    setJbCheck(null);
+    setJbError(null);
+    setCancelOpen(false);
+    onExit();
   };
 
   const goBack = () => {
@@ -451,6 +483,14 @@ export function Arrival() {
     () => stagedItems.reduce((sum, it) => sum + totalForQtyPence(it.catalogue, it.qty), 0),
     [stagedItems]
   );
+
+  // Only PAID deposits credit the till. A failed deposit is shown
+  // visually elsewhere; the bill still sums to the full subtotal.
+  // Walk-ins and unpaid bookings → 0.
+  const depositPence =
+    appointment?.deposit_status === 'paid' ? appointment.deposit_pence ?? 0 : 0;
+  const depositProvider =
+    depositPence > 0 ? appointment?.deposit_provider ?? null : null;
 
   const handleStartAppointment = async () => {
     if (!patient) return;
@@ -592,6 +632,7 @@ export function Arrival() {
         <StepperBar
           steps={STEPS}
           currentIndex={currentStepIndex}
+          onCancel={() => setCancelOpen(true)}
         />
 
         {patient && (step === 'service' || step === 'start') ? (
@@ -637,6 +678,8 @@ export function Arrival() {
             recognisedTypes={recognisedTypes}
             stagedItems={stagedItems}
             stagedTotalPence={stagedTotalPence}
+            depositPence={depositPence}
+            depositProvider={depositProvider}
             onIncrement={(key) =>
               setStagedItems((s) =>
                 s.map((it) => (it.key === key ? { ...it, qty: it.qty + 1 } : it))
@@ -678,6 +721,8 @@ export function Arrival() {
             editingFields={editingFields}
             onBeginEdit={beginEditField}
             linkedToShopify={!!patient.shopify_customer_id}
+            depositPence={depositPence}
+            depositProvider={depositProvider}
           />
         ) : step === 'consent' ? (
           <ConsentStep
@@ -775,6 +820,28 @@ export function Arrival() {
         </div>
       ) : null}
 
+      <Dialog
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        title="Discard arrival progress?"
+        width={420}
+        dismissable
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[3] }}>
+            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+              Keep going
+            </Button>
+            <Button variant="primary" onClick={onCancelConfirm}>
+              Discard and exit
+            </Button>
+          </div>
+        }
+      >
+        <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
+          The cart, customer details and notes you've added so far will be cleared. Any waiver signatures the patient has already saved are kept against their record — those don't depend on this arrival.
+        </p>
+      </Dialog>
+
       <style>{`
         @keyframes lng-arrival-fade {
           from { opacity: 0; transform: translateY(8px); }
@@ -853,9 +920,14 @@ function hydrateForm(snap: ArrivalIntakeSnapshot, setForm: (f: FormState) => voi
 function StepperBar({
   steps,
   currentIndex,
+  onCancel,
 }: {
   steps: { id: Step; label: string }[];
   currentIndex: number;
+  // Click handler for the Cancel affordance on the right of the
+  // bar. Parent owns the confirmation dialog so this is a thin
+  // pass-through.
+  onCancel: () => void;
 }) {
   return (
     <header
@@ -871,6 +943,9 @@ function StepperBar({
         gap: theme.space[3],
       }}
     >
+      {/* Spacer mirrors the Cancel button on the right so the
+          centred step list stays optically centred. */}
+      <span aria-hidden style={{ width: 64 }} />
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
         <ol
           aria-label="Arrival progress"
@@ -946,6 +1021,13 @@ function StepperBar({
           })}
         </ol>
       </div>
+      {/* Cancel sits on the right edge so it's reachable on every
+          step. Tertiary chrome keeps it from competing with the
+          Next / primary actions in the bottom action bar; the
+          parent gates the actual abandon behind a confirm dialog. */}
+      <Button variant="tertiary" size="sm" onClick={onCancel}>
+        Cancel
+      </Button>
     </header>
   );
 }
@@ -1053,6 +1135,8 @@ function ServiceStep({
   recognisedTypes,
   stagedItems,
   stagedTotalPence,
+  depositPence,
+  depositProvider,
   onIncrement,
   onDecrement,
   onRemoveItem,
@@ -1070,6 +1154,8 @@ function ServiceStep({
   recognisedTypes: string[];
   stagedItems: StagedItem[];
   stagedTotalPence: number;
+  depositPence: number;
+  depositProvider: 'paypal' | 'stripe' | null;
   onIncrement: (key: string) => void;
   onDecrement: (key: string) => void;
   onRemoveItem: (key: string) => void;
@@ -1219,30 +1305,11 @@ function ServiceStep({
           </div>
         ) : null}
         {stagedItems.length > 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginTop: theme.space[4],
-              padding: `${theme.space[3]}px ${theme.space[4]}px`,
-              background: theme.color.bg,
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-            }}
-          >
-            <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>Total</span>
-            <span
-              style={{
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {formatPence(stagedTotalPence)}
-            </span>
-          </div>
+          <TotalsBlock
+            subtotalPence={stagedTotalPence}
+            depositPence={depositPence}
+            depositProvider={depositProvider}
+          />
         ) : null}
       </Section>
 
@@ -1271,6 +1338,134 @@ function ServiceStep({
           style={textareaStyle}
         />
       </Section>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Totals — staged subtotal, deposit deduction (when one was paid),
+// and the resulting balance to collect at the till. Shared between
+// the service-step cart preview and the customer-step confirmation
+// banner so the same numbers carry through every surface from
+// arrival -> visit page -> Pay screen. Walk-ins and unpaid bookings
+// pass depositPence=0 and the deposit row collapses.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function depositLabel(provider: 'paypal' | 'stripe' | null): string {
+  if (provider === 'stripe') return 'Deposit (Stripe via Calendly)';
+  if (provider === 'paypal') return 'Deposit (PayPal via Calendly)';
+  return 'Deposit';
+}
+
+function TotalsBlock({
+  subtotalPence,
+  depositPence,
+  depositProvider,
+}: {
+  subtotalPence: number;
+  depositPence: number;
+  depositProvider: 'paypal' | 'stripe' | null;
+}) {
+  const balancePence = Math.max(0, subtotalPence - depositPence);
+  const showBreakdown = depositPence > 0;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        marginTop: theme.space[4],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        background: theme.color.bg,
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <TotalsRow label="Subtotal" valuePence={subtotalPence} />
+      {showBreakdown ? (
+        <TotalsRow label={depositLabel(depositProvider)} valuePence={-depositPence} accent />
+      ) : null}
+      <TotalsRow
+        label={showBreakdown ? 'To collect' : 'Total'}
+        valuePence={balancePence}
+        emphasis
+      />
+    </div>
+  );
+}
+
+// Same numbers, different chrome. The customer-step banner already
+// has card padding around it, so the totals here render as a flat
+// list with a hairline above (mirrors the previous single-row
+// "Total" treatment).
+function ConfirmationTotals({
+  subtotalPence,
+  depositPence,
+  depositProvider,
+}: {
+  subtotalPence: number;
+  depositPence: number;
+  depositProvider: 'paypal' | 'stripe' | null;
+}) {
+  const balancePence = Math.max(0, subtotalPence - depositPence);
+  const showBreakdown = depositPence > 0;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        paddingTop: theme.space[2],
+        borderTop: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <TotalsRow label="Subtotal" valuePence={subtotalPence} />
+      {showBreakdown ? (
+        <TotalsRow label={depositLabel(depositProvider)} valuePence={-depositPence} accent />
+      ) : null}
+      <TotalsRow
+        label={showBreakdown ? 'To collect' : 'Total'}
+        valuePence={balancePence}
+        emphasis
+      />
+    </div>
+  );
+}
+
+function TotalsRow({
+  label,
+  valuePence,
+  emphasis = false,
+  accent = false,
+}: {
+  label: string;
+  valuePence: number;
+  emphasis?: boolean;
+  accent?: boolean;
+}) {
+  const sign = valuePence < 0 ? '-' : '';
+  const magnitude = Math.abs(valuePence);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+      <span
+        style={{
+          fontSize: emphasis ? theme.type.size.base : theme.type.size.sm,
+          color: emphasis ? theme.color.ink : theme.color.inkMuted,
+          fontWeight: emphasis ? theme.type.weight.semibold : theme.type.weight.regular,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: emphasis ? theme.type.size.lg : theme.type.size.base,
+          fontWeight: emphasis ? theme.type.weight.semibold : theme.type.weight.regular,
+          color: accent ? theme.color.accent : theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {sign}{formatPence(magnitude)}
+      </span>
     </div>
   );
 }
@@ -1535,6 +1730,8 @@ function CustomerStep({
   editingFields,
   onBeginEdit,
   linkedToShopify,
+  depositPence,
+  depositProvider,
 }: {
   patient: PatientLite;
   snapshot: ArrivalIntakeSnapshot;
@@ -1548,6 +1745,8 @@ function CustomerStep({
   editingFields: Set<keyof FormState>;
   onBeginEdit: (key: keyof FormState) => void;
   linkedToShopify: boolean;
+  depositPence: number;
+  depositProvider: 'paypal' | 'stripe' | null;
 }) {
   const isEditing = (k: keyof FormState) => editingFields.has(k);
   const stagedTotalPence = stagedItems.reduce(
@@ -1663,22 +1862,11 @@ function CustomerStep({
                   </li>
                 ))}
               </ul>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  paddingTop: theme.space[2],
-                  borderTop: `1px solid ${theme.color.border}`,
-                  fontSize: theme.type.size.base,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                }}
-              >
-                <span>Total</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {formatPence(stagedTotalPence)}
-                </span>
-              </div>
+              <ConfirmationTotals
+                subtotalPence={stagedTotalPence}
+                depositPence={depositPence}
+                depositProvider={depositProvider}
+              />
               <div
                 style={{
                   marginTop: theme.space[1],
@@ -2205,14 +2393,17 @@ function FieldRow({
   }
   if (multiline) {
     return (
-      <label style={{ ...wrapper, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-        <span style={cardLabelStyle}>
-          {label}
-          {required ? <RequiredMark /> : null}
-        </span>
-        {helper ? <span style={helperStyle}>{helper}</span> : null}
-        <textarea value={value} onChange={(e) => onChange(e.currentTarget.value)} rows={3} style={textareaStyle} />
-      </label>
+      <div style={wrapper}>
+        <EditableFieldCard
+          label={label}
+          required={required}
+          helper={helper}
+          kind={kind}
+          value={value}
+          onChange={onChange}
+          multiline
+        />
+      </div>
     );
   }
   return (
@@ -2261,6 +2452,7 @@ function EditableFieldCard({
   kind = 'text',
   value,
   onChange,
+  multiline = false,
 }: {
   label: string;
   required?: boolean;
@@ -2268,9 +2460,43 @@ function EditableFieldCard({
   kind?: FieldKind;
   value: string;
   onChange: (v: string) => void;
+  // When true, swaps the inner <input> for a <textarea> while
+  // keeping the same chrome. Used by the Allergies & sensitivities
+  // field on the customer step so it sits in a bordered card
+  // matching the rest of the form rather than a separate textarea
+  // outside any container.
+  multiline?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   const inputAttrs = inputAttributesForKind(kind);
+  // Shared text styling for the inner input / textarea so both
+  // surfaces look identical aside from element type.
+  const innerStyle: CSSProperties = {
+    appearance: 'none',
+    border: 'none',
+    background: 'transparent',
+    outline: 'none',
+    padding: 0,
+    fontFamily: 'inherit',
+    fontSize: theme.type.size.md,
+    fontWeight: theme.type.weight.semibold,
+    color: theme.color.ink,
+    letterSpacing: theme.type.tracking.tight,
+    width: '100%',
+    minWidth: 0,
+  };
+  const handleBlur = () => {
+    setFocused(false);
+    // Title-case names + cities on blur. Doing this on blur (not
+    // every keystroke) lets the receptionist type freely without
+    // fighting in-progress edits — the cleanup happens when the
+    // field commits. Skipped for multiline since paragraph text
+    // doesn't title-case sensibly.
+    if (!multiline && kind === 'name' && value) {
+      const cased = properCase(value);
+      if (cased !== value) onChange(cased);
+    }
+  };
   return (
     <label
       style={{
@@ -2289,40 +2515,35 @@ function EditableFieldCard({
         {label}
         {required ? <RequiredMark /> : null}
       </span>
-      <input
-        {...inputAttrs}
-        value={value}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => {
-          setFocused(false);
-          // Title-case names + cities on blur. Doing this on blur
-          // (not every keystroke) lets the receptionist type freely
-          // without fighting in-progress edits — the cleanup happens
-          // when the field commits. properCase handles hyphenated
-          // (Smith-Jones), apostrophe (O'Brien) and honorific (Dr,
-          // Mrs) cases correctly.
-          if (kind === 'name' && value) {
-            const cased = properCase(value);
-            if (cased !== value) onChange(cased);
-          }
-        }}
-        aria-required={required || undefined}
-        style={{
-          appearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          outline: 'none',
-          padding: 0,
-          fontFamily: 'inherit',
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
-          width: '100%',
-          minWidth: 0,
-        }}
-      />
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          rows={3}
+          aria-required={required || undefined}
+          style={{
+            ...innerStyle,
+            // Paragraph text is comfortable at lighter weight + a
+            // bit of leading. Keeps the card's silhouette identical
+            // to the single-line variant; just relaxes the body.
+            fontWeight: theme.type.weight.regular,
+            lineHeight: theme.type.leading.snug,
+            resize: 'vertical',
+          }}
+        />
+      ) : (
+        <input
+          {...inputAttrs}
+          value={value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          aria-required={required || undefined}
+          style={innerStyle}
+        />
+      )}
       {helper ? <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>{helper}</span> : null}
     </label>
   );
@@ -2661,11 +2882,6 @@ const qtyButton: CSSProperties = {
 const cardLabelStyle: CSSProperties = {
   fontSize: theme.type.size.sm,
   fontWeight: theme.type.weight.medium,
-  color: theme.color.inkMuted,
-};
-
-const helperStyle: CSSProperties = {
-  fontSize: theme.type.size.sm,
   color: theme.color.inkMuted,
 };
 
