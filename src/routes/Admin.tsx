@@ -19,6 +19,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
+  importReadersFromStripe,
   listLoungeLocations,
   listStripeLocations,
   registerReader,
@@ -674,7 +675,51 @@ function DevicesTab() {
   const [stripeLocs, setStripeLocs] = useState<StripeTerminalLocation[]>([]);
   const [loungeLocs, setLoungeLocs] = useState<LoungeLocation[]>([]);
   const [locsLoading, setLocsLoading] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const importFromStripe = async () => {
+    setImportBusy(true);
+    try {
+      // Need a Lounge clinic to attach the imported readers to.
+      // Grab the first if not already loaded.
+      let lounge = loungeLocs;
+      if (lounge.length === 0) {
+        lounge = await listLoungeLocations();
+        setLoungeLocs(lounge);
+      }
+      if (lounge.length === 0) {
+        setToast({ tone: 'error', title: 'No Lounge locations', description: 'Configure a clinic first.' });
+        return;
+      }
+      const result = await importReadersFromStripe(lounge[0]!.id);
+      readers.refresh();
+      if (result.imported.length === 0) {
+        setToast({
+          tone: 'success',
+          title: result.already_present > 0 ? 'Already up to date.' : 'No readers in Stripe.',
+          description:
+            result.already_present > 0
+              ? `${result.already_present} reader${result.already_present === 1 ? '' : 's'} already registered.`
+              : 'Pair a reader in Stripe Dashboard or via Register reader.',
+        });
+      } else {
+        setToast({
+          tone: 'success',
+          title: `Imported ${result.imported.length} reader${result.imported.length === 1 ? '' : 's'}.`,
+          description: result.imported.map((r) => r.friendly_name).join(', '),
+        });
+      }
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Import failed',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setImportBusy(false);
+    }
+  };
 
   const openRegister = async () => {
     setRegError(null);
@@ -758,11 +803,18 @@ function DevicesTab() {
               Stripe Terminal readers visible to your location. Pair an S700 by entering its on-screen code below.
             </p>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => openRegister()}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Plus size={16} /> Register reader
-            </span>
-          </Button>
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            <Button variant="tertiary" size="sm" onClick={importFromStripe} loading={importBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <RefreshCw size={16} /> Import from Stripe
+              </span>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => openRegister()}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <Plus size={16} /> Register reader
+              </span>
+            </Button>
+          </div>
         </div>
         {readers.loading ? (
           <Skeleton height={64} />
