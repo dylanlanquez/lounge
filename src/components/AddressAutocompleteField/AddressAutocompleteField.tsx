@@ -67,7 +67,17 @@ export function AddressAutocompleteField({
     },
   });
 
-  const visibleDropdown = focused && state.suggestions.length > 0;
+  // Open the dropdown as soon as the query crosses the minimum
+  // length, not just when results land. Earlier the panel only
+  // showed once `suggestions.length > 0`, which made a slow
+  // Google load or a zero-result query look like the picker was
+  // dead. Now there's always feedback once the patient has typed
+  // enough — loading shimmer, list, "No matches", or error.
+  const trimmed = value.trim();
+  const queryReady = trimmed.length >= 3;
+  const visibleDropdown = focused && queryReady;
+  const showSpinner = !ready || state.loading;
+  const showEmpty = ready && !state.loading && state.suggestions.length === 0 && !state.error;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!visibleDropdown) return;
@@ -167,7 +177,10 @@ export function AddressAutocompleteField({
             top: 'calc(100% + 4px)',
             left: 0,
             right: 0,
-            zIndex: 30,
+            // Above the page chrome (sticky stepper at 20, fixed
+            // ActionBar at 20). 50 leaves headroom for any future
+            // overlay without a refactor.
+            zIndex: 50,
             background: theme.color.surface,
             border: `1px solid ${theme.color.border}`,
             borderRadius: theme.radius.input,
@@ -176,56 +189,91 @@ export function AddressAutocompleteField({
             overflowY: 'auto',
           }}
         >
-          {state.suggestions.map((sug, i) => {
-            const main = sug.placePrediction?.mainText?.text ?? sug.placePrediction?.text?.text ?? '';
-            const secondary = sug.placePrediction?.secondaryText?.text ?? '';
-            const active = i === activeIndex;
-            return (
-              <button
-                key={i}
-                type="button"
-                role="option"
-                aria-selected={active}
-                // mousedown not click — click fires after blur and
-                // the dropdown is gone by then.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  void selectSuggestion(i);
-                }}
-                onMouseEnter={() => setActiveIndex(i)}
-                style={{
-                  appearance: 'none',
-                  width: '100%',
-                  textAlign: 'left',
-                  background: active ? theme.color.bg : 'transparent',
-                  border: 'none',
-                  borderBottom: `1px solid ${theme.color.border}`,
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 2,
-                  WebkitTapHighlightColor: 'transparent',
-                }}
-              >
-                <span
+          {state.error ? (
+            <div
+              role="status"
+              style={{
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.alert,
+              }}
+            >
+              Couldn't reach Places. Type the address manually.
+            </div>
+          ) : showSpinner ? (
+            <div
+              role="status"
+              style={{
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+              }}
+            >
+              Searching addresses…
+            </div>
+          ) : showEmpty ? (
+            <div
+              role="status"
+              style={{
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+              }}
+            >
+              No matches. Try a longer query, or fill the rest manually.
+            </div>
+          ) : (
+            state.suggestions.map((sug, i) => {
+              const main = sug.placePrediction?.mainText?.text ?? sug.placePrediction?.text?.text ?? '';
+              const secondary = sug.placePrediction?.secondaryText?.text ?? '';
+              const active = i === activeIndex;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  // mousedown not click — click fires after blur and
+                  // the dropdown is gone by then.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    void selectSuggestion(i);
+                  }}
+                  onMouseEnter={() => setActiveIndex(i)}
                   style={{
-                    fontSize: theme.type.size.sm,
-                    fontWeight: theme.type.weight.semibold,
-                    color: theme.color.ink,
+                    appearance: 'none',
+                    width: '100%',
+                    textAlign: 'left',
+                    background: active ? theme.color.bg : 'transparent',
+                    border: 'none',
+                    borderBottom: `1px solid ${theme.color.border}`,
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    WebkitTapHighlightColor: 'transparent',
                   }}
                 >
-                  {main}
-                </span>
-                {secondary ? (
-                  <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                    {secondary}
+                  <span
+                    style={{
+                      fontSize: theme.type.size.sm,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.ink,
+                    }}
+                  >
+                    {main}
                   </span>
-                ) : null}
-              </button>
-            );
-          })}
+                  {secondary ? (
+                    <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                      {secondary}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })
+          )}
         </div>
       ) : null}
     </div>
