@@ -48,7 +48,7 @@ import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useIsMobile } from '../lib/useIsMobile.ts';
+import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { formatVisitCrumb, recordUnsuitability, useVisitDetail } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
@@ -152,6 +152,10 @@ export function VisitDetail() {
   const [unsuitableBusy, setUnsuitableBusy] = useState(false);
   const [unsuitableError, setUnsuitableError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
+  // Anything that isn't a fine-pointer ≥1024px desktop (every iPad /
+  // Samsung tab, including landscape) gets compact action buttons so
+  // the cart action row stays on a single line at narrower widths.
+  const isDesktop = useIsDesktop();
 
   // Waiver state. Required sections are derived from the cart's
   // service_types when items exist (post-arrival truth) and fall back to
@@ -775,14 +779,14 @@ export function VisitDetail() {
             {items.length > 0 ? (
               <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                 {canMarkUnsuitable ? (
-                  <Button variant="tertiary" onClick={openUnsuitable}>
+                  <Button variant="tertiary" size={isDesktop ? 'md' : 'sm'} onClick={openUnsuitable}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <Ban size={16} aria-hidden />
                       Mark unsuitable
                     </span>
                   </Button>
                 ) : null}
-                <Button variant="secondary" onClick={openNoteEditor}>
+                <Button variant="secondary" size={isDesktop ? 'md' : 'sm'} onClick={openNoteEditor}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                     <StickyNote size={16} aria-hidden />
                     {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
@@ -790,6 +794,7 @@ export function VisitDetail() {
                 </Button>
                 <Button
                   variant="secondary"
+                  size={isDesktop ? 'md' : 'sm'}
                   onClick={handlePrintLwo}
                   disabled={!appointment?.appointment_ref}
                   title={
@@ -805,6 +810,7 @@ export function VisitDetail() {
                 </Button>
                 <Button
                   variant="primary"
+                  size={isDesktop ? 'md' : 'sm'}
                   showArrow
                   disabled={cartLocked}
                   onClick={() =>
