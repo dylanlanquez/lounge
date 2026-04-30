@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ageBracketFor,
   aggregateBookingsVsWalkIns,
   aggregateOverview,
+  aggregatePatientReports,
+  outwardPostcode,
   type BookingsAppointment,
   type BookingsVisit,
+  type PatientReportVisit,
   type ReportsOverviewItem,
   type ReportsOverviewPayment,
   type ReportsOverviewVisit,
@@ -475,5 +479,270 @@ describe('aggregateBookingsVsWalkIns', () => {
     );
     expect(r.total_booked).toBe(2);
     expect(r.total_walk_in).toBe(3);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Demographics + Marketing helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('outwardPostcode', () => {
+  it('extracts the outward code from a standard postcode', () => {
+    expect(outwardPostcode('SW1A 1AA')).toBe('SW1A');
+    expect(outwardPostcode('M1 1AE')).toBe('M1');
+    expect(outwardPostcode('B33 8TH')).toBe('B33');
+    expect(outwardPostcode('CR2 6XH')).toBe('CR2');
+  });
+
+  it('strips internal whitespace and is case-insensitive', () => {
+    expect(outwardPostcode('  sw1a   1aa ')).toBe('SW1A');
+  });
+
+  it('returns "Unknown" for null, empty, or too-short input', () => {
+    expect(outwardPostcode(null)).toBe('Unknown');
+    expect(outwardPostcode(undefined)).toBe('Unknown');
+    expect(outwardPostcode('')).toBe('Unknown');
+    expect(outwardPostcode('SW1')).toBe('Unknown');
+  });
+});
+
+describe('ageBracketFor', () => {
+  const REF = new Date(2026, 4, 1); // 1 May 2026
+  it('returns unknown for null DOB', () => {
+    expect(ageBracketFor(null, REF)).toBe('unknown');
+  });
+  it('handles malformed DOB strings as unknown', () => {
+    expect(ageBracketFor('not a date', REF)).toBe('unknown');
+  });
+  it('rejects future-dated DOB as unknown', () => {
+    expect(ageBracketFor('2030-01-01', REF)).toBe('unknown');
+  });
+  it('buckets typical ages correctly', () => {
+    expect(ageBracketFor('2015-04-01', REF)).toBe('under_18'); // 11
+    expect(ageBracketFor('2000-04-01', REF)).toBe('18_29'); // 26
+    expect(ageBracketFor('1985-04-01', REF)).toBe('30_44'); // 41
+    expect(ageBracketFor('1970-04-01', REF)).toBe('45_59'); // 56
+    expect(ageBracketFor('1960-04-01', REF)).toBe('60_74'); // 66
+    expect(ageBracketFor('1940-04-01', REF)).toBe('75_plus'); // 86
+  });
+  it('respects birthday-not-yet-this-year boundary', () => {
+    // Born 30 May 2000; ref is 1 May 2026 — hasn't had birthday yet → 25
+    expect(ageBracketFor('2000-05-30', REF)).toBe('18_29');
+    // Born 30 Apr 2000; ref is 1 May 2026 — has had birthday → 26
+    expect(ageBracketFor('2000-04-30', REF)).toBe('18_29');
+    // Born 30 Apr 1996 → 30 (boundary)
+    expect(ageBracketFor('1996-04-30', REF)).toBe('30_44');
+  });
+});
+
+const RANGE_DM = makeCustomRange('2026-04-01', '2026-04-30');
+const visitWithPatient = (over: Partial<PatientReportVisit>): PatientReportVisit => ({
+  id: 'v',
+  patient_id: 'p1',
+  arrival_type: 'walk_in',
+  opened_at: '2026-04-15T10:00:00Z',
+  patient: {
+    id: 'p1',
+    date_of_birth: '1990-01-01',
+    sex: 'female',
+    portal_ship_postcode: 'SW1A 1AA',
+    referred_by: 'Google',
+    registered_at: '2026-04-01T09:00:00Z',
+  },
+  cart: { id: 'c1', status: 'paid', total_pence: 10000 },
+  ...over,
+});
+
+describe('aggregatePatientReports', () => {
+  it('returns zero shape for an empty visit list', () => {
+    const r = aggregatePatientReports(RANGE_DM, []);
+    expect(r.total_unique_patients).toBe(0);
+    expect(r.new_patients).toBe(0);
+    expect(r.returning_patients).toBe(0);
+    expect(r.referral_sources).toEqual([]);
+    expect(r.postcode_areas).toEqual([]);
+    expect(r.postcode_other).toEqual({ count: 0, revenue_pence: 0 });
+    expect(r.visits_in_period).toBe(0);
+    expect(r.revenue_in_period_pence).toBe(0);
+  });
+
+  it('counts unique patients (de-dups on patient_id)', () => {
+    const r = aggregatePatientReports(RANGE_DM, [
+      visitWithPatient({ id: 'v1', patient_id: 'p1' }),
+      visitWithPatient({ id: 'v2', patient_id: 'p1' }), // same patient, different visit
+      visitWithPatient({
+        id: 'v3',
+        patient_id: 'p2',
+        patient: {
+          id: 'p2',
+          date_of_birth: '1980-01-01',
+          sex: 'male',
+          portal_ship_postcode: 'M1 1AE',
+          referred_by: 'Friend',
+          registered_at: null,
+        },
+      }),
+    ]);
+    expect(r.total_unique_patients).toBe(2);
+    expect(r.visits_in_period).toBe(3);
+  });
+
+  it('classifies new vs returning by registered_at', () => {
+    const r = aggregatePatientReports(RANGE_DM, [
+      visitWithPatient({
+        id: 'v1',
+        patient_id: 'p1',
+        patient: {
+          id: 'p1',
+          date_of_birth: '1990-01-01',
+          sex: 'female',
+          portal_ship_postcode: null,
+          referred_by: null,
+          registered_at: '2026-04-15T09:00:00Z', // in range → new
+        },
+      }),
+      visitWithPatient({
+        id: 'v2',
+        patient_id: 'p2',
+        patient: {
+          id: 'p2',
+          date_of_birth: '1990-01-01',
+          sex: 'female',
+          portal_ship_postcode: null,
+          referred_by: null,
+          registered_at: '2024-01-01T09:00:00Z', // long before range → returning
+        },
+      }),
+      visitWithPatient({
+        id: 'v3',
+        patient_id: 'p3',
+        patient: {
+          id: 'p3',
+          date_of_birth: '1990-01-01',
+          sex: 'female',
+          portal_ship_postcode: null,
+          referred_by: null,
+          registered_at: null, // unknown → treated as returning
+        },
+      }),
+    ]);
+    expect(r.new_patients).toBe(1);
+    expect(r.returning_patients).toBe(2);
+  });
+
+  it('sums paid-cart revenue per patient and surfaces it on referral_sources', () => {
+    const r = aggregatePatientReports(RANGE_DM, [
+      visitWithPatient({
+        id: 'v1',
+        patient_id: 'p1',
+        patient: {
+          id: 'p1',
+          date_of_birth: null,
+          sex: null,
+          portal_ship_postcode: null,
+          referred_by: 'Instagram',
+          registered_at: null,
+        },
+        cart: { id: 'c1', status: 'paid', total_pence: 12500 },
+      }),
+      visitWithPatient({
+        id: 'v2',
+        patient_id: 'p2',
+        patient: {
+          id: 'p2',
+          date_of_birth: null,
+          sex: null,
+          portal_ship_postcode: null,
+          referred_by: 'Instagram',
+          registered_at: null,
+        },
+        cart: { id: 'c2', status: 'open', total_pence: 99999 }, // open cart doesn't count
+      }),
+      visitWithPatient({
+        id: 'v3',
+        patient_id: 'p3',
+        patient: {
+          id: 'p3',
+          date_of_birth: null,
+          sex: null,
+          portal_ship_postcode: null,
+          referred_by: 'Friend',
+          registered_at: null,
+        },
+        cart: { id: 'c3', status: 'paid', total_pence: 5000 },
+      }),
+    ]);
+    expect(r.referral_sources).toHaveLength(2);
+    const insta = r.referral_sources.find((s) => s.source === 'Instagram');
+    expect(insta?.patients).toBe(2);
+    expect(insta?.revenue_pence).toBe(12500); // p2's open cart not counted
+    const friend = r.referral_sources.find((s) => s.source === 'Friend');
+    expect(friend?.revenue_pence).toBe(5000);
+  });
+
+  it('groups null/blank referrals as "Unspecified"', () => {
+    const r = aggregatePatientReports(RANGE_DM, [
+      visitWithPatient({
+        id: 'v1',
+        patient_id: 'p1',
+        patient: {
+          id: 'p1',
+          date_of_birth: null,
+          sex: null,
+          portal_ship_postcode: null,
+          referred_by: null,
+          registered_at: null,
+        },
+      }),
+      visitWithPatient({
+        id: 'v2',
+        patient_id: 'p2',
+        patient: {
+          id: 'p2',
+          date_of_birth: null,
+          sex: null,
+          portal_ship_postcode: null,
+          referred_by: '   ',
+          registered_at: null,
+        },
+      }),
+    ]);
+    expect(r.referral_sources).toHaveLength(1);
+    expect(r.referral_sources[0]?.source).toBe('Unspecified');
+    expect(r.referral_sources[0]?.patients).toBe(2);
+  });
+
+  it('produces an age distribution with all brackets present', () => {
+    const r = aggregatePatientReports(RANGE_DM, [
+      visitWithPatient({ id: 'v1', patient_id: 'p1' }),
+    ]);
+    const ids = r.age_distribution.map((b) => b.bracket);
+    expect(ids).toEqual(['under_18', '18_29', '30_44', '45_59', '60_74', '75_plus', 'unknown']);
+  });
+
+  it('caps postcode_areas at 10 with the rest grouped into postcode_other', () => {
+    const visits: PatientReportVisit[] = [];
+    for (let i = 0; i < 14; i += 1) {
+      visits.push(
+        visitWithPatient({
+          id: `v${i}`,
+          patient_id: `p${i}`,
+          patient: {
+            id: `p${i}`,
+            date_of_birth: null,
+            sex: null,
+            // 14 unique outward codes: A1, A2, ..., A14 (each made up)
+            portal_ship_postcode: `A${i + 1} 1AA`,
+            referred_by: null,
+            registered_at: null,
+          },
+          cart: { id: `c${i}`, status: 'paid', total_pence: 1000 },
+        }),
+      );
+    }
+    const r = aggregatePatientReports(RANGE_DM, visits);
+    expect(r.postcode_areas).toHaveLength(10);
+    expect(r.postcode_other.count).toBe(4);
+    expect(r.postcode_other.revenue_pence).toBe(4000);
   });
 });
