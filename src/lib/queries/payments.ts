@@ -55,7 +55,7 @@ export interface VisitPaidStatus {
   cart_id: string | null;
   amount_due_pence: number | null;
   amount_paid_pence: number;
-  paid_status: 'no_charge' | 'paid' | 'partially_paid' | 'unpaid';
+  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
 }
 
 export function useVisitPaidStatus(visitId: string | undefined) {

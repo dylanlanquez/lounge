@@ -10,7 +10,7 @@ export interface VisitRow {
   location_id: string;
   appointment_id: string | null;
   walk_in_id: string | null;
-  status: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable';
+  status: 'arrived' | 'in_chair' | 'complete' | 'unsuitable';
   arrival_type: 'walk_in' | 'scheduled';
   receptionist_id: string | null;
   opened_at: string;
@@ -70,7 +70,7 @@ export async function createWalkInVisit(
       location_id: input.location_id,
       walk_in_id: walkIn.id,
       arrival_type: 'walk_in',
-      status: 'opened',
+      status: 'arrived',
       notes: input.notes ?? null,
     })
     .select('id, opened_at')
@@ -296,7 +296,7 @@ export async function markAppointmentArrived(
       location_id: appt.location_id,
       appointment_id: appt.id,
       arrival_type: 'scheduled',
-      status: 'opened',
+      status: 'arrived',
     })
     .select('id, opened_at')
     .single();
@@ -361,7 +361,7 @@ export interface VisitAppointmentContext {
 export interface ActiveVisitRow {
   id: string;
   patient_id: string;
-  status: 'opened' | 'in_progress';
+  status: 'arrived' | 'in_chair';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
   patient_first_name: string | null;
@@ -391,7 +391,7 @@ export function useActiveVisits(): ActiveVisitsResult {
         .select(
           'id, patient_id, status, arrival_type, opened_at, patient:patients ( first_name, last_name, phone )'
         )
-        .in('status', ['opened', 'in_progress'])
+        .in('status', ['arrived', 'in_chair'])
         .order('opened_at', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -408,7 +408,7 @@ export function useActiveVisits(): ActiveVisitsResult {
         const raw = r as {
           id: string;
           patient_id: string;
-          status: 'opened' | 'in_progress';
+          status: 'arrived' | 'in_chair';
           arrival_type: 'walk_in' | 'scheduled';
           opened_at: string;
           patient:
@@ -732,7 +732,7 @@ export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Pr
 
   const { error: visitErr } = await supabase
     .from('lng_visits')
-    .update({ status: 'in_progress', closed_at: null })
+    .update({ status: 'in_chair', closed_at: null })
     .eq('id', input.visit_id);
   if (visitErr) throw new Error(visitErr.message);
 

@@ -394,7 +394,7 @@ export function VisitDetail() {
   // Visits that have already terminated (complete / unsuitable /
   // cancelled) are read-only for unsuitability — no second mark.
   const visitTerminated =
-    visit?.status === 'complete' || visit?.status === 'unsuitable' || visit?.status === 'cancelled';
+    visit?.status === 'complete' || visit?.status === 'unsuitable';
 
   // Items that can be picked in the dropdown — only catalogue-backed
   // lines (ad-hoc rows have no catalogue_id and the schema requires
@@ -1763,16 +1763,14 @@ function showableRef(value: string | null | undefined): value is string {
   return true;
 }
 
-function visitStatusIcon(s: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable') {
+function visitStatusIcon(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable') {
   switch (s) {
-    case 'opened':
+    case 'arrived':
       return <Circle size={12} />;
-    case 'in_progress':
+    case 'in_chair':
       return <Loader2 size={12} />;
     case 'complete':
       return <CheckCircle size={12} />;
-    case 'cancelled':
-      return <CircleSlash size={12} />;
     case 'unsuitable':
       return <Ban size={12} />;
   }
@@ -1792,30 +1790,26 @@ function cartStatusIcon(s: 'open' | 'paid' | 'voided') {
 // Visit-status helpers. The DB stores the raw enum (opened /
 // in_progress / complete / cancelled); the UI shows humanised copy
 // to match the other status pills in the app.
-function visitStatusLabel(s: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable'): string {
+function visitStatusLabel(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable'): string {
   switch (s) {
-    case 'opened':
-      return 'Opened';
-    case 'in_progress':
-      return 'In progress';
+    case 'arrived':
+      return 'Arrived';
+    case 'in_chair':
+      return 'In chair';
     case 'complete':
       return 'Complete';
-    case 'cancelled':
-      return 'Cancelled';
     case 'unsuitable':
       return 'Unsuitable';
   }
 }
-function visitStatusTone(s: 'opened' | 'in_progress' | 'complete' | 'cancelled' | 'unsuitable') {
+function visitStatusTone(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable') {
   switch (s) {
-    case 'opened':
+    case 'arrived':
       return 'in_progress' as const;
-    case 'in_progress':
+    case 'in_chair':
       return 'in_progress' as const;
     case 'complete':
       return 'complete' as const;
-    case 'cancelled':
-      return 'cancelled' as const;
     case 'unsuitable':
       return 'unsuitable' as const;
   }

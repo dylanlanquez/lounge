@@ -234,7 +234,7 @@ function makeVisit(overrides: Partial<EnrichedActiveVisit> = {}): EnrichedActive
   return {
     id: 'visit-1',
     patient_id: 'p-1',
-    status: 'opened',
+    status: 'arrived',
     arrival_type: 'walk_in',
     opened_at: '2026-04-28T09:00:00Z',
     patient_first_name: null,
@@ -254,7 +254,7 @@ function makeVisit(overrides: Partial<EnrichedActiveVisit> = {}): EnrichedActive
     searchable: '',
     amount_due_pence: null,
     amount_paid_pence: 0,
-    paid_status: 'no_charge',
+    paid_status: 'free_visit',
     payment_done: true,
     waiver_status: 'not_required',
     sla_target_minutes: null,
