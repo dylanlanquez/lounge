@@ -292,6 +292,366 @@ export function shapeSalesRows(visits: RawSalesVisit[], filters: SalesFilters): 
   return { rows, total_subtotal_pence, total_discount_pence, total_collected_pence };
 }
 
+// ── Discounts ───────────────────────────────────────────────────────────────
+
+export interface DiscountRow {
+  id: string;
+  cart_id: string;
+  visit_id: string | null;
+  patient_name: string;
+  amount_pence: number;
+  reason: string;
+  applied_at: string;
+  removed_at: string | null;
+  removed_reason: string | null;
+  approver_name: string;
+  applier_name: string;
+}
+
+interface RawDiscount {
+  id: string;
+  cart_id: string;
+  amount_pence: number;
+  reason: string;
+  applied_at: string;
+  removed_at: string | null;
+  removed_reason: string | null;
+  approver:
+    | { first_name: string | null; last_name: string | null; name: string | null }
+    | { first_name: string | null; last_name: string | null; name: string | null }[]
+    | null;
+  applier:
+    | { first_name: string | null; last_name: string | null; name: string | null }
+    | { first_name: string | null; last_name: string | null; name: string | null }[]
+    | null;
+  cart:
+    | {
+        visit:
+          | {
+              id: string;
+              patient:
+                | { first_name: string | null; last_name: string | null; name: string | null }
+                | { first_name: string | null; last_name: string | null; name: string | null }[]
+                | null;
+            }
+          | {
+              id: string;
+              patient:
+                | { first_name: string | null; last_name: string | null; name: string | null }
+                | { first_name: string | null; last_name: string | null; name: string | null }[]
+                | null;
+            }[]
+          | null;
+      }
+    | {
+        visit:
+          | {
+              id: string;
+              patient:
+                | { first_name: string | null; last_name: string | null; name: string | null }
+                | { first_name: string | null; last_name: string | null; name: string | null }[]
+                | null;
+            }
+          | {
+              id: string;
+              patient:
+                | { first_name: string | null; last_name: string | null; name: string | null }
+                | { first_name: string | null; last_name: string | null; name: string | null }[]
+                | null;
+            }[]
+          | null;
+      }[]
+    | null;
+}
+
+export interface ApproverLeaderboardEntry {
+  name: string;
+  count: number;
+  total_pence: number;
+}
+
+export interface DiscountsData {
+  rows: DiscountRow[];
+  total_amount_pence: number;
+  active_count: number;
+  removed_count: number;
+  approver_leaderboard: ApproverLeaderboardEntry[];
+}
+
+export function shapeDiscounts(raw: RawDiscount[]): DiscountsData {
+  const rows: DiscountRow[] = [];
+  const approverAgg = new Map<string, ApproverLeaderboardEntry>();
+  let total = 0;
+  let active = 0;
+  let removed = 0;
+
+  for (const d of raw) {
+    const cart = pickOne(d.cart);
+    const visit = pickOne(cart?.visit ?? null);
+    const patient = pickOne(visit?.patient ?? null);
+    const approver = pickOne(d.approver);
+    const applier = pickOne(d.applier);
+    const approverName = composePersonName(approver);
+    const applierName = composePersonName(applier);
+    const patientName = composePersonName(patient);
+
+    rows.push({
+      id: d.id,
+      cart_id: d.cart_id,
+      visit_id: visit?.id ?? null,
+      patient_name: patientName,
+      amount_pence: d.amount_pence,
+      reason: d.reason,
+      applied_at: d.applied_at,
+      removed_at: d.removed_at,
+      removed_reason: d.removed_reason,
+      approver_name: approverName,
+      applier_name: applierName,
+    });
+
+    total += d.amount_pence;
+    if (d.removed_at) removed += 1;
+    else active += 1;
+
+    const key = approverName;
+    const prior = approverAgg.get(key);
+    if (prior) {
+      prior.count += 1;
+      prior.total_pence += d.amount_pence;
+    } else {
+      approverAgg.set(key, { name: approverName, count: 1, total_pence: d.amount_pence });
+    }
+  }
+
+  rows.sort((a, b) => b.applied_at.localeCompare(a.applied_at));
+  const approver_leaderboard = Array.from(approverAgg.values()).sort(
+    (a, b) => b.total_pence - a.total_pence,
+  );
+
+  return {
+    rows,
+    total_amount_pence: total,
+    active_count: active,
+    removed_count: removed,
+    approver_leaderboard,
+  };
+}
+
+interface DiscountsResult {
+  data: DiscountsData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useFinancialsDiscounts(range: DateRange): DiscountsResult {
+  const [data, setData] = useState<DiscountsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const res = await supabase
+          .from('lng_cart_discounts')
+          .select(
+            `id, cart_id, amount_pence, reason, applied_at, removed_at, removed_reason,
+             approver:accounts!approved_by ( first_name, last_name, name ),
+             applier:accounts!applied_by ( first_name, last_name, name ),
+             cart:lng_carts (
+               visit:lng_visits ( id, patient:patients ( first_name, last_name, name ) )
+             )`,
+          )
+          .gte('applied_at', fromIso)
+          .lte('applied_at', toIso);
+        if (cancelled) return;
+        if (res.error) throw new Error(`discounts: ${res.error.message}`);
+        const out = shapeDiscounts((res.data ?? []) as RawDiscount[]);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load discounts';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'financials.discounts',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ── Voids ───────────────────────────────────────────────────────────────────
+
+export interface VoidRow {
+  id: string;
+  cart_id: string;
+  visit_id: string | null;
+  patient_name: string;
+  amount_pence: number;
+  method: string;
+  reason: string;
+  cancelled_at: string;
+  // Time between succeeded_at and cancelled_at, in minutes. Null when
+  // the payment never succeeded (cancelled before capture).
+  minutes_to_void: number | null;
+  taken_by_name: string;
+}
+
+interface RawVoid {
+  id: string;
+  cart_id: string;
+  amount_pence: number;
+  method: string;
+  failure_reason: string | null;
+  succeeded_at: string | null;
+  cancelled_at: string;
+  taken_by:
+    | { first_name: string | null; last_name: string | null; name: string | null }
+    | { first_name: string | null; last_name: string | null; name: string | null }[]
+    | null;
+  cart:
+    | {
+        visit:
+          | { id: string; patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null }
+          | { id: string; patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null }[]
+          | null;
+      }
+    | {
+        visit:
+          | { id: string; patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null }
+          | { id: string; patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null }[]
+          | null;
+      }[]
+    | null;
+}
+
+export interface VoidsData {
+  rows: VoidRow[];
+  total_amount_pence: number;
+  count: number;
+  // Voids in <60 min — useful flag for sus-pattern surfacing.
+  same_day_count: number;
+}
+
+export function shapeVoids(raw: RawVoid[], windowMinutes: number): VoidsData {
+  const rows: VoidRow[] = [];
+  let total = 0;
+  let same_day_count = 0;
+  for (const v of raw) {
+    const cart = pickOne(v.cart);
+    const visit = pickOne(cart?.visit ?? null);
+    const patient = pickOne(visit?.patient ?? null);
+    const taken = pickOne(v.taken_by);
+
+    let minutes_to_void: number | null = null;
+    if (v.succeeded_at) {
+      const ms = new Date(v.cancelled_at).getTime() - new Date(v.succeeded_at).getTime();
+      minutes_to_void = Math.max(0, Math.round(ms / 60000));
+      if (minutes_to_void <= windowMinutes) same_day_count += 1;
+    }
+
+    rows.push({
+      id: v.id,
+      cart_id: v.cart_id,
+      visit_id: visit?.id ?? null,
+      patient_name: composePersonName(patient),
+      amount_pence: v.amount_pence,
+      method: v.method,
+      reason: v.failure_reason ?? '—',
+      cancelled_at: v.cancelled_at,
+      minutes_to_void,
+      taken_by_name: composePersonName(taken),
+    });
+    total += v.amount_pence;
+  }
+  rows.sort((a, b) => b.cancelled_at.localeCompare(a.cancelled_at));
+  return { rows, total_amount_pence: total, count: rows.length, same_day_count };
+}
+
+interface VoidsResult {
+  data: VoidsData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useFinancialsVoids(
+  range: DateRange,
+  windowMinutes: number = 60,
+): VoidsResult {
+  const [data, setData] = useState<VoidsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const res = await supabase
+          .from('lng_payments')
+          .select(
+            `id, cart_id, amount_pence, method, failure_reason, succeeded_at, cancelled_at,
+             taken_by:accounts!taken_by ( first_name, last_name, name ),
+             cart:lng_carts (
+               visit:lng_visits ( id, patient:patients ( first_name, last_name, name ) )
+             )`,
+          )
+          .eq('status', 'cancelled')
+          .gte('cancelled_at', fromIso)
+          .lte('cancelled_at', toIso);
+        if (cancelled) return;
+        if (res.error) throw new Error(`voids: ${res.error.message}`);
+        const out = shapeVoids((res.data ?? []) as RawVoid[], windowMinutes);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load voids';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'financials.voids',
+          severity: 'error',
+          message,
+          context: { range, windowMinutes },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range, windowMinutes]);
+
+  return { data, loading, error };
+}
+
+function composePersonName(
+  p: { first_name: string | null; last_name: string | null; name: string | null } | null,
+): string {
+  if (!p) return '—';
+  const fn = p.first_name?.trim();
+  const ln = p.last_name?.trim();
+  if (fn && ln) return `${fn} ${ln}`;
+  return fn ?? ln ?? p.name?.trim() ?? '—';
+}
+
 function humaniseMethod(method: string): string {
   switch (method) {
     case 'cash':

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateFinancialsOverview, shapeSalesRows, type FinancialsOverviewPayment } from './financials.ts';
+import {
+  aggregateFinancialsOverview,
+  shapeDiscounts,
+  shapeSalesRows,
+  shapeVoids,
+  type FinancialsOverviewPayment,
+} from './financials.ts';
 import { makeCustomRange } from '../dateRange.ts';
 
 const RANGE = makeCustomRange('2026-04-13', '2026-04-15');
@@ -217,5 +223,135 @@ describe('shapeSalesRows', () => {
       { paymentMethod: null, cartStatus: null, arrivalType: null },
     );
     expect(r.rows.map((row) => row.visit_id)).toEqual(['v2', 'v3', 'v1']);
+  });
+});
+
+// ── shapeDiscounts ──────────────────────────────────────────────────────────
+
+describe('shapeDiscounts', () => {
+  const baseDiscount = (over: Record<string, unknown> = {}) => ({
+    id: 'd1',
+    cart_id: 'c1',
+    amount_pence: 5000,
+    reason: 'Compensation',
+    applied_at: '2026-04-15T10:00:00Z',
+    removed_at: null,
+    removed_reason: null,
+    approver: { first_name: 'Sarah', last_name: 'Smith', name: null },
+    applier: { first_name: 'Beth', last_name: 'Mackay', name: null },
+    cart: { visit: { id: 'v1', patient: { first_name: 'Pat', last_name: 'X', name: null } } },
+    ...over,
+  });
+
+  it('returns empty shape for empty input', () => {
+    const r = shapeDiscounts([]);
+    expect(r.rows).toEqual([]);
+    expect(r.total_amount_pence).toBe(0);
+    expect(r.active_count).toBe(0);
+    expect(r.removed_count).toBe(0);
+    expect(r.approver_leaderboard).toEqual([]);
+  });
+
+  it('counts active vs removed', () => {
+    const r = shapeDiscounts([
+      baseDiscount({ id: 'd1' }),
+      baseDiscount({ id: 'd2', removed_at: '2026-04-15T11:00:00Z', removed_reason: 'Cashier mistake' }),
+    ]);
+    expect(r.active_count).toBe(1);
+    expect(r.removed_count).toBe(1);
+  });
+
+  it('builds the approver leaderboard sorted by total', () => {
+    const r = shapeDiscounts([
+      baseDiscount({
+        id: 'd1',
+        amount_pence: 1000,
+        approver: { first_name: 'A', last_name: 'A', name: null },
+      }),
+      baseDiscount({
+        id: 'd2',
+        amount_pence: 5000,
+        approver: { first_name: 'B', last_name: 'B', name: null },
+      }),
+      baseDiscount({
+        id: 'd3',
+        amount_pence: 2000,
+        approver: { first_name: 'A', last_name: 'A', name: null },
+      }),
+    ]);
+    expect(r.approver_leaderboard).toEqual([
+      { name: 'B B', count: 1, total_pence: 5000 },
+      { name: 'A A', count: 2, total_pence: 3000 },
+    ]);
+  });
+
+  it('orders rows newest first', () => {
+    const r = shapeDiscounts([
+      baseDiscount({ id: 'd1', applied_at: '2026-04-13T10:00:00Z' }),
+      baseDiscount({ id: 'd2', applied_at: '2026-04-15T10:00:00Z' }),
+      baseDiscount({ id: 'd3', applied_at: '2026-04-14T10:00:00Z' }),
+    ]);
+    expect(r.rows.map((x) => x.id)).toEqual(['d2', 'd3', 'd1']);
+  });
+});
+
+// ── shapeVoids ──────────────────────────────────────────────────────────────
+
+describe('shapeVoids', () => {
+  const baseVoid = (over: Record<string, unknown> = {}) => ({
+    id: 'p1',
+    cart_id: 'c1',
+    amount_pence: 5000,
+    method: 'card_terminal',
+    failure_reason: 'Customer changed their mind',
+    succeeded_at: '2026-04-15T10:00:00Z',
+    cancelled_at: '2026-04-15T10:30:00Z', // 30 min later
+    taken_by: { first_name: 'Beth', last_name: 'Mackay', name: null },
+    cart: { visit: { id: 'v1', patient: { first_name: 'Pat', last_name: 'X', name: null } } },
+    ...over,
+  });
+
+  it('returns empty shape for empty input', () => {
+    const r = shapeVoids([], 60);
+    expect(r.rows).toEqual([]);
+    expect(r.count).toBe(0);
+    expect(r.same_day_count).toBe(0);
+  });
+
+  it('computes minutes_to_void as the gap from succeeded_at to cancelled_at', () => {
+    const r = shapeVoids([baseVoid({})], 60);
+    expect(r.rows[0]?.minutes_to_void).toBe(30);
+  });
+
+  it('flags same_day_count when within window', () => {
+    const r = shapeVoids(
+      [
+        baseVoid({ id: 'p1', succeeded_at: '2026-04-15T10:00:00Z', cancelled_at: '2026-04-15T10:15:00Z' }),
+        baseVoid({ id: 'p2', succeeded_at: '2026-04-15T10:00:00Z', cancelled_at: '2026-04-15T13:00:00Z' }),
+      ],
+      60,
+    );
+    expect(r.same_day_count).toBe(1);
+  });
+
+  it('returns null minutes_to_void when never succeeded (cancelled pre-capture)', () => {
+    const r = shapeVoids(
+      [baseVoid({ succeeded_at: null, cancelled_at: '2026-04-15T10:30:00Z' })],
+      60,
+    );
+    expect(r.rows[0]?.minutes_to_void).toBeNull();
+    expect(r.same_day_count).toBe(0);
+  });
+
+  it('orders by cancelled_at desc', () => {
+    const r = shapeVoids(
+      [
+        baseVoid({ id: 'p1', cancelled_at: '2026-04-13T10:00:00Z' }),
+        baseVoid({ id: 'p2', cancelled_at: '2026-04-15T10:00:00Z' }),
+        baseVoid({ id: 'p3', cancelled_at: '2026-04-14T10:00:00Z' }),
+      ],
+      60,
+    );
+    expect(r.rows.map((v) => v.id)).toEqual(['p2', 'p3', 'p1']);
   });
 });

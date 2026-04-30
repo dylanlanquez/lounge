@@ -16,6 +16,8 @@ import { type DateRange, defaultDateRange } from '../../lib/dateRange.ts';
 import { Receipt } from 'lucide-react';
 import { OverviewTab } from './OverviewTab.tsx';
 import { SalesTab } from './SalesTab.tsx';
+import { DiscountsTab } from './DiscountsTab.tsx';
+import { VoidsTab } from './VoidsTab.tsx';
 
 type Tab =
   | 'overview'
@@ -113,6 +115,10 @@ export function Financials() {
           <OverviewTab range={range} />
         ) : tab === 'sales' ? (
           <SalesTab range={range} />
+        ) : tab === 'discounts' ? (
+          <DiscountsTab range={range} />
+        ) : tab === 'voids' ? (
+          <VoidsTab range={range} />
         ) : (
           <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
         )}
