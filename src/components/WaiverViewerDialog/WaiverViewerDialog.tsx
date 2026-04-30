@@ -110,6 +110,11 @@ export function WaiverViewerDialog({
   // would re-mount the iframe every render — the imperative
   // contentDocument.write here lets the iframe survive across
   // status flips so the print / download paths can re-read it.
+  // Once the doc is in, measure its actual content height and
+  // notify the parent so the wrapping div can size to match —
+  // otherwise a short doc renders inside a fixed 2-page box and
+  // the receptionist sees a sea of white below the signature.
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
   useEffect(() => {
     if (!open || mode !== 'preview') return;
     const iframe = previewRef.current;
@@ -119,6 +124,22 @@ export function WaiverViewerDialog({
     idoc.open();
     idoc.write(html);
     idoc.close();
+
+    const measure = (): void => {
+      const h = idoc.body?.scrollHeight ?? 0;
+      if (h > 0) setContentHeight(h);
+    };
+    // First measurement after the doc is in. ResizeObserver picks
+    // up subsequent changes (font load, image load, etc.) so the
+    // preview never settles at a stale height.
+    measure();
+    const ro = idoc.defaultView && 'ResizeObserver' in idoc.defaultView
+      ? new (idoc.defaultView as Window & typeof globalThis).ResizeObserver(measure)
+      : null;
+    if (ro && idoc.body) ro.observe(idoc.body);
+    return () => {
+      ro?.disconnect();
+    };
   }, [open, mode, html]);
 
   if (!doc) return null;
@@ -291,7 +312,7 @@ export function WaiverViewerDialog({
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
         <StatusBanner status={status} />
         {mode === 'preview' ? (
-          <PreviewFrame ref={previewRef} mobile={isMobile} />
+          <PreviewFrame ref={previewRef} mobile={isMobile} contentHeight={contentHeight} />
         ) : (
           <Composer
             recipient={recipient}
@@ -377,8 +398,14 @@ const A4_TWO_PAGES_PX = 2244;
 // A4 preview that scales to whatever width the dialog gives it.
 // Uses a ResizeObserver to keep transform scale in lockstep with
 // the container width so the document never crops or letterboxes.
-const PreviewFrame = forwardRef<HTMLIFrameElement, { mobile: boolean }>(
-  function PreviewFrame({ mobile }, ref) {
+// contentHeight (when known) sizes the iframe to the actual
+// document height so a short doc doesn't render inside a giant
+// 2-page-tall box of white space.
+const PreviewFrame = forwardRef<
+  HTMLIFrameElement,
+  { mobile: boolean; contentHeight: number | null }
+>(
+  function PreviewFrame({ mobile, contentHeight }, ref) {
     const wrapRef = useRef<HTMLDivElement | null>(null);
     const [scale, setScale] = useState(0.6);
     useEffect(() => {
@@ -394,7 +421,13 @@ const PreviewFrame = forwardRef<HTMLIFrameElement, { mobile: boolean }>(
       return () => ro.disconnect();
     }, []);
 
-    const scaledHeight = A4_TWO_PAGES_PX * scale;
+    // Iframe height defaults to two A4 pages while we wait for the
+    // first measurement. Once the inner doc reports its actual
+    // scrollHeight, we use that — clamped to two pages so a
+    // pathologically long doc still scrolls inside a sane viewport.
+    const docHeightPx = contentHeight ?? A4_TWO_PAGES_PX;
+    const iframeHeight = Math.min(docHeightPx, A4_TWO_PAGES_PX);
+    const scaledHeight = iframeHeight * scale;
     const visibleHeight = mobile ? '60dvh' : '70dvh';
 
     return (
@@ -430,7 +463,7 @@ const PreviewFrame = forwardRef<HTMLIFrameElement, { mobile: boolean }>(
               top: 0,
               left: 0,
               width: A4_WIDTH_PX,
-              height: A4_TWO_PAGES_PX,
+              height: iframeHeight,
               transform: `scale(${scale})`,
               transformOrigin: 'top left',
               border: 0,
