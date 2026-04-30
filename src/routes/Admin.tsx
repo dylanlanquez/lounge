@@ -28,6 +28,12 @@ import {
   type StripeTerminalLocation,
 } from '../lib/queries/terminalReaders.ts';
 import { setIsManager, useStaff } from '../lib/queries/staff.ts';
+import {
+  reconcileTerminalPayment,
+  useCardPaymentHealth,
+  useStripePaymentsLog,
+  type StripePaymentRow,
+} from '../lib/queries/terminalPayments.ts';
 import { BottomSheet } from '../components/index.ts';
 import {
   useReceptionistSessions,
@@ -79,7 +85,7 @@ import {
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -124,6 +130,7 @@ export function Admin() {
               { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
+              { value: 'payments', label: 'Payments' },
               { value: 'staff', label: 'Staff' },
               { value: 'failures', label: 'Failures' },
               { value: 'testing', label: 'Testing' },
@@ -145,6 +152,8 @@ export function Admin() {
           <ReportsTab />
         ) : tab === 'devices' ? (
           <DevicesTab />
+        ) : tab === 'payments' ? (
+          <PaymentsTab />
         ) : tab === 'staff' ? (
           <StaffTab />
         ) : tab === 'testing' ? (
@@ -1004,6 +1013,331 @@ function DevicesTab() {
       ) : null}
     </div>
   );
+}
+
+function PaymentsTab() {
+  const log = useStripePaymentsLog(50);
+  const health = useCardPaymentHealth();
+  const [reconcilingId, setReconcilingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error' | 'info'; title: string; description?: string } | null>(null);
+
+  const driftCount = log.rows.filter((r) => r.drift || r.orphan).length;
+
+  const onReconcile = async (paymentId: string) => {
+    setReconcilingId(paymentId);
+    setToast(null);
+    try {
+      const result = await reconcileTerminalPayment(paymentId);
+      setToast({
+        tone: 'success',
+        title: 'Reconciled',
+        description: `Stripe says ${result.stripe_status}. Local now ${result.local_status ?? 'unchanged'}.`,
+      });
+      log.refresh();
+      health.refresh();
+    } catch (e) {
+      setToast({ tone: 'error', title: 'Reconcile failed', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setReconcilingId(null);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <Card padding="lg">
+        <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+          Card payment health
+        </h2>
+        <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          Two checks. Webhook delivery shows when Stripe last reached the terminal-webhook function. Status reconciler is a poll-based fallback that the till uses to flip the screen if a webhook is delayed or dropped.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: theme.space[3] }}>
+          <HealthDot
+            label="Webhook delivery"
+            tone={health.webhookState}
+            value={
+              health.webhookLastSeenISO
+                ? `Last seen ${formatRelative(health.webhookLastSeenISO)}`
+                : 'No event received yet'
+            }
+          />
+          <HealthDot
+            label="Status reconciler"
+            tone={health.reconcilerReachable === true ? 'green' : health.reconcilerReachable === false ? 'red' : 'unknown'}
+            value={
+              health.reconcilerReachable === true
+                ? 'Reachable'
+                : health.reconcilerReachable === false
+                  ? 'Unreachable'
+                  : 'Probing…'
+            }
+          />
+        </div>
+        <div style={{ marginTop: theme.space[4], display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="tertiary" size="sm" onClick={health.refresh}>
+            Refresh
+          </Button>
+        </div>
+      </Card>
+
+      <Card padding="lg">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3], flexWrap: 'wrap' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+              Recent card payments
+            </h2>
+            <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              Pulled live from Stripe. Drift means Stripe and Lounge disagree on status. Orphan means Stripe has the payment but no Lounge row.
+              {driftCount > 0 ? ` ${driftCount} need attention.` : ''}
+            </p>
+          </div>
+          <Button variant="tertiary" size="sm" onClick={log.refresh}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <RefreshCw size={14} aria-hidden />
+              Refresh
+            </span>
+          </Button>
+        </div>
+
+        <div style={{ marginTop: theme.space[5], display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          {log.error ? (
+            <p style={{ color: theme.color.alert, margin: 0, fontSize: theme.type.size.sm }}>{log.error}</p>
+          ) : log.loading ? (
+            <Skeleton height={80} />
+          ) : log.rows.length === 0 ? (
+            <EmptyState
+              icon={<CreditCard size={20} />}
+              title="No payments yet"
+              description="Stripe hasn't recorded any payment intents on this account."
+            />
+          ) : (
+            log.rows.map((row) => (
+              <PaymentLogRow
+                key={row.stripe.id}
+                row={row}
+                reconciling={reconcilingId === row.local?.payment_id}
+                onReconcile={onReconcile}
+              />
+            ))
+          )}
+        </div>
+      </Card>
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HealthDot({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone: 'green' | 'amber' | 'red' | 'unknown';
+  value: string;
+}) {
+  const dotColor =
+    tone === 'green'
+      ? theme.color.accent
+      : tone === 'amber'
+        ? theme.color.warn
+        : tone === 'red'
+          ? theme.color.alert
+          : theme.color.inkSubtle;
+  return (
+    <div
+      style={{
+        padding: theme.space[3],
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.bg,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[1],
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          color: theme.color.inkMuted,
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        {label}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+        <span
+          aria-hidden
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            background: dotColor,
+            flexShrink: 0,
+            boxShadow: tone === 'green' ? `0 0 0 4px ${dotColor}22` : undefined,
+          }}
+        />
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
+          {value}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PaymentLogRow({
+  row,
+  reconciling,
+  onReconcile,
+}: {
+  row: StripePaymentRow;
+  reconciling: boolean;
+  onReconcile: (paymentId: string) => void;
+}) {
+  const stateLabel = humaniseStripeStatus(row.stripe.status);
+  const localLabel = row.local?.status ? humaniseLocalStatus(row.local.status) : 'Not in Lounge';
+  const tone =
+    row.drift || row.orphan
+      ? 'no_show'
+      : row.stripe.status === 'succeeded' || row.stripe.status === 'requires_capture'
+        ? 'arrived'
+        : row.stripe.status === 'canceled'
+          ? 'cancelled'
+          : 'pending';
+  return (
+    <div
+      style={{
+        padding: theme.space[4],
+        borderRadius: theme.radius.input,
+        border: `1px solid ${row.drift || row.orphan ? theme.color.alert : theme.color.border}`,
+        background: theme.color.bg,
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) auto',
+        gap: theme.space[4],
+        alignItems: 'center',
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: theme.space[3], alignItems: 'center', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              fontVariantNumeric: 'tabular-nums',
+              color: theme.color.ink,
+            }}
+          >
+            {formatPence(row.stripe.amount_pence)}
+          </span>
+          <StatusPill tone={tone} size="sm">
+            Stripe: {stateLabel}
+          </StatusPill>
+          <StatusPill tone={row.drift || row.orphan ? 'no_show' : 'arrived'} size="sm">
+            Lounge: {localLabel}
+          </StatusPill>
+          {row.drift ? <StatusPill tone="no_show" size="sm">Drift</StatusPill> : null}
+          {row.orphan ? <StatusPill tone="no_show" size="sm">Orphan</StatusPill> : null}
+        </div>
+        <div style={{ display: 'flex', gap: theme.space[3], alignItems: 'center', flexWrap: 'wrap', color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatRelative(new Date(row.stripe.created * 1000).toISOString())}</span>
+          {row.local?.patient_name ? <span>· {row.local.patient_name}</span> : null}
+          {row.local?.appointment_ref ? <span>· {row.local.appointment_ref}</span> : null}
+          {row.local?.payment_journey && row.local.payment_journey !== 'standard' ? (
+            <span>· {row.local.payment_journey}</span>
+          ) : null}
+        </div>
+        <code
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            fontVariantNumeric: 'tabular-nums',
+            wordBreak: 'break-all',
+          }}
+        >
+          {row.stripe.id}
+        </code>
+        {row.stripe.last_payment_error ? (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
+            {row.stripe.last_payment_error}
+          </p>
+        ) : null}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], alignItems: 'flex-end' }}>
+        {row.local?.payment_id ? (
+          <Button
+            variant={row.drift ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => onReconcile(row.local!.payment_id!)}
+            loading={reconciling}
+          >
+            Reconcile
+          </Button>
+        ) : (
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle, textAlign: 'right' }}>
+            No local row to reconcile
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function humaniseStripeStatus(s: string): string {
+  switch (s) {
+    case 'succeeded':
+      return 'Succeeded';
+    case 'requires_capture':
+      return 'Auth (capture pending)';
+    case 'canceled':
+      return 'Cancelled';
+    case 'processing':
+      return 'Processing';
+    case 'requires_action':
+      return 'Customer action needed';
+    case 'requires_payment_method':
+      return 'Awaiting tap';
+    case 'requires_confirmation':
+      return 'Awaiting confirmation';
+    default:
+      return s;
+  }
+}
+
+function humaniseLocalStatus(s: string): string {
+  switch (s) {
+    case 'succeeded':
+      return 'Succeeded';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'failed':
+      return 'Failed';
+    case 'pending':
+      return 'Pending';
+    case 'processing':
+      return 'Processing';
+    default:
+      return s;
+  }
+}
+
+function formatRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return iso;
+  const sec = Math.round(ms / 1000);
+  if (sec < 45) return 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} h ago`;
+  const days = Math.round(hr / 24);
+  return `${days} d ago`;
 }
 
 function StaffTab() {
