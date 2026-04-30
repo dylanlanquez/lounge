@@ -211,15 +211,17 @@ export function PatientEditModal({
             Cancel
           </Button>
           <Button variant="primary" onClick={handleSave} loading={saving}>
-            {showProfile && isLinked ? 'Save and update online account' : 'Save changes'}
+            {isLinked ? 'Save and update online account' : 'Save changes'}
           </Button>
         </div>
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-        {/* The Shopify-link warning is only relevant when the user
-            is editing identity — clinical fields don't sync online. */}
-        {showProfile && isLinked ? <LinkedAccountWarning /> : null}
+        {/* Both Profile and Care edits flow through to the linked
+            venneir.com / One Click account when one exists, so
+            the warning surfaces on either section. The button
+            copy in the footer above mirrors the same condition. */}
+        {isLinked ? <LinkedAccountWarning /> : null}
 
         {showProfile ? (
           <>
@@ -265,6 +267,17 @@ export function PatientEditModal({
               />
             </div>
 
+            {/* Subtle hairline + breathing room separates Identity
+                from Delivery address so the form reads as two
+                distinct fieldsets rather than one long stack. */}
+            <div
+              aria-hidden
+              style={{
+                height: 1,
+                background: theme.color.border,
+                margin: `${theme.space[3]}px 0`,
+              }}
+            />
             <SectionHeader title="Delivery address" subtitle={isLinked ? 'Used for online orders too' : 'Stored at the lab only'} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
               <Input
@@ -299,7 +312,10 @@ export function PatientEditModal({
 
         {showCare ? (
           <>
-            <SectionHeader title="Care details" subtitle="Stored at the lab. Not shared with the customer's online account." />
+            <SectionHeader
+              title="Care details"
+              subtitle={isLinked ? 'Synced to venneir.com and One Click' : 'Stored at the lab only'}
+            />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
               <Input
                 label="Emergency contact name"
