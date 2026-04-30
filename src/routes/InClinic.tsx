@@ -410,16 +410,49 @@ function ActiveVisitCard({
         />
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3], marginTop: theme.space[5] }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
-          <WaiverPill status={visit.waiver_status} />
-          <PaymentPill done={visit.payment_done} status={visit.paid_status} />
-        </div>
+      {/* Pills row — waiver + payment status. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          flexWrap: 'wrap',
+          marginTop: theme.space[5],
+        }}
+      >
+        <WaiverPill status={visit.waiver_status} />
+        <PaymentPill done={visit.payment_done} status={visit.paid_status} />
+      </div>
+
+      {/* Bottom row — JB on the left, balance on the right. JB renders
+          empty when not yet allocated so the balance keeps its right
+          edge. Balance dims to inkSubtle when unpaid (still on the
+          card, but visually quieter than name/descriptor) and uses
+          accent green when settled to mirror the Paid pill. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          marginTop: theme.space[4],
+        }}
+      >
         <span
           style={{
             fontSize: theme.type.size.base,
             fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
+            color: visit.jb_ref ? theme.color.ink : theme.color.inkSubtle,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {visit.jb_ref ? `JB${visit.jb_ref}` : '—'}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: visit.payment_done ? theme.color.accent : theme.color.inkSubtle,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
