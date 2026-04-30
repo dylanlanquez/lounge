@@ -51,6 +51,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
+  completeVisit,
   endVisitEarly,
   formatVisitCrumb,
   removeCartLineWithReason,
@@ -175,6 +176,16 @@ export function VisitDetail() {
   const [unsuitNote, setUnsuitNote] = useState('');
   const [unsuitBusy, setUnsuitBusy] = useState(false);
   const [unsuitError, setUnsuitError] = useState<string | null>(null);
+
+  // Complete visit sheet — fires when staff hits the primary CTA on
+  // a free visit or paid-cart visit. Asks the fulfilment question
+  // (in person vs shipping) and writes the choice onto the visit row
+  // via completeVisit. Shipping branch surfaces a follow-up notice;
+  // the actual dispatch flow is a separate slice.
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [completeMethod, setCompleteMethod] = useState<'in_person' | 'shipping'>('in_person');
+  const [completeBusy, setCompleteBusy] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
   // Drives the unsuitable header line + reverse-flow toast wording.
   // Re-fetched whenever the visit refreshes.
@@ -398,6 +409,13 @@ export function VisitDetail() {
   // the over-deposit case so we never produce a negative charge here.
   const total = Math.max(0, subtotal - discount - depositPence);
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
+  // Primary action toggles between Take payment and Complete visit
+  // based on whether there's a balance to collect. Free visits and
+  // already-paid carts skip the till entirely; staff completes the
+  // visit straight from VisitDetail, answering the in-person-vs-
+  // shipping question.
+  const balanceDuePence = total;
+  const noBalanceToCollect = balanceDuePence <= 0 || cart?.status === 'paid';
   // Visit terminated by an unsuitability finding. Same as cartLocked
   // but specifically lit when the lock is reversible (admin can flip
   // back via the in-app reverse button), unlike paid which is final.
@@ -458,6 +476,34 @@ export function VisitDetail() {
       setError(e instanceof Error ? e.message : 'Could not reverse');
     } finally {
       setReverseBusy(false);
+    }
+  };
+
+  const openCompleteVisit = () => {
+    setCompleteError(null);
+    setCompleteMethod('in_person');
+    setCompleteOpen(true);
+  };
+
+  const submitCompleteVisit = async () => {
+    if (!visit || !patient) return;
+    setCompleteBusy(true);
+    setCompleteError(null);
+    try {
+      await completeVisit({
+        patient_id: patient.id,
+        visit_id: visit.id,
+        appointment_id: visit.appointment_id,
+        walk_in_id: visit.walk_in_id,
+        fulfilment_method: completeMethod,
+        total_pence: total,
+      });
+      setCompleteOpen(false);
+      refresh();
+    } catch (e) {
+      setCompleteError(e instanceof Error ? e.message : 'Could not complete');
+    } finally {
+      setCompleteBusy(false);
     }
   };
 
@@ -985,27 +1031,39 @@ export function VisitDetail() {
                   </span>
                 </Button>
               ) : items.length > 0 ? (
-                <Button
-                  variant="primary"
-                  showArrow
-                  disabled={cartLocked}
-                  onClick={() =>
-                    navigate(`/visit/${visit.id}/pay`, {
-                      state: {
-                        from: 'visit',
-                        visitId: visit.id,
-                        visitOpenedAt: visit.opened_at,
-                        // Pass the visit's own entry through so
-                        // Pay's breadcrumb can render the full
-                        // chain and the visit-link can pop back
-                        // with the right state.
-                        visitEntry: location.state,
-                      },
-                    })
-                  }
-                >
-                  Take payment
-                </Button>
+                noBalanceToCollect ? (
+                  // Free visit, fully covered by deposit, or cart
+                  // already paid → there's no till step. Primary
+                  // becomes Complete visit; the sheet asks the
+                  // in-person-vs-shipping question.
+                  <Button variant="primary" onClick={openCompleteVisit}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <CheckCircle size={16} aria-hidden />
+                      Complete visit
+                    </span>
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    showArrow
+                    onClick={() =>
+                      navigate(`/visit/${visit.id}/pay`, {
+                        state: {
+                          from: 'visit',
+                          visitId: visit.id,
+                          visitOpenedAt: visit.opened_at,
+                          // Pass the visit's own entry through so
+                          // Pay's breadcrumb can render the full
+                          // chain and the visit-link can pop back
+                          // with the right state.
+                          visitEntry: location.state,
+                        },
+                      })
+                    }
+                  >
+                    Take payment
+                  </Button>
+                )
               ) : null}
             </div>
 
@@ -1572,6 +1630,122 @@ export function VisitDetail() {
               }}
             >
               {unsuitError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      {/* Complete visit sheet — fired by the primary CTA when the
+          balance is fully settled. Asks the fulfilment question and
+          writes the choice to lng_visits.fulfilment_method via
+          completeVisit. The shipping branch is just stored for now;
+          the actual dispatch flow is a separate slice. */}
+      <BottomSheet
+        open={completeOpen}
+        onClose={() => !completeBusy && setCompleteOpen(false)}
+        dismissable={!completeBusy}
+        title="Complete visit"
+        description={
+          completeMethod === 'shipping'
+            ? 'The work will be shipped. The dispatch flow opens after this slice lands; for now the choice is recorded on the visit.'
+            : 'Confirm the work was passed to the patient on the day. The visit closes and the job box is freed.'
+        }
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button variant="secondary" onClick={() => setCompleteOpen(false)} disabled={completeBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Cancel
+              </span>
+            </Button>
+            <Button variant="primary" onClick={submitCompleteVisit} loading={completeBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <CheckCircle size={16} aria-hidden /> Complete visit
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              How is the work being handed off? <span style={{ color: theme.color.alert }}>*</span>
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {([
+                { value: 'in_person', label: 'Passed to patient', sub: 'Patient is taking the work today.' },
+                { value: 'shipping', label: 'To be shipped', sub: 'Work is being dispatched. We move to the shipping flow next.' },
+              ] as const).map((opt) => {
+                const isSel = completeMethod === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setCompleteMethod(opt.value)}
+                    style={{
+                      appearance: 'none',
+                      width: '100%',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      padding: theme.space[3],
+                      borderRadius: theme.radius.input,
+                      border: `1.5px solid ${isSel ? theme.color.ink : theme.color.border}`,
+                      background: isSel ? 'rgba(14, 20, 20, 0.03)' : theme.color.surface,
+                      color: theme.color.ink,
+                      fontFamily: 'inherit',
+                      transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: theme.type.size.base,
+                        fontWeight: isSel ? theme.type.weight.semibold : theme.type.weight.medium,
+                      }}
+                    >
+                      {opt.label}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: theme.type.size.sm,
+                        color: theme.color.inkMuted,
+                        fontWeight: theme.type.weight.regular,
+                      }}
+                    >
+                      {opt.sub}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {completeError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {completeError}
             </p>
           ) : null}
         </div>

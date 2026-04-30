@@ -753,6 +753,78 @@ export interface ReverseUnsuitabilityInput {
   visit_id: string;
 }
 
+// How the work was handed off at completion.
+export type VisitFulfilmentMethod = 'in_person' | 'shipping';
+
+export interface CompleteVisitInput {
+  patient_id: string;
+  visit_id: string;
+  appointment_id: string | null;
+  walk_in_id: string | null;
+  fulfilment_method: VisitFulfilmentMethod;
+  // Total in pence — used purely for the timeline event payload so
+  // the closed event reads "£298.00" without a join back to the
+  // cart roll-up.
+  total_pence?: number;
+}
+
+// Explicit visit completion. Until now Pay auto-completed the visit
+// when staff sent the receipt; that conflated payment with hand-off
+// and skipped the in-person-vs-shipping question. Now staff has to
+// click Complete visit on VisitDetail and answer the fulfilment
+// question, which lands as fulfilment_method on the visit row for a
+// future shipping flow to pick up.
+//
+// Side effects:
+//   - flips lng_visits.status='complete' + stamps closed_at
+//   - records fulfilment_method (in_person | shipping)
+//   - frees the job box on the appointment / walk_in source so the
+//     box becomes available for the next booking (the visit's own
+//     jb_ref column is captured at insert and stays as audit)
+//   - writes a patient_events 'visit_closed' row with the staff
+//     account and the fulfilment choice on the payload
+export async function completeVisit(input: CompleteVisitInput): Promise<void> {
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+
+  const { error: visitErr } = await supabase
+    .from('lng_visits')
+    .update({
+      status: 'complete',
+      closed_at: new Date().toISOString(),
+      fulfilment_method: input.fulfilment_method,
+    })
+    .eq('id', input.visit_id);
+  if (visitErr) throw new Error(visitErr.message);
+
+  // Free the JB on the source row. The visit's own captured jb_ref
+  // is immutable and survives this clearing, so the timeline +
+  // history stay intact.
+  if (input.appointment_id) {
+    await supabase
+      .from('lng_appointments')
+      .update({ jb_ref: null })
+      .eq('id', input.appointment_id);
+  }
+  if (input.walk_in_id) {
+    await supabase
+      .from('lng_walk_ins')
+      .update({ jb_ref: null })
+      .eq('id', input.walk_in_id);
+  }
+
+  await supabase.from('patient_events').insert({
+    patient_id: input.patient_id,
+    event_type: 'visit_closed',
+    actor_account_id: (accountId as string | null) ?? null,
+    payload: {
+      visit_id: input.visit_id,
+      total_pence: input.total_pence ?? null,
+      fulfilment_method: input.fulfilment_method,
+      staff_account_id: (accountId as string | null) ?? null,
+    },
+  });
+}
+
 // Single entry point for the cart-line Remove sheet. Handles all
 // three reason categories in one call: soft-deletes the line,
 // writes the right audit row(s), and decides whether the visit
