@@ -33,6 +33,11 @@ export interface WaiverDocItem {
   shade: string | null;
   thickness: string | null;
   category: 'denture' | 'appliance';
+  // Per-instance price in pence (unit_price_pence on lng_cart_items
+  // already has the upgrade-rolled-in value, so this is what the
+  // patient was charged). The renderer also derives the line total
+  // = unitPricePence × qty.
+  unitPricePence: number;
 }
 
 export interface WaiverDocSection {
@@ -51,10 +56,11 @@ export interface WaiverDocPaymentSummary {
 }
 
 export interface WaiverDocInput {
-  lapRef: string;
+  lapRef: string;                     // e.g. LAP-00003
+  visitType: string | null;           // human label, e.g. "In-person impression appointment"
   patient: {
     fullName: string;
-    dateOfBirth: string | null;     // ISO YYYY-MM-DD
+    dateOfBirth: string | null;       // ISO YYYY-MM-DD
     sex: string | null;
     email: string | null;
     phone: string | null;
@@ -63,19 +69,33 @@ export interface WaiverDocInput {
     city: string | null;
     postcode: string | null;
   };
-  visitOpenedAt: string;             // ISO
-  staffName: string | null;
-  jobBox: string | null;             // already formatted "JB55"
+  visitOpenedAt: string;              // ISO
+  // Receptionist who attended the appointment. Displayed on the
+  // signature card as "Witnessed by". Patients do not need a
+  // generic "Staff" field on the visit summary, so it lives only
+  // on the signature attribution.
+  witnessName: string | null;
   items: WaiverDocItem[];
   notes: string | null;
   sections: WaiverDocSection[];
   // Full SVG document string from lng_waiver_signatures.signature_svg
   // (e.g. `<svg xmlns="..." viewBox="0 0 600 180">...<path .../></svg>`).
   // Embedded verbatim into the page so the strokes render at their
-  // captured size; sized via the wrapping .sig-pad container.
+  // captured size; sized visually via the wrapping .sig-card container.
   signatureSvg: string | null;
   payment: WaiverDocPaymentSummary | null;
-  logoUrl: string;                   // origin + /black-venneir-logo.png
+  // Branding threaded as input rather than hardcoded so a future
+  // second site or staging deploy can override it without forking
+  // the renderer. accentColor controls every colour accent in the
+  // document.
+  brand: {
+    name: string;                     // e.g. "Venneir Lounge"
+    contactEmail: string;
+    vatNumber: string | null;
+    logoUrl: string;                  // origin + asset path
+    addressLine: string | null;       // single-line address, optional
+  };
+  accentColor: string;                // e.g. "#1F4D3A"
 }
 
 const MUTED_DASH = '<span style="font-weight:400;color:#999">—</span>';
@@ -128,275 +148,348 @@ function formatGbp(pence: number): string {
   }).format(pence / 100);
 }
 
-function renderItemsTable(rows: WaiverDocItem[]): string {
-  if (rows.length === 0) return '';
-  const showRepairType = rows.some((i) => i.repairType);
-  const showThickness = rows.some((i) => i.thickness);
-  const showShade = rows.some((i) => i.shade);
-  const th = (lbl: string, align: 'left' | 'center' = 'left'): string =>
-    `<th${align === 'center' ? ' class="tc"' : ''}>${lbl}</th>`;
-  const td = (val: string, classes: string[] = []): string => {
-    const cls = classes.length ? ` class="${classes.join(' ')}"` : '';
-    return `<td${cls}>${val}</td>`;
-  };
-  return `<table class="items">
-    <thead><tr>
-      ${th('Device')}${showRepairType ? th('Repair Type') : ''}${th('Arch', 'center')}${th('Qty', 'center')}${showThickness ? th('Thickness', 'center') : ''}${showShade ? th('Shade', 'center') : ''}
-    </tr></thead>
-    <tbody>${rows
-      .map(
-        (i) => `<tr>
-      ${td(i.device ? escapeHtml(i.device) : MUTED_DASH, ['dev'])}
-      ${showRepairType ? td(i.repairType ? escapeHtml(i.repairType) : MUTED_DASH, ['dev']) : ''}
-      ${td(archLabel(i.arch) || MUTED_DASH, ['tc'])}
-      ${td(i.qty > 0 ? String(i.qty) : MUTED_DASH, ['tc'])}
-      ${showThickness ? td(i.thickness ? escapeHtml(i.thickness) : MUTED_DASH, ['tc']) : ''}
-      ${showShade ? td(i.shade ? escapeHtml(i.shade) : MUTED_DASH, ['tc']) : ''}
-    </tr>`,
-      )
-      .join('')}</tbody>
-  </table>`;
+// Render one item row. Description is the catalogue's human label
+// (repairType for denture services, device for appliances) and the
+// sub-line carries arch / shade / thickness as a single muted line
+// — the same rhythm a Stripe receipt uses. Returns the inner <tr>.
+function renderItemRow(item: WaiverDocItem): string {
+  const description = item.category === 'denture' && item.repairType
+    ? item.repairType
+    : item.device || '';
+  const subParts: string[] = [];
+  if (item.arch) subParts.push(archLabel(item.arch));
+  if (item.shade) subParts.push(`Shade ${item.shade}`);
+  if (item.thickness) subParts.push(item.thickness);
+  const sub = subParts.length > 0
+    ? `<span class="sub">${escapeHtml(subParts.join(' · '))}</span>`
+    : '';
+  const unit = formatGbp(item.unitPricePence);
+  const lineTotal = formatGbp(item.unitPricePence * Math.max(1, item.qty));
+  return `<tr>
+    <td><span class="desc">${escapeHtml(description) || MUTED_DASH}</span>${sub}</td>
+    <td class="qty center">${item.qty}</td>
+    <td class="num">${unit}</td>
+    <td class="num">${lineTotal}</td>
+  </tr>`;
 }
 
-// Two-page A4 layout. The waiver content does not compress cleanly
-// onto a single sheet (full terms text + signature + the rest of the
-// metadata never fit at a comfortable reading size), so page 1
-// carries the operational data (customer + items + payment) and
-// page 2 carries the legal block (terms + signature). This frees
-// every section to breathe at a properly readable type size.
+// Items section. When the visit has both denture and appliance lines
+// the sub-headers (".items-subhead") split them into two sections
+// inside the same table — same posture Checkpoint and the LWO use,
+// adapted to the patient-facing typography.
+function renderItemsTable(rows: WaiverDocItem[]): string {
+  if (rows.length === 0) {
+    return `<p style="font-size:11px;color:var(--muted);margin:6px 0">No billable items recorded for this visit.</p>`;
+  }
+  const denture = rows.filter((r) => r.category === 'denture');
+  const appliance = rows.filter((r) => r.category === 'appliance');
+  const both = denture.length > 0 && appliance.length > 0;
+  const tableHead = `<colgroup>
+    <col />
+    <col style="width:60px" />
+    <col style="width:100px" />
+    <col style="width:110px" />
+  </colgroup>
+  <thead><tr>
+    <th>Description</th>
+    <th class="center">Qty</th>
+    <th class="num">Each</th>
+    <th class="num">Amount</th>
+  </tr></thead>`;
+  const body = both
+    ? `<tbody>
+        <tr><td colspan="4" class="items-subhead">Denture services</td></tr>
+        ${denture.map(renderItemRow).join('')}
+        <tr><td colspan="4" class="items-subhead">Appliances</td></tr>
+        ${appliance.map(renderItemRow).join('')}
+      </tbody>`
+    : `<tbody>${rows.map(renderItemRow).join('')}</tbody>`;
+  return `<table class="items">${tableHead}${body}</table>`;
+}
+
+// Two-page A4 layout, designed for the patient's pocket folder
+// rather than a lab job sheet. Aesthetic targets: Linear / Stripe /
+// Notion-grade typography; one quiet brand accent (Venneir's deep
+// emerald) used sparingly to anchor the document; generous
+// whitespace; signature treated as a feature, not metadata.
 //
-// Page break is forced on `.page-2` via `break-before: always` so
-// the terms always start at the top of a fresh sheet, regardless of
-// how short page 1 happens to be on a given visit.
-const A4_CSS = `
+// Canonical width: 794px (A4 @ 96dpi). The on-screen preview frame
+// renders at this width and the dialog scales it via transform to
+// fit, so what's previewed matches what's printed exactly.
+const A4_CSS = (accent: string): string => `
   *{box-sizing:border-box;margin:0;padding:0}
-  @page{size:A4;margin:18mm 18mm}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;color:#1a1a1a;line-height:1.5;padding:0;background:#fff}
+  :root{--accent:${accent};--ink:#0E1414;--muted:rgba(14,20,20,0.62);--subtle:rgba(14,20,20,0.42);--rule:rgba(14,20,20,0.08);--soft:rgba(14,20,20,0.04);--surface:#FFFFFF}
+  html,body{background:var(--surface);color:var(--ink)}
+  @page{size:A4;margin:0}
 
-  .page{position:relative}
-  .page-2{break-before:always;page-break-before:always}
+  /* Each .page is exactly one A4 sheet. The fixed page size means
+     the print engine can never paginate within a page even when
+     screen rendering happens at smaller window sizes — the
+     transform-scale wrapper in the preview iframe respects these
+     dimensions verbatim. */
+  body{font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10.5px;line-height:1.55;font-feature-settings:'ss01','cv11';-webkit-font-smoothing:antialiased}
+  .page{width:210mm;height:297mm;padding:18mm 20mm;position:relative;display:flex;flex-direction:column;page-break-after:always;break-after:page}
+  .page:last-child{page-break-after:auto;break-after:auto}
 
-  /* Page header: large logo on the left, big LAP ref on the right.
-     A 1.5px rule under the row anchors the title visually. */
-  .header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px;padding-bottom:12px;border-bottom:1.5px solid #1a1a1a}
-  .header img{height:28px;display:block}
-  .header-title{font-size:14px;font-weight:700;color:#1a1a1a;letter-spacing:.01em;margin-top:6px}
-  .header-sub{font-size:11px;color:#666;margin-top:2px}
-  .header-right{text-align:right}
-  .ref{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:18px;font-weight:700;letter-spacing:.04em}
-  .ref-sub{font-size:10px;color:#666;margin-top:2px}
+  /* ── Letterhead ───────────────────────────────────────────────── */
+  .lh{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  .lh-brand{display:flex;flex-direction:column;gap:4px}
+  .lh-brand .mark{display:flex;align-items:center;gap:10px}
+  .lh-brand img{height:22px;display:block}
+  .lh-brand .wordmark{font-size:18px;font-weight:700;letter-spacing:-.01em;color:var(--ink)}
+  .lh-brand .accent-rule{width:36px;height:2px;background:var(--accent);margin-top:6px;border-radius:2px}
+  .lh-brand .meta-line{font-size:9.5px;color:var(--muted);margin-top:6px;letter-spacing:.01em}
+  .lh-ref{text-align:right}
+  .lh-ref .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--subtle);font-weight:600;margin-bottom:4px}
+  .lh-ref .value{font-family:'SF Mono','Roboto Mono',Menlo,Consolas,monospace;font-size:15px;font-weight:700;letter-spacing:.06em;color:var(--accent)}
+  .lh-ref .sub{font-size:9.5px;color:var(--muted);margin-top:3px}
 
-  /* Section heading: small uppercase eyebrow with a hairline above
-     for visual separation. Plays nicely on both pages. */
-  h2{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:16px 0 10px;color:#444;padding-top:12px;border-top:1px solid #e6e6e6;break-after:avoid}
-  h2:first-of-type{border-top:none;padding-top:0;margin-top:0}
+  /* ── Page hero ───────────────────────────────────────────────── */
+  .hero{margin:32px 0 24px;padding-top:20px;border-top:1px solid var(--rule)}
+  .hero h1{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.15;color:var(--ink)}
+  .hero .deck{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.55}
+  .hero .deck strong{color:var(--ink);font-weight:600}
 
-  /* Two-up grids for the customer + visit + payment metadata.
-     gap:6px row / 24px column gives field labels room to read. */
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;margin-bottom:8px}
-  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 24px;margin-bottom:8px}
-  .fl{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#999;font-weight:600;margin-bottom:2px}
-  .fv{font-size:12px;font-weight:500;color:#1a1a1a}
+  /* ── Section heading ─────────────────────────────────────────── */
+  .sec{margin-top:24px}
+  .sec h2{font-size:8.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--subtle);margin-bottom:10px;break-after:avoid}
 
-  /* Items table at a reading-friendly type size. Every cell has
-     real padding so the rows don't read as one block. */
-  table.items{width:100%;border-collapse:collapse;margin:4px 0 0;border:1px solid #e6e6e6;border-radius:4px;overflow:hidden}
-  table.items th{padding:7px 12px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#777;font-weight:700;text-align:left;background:#fafafa;border-bottom:1px solid #e6e6e6}
-  table.items th.tc{text-align:center}
-  table.items td{padding:9px 12px;font-size:11px;border-bottom:1px solid #f0f0f0}
+  /* ── Field grids ─────────────────────────────────────────────── */
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:14px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);column-gap:32px;row-gap:14px}
+  .field .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--subtle);font-weight:600;margin-bottom:3px}
+  .field .value{font-size:11.5px;color:var(--ink);font-weight:500;line-height:1.4}
+
+  /* ── Items table (Stripe-receipt feel) ───────────────────────── */
+  table.items{width:100%;border-collapse:collapse;margin-top:4px}
+  table.items th{font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--subtle);font-weight:600;text-align:left;padding:0 0 8px;border-bottom:1px solid var(--rule)}
+  table.items th.num,table.items td.num{text-align:right;font-variant-numeric:tabular-nums}
+  table.items th.center,table.items td.center{text-align:center}
+  table.items td{padding:11px 0;border-bottom:1px solid var(--rule);font-size:11.5px;color:var(--ink);vertical-align:top}
   table.items tr:last-child td{border-bottom:none}
-  table.items td.tc{text-align:center}
-  table.items td.dev{font-weight:600}
+  table.items .desc{font-weight:600}
+  table.items .sub{display:block;font-size:10px;color:var(--muted);font-weight:400;margin-top:2px;letter-spacing:.01em}
+  table.items td.qty{color:var(--muted)}
 
-  .sub-h{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#1a1a1a;margin:14px 0 6px}
+  /* Section subheader inside items (Denture / Appliances) — used
+     only when both categories are present in the same visit. */
+  .items-subhead{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);padding:18px 0 6px;border-bottom:1px solid var(--rule)}
+  .items-subhead:first-child{padding-top:0}
 
-  /* Status pill on the payment row. */
-  .status{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700}
-  .status-green{background:#dcfce7;color:#15803d}
-  .status-orange{background:#fff7ed;color:#c2410c}
-  .status-grey{background:#f3f4f6;color:#4b5563}
+  /* ── Totals strip ────────────────────────────────────────────── */
+  .totals{margin-top:18px;padding-top:14px;border-top:2px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline}
+  .totals .label{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--ink);font-weight:600}
+  .totals .value{font-size:18px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
 
-  /* Page 2: terms + signature. Single-column terms at 11px reads
-     comfortably for the patient. Numbered list on the left margin. */
-  .terms-intro{font-size:11px;color:#333;margin:6px 0 12px;line-height:1.55}
-  ol.terms{margin:0;padding-left:24px;list-style-position:outside}
-  ol.terms li{margin-bottom:8px;font-size:11px;line-height:1.55;color:#222;break-inside:avoid}
+  /* ── Status pill ─────────────────────────────────────────────── */
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:9.5px;font-weight:600;letter-spacing:.04em}
+  .pill-paid{background:var(--accent);color:#fff}
+  .pill-pending{background:rgba(179,104,21,.14);color:#7A4A0F}
+  .pill-failed{background:rgba(184,58,42,.12);color:#8A2918}
 
-  .sub-section{margin-top:14px;break-before:auto}
-  .sub-section h3{font-size:11px;font-weight:700;color:#1a1a1a;letter-spacing:.02em;margin:0 0 6px}
+  /* ── Notes block ─────────────────────────────────────────────── */
+  .notes{margin-top:18px;padding:14px 16px;background:var(--soft);border-radius:8px}
+  .notes .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--subtle);font-weight:600;margin-bottom:4px}
+  .notes .value{font-size:11px;color:var(--ink);line-height:1.55;white-space:pre-wrap}
 
-  /* Signature block. Large pad area + meta column to its right. */
-  .sig-block{display:flex;align-items:flex-end;gap:32px;margin-top:24px;padding-top:18px;border-top:1px solid #e6e6e6;break-inside:avoid}
-  .sig-pad{flex:0 0 auto;border:1px solid #e6e6e6;border-radius:4px;padding:10px;background:#fafafa}
-  .sig-pad svg{display:block}
-  .sig-pad-blank{flex:0 0 auto;width:280px;height:108px;border:1px dashed #cbd5e1;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:10px}
-  .sig-meta{flex:1;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:11px;color:#1a1a1a;align-items:baseline}
-  .sig-meta .label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#999;font-weight:600}
-  .sig-meta .value{font-weight:500}
+  /* ── Footer (page indicator) ─────────────────────────────────── */
+  .pg-footer{margin-top:auto;padding-top:14px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline;font-size:9px;color:var(--subtle);letter-spacing:.02em}
+  .pg-footer .legal{color:var(--muted)}
 
-  /* Page footer: ref + page indicator in a thin row. */
-  .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e6e6e6;display:flex;justify-content:space-between;font-size:9px;color:#9ca3af}
+  /* ── Page 2: Terms ───────────────────────────────────────────── */
+  .terms-deck{font-size:11.5px;color:var(--muted);line-height:1.6;margin:8px 0 18px;max-width:60ch}
+  .terms-section{margin-top:18px}
+  .terms-section + .terms-section{margin-top:22px}
+  .terms-section h3{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+  ol.terms{margin:0;padding-left:18px;counter-reset:term;list-style:none}
+  ol.terms li{position:relative;padding-left:18px;margin-bottom:9px;font-size:10.5px;line-height:1.6;color:var(--ink);break-inside:avoid;counter-increment:term}
+  ol.terms li::before{content:counter(term)".";position:absolute;left:-4px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+
+  /* ── Signature card ──────────────────────────────────────────── */
+  .sig-card{margin-top:auto;padding:22px 24px;border:1px solid var(--rule);border-radius:14px;background:var(--surface);box-shadow:0 1px 0 rgba(14,20,20,0.02)}
+  .sig-card .sig-eyebrow{font-size:8.5px;text-transform:uppercase;letter-spacing:.16em;color:var(--accent);font-weight:700;margin-bottom:10px}
+  .sig-card .sig-name{font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:14px}
+  .sig-card .pad{display:block;width:100%;max-width:380px;height:120px;padding:6px 8px;border-bottom:1px solid var(--rule);position:relative}
+  .sig-card .pad svg{display:block;width:100%;height:100%}
+  .sig-card .pad-blank{display:flex;align-items:center;justify-content:center;color:var(--subtle);font-size:10px}
+  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:32px;row-gap:10px;margin-top:18px}
+  .sig-meta .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--subtle);font-weight:600;margin-bottom:2px}
+  .sig-meta .value{font-size:11.5px;color:var(--ink);font-weight:500}
 `;
 
 export function buildWaiverDocument(input: WaiverDocInput): string {
+  if (input.sections.length === 0) {
+    throw new Error(
+      'buildWaiverDocument called with zero waiver sections. Caller must gate on signed-state.',
+    );
+  }
   const ref = escapeHtml(input.lapRef);
   const name = escapeHtml(properCase(input.patient.fullName)) || MUTED_DASH;
 
-  // Items are split by category — same posture as the LWO label so a
-  // combo order shows two stacked tables. The items section also
-  // surfaces tech notes in a small block under the tables.
-  const denture = input.items.filter((i) => i.category === 'denture');
-  const appliance = input.items.filter((i) => i.category === 'appliance');
-  const hasBoth = denture.length > 0 && appliance.length > 0;
-  const subHdr = (text: string): string =>
-    `<div class="sub-h">${escapeHtml(text)}</div>`;
-  const itemsHtml =
-    input.items.length === 0
-      ? `<div class="fv" style="color:#999">No items recorded.</div>`
-      : (hasBoth
-          ? subHdr('Denture services') + renderItemsTable(denture) + subHdr('Appliances') + renderItemsTable(appliance)
-          : renderItemsTable(input.items)) +
-        (input.notes
-          ? `<div style="margin-top:4px"><div class="fl">Notes</div><div class="fv" style="white-space:pre-wrap">${escapeHtml(input.notes)}</div></div>`
-          : '');
-
-  // Document title pivots on which categories were signed for. Loud
-  // failure if there's nothing — caller should never invoke us with
-  // zero sections (View waiver button is disabled in that state).
-  if (input.sections.length === 0) {
-    throw new Error('buildWaiverDocument called with zero waiver sections — caller should gate on signed-state.');
-  }
-  const docTitle =
-    hasBoth || (denture.length > 0 && appliance.length > 0)
-      ? 'Denture services & appliances'
-      : input.sections[0]!.title;
-
-  // One terms block per signed section. When the visit has multiple
-  // sections, each gets its own sub-heading so the reader can map
-  // "these terms apply to the appliances" / "these to the denture
-  // repair" without ambiguity.
-  const termsBlocks = input.sections
-    .map((section, idx) => {
-      const sub =
-        input.sections.length > 1
-          ? `<div class="sub-h" style="margin:${idx > 0 ? '10' : '4'}px 0 4px">${escapeHtml(section.title)}</div>`
-          : '';
-      const list = section.terms.map((t) => `<li>${escapeHtml(t)}</li>`).join('');
-      return sub + `<ol class="terms">${list}</ol>`;
-    })
-    .join('');
-
-  // Embed the captured SVG verbatim. signature_svg is a complete
-  // <svg>...</svg> document at its capture dimensions; the .sig-pad
-  // container scales it visually via max-width on the inner svg.
-  const signatureHtml = input.signatureSvg
-    ? `<div class="sig-pad">${input.signatureSvg.replace(/<svg([^>]*)>/, '<svg$1 style="display:block;width:280px;height:auto">')}</div>`
-    : `<div class="sig-pad-blank">Signature unavailable</div>`;
-
-  // Most-recent section's signed_at + witness drive the signature
-  // block. The full per-section audit lives on the patient profile.
-  const latest = input.sections.reduce((acc, s) => (s.signedAt > acc.signedAt ? s : acc), input.sections[0]!);
-
-  // Customer information grid — every cell falls back to the muted
-  // dash so a missing field looks intentional rather than broken.
-  const addressParts = [
+  const addressLine = [
     input.patient.addressLine1,
     input.patient.addressLine2,
     input.patient.city,
     input.patient.postcode,
-  ].filter(Boolean) as string[];
+  ]
+    .filter(Boolean)
+    .join(', ');
 
-  const paymentHtml = input.payment
-    ? `<h2>Payment</h2>
-       <div class="grid">
-         <div><div class="fl">Amount</div><div class="fv" style="font-size:13px;font-weight:700">${formatGbp(input.payment.amountPence)}</div></div>
-         <div><div class="fl">Method</div><div class="fv">${escapeHtml(properCase(input.payment.method))}</div></div>
-         <div><div class="fl">Date</div><div class="fv">${fmtDateTime(input.payment.takenAt)}</div></div>
-         <div><div class="fl">Status</div><div class="fv"><span class="status ${input.payment.status === 'paid' ? 'status-green' : 'status-orange'}">${input.payment.status === 'paid' ? 'Paid' : 'Failed'}</span></div></div>
+  const itemsTable = renderItemsTable(input.items);
+  const subtotalPence = input.items.reduce(
+    (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
+    0,
+  );
+  const totalsStripHtml =
+    input.items.length > 0
+      ? `<div class="totals">
+           <span class="label">Subtotal</span>
+           <span class="value">${formatGbp(subtotalPence)}</span>
+         </div>`
+      : '';
+
+  const paymentPill = input.payment
+    ? input.payment.status === 'paid'
+      ? '<span class="pill pill-paid">Paid</span>'
+      : '<span class="pill pill-failed">Failed</span>'
+    : '<span class="pill pill-pending">Awaiting payment</span>';
+  const paymentSummaryHtml = input.payment
+    ? `<div class="grid-3">
+         <div class="field"><div class="label">Amount</div><div class="value" style="font-size:13px;font-weight:600">${formatGbp(input.payment.amountPence)}</div></div>
+         <div class="field"><div class="label">Method</div><div class="value">${escapeHtml(properCase(input.payment.method))}</div></div>
+         <div class="field"><div class="label">Date</div><div class="value">${fmtDate(input.payment.takenAt)}</div></div>
        </div>`
-    : `<h2>Payment</h2>
-       <div><div class="fl">Status</div><div class="fv"><span class="status status-orange">Pending</span></div></div>`;
+    : `<p style="font-size:11px;color:var(--muted);margin:6px 0 0">Settle the balance at the till before you leave the clinic.</p>`;
 
-  // Page 1 footer differs from page 2 ("Page 1 of 2" vs "Page 2 of 2").
-  // The footer block is rendered once per page so both sheets carry
-  // the LAP ref + page indicator + generation timestamp.
+  const notesHtml = input.notes
+    ? `<div class="notes"><div class="label">Note from your clinician</div><div class="value">${escapeHtml(input.notes)}</div></div>`
+    : '';
+
+  const latest = input.sections.reduce(
+    (acc, s) => (s.signedAt > acc.signedAt ? s : acc),
+    input.sections[0]!,
+  );
+  const signatureHtml = input.signatureSvg
+    ? `<div class="pad">${input.signatureSvg.replace(/<svg([^>]*)>/, '<svg$1 preserveAspectRatio="xMidYMid meet">')}</div>`
+    : `<div class="pad pad-blank">Signature unavailable</div>`;
+
+  const termsBlocks = input.sections
+    .map((section) => {
+      const list = section.terms.map((t) => `<li>${escapeHtml(t)}</li>`).join('');
+      const sub =
+        input.sections.length > 1
+          ? `<h3>${escapeHtml(section.title)}</h3>`
+          : '';
+      return `<div class="terms-section">${sub}<ol class="terms">${list}</ol></div>`;
+    })
+    .join('');
+
+  const visitDateLabel = fmtDate(input.visitOpenedAt);
+  const visitTypeLabel = input.visitType ? properCase(input.visitType) : null;
+  const heroDeck = visitTypeLabel
+    ? `Prepared for <strong>${name}</strong> following the <strong>${escapeHtml(
+        visitTypeLabel.toLowerCase(),
+      )}</strong> on <strong>${visitDateLabel}</strong>.`
+    : `Prepared for <strong>${name}</strong>, ${visitDateLabel}.`;
+
+  const brand = input.brand;
   const generatedAt = fmtDateTime(new Date().toISOString());
-  const footer = (page: 1 | 2): string =>
-    `<div class="footer"><span>Venneir Dental Laboratory &middot; ${ref}</span><span>Page ${page} of 2 &middot; Generated ${generatedAt}</span></div>`;
+  const legalLine = brand.vatNumber
+    ? `${escapeHtml(brand.name)} · VAT ${escapeHtml(brand.vatNumber)}`
+    : escapeHtml(brand.name);
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)} ${ref}</title><style>${A4_CSS}</style></head><body>
-
-    <!-- Page 1: customer details, visit context, items, payment. -->
-    <section class="page page-1">
-      <div class="header">
-        <div>
-          <img src="${input.logoUrl}" alt="Venneir" />
-          <div class="header-title">${escapeHtml(docTitle)}</div>
-          <div class="header-sub">Signed waiver and visit summary</div>
+  const letterhead = (variant: 'full' | 'compact'): string => `
+    <div class="lh">
+      <div class="lh-brand">
+        <div class="mark">
+          ${brand.logoUrl ? `<img src="${escapeHtml(brand.logoUrl)}" alt="" />` : ''}
+          <span class="wordmark">${escapeHtml(brand.name)}</span>
         </div>
-        <div class="header-right">
-          <div class="ref">${ref}</div>
-          <div class="ref-sub">${fmtDateTime(input.visitOpenedAt)}</div>
+        <div class="accent-rule"></div>
+        ${variant === 'full' ? `<div class="meta-line">${escapeHtml([brand.addressLine, brand.contactEmail].filter(Boolean).join(' · '))}</div>` : ''}
+      </div>
+      <div class="lh-ref">
+        <div class="label">Visit reference</div>
+        <div class="value">${ref}</div>
+        <div class="sub">${visitDateLabel}</div>
+      </div>
+    </div>
+  `;
+
+  const pageFooter = (page: 1 | 2): string => `
+    <div class="pg-footer">
+      <span class="legal">${legalLine}</span>
+      <span>Page ${page} of 2 · ${generatedAt}</span>
+    </div>
+  `;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Visit summary ${ref}</title><style>${A4_CSS(input.accentColor)}</style></head><body>
+
+    <section class="page">
+      ${letterhead('full')}
+
+      <div class="hero">
+        <h1>Visit summary</h1>
+        <p class="deck">${heroDeck}</p>
+      </div>
+
+      <div class="sec">
+        <h2>Patient details</h2>
+        <div class="grid-2">
+          <div class="field"><div class="label">Full name</div><div class="value">${name}</div></div>
+          <div class="field"><div class="label">Date of birth</div><div class="value">${input.patient.dateOfBirth ? fmtDate(input.patient.dateOfBirth) : MUTED_DASH}</div></div>
+          <div class="field"><div class="label">Email</div><div class="value">${input.patient.email ? escapeHtml(input.patient.email) : MUTED_DASH}</div></div>
+          <div class="field"><div class="label">Phone</div><div class="value">${input.patient.phone ? escapeHtml(input.patient.phone) : MUTED_DASH}</div></div>
+          <div class="field" style="grid-column:1/-1"><div class="label">Address</div><div class="value">${addressLine ? escapeHtml(addressLine) : MUTED_DASH}</div></div>
         </div>
       </div>
 
-      <h2>Customer</h2>
-      <div class="grid">
-        <div><div class="fl">Full name</div><div class="fv">${name}</div></div>
-        <div><div class="fl">Date of birth</div><div class="fv">${input.patient.dateOfBirth ? fmtDate(input.patient.dateOfBirth) : MUTED_DASH}</div></div>
-        <div><div class="fl">Sex</div><div class="fv">${input.patient.sex ? escapeHtml(properCase(input.patient.sex.replace(/_/g, ' '))) : MUTED_DASH}</div></div>
-        <div><div class="fl">Email</div><div class="fv">${input.patient.email ? escapeHtml(input.patient.email) : MUTED_DASH}</div></div>
-        <div><div class="fl">Phone</div><div class="fv">${input.patient.phone ? escapeHtml(input.patient.phone) : MUTED_DASH}</div></div>
-        <div><div class="fl">Address</div><div class="fv">${addressParts.length > 0 ? escapeHtml(addressParts.join(', ')) : MUTED_DASH}</div></div>
+      <div class="sec">
+        <h2>Today's work</h2>
+        ${itemsTable}
+        ${totalsStripHtml}
       </div>
 
-      <h2>Visit</h2>
-      <div class="grid-3">
-        <div><div class="fl">Job box</div><div class="fv">${input.jobBox ? escapeHtml(input.jobBox) : MUTED_DASH}</div></div>
-        <div><div class="fl">Staff</div><div class="fv">${input.staffName ? escapeHtml(input.staffName) : MUTED_DASH}</div></div>
-        <div><div class="fl">Checked in</div><div class="fv">${fmtDateTime(input.visitOpenedAt)}</div></div>
+      <div class="sec">
+        <h2>Payment</h2>
+        <div style="display:flex;justify-content:flex-end;align-items:flex-start;gap:24px;margin-bottom:10px">
+          <div>${paymentPill}</div>
+        </div>
+        ${paymentSummaryHtml}
       </div>
 
-      <h2>Items</h2>
-      ${itemsHtml}
+      ${notesHtml}
 
-      ${paymentHtml}
-
-      ${footer(1)}
+      ${pageFooter(1)}
     </section>
 
-    <!-- Page 2: terms (single column, comfortable type) and signature. -->
-    <section class="page page-2">
-      <div class="header">
-        <div>
-          <img src="${input.logoUrl}" alt="Venneir" />
-          <div class="header-title">Terms and signature</div>
-          <div class="header-sub">${escapeHtml(docTitle)}</div>
-        </div>
-        <div class="header-right">
-          <div class="ref">${ref}</div>
-          <div class="ref-sub">${name}</div>
-        </div>
+    <section class="page">
+      ${letterhead('compact')}
+
+      <div class="hero">
+        <h1>Terms and signature</h1>
+        <p class="deck">${name} agreed to the following terms before treatment began. Keep this page with your records.</p>
       </div>
 
-      <h2>Terms and conditions</h2>
-      <p class="terms-intro">By signing below, I acknowledge and agree to the following:</p>
-      ${termsBlocks}
+      <div class="sec">
+        <h2>Agreed terms</h2>
+        <p class="terms-deck">By signing, you confirmed you understood every clause below and that you accepted the work and warranty terms as described.</p>
+        ${termsBlocks}
+      </div>
 
-      <div class="sig-block">
-        <div>
-          <div class="fl" style="margin-bottom:6px">Signature</div>
-          ${signatureHtml}
-        </div>
+      <div class="sig-card">
+        <div class="sig-eyebrow">Signature on file</div>
+        <div class="sig-name">${name}</div>
+        ${signatureHtml}
         <div class="sig-meta">
-          <span class="label">Signed by</span><span class="value">${name}</span>
-          <span class="label">Signed at</span><span class="value">${fmtDateTime(latest.signedAt)}</span>
-          <span class="label">Witnessed by</span><span class="value">${latest.witnessName ? escapeHtml(properCase(latest.witnessName)) : MUTED_DASH}</span>
+          <div><div class="label">Signed</div><div class="value">${fmtDateTime(latest.signedAt)}</div></div>
+          <div><div class="label">Witnessed by</div><div class="value">${input.witnessName ? escapeHtml(properCase(input.witnessName)) : MUTED_DASH}</div></div>
         </div>
       </div>
 
-      ${footer(2)}
+      ${pageFooter(2)}
     </section>
+
   </body></html>`;
 }
 
