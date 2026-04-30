@@ -13,11 +13,8 @@ import {
   CreditCard,
   Hash,
   Loader2,
-  FileText,
   Plus,
-  Printer,
   ShoppingCart,
-  StickyNote,
   UserPlus,
   X,
 } from 'lucide-react';
@@ -766,19 +763,17 @@ export function VisitDetail() {
 
             {items.length > 0 ? (
               <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+                {/* Secondary actions — text-only at the page's
+                    maxWidth=960px the icons would push Take payment
+                    onto a second row. Labels alone read fine and
+                    keep the row tidy. */}
                 {canMarkUnsuitable ? (
                   <Button variant="tertiary" onClick={openUnsuitable}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <Ban size={16} aria-hidden />
-                      Mark unsuitable
-                    </span>
+                    Mark unsuitable
                   </Button>
                 ) : null}
                 <Button variant="secondary" onClick={openNoteEditor}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <StickyNote size={16} aria-hidden />
-                    {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
-                  </span>
+                  {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
                 </Button>
                 <Button
                   variant="secondary"
@@ -790,10 +785,7 @@ export function VisitDetail() {
                       : 'Available once a waiver has been signed for this visit.'
                   }
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <FileText size={16} aria-hidden />
-                    View waiver
-                  </span>
+                  View waiver
                 </Button>
                 <Button
                   variant="secondary"
@@ -805,10 +797,7 @@ export function VisitDetail() {
                       : 'A LAP reference is stamped during arrival intake. Open arrival before printing.'
                   }
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <Printer size={16} aria-hidden />
-                    Print LWO
-                  </span>
+                  Print LWO
                 </Button>
                 <Button
                   variant="primary"
