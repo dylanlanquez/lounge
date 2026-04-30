@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Mail } from 'lucide-react';
 import { Dialog } from '../Dialog/Dialog.tsx';
 import { Input } from '../Input/Input.tsx';
@@ -111,6 +111,16 @@ export function PatientEditModal({
   const [clinical, setClinical] = useState<DraftClinical>(() => emptyClinical(patient));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<string | null>(null);
+  // Scroll the error banner into view when it appears so the
+  // receptionist can't miss a save failure even if they were focused
+  // on a field at the bottom of the form.
+  const errorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (error && errorRef.current) {
+      errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [error]);
   const showProfile = section === 'profile';
   const showCare = section === 'care';
 
@@ -133,6 +143,7 @@ export function PatientEditModal({
       }
     }
     setError(null);
+    setErrorKind(null);
     setSaving(true);
     try {
       // Country isn't surfaced in the form anymore (Shopify sync
@@ -192,7 +203,10 @@ export function PatientEditModal({
       await onSaved();
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not save changes. Try again.');
+      const message = e instanceof Error ? e.message : 'Could not save changes. Try again.';
+      const kind = (e as { errorKind?: string } | null)?.errorKind ?? null;
+      setError(message);
+      setErrorKind(kind);
     } finally {
       setSaving(false);
     }
@@ -346,17 +360,40 @@ export function PatientEditModal({
 
         {error ? (
           <div
+            ref={errorRef}
             role="alert"
             style={{
-              padding: theme.space[3],
+              display: 'flex',
+              gap: theme.space[3],
+              padding: theme.space[4],
               borderRadius: theme.radius.input,
-              background: 'rgba(184, 58, 42, 0.08)',
-              border: `1px solid rgba(184, 58, 42, 0.2)`,
-              color: theme.color.alert,
+              background: theme.color.alert,
+              color: theme.color.surface,
               fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
+              lineHeight: 1.5,
+              boxShadow: theme.shadow.card,
             }}
           >
-            {error}
+            <AlertTriangle size={20} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontWeight: theme.type.weight.semibold }}>
+                Save failed
+              </p>
+              <p style={{ margin: `${theme.space[1]}px 0 0` }}>{error}</p>
+              {errorKind ? (
+                <p
+                  style={{
+                    margin: `${theme.space[2]}px 0 0`,
+                    fontSize: theme.type.size.xs,
+                    opacity: 0.8,
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  }}
+                >
+                  {errorKind}
+                </p>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>
