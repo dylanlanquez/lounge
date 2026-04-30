@@ -245,41 +245,50 @@ const A4_CSS = (accent: string): string => `
   .lh-ref .sub{font-size:9.5px;color:var(--muted);margin-top:3px}
 
   /* ── Page hero ───────────────────────────────────────────────── */
-  .hero{margin:32px 0 24px;padding-top:20px;border-top:1px solid var(--rule)}
-  .hero h1{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.15;color:var(--ink)}
-  .hero .deck{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.55}
+  /* Sits flush against the letterhead, no decorative top rule —
+     the wordmark + accent stripe above already do the separation. */
+  .hero{margin:14px 0 12px}
+  .hero h1{font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.15;color:var(--ink)}
+  .hero .deck{font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5}
   .hero .deck strong{color:var(--ink);font-weight:600}
 
-  /* ── Section heading ─────────────────────────────────────────── */
-  .sec{margin-top:24px}
-  .sec h2{font-size:8.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--subtle);margin-bottom:10px;break-after:avoid}
+  /* ── Section block ───────────────────────────────────────────── */
+  /* No "PATIENT DETAILS" eyebrows on the customer document — the
+     content is self-evident. Sections rely on whitespace + rules
+     to separate. .sec just gives a tight margin above. */
+  .sec{margin-top:14px}
 
   /* ── Field grids ─────────────────────────────────────────────── */
-  .grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:14px}
-  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);column-gap:32px;row-gap:14px}
-  .field .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--subtle);font-weight:600;margin-bottom:3px}
-  .field .value{font-size:11.5px;color:var(--ink);font-weight:500;line-height:1.4}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:28px;row-gap:8px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);column-gap:28px;row-gap:8px}
+  .field .label{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:1px}
+  .field .value{font-size:11px;color:var(--ink);font-weight:500;line-height:1.35}
 
   /* ── Items table (Stripe-receipt feel) ───────────────────────── */
-  table.items{width:100%;border-collapse:collapse;margin-top:4px}
-  table.items th{font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--subtle);font-weight:600;text-align:left;padding:0 0 8px;border-bottom:1px solid var(--rule)}
+  table.items{width:100%;border-collapse:collapse;margin-top:6px}
+  table.items th{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;text-align:left;padding:0 0 6px;border-bottom:1px solid var(--rule)}
   table.items th.num,table.items td.num{text-align:right;font-variant-numeric:tabular-nums}
   table.items th.center,table.items td.center{text-align:center}
-  table.items td{padding:11px 0;border-bottom:1px solid var(--rule);font-size:11.5px;color:var(--ink);vertical-align:top}
+  table.items td{padding:8px 0;border-bottom:1px solid var(--rule);font-size:11px;color:var(--ink);vertical-align:top}
   table.items tr:last-child td{border-bottom:none}
   table.items .desc{font-weight:600}
-  table.items .sub{display:block;font-size:10px;color:var(--muted);font-weight:400;margin-top:2px;letter-spacing:.01em}
+  table.items .sub{display:block;font-size:9.5px;color:var(--muted);font-weight:400;margin-top:1px}
   table.items td.qty{color:var(--muted)}
 
-  /* Section subheader inside items (Denture / Appliances) — used
-     only when both categories are present in the same visit. */
-  .items-subhead{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);padding:18px 0 6px;border-bottom:1px solid var(--rule)}
+  /* Items subheader inside the table for combo orders. */
+  .items-subhead{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);padding:12px 0 4px;border-bottom:1px solid var(--rule)}
   .items-subhead:first-child{padding-top:0}
 
   /* ── Totals strip ────────────────────────────────────────────── */
-  .totals{margin-top:18px;padding-top:14px;border-top:2px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline}
-  .totals .label{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--ink);font-weight:600}
-  .totals .value{font-size:18px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .totals{margin-top:10px;padding-top:10px;border-top:2px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline}
+  .totals .label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink);font-weight:600}
+  .totals .value{font-size:16px;font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+
+  /* ── Payment row (single line: status + amount) ──────────────── */
+  .pay-row{margin-top:10px;display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:10px 12px;border:1px solid var(--rule);border-radius:10px}
+  .pay-row .meta{display:flex;align-items:baseline;gap:14px;color:var(--muted);font-size:10px}
+  .pay-row .meta strong{color:var(--ink);font-weight:600}
+  .pay-row .amount{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
 
   /* ── Status pill ─────────────────────────────────────────────── */
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:9.5px;font-weight:600;letter-spacing:.04em}
@@ -288,33 +297,37 @@ const A4_CSS = (accent: string): string => `
   .pill-failed{background:rgba(184,58,42,.12);color:#8A2918}
 
   /* ── Notes block ─────────────────────────────────────────────── */
-  .notes{margin-top:18px;padding:14px 16px;background:var(--soft);border-radius:8px}
-  .notes .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--subtle);font-weight:600;margin-bottom:4px}
-  .notes .value{font-size:11px;color:var(--ink);line-height:1.55;white-space:pre-wrap}
+  .notes{margin-top:12px;padding:10px 12px;background:var(--soft);border-radius:8px}
+  .notes .label{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:3px}
+  .notes .value{font-size:10.5px;color:var(--ink);line-height:1.5;white-space:pre-wrap}
 
   /* ── Footer (page indicator) ─────────────────────────────────── */
-  .pg-footer{margin-top:auto;padding-top:14px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline;font-size:9px;color:var(--subtle);letter-spacing:.02em}
+  .pg-footer{margin-top:auto;padding-top:10px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline;font-size:8.5px;color:var(--subtle);letter-spacing:.02em}
   .pg-footer .legal{color:var(--muted)}
 
-  /* ── Page 2: Terms ───────────────────────────────────────────── */
-  .terms-deck{font-size:11.5px;color:var(--muted);line-height:1.6;margin:8px 0 18px;max-width:60ch}
-  .terms-section{margin-top:18px}
-  .terms-section + .terms-section{margin-top:22px}
-  .terms-section h3{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
-  ol.terms{margin:0;padding-left:18px;counter-reset:term;list-style:none}
-  ol.terms li{position:relative;padding-left:18px;margin-bottom:9px;font-size:10.5px;line-height:1.6;color:var(--ink);break-inside:avoid;counter-increment:term}
-  ol.terms li::before{content:counter(term)".";position:absolute;left:-4px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+  /* ── Page 2: Terms (two-column flow) ─────────────────────────── */
+  .terms-deck{font-size:10.5px;color:var(--muted);line-height:1.5;margin:4px 0 10px}
+  .terms-section{margin-top:10px}
+  .terms-section + .terms-section{margin-top:14px}
+  .terms-section h3{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:5px}
+  /* columns:2 reflows the clauses across two columns so the full
+     terms occupy the upper half of page 2 and the signature card
+     has guaranteed room below. break-inside:avoid on each <li>
+     keeps individual clauses unsplittable. */
+  ol.terms{margin:0;padding-left:14px;counter-reset:term;list-style:none;column-count:2;column-gap:24px;column-rule:1px solid var(--rule);column-fill:balance}
+  ol.terms li{position:relative;padding-left:14px;margin-bottom:6px;font-size:9.5px;line-height:1.5;color:var(--ink);break-inside:avoid;counter-increment:term}
+  ol.terms li::before{content:counter(term)".";position:absolute;left:-2px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
 
   /* ── Signature card ──────────────────────────────────────────── */
-  .sig-card{margin-top:auto;padding:22px 24px;border:1px solid var(--rule);border-radius:14px;background:var(--surface);box-shadow:0 1px 0 rgba(14,20,20,0.02)}
-  .sig-card .sig-eyebrow{font-size:8.5px;text-transform:uppercase;letter-spacing:.16em;color:var(--accent);font-weight:700;margin-bottom:10px}
-  .sig-card .sig-name{font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:14px}
-  .sig-card .pad{display:block;width:100%;max-width:380px;height:120px;padding:6px 8px;border-bottom:1px solid var(--rule);position:relative}
+  .sig-card{margin-top:18px;padding:18px 20px;border:1px solid var(--rule);border-radius:14px;background:var(--surface);box-shadow:0 1px 0 rgba(14,20,20,0.02)}
+  .sig-card .sig-eyebrow{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin-bottom:6px}
+  .sig-card .sig-name{font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:8px}
+  .sig-card .pad{display:block;width:100%;max-width:340px;height:96px;padding:4px 6px;border-bottom:1px solid var(--rule);position:relative}
   .sig-card .pad svg{display:block;width:100%;height:100%}
   .sig-card .pad-blank{display:flex;align-items:center;justify-content:center;color:var(--subtle);font-size:10px}
-  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:32px;row-gap:10px;margin-top:18px}
-  .sig-meta .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--subtle);font-weight:600;margin-bottom:2px}
-  .sig-meta .value{font-size:11.5px;color:var(--ink);font-weight:500}
+  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:28px;row-gap:6px;margin-top:12px}
+  .sig-meta .label{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:1px}
+  .sig-meta .value{font-size:11px;color:var(--ink);font-weight:500}
 `;
 
 export function buildWaiverDocument(input: WaiverDocInput): string {
@@ -348,18 +361,23 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
          </div>`
       : '';
 
-  const paymentPill = input.payment
-    ? input.payment.status === 'paid'
-      ? '<span class="pill pill-paid">Paid</span>'
-      : '<span class="pill pill-failed">Failed</span>'
-    : '<span class="pill pill-pending">Awaiting payment</span>';
-  const paymentSummaryHtml = input.payment
-    ? `<div class="grid-3">
-         <div class="field"><div class="label">Amount</div><div class="value" style="font-size:13px;font-weight:600">${formatGbp(input.payment.amountPence)}</div></div>
-         <div class="field"><div class="label">Method</div><div class="value">${escapeHtml(properCase(input.payment.method))}</div></div>
-         <div class="field"><div class="label">Date</div><div class="value">${fmtDate(input.payment.takenAt)}</div></div>
+  // Compact single-row payment summary: status pill + meta + amount,
+  // all on one line. Replaces the previous separate pill row + 3-up
+  // grid which was eating ~80px of vertical space.
+  const paymentRowHtml = input.payment
+    ? `<div class="pay-row">
+         <div style="display:flex;align-items:center;gap:10px">
+           <span class="pill ${input.payment.status === 'paid' ? 'pill-paid' : 'pill-failed'}">${input.payment.status === 'paid' ? 'Paid' : 'Failed'}</span>
+           <span class="meta"><strong>${escapeHtml(properCase(input.payment.method))}</strong> · ${fmtDate(input.payment.takenAt)}</span>
+         </div>
+         <span class="amount">${formatGbp(input.payment.amountPence)}</span>
        </div>`
-    : `<p style="font-size:11px;color:var(--muted);margin:6px 0 0">Settle the balance at the till before you leave the clinic.</p>`;
+    : `<div class="pay-row">
+         <div style="display:flex;align-items:center;gap:10px">
+           <span class="pill pill-pending">Awaiting payment</span>
+           <span class="meta">Settle at the till before leaving</span>
+         </div>
+       </div>`;
 
   const notesHtml = input.notes
     ? `<div class="notes"><div class="label">Note from your clinician</div><div class="value">${escapeHtml(input.notes)}</div></div>`
@@ -385,11 +403,15 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     .join('');
 
   const visitDateLabel = fmtDate(input.visitOpenedAt);
-  const visitTypeLabel = input.visitType ? properCase(input.visitType) : null;
+  // Visit type comes in as either a Calendly label ("In-person
+  // impression appointment") or a service_type slug
+  // ("same_day_appliance"). Normalise underscores → spaces and
+  // lowercase so the hero reads as natural English.
+  const visitTypeLabel = input.visitType
+    ? input.visitType.replace(/_/g, ' ').toLowerCase()
+    : null;
   const heroDeck = visitTypeLabel
-    ? `Prepared for <strong>${name}</strong> following the <strong>${escapeHtml(
-        visitTypeLabel.toLowerCase(),
-      )}</strong> on <strong>${visitDateLabel}</strong>.`
+    ? `Prepared for <strong>${name}</strong> following the <strong>${escapeHtml(visitTypeLabel)}</strong> on <strong>${visitDateLabel}</strong>.`
     : `Prepared for <strong>${name}</strong>, ${visitDateLabel}.`;
 
   const brand = input.brand;
@@ -434,7 +456,6 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       </div>
 
       <div class="sec">
-        <h2>Patient details</h2>
         <div class="grid-2">
           <div class="field"><div class="label">Full name</div><div class="value">${name}</div></div>
           <div class="field"><div class="label">Date of birth</div><div class="value">${input.patient.dateOfBirth ? fmtDate(input.patient.dateOfBirth) : MUTED_DASH}</div></div>
@@ -445,17 +466,12 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       </div>
 
       <div class="sec">
-        <h2>Today's work</h2>
         ${itemsTable}
         ${totalsStripHtml}
       </div>
 
       <div class="sec">
-        <h2>Payment</h2>
-        <div style="display:flex;justify-content:flex-end;align-items:flex-start;gap:24px;margin-bottom:10px">
-          <div>${paymentPill}</div>
-        </div>
-        ${paymentSummaryHtml}
+        ${paymentRowHtml}
       </div>
 
       ${notesHtml}
@@ -472,8 +488,7 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       </div>
 
       <div class="sec">
-        <h2>Agreed terms</h2>
-        <p class="terms-deck">By signing, you confirmed you understood every clause below and that you accepted the work and warranty terms as described.</p>
+        <p class="terms-deck">By signing, you confirmed you understood every clause below and accepted the work and warranty terms as described.</p>
         ${termsBlocks}
       </div>
 
