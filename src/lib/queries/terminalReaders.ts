@@ -101,6 +101,44 @@ export async function registerReader(input: RegisterReaderInput): Promise<void> 
   }
 }
 
+// Imports any readers Stripe knows about that aren't yet in
+// lng_terminal_readers. Used when staff has paired an S700 directly
+// via Stripe Dashboard rather than Lounge's Register reader form.
+// Inserted readers all get assigned the supplied Lounge clinic id
+// — multi-clinic setups can edit afterwards if needed.
+export interface ImportReadersResult {
+  imported: Array<{ id: string; stripe_reader_id: string; friendly_name: string }>;
+  already_present: number;
+}
+
+export async function importReadersFromStripe(loungeLocationId: string): Promise<ImportReadersResult> {
+  const url = new URL(import.meta.env.VITE_SUPABASE_URL);
+  const projectRef = url.hostname.split('.')[0];
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  const r = await fetch(`https://${projectRef}.functions.supabase.co/terminal-import-readers`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token ?? ''}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ location_id: loungeLocationId }),
+  });
+  const body = (await r.json().catch(() => ({}))) as {
+    ok?: boolean;
+    imported?: ImportReadersResult['imported'];
+    already_present?: number;
+    error?: string;
+  };
+  if (!r.ok || !body.ok) {
+    throw new Error(body.error ?? `HTTP ${r.status}`);
+  }
+  return {
+    imported: body.imported ?? [],
+    already_present: body.already_present ?? 0,
+  };
+}
+
 // Lounge-internal locations table. Used to populate the
 // Lounge-side picker on the register reader form.
 export interface LoungeLocation {
