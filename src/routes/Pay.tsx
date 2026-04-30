@@ -11,7 +11,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
 import { useCart, formatPence } from '../lib/queries/carts.ts';
-import { recordCashPayment } from '../lib/queries/payments.ts';
+import { recordCashPayment, useVisitPaidStatus } from '../lib/queries/payments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
@@ -101,31 +101,77 @@ export function Pay() {
   // negative charge — refund handled manually in PayPal.
   const subtotal = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
-  const balanceDue = Math.max(0, subtotal - depositPence);
-  // Total is what we ACTUALLY charge — used everywhere downstream (cash,
-  // card, BNPL). Keeping the variable name `total` minimises churn on the
-  // submit handlers below.
-  const total = balanceDue;
+  const billAfterDeposit = Math.max(0, subtotal - depositPence);
+
+  // Split-payment plumbing. Read the visit's paid-status view so we
+  // know how much has already been collected on this cart (cash +
+  // card + BNPL combined). Outstanding = bill - amount paid so far.
+  // Refresh after each successful payment so the next method picker
+  // sees the new balance.
+  const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
+  const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
+  const outstandingPence = Math.max(0, billAfterDeposit - amountPaidPence);
+
+  // chargeAmountPence: what the next single payment will be for.
+  // Defaults to outstanding so the common case (single full
+  // payment) needs no extra clicks. Staff edits it down to support
+  // splits ("£40 on this card, then £60 cash"). Stored as text so
+  // intermediate edits like "20." don't snap back.
+  const [chargeAmountText, setChargeAmountText] = useState('');
+  const parsedChargeAmount = (() => {
+    const trimmed = chargeAmountText.trim();
+    if (trimmed === '') return outstandingPence;
+    const n = Number(trimmed.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.min(Math.round(n * 100), outstandingPence);
+  })();
+  // The amount the chosen method will actually charge. Always
+  // bounded to the current outstanding so a stale text value can't
+  // overshoot.
+  const chargeAmountPence = Math.min(parsedChargeAmount, outstandingPence);
+  // Boolean: is this charge going to clear the bill?
+  const willClearBill = chargeAmountPence > 0 && chargeAmountPence >= outstandingPence;
+  // Variable kept around for receipt copy (the "£X paid" headline).
+  const total = chargeAmountPence;
 
   const submitCash = async () => {
     if (!cart) return;
+    if (chargeAmountPence <= 0) {
+      setError('Charge amount must be positive.');
+      return;
+    }
     const tenderedFloat = Number(tendered.replace(/[^\d.]/g, ''));
     const tenderedPence = Math.round(tenderedFloat * 100);
-    if (!Number.isFinite(tenderedPence) || tenderedPence < total) {
-      setError(`Tendered amount must be at least ${formatPence(total)}.`);
+    if (!Number.isFinite(tenderedPence) || tenderedPence < chargeAmountPence) {
+      setError(`Tendered amount must be at least ${formatPence(chargeAmountPence)}.`);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const change = tenderedPence - total;
+      const change = tenderedPence - chargeAmountPence;
+      const splitBit =
+        chargeAmountPence < outstandingPence
+          ? ` Split payment, outstanding ${formatPence(outstandingPence - chargeAmountPence)} after this.`
+          : '';
       const note =
         depositPence > 0
-          ? `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}. Deposit ${formatPence(depositPence)} via ${deposit?.provider ?? 'paypal'} already collected at booking.`
-          : `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}`;
-      const payment = await recordCashPayment(cart.id, total, note);
+          ? `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}. Deposit ${formatPence(depositPence)} via ${deposit?.provider ?? 'paypal'} already collected at booking.${splitBit}`
+          : `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}.${splitBit}`;
+      const payment = await recordCashPayment(cart.id, chargeAmountPence, note);
       setPaymentId(payment.id);
-      setStage('success');
+      // Refresh the paid status so the next render sees the new
+      // outstanding. If this charge cleared the bill, advance to
+      // success; otherwise return to the method picker so staff
+      // can take the next part of the split.
+      refreshPaid();
+      if (willClearBill) {
+        setStage('success');
+      } else {
+        setTendered('');
+        setChargeAmountText('');
+        setStage('choose');
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
@@ -250,21 +296,19 @@ export function Pay() {
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {patient ? patientFullName(patient) : 'Appointment'} · {formatPence(total)}
-          {depositPence > 0 ? (
-            <span
-              style={{
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.medium,
-                color: theme.color.inkMuted,
-                marginLeft: theme.space[2],
-              }}
-            >
-              to collect
-            </span>
-          ) : null}
+          {patient ? patientFullName(patient) : 'Appointment'} · {formatPence(outstandingPence)}
+          <span
+            style={{
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.inkMuted,
+              marginLeft: theme.space[2],
+            }}
+          >
+            {amountPaidPence > 0 ? 'outstanding' : depositPence > 0 ? 'to collect' : ''}
+          </span>
         </h1>
-        {depositPence > 0 ? (
+        {depositPence > 0 || amountPaidPence > 0 ? (
           <p
             style={{
               margin: `0 0 ${theme.space[3]}px`,
@@ -274,14 +318,26 @@ export function Pay() {
             }}
           >
             <span>Subtotal {formatPence(subtotal)}</span>
-            <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
-            <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
-              Deposit −{formatPence(depositPence)}
-            </span>
-            <span style={{ color: theme.color.inkSubtle }}>
-              {' '}
-              ({deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)
-            </span>
+            {depositPence > 0 ? (
+              <>
+                <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+                  Deposit −{formatPence(depositPence)}
+                </span>
+                <span style={{ color: theme.color.inkSubtle }}>
+                  {' '}
+                  ({deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)
+                </span>
+              </>
+            ) : null}
+            {amountPaidPence > 0 ? (
+              <>
+                <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+                  Collected −{formatPence(amountPaidPence)}
+                </span>
+              </>
+            ) : null}
           </p>
         ) : null}
         <p style={{ margin: `0 0 ${theme.space[6]}px`, color: theme.color.inkMuted }}>
@@ -294,20 +350,60 @@ export function Pay() {
 
         {stage === 'choose' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            {/* Charge-amount input — defaults to outstanding so the
+                common single-payment case needs no extra clicks.
+                Edit it down to take a partial (split payment): the
+                next method picks up the new outstanding for the
+                second part. */}
+            <div
+              style={{
+                padding: theme.space[4],
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.surface,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[2],
+              }}
+            >
+              <Input
+                label="Amount to charge now (£)"
+                inputMode="decimal"
+                placeholder={(outstandingPence / 100).toFixed(2)}
+                value={chargeAmountText}
+                onChange={(e) => setChargeAmountText(e.target.value)}
+              />
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                Defaults to the outstanding {formatPence(outstandingPence)}. Edit it down to split across methods (cash and card together, etc).
+              </p>
+            </div>
             <MethodCard
               icon={<CreditCard size={20} />}
               title="Card"
-              description={reader ? `Reader: ${reader.friendly_name}` : 'No reader registered yet'}
+              description={reader ? `${formatPence(chargeAmountPence)} on ${reader.friendly_name}` : 'No reader registered yet'}
               onClick={() => openTerminal('standard')}
-              disabled={!reader}
+              disabled={!reader || chargeAmountPence <= 0}
             />
-            <MethodCard icon={<Banknote size={20} />} title="Cash" description="Change calculator built-in." onClick={() => setStage('cash')} />
+            <MethodCard
+              icon={<Banknote size={20} />}
+              title="Cash"
+              description={`${formatPence(chargeAmountPence)} cash, change calculator built in.`}
+              onClick={() => setStage('cash')}
+              disabled={chargeAmountPence <= 0}
+            />
             <MethodCard
               icon={<ShoppingBag size={20} />}
               title="Buy now, pay later"
-              description={reader ? 'Klarna or Clearpay via the same reader' : 'Needs a registered reader'}
+              description={reader ? `${formatPence(chargeAmountPence)} via Klarna or Clearpay on the same reader` : 'Needs a registered reader'}
               onClick={() => setStage('bnpl')}
-              disabled={!reader}
+              disabled={!reader || chargeAmountPence <= 0}
             />
           </div>
         ) : stage === 'bnpl' ? (
@@ -340,15 +436,27 @@ export function Pay() {
           </Card>
         ) : stage === 'cash' ? (
           <Card padding="lg">
+            <p
+              style={{
+                margin: `0 0 ${theme.space[3]}px`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+              }}
+            >
+              Recording {formatPence(chargeAmountPence)} cash.
+              {chargeAmountPence < outstandingPence
+                ? ` Outstanding ${formatPence(outstandingPence - chargeAmountPence)} after this — pick the next method on the previous screen.`
+                : ''}
+            </p>
             <Input
               label="Tendered (£)"
               autoFocus
               inputMode="decimal"
-              placeholder={`min ${formatPence(total)}`}
+              placeholder={`min ${formatPence(chargeAmountPence)}`}
               value={tendered}
               onChange={(e) => setTendered(e.target.value)}
             />
-            <ChangeRow tendered={tendered} totalPence={total} />
+            <ChangeRow tendered={tendered} totalPence={chargeAmountPence} />
             <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', marginTop: theme.space[4] }}>
               <Button variant="tertiary" onClick={() => setStage('choose')}>
                 Back
@@ -419,7 +527,15 @@ export function Pay() {
 
         <div style={{ marginTop: theme.space[5], display: 'flex', justifyContent: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
           <StatusPill tone="neutral" size="sm">
-            Total: {formatPence(total)}
+            Subtotal: {formatPence(subtotal)}
+          </StatusPill>
+          {amountPaidPence > 0 ? (
+            <StatusPill tone="neutral" size="sm">
+              Collected: {formatPence(amountPaidPence)}
+            </StatusPill>
+          ) : null}
+          <StatusPill tone="neutral" size="sm">
+            Outstanding: {formatPence(outstandingPence)}
           </StatusPill>
         </div>
       </div>
@@ -431,14 +547,20 @@ export function Pay() {
             onClose={() => setTerminalOpen(false)}
             visitId={visit?.id ?? ''}
             cartId={cart.id}
-            amountPence={total}
+            amountPence={chargeAmountPence}
             readerId={reader.id}
             readerName={reader.friendly_name}
             paymentJourney={journey === 'klarna' || journey === 'clearpay' ? journey : 'standard'}
             onSucceeded={(pid) => {
               setPaymentId(pid);
               setTerminalOpen(false);
-              setStage('success');
+              refreshPaid();
+              if (willClearBill) {
+                setStage('success');
+              } else {
+                setChargeAmountText('');
+                setStage('choose');
+              }
             }}
           />
           {(journey === 'klarna' || journey === 'clearpay') ? (
@@ -448,13 +570,19 @@ export function Pay() {
               provider={journey}
               visitId={visit?.id ?? ''}
               cartId={cart.id}
-              amountPence={total}
+              amountPence={chargeAmountPence}
               readerId={reader.id}
               readerName={reader.friendly_name}
               onSucceeded={(pid) => {
                 setPaymentId(pid);
                 setBnplOpen(false);
-                setStage('success');
+                refreshPaid();
+                if (willClearBill) {
+                  setStage('success');
+                } else {
+                  setChargeAmountText('');
+                  setStage('choose');
+                }
               }}
             />
           ) : null}

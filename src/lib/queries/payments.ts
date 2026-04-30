@@ -48,11 +48,46 @@ export async function recordCashPayment(
     .single();
   if (error || !data) throw new Error(error?.message ?? 'Cash payment record failed');
 
-  // Mark cart as paid (computed via view, but we reflect cart status here so
-  // the EPOS UI knows to lock additions).
-  await supabase.from('lng_carts').update({ status: 'paid', closed_at: new Date().toISOString() }).eq('id', cartId);
+  // Conditional cart paid flip — supports split payments. Sum every
+  // succeeded payment on this cart and compare to the cart total.
+  // Only flip status='paid' when fully covered. Partial payments
+  // leave the cart 'open' so subsequent methods can still take the
+  // remaining balance.
+  await maybeFlipCartPaid(cartId);
 
   return data as PaymentRow;
+}
+
+// Sum succeeded payments on a cart and flip its status to 'paid'
+// once they meet or exceed the total. No-ops on already-paid carts
+// and on carts with no total (free visits — handled by the
+// Complete visit flow, not here).
+async function maybeFlipCartPaid(cartId: string): Promise<void> {
+  const { data: cart } = await supabase
+    .from('lng_carts')
+    .select('total_pence, status')
+    .eq('id', cartId)
+    .maybeSingle();
+  if (!cart) return;
+  const c = cart as { total_pence: number | null; status: string };
+  if (c.status === 'paid' || c.status === 'voided') return;
+  if (c.total_pence == null || c.total_pence <= 0) return;
+
+  const { data: rows } = await supabase
+    .from('lng_payments')
+    .select('amount_pence')
+    .eq('cart_id', cartId)
+    .eq('status', 'succeeded');
+  const succeeded = ((rows ?? []) as { amount_pence: number }[]).reduce(
+    (s, r) => s + r.amount_pence,
+    0
+  );
+  if (succeeded < c.total_pence) return;
+
+  await supabase
+    .from('lng_carts')
+    .update({ status: 'paid', closed_at: new Date().toISOString() })
+    .eq('id', cartId);
 }
 
 export interface VisitPaidStatus {
@@ -67,6 +102,8 @@ export function useVisitPaidStatus(visitId: string | undefined) {
   const [data, setData] = useState<VisitPaidStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = () => setTick((t) => t + 1);
 
   useEffect(() => {
     if (!visitId) {
@@ -92,7 +129,7 @@ export function useVisitPaidStatus(visitId: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [visitId]);
+  }, [visitId, tick]);
 
-  return { data, loading, error };
+  return { data, loading, error, refresh };
 }
