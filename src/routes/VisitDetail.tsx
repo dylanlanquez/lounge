@@ -179,6 +179,28 @@ export function VisitDetail() {
       );
       return;
     }
+    // Impression-appointment lines are scheduling-only — the patient
+    // is in the chair to have an impression taken, no lab work has
+    // been spec'd. Excluding them from the LWO mirrors how Checkpoint
+    // handles its appointment placeholders: the lab only sees a row
+    // for actual work to be done. The line still appears on the
+    // visit page, the cart, and the receipt — only the printed LWO
+    // hides it.
+    const printableItems = items
+      .filter((it) => it.service_type !== 'impression_appointment')
+      .map((it) => buildPrintableItem(it));
+
+    if (printableItems.length === 0) {
+      // Loud failure rather than a blank label going to the lab. The
+      // receptionist either added nothing yet, or every staged line
+      // is an impression-appointment placeholder — in both cases the
+      // lab has nothing to act on and the LWO shouldn't print.
+      setError(
+        'No printable work on this visit. Add at least one denture or appliance line — impression appointments alone do not go to the lab.',
+      );
+      return;
+    }
+
     try {
       printLwo({
         lapRef: appointment.appointment_ref,
@@ -188,7 +210,7 @@ export function VisitDetail() {
         staffName: receptionistName,
         checkedInAt: visit.opened_at,
         notes: visit.notes,
-        items: items.map((it) => buildPrintableItem(it)),
+        items: printableItems,
       });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not open the printable LWO.');
