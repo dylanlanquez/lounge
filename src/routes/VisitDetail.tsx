@@ -27,7 +27,7 @@ import {
   Breadcrumb,
   Button,
   Card,
-  DropdownSelect,
+  Checkbox,
   EmptyState,
   MarketingGallery,
   Skeleton,
@@ -142,11 +142,12 @@ export function VisitDetail() {
   const { rows: patientSignedRows } = useSignedWaivers(patient?.id ?? null);
   const [waiverOpen, setWaiverOpen] = useState(false);
   // Unsuitability sheet — staff records that the patient cannot
-  // proceed with one of the items in their basket. Reason is required
-  // (schema enforces non-empty too). Submit terminates the visit by
-  // flipping status to 'unsuitable'.
+  // proceed with one or more items in their basket. Reason is shared
+  // across the selected products (one submit = one finding for each
+  // chosen line, all with the same reason). Submit terminates the
+  // visit by flipping status to 'unsuitable'.
   const [unsuitableOpen, setUnsuitableOpen] = useState(false);
-  const [unsuitableCatalogueId, setUnsuitableCatalogueId] = useState<string>('');
+  const [unsuitableCatalogueIds, setUnsuitableCatalogueIds] = useState<string[]>([]);
   const [unsuitableReason, setUnsuitableReason] = useState('');
   const [unsuitableBusy, setUnsuitableBusy] = useState(false);
   const [unsuitableError, setUnsuitableError] = useState<string | null>(null);
@@ -388,14 +389,22 @@ export function VisitDetail() {
   const openUnsuitable = () => {
     setUnsuitableError(null);
     setUnsuitableReason('');
-    setUnsuitableCatalogueId(unsuitableEligibleItems[0]?.catalogue_id ?? '');
+    // Default-empty selection so staff has to consciously pick — no
+    // chance of submitting against the wrong line through inertia.
+    setUnsuitableCatalogueIds([]);
     setUnsuitableOpen(true);
+  };
+
+  const toggleUnsuitableCatalogueId = (id: string, checked: boolean) => {
+    setUnsuitableCatalogueIds((cur) =>
+      checked ? [...new Set([...cur, id])] : cur.filter((x) => x !== id)
+    );
   };
 
   const submitUnsuitable = async () => {
     if (!visit || !patient) return;
-    if (!unsuitableCatalogueId) {
-      setUnsuitableError('Pick the product the patient was unsuitable for.');
+    if (unsuitableCatalogueIds.length === 0) {
+      setUnsuitableError('Pick at least one product the patient was unsuitable for.');
       return;
     }
     if (unsuitableReason.trim().length === 0) {
@@ -408,7 +417,7 @@ export function VisitDetail() {
       await recordUnsuitability({
         patient_id: patient.id,
         visit_id: visit.id,
-        catalogue_id: unsuitableCatalogueId,
+        catalogue_ids: unsuitableCatalogueIds,
         reason: unsuitableReason,
       });
       setUnsuitableOpen(false);
@@ -1036,17 +1045,45 @@ export function VisitDetail() {
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          <DropdownSelect<string>
-            label="Product"
-            required
-            value={unsuitableCatalogueId}
-            options={unsuitableEligibleItems.map((it) => ({
-              value: it.catalogue_id,
-              label: it.name,
-            }))}
-            onChange={(v) => setUnsuitableCatalogueId(v)}
-            placeholder="Pick a product from the basket"
-          />
+          {/* Multi-select list of basket items. Staff tick every
+              product the patient is unsuitable for; the same reason
+              applies to all of them (one submit = one record per
+              ticked product). Vertical list works better than a
+              dropdown here — cart items are few and the staff need
+              to see all of them at once to choose accurately. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Products <span style={{ color: theme.color.alert }}>*</span>
+            </span>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[2],
+                padding: theme.space[3],
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+              }}
+            >
+              {unsuitableEligibleItems.map((it) => (
+                <Checkbox
+                  key={it.id}
+                  checked={unsuitableCatalogueIds.includes(it.catalogue_id)}
+                  onChange={(v) => toggleUnsuitableCatalogueId(it.catalogue_id, v)}
+                  label={it.name}
+                />
+              ))}
+            </div>
+          </div>
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             <span
