@@ -309,8 +309,23 @@ export async function removeCartItem(itemId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// One source of truth for GBP rendering across the app. Intl gives us
+// the thousand separators ("£1,248.00", not "£1248.00"), the en-GB
+// minus-sign placement, and 2dp without us hand-rolling it.
+const GBP = new Intl.NumberFormat('en-GB', {
+  style: 'currency',
+  currency: 'GBP',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 export function formatPence(pence: number): string {
-  const sign = pence < 0 ? '-' : '';
-  const abs = Math.abs(pence);
-  return `${sign}£${(abs / 100).toFixed(2)}`;
+  return GBP.format(pence / 100);
+}
+
+// For the few callers that already hold a pounds value (catalogue
+// rows, picker line-totals computed in pounds). Convert in one spot
+// so every readable money value flows through the same formatter.
+export function formatPounds(pounds: number): string {
+  return GBP.format(pounds);
 }

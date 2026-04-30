@@ -1,5 +1,6 @@
 import { Minus, Package, Plus, Trash2 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { formatPence } from '../../lib/queries/carts.ts';
 
 export interface CartLineItemProps {
   name: string;
@@ -72,7 +73,7 @@ export function CartLineItem({
           }}
         >
           {description ? `${description} · ` : ''}
-          £{(unitPricePence / 100).toFixed(2)} each
+          {formatPence(unitPricePence)} each
         </p>
       </div>
 
@@ -95,7 +96,7 @@ export function CartLineItem({
           fontVariantNumeric: 'tabular-nums',
         }}
       >
-        £{(lineTotalPence / 100).toFixed(2)}
+        {formatPence(lineTotalPence)}
       </div>
 
       <button

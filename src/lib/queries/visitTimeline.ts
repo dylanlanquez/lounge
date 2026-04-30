@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { formatPence } from './carts.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useVisitTimeline — derives a sorted, deduplicated audit-trail event
@@ -136,8 +137,7 @@ export interface UseVisitTimelineResult {
 }
 
 const PENCE = (p: number | null | undefined): string => {
-  if (p == null) return '£0.00';
-  return `£${(p / 100).toFixed(2)}`;
+  return formatPence(p ?? 0);
 };
 
 const ARCH_LABEL = (a: 'upper' | 'lower' | 'both' | null): string | null => {

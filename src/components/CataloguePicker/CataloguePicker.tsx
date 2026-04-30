@@ -22,6 +22,7 @@ import {
 } from '../../lib/queries/appointments.ts';
 import {
   addCatalogueItemsToCart,
+  formatPounds,
   type AppliedUpgrade,
   type CatalogueAddOptions,
 } from '../../lib/queries/carts.ts';
@@ -903,7 +904,7 @@ function ProductRow({
             whiteSpace: 'nowrap',
           }}
         >
-          {showFromPrefix ? 'From ' : ''}£{minHeaderPrice.toFixed(2)}
+          {showFromPrefix ? 'From ' : ''}{formatPounds(minHeaderPrice)}
         </span>
         <RowActionBox
           isFormless={isFormless}
@@ -1018,7 +1019,7 @@ function ProductRow({
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          +£{tierPrice.toFixed(2)}
+                          +{formatPounds(tierPrice)}
                         </span>
                       </label>
                     );
@@ -1063,7 +1064,7 @@ function ProductRow({
                     lineHeight: 1,
                   }}
                 >
-                  £{lineTotal.toFixed(2)}
+                  {formatPounds(lineTotal)}
                 </span>
               </div>
               <Button
