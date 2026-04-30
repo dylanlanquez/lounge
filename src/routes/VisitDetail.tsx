@@ -948,14 +948,16 @@ export function VisitDetail() {
                   </span>
                 </Button>
               ) : null}
-              <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-                <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <StickyNote size={16} aria-hidden />
-                    {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
-                  </span>
-                </Button>
-              </span>
+              {items.length > 0 ? (
+                <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
+                  <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <StickyNote size={16} aria-hidden />
+                      {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
+                    </span>
+                  </Button>
+                </span>
+              ) : null}
               {items.length > 0 ? (
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
                   <Button
