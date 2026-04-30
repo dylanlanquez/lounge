@@ -147,7 +147,11 @@ export function printLwo(input: PrintableLwoInput): void {
     'tr:last-child td{border-bottom:none}' +
     // Category subheader ("DENTURE SERVICES" / "APPLIANCES") — only shown for
     // combo orders. Uses the same black-bar treatment as the column header.
-    '.tbl-subhdr{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.1em;padding:5px 8px;background:#000;color:#fff;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;border-bottom:1px solid #000}' +
+    // The bottom border is a 2px WHITE strip rather than the usual black:
+    // both rows are filled black, so a black border was invisible. White is
+    // an unburnt strip on thermal stock — visible, clean, no dithering. 2px
+    // (≈0.25mm at 203 DPI) is the print-safe minimum to render reliably.
+    '.tbl-subhdr{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.1em;padding:5px 8px;background:#000;color:#fff;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;border-bottom:2px solid #fff}' +
     '.notes-box{border:1px dashed #000;padding:3px 6px;margin-top:2px;flex-shrink:0}' +
     '.notes-lbl{font-size:6px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:1px}' +
     '.notes-val{font-size:8px;line-height:1.3;word-break:break-word}' +
