@@ -146,6 +146,7 @@ function Header({ meta }: { meta: string }) {
 
 function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
   const icon = iconFor(event);
+  const tone = toneFor(event);
   return (
     <li
       style={{
@@ -176,8 +177,8 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
           width: 36,
           height: 36,
           borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
+          background: tone.bg,
+          color: tone.fg,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -240,6 +241,56 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
       </div>
     </li>
   );
+}
+
+// Per-event tone for the icon dot. Keeps to the existing palette
+// (accent / warn / alert / neutral) so the timeline reads as a
+// quick scan: green = positive milestone, amber = soft-terminal /
+// caution, red = failure, grey = neutral activity.
+//
+// Granular dispatch: type='patient_event' covers many event_types
+// (registration / unsuitable / ended_early / deposit_failed). We
+// disambiguate by the title string set in HUMAN_PATIENT_EVENT.
+type EventTone = { bg: string; fg: string };
+const TONE: Record<'accent' | 'warn' | 'alert' | 'neutral', EventTone> = {
+  accent: { bg: theme.color.accentBg, fg: theme.color.accent },
+  warn: { bg: 'rgba(179, 104, 21, 0.10)', fg: theme.color.warn },
+  alert: { bg: 'rgba(184, 58, 42, 0.10)', fg: theme.color.alert },
+  neutral: { bg: 'rgba(14, 20, 20, 0.05)', fg: theme.color.inkMuted },
+};
+
+function toneFor(event: TimelineEvent): EventTone {
+  switch (event.type) {
+    case 'appointment_created':
+    case 'deposit_paid':
+    case 'visit_opened':
+    case 'waiver_signed':
+    case 'payment_succeeded':
+      return TONE.accent;
+    case 'payment_failed':
+      return TONE.alert;
+    case 'cart_item_added':
+    case 'jb_assigned':
+    case 'jb_freed':
+    case 'visit_closed':
+      return TONE.neutral;
+    case 'patient_event': {
+      // Patient-event titles come from HUMAN_PATIENT_EVENT in
+      // visitTimeline.ts. Tone follows the semantic weight:
+      //   - reversal / re-open = positive (accent)
+      //   - terminal-but-soft = warn
+      //   - failure = alert
+      //   - everything else = neutral
+      const t = event.title;
+      if (t === 'Unsuitable reversed') return TONE.accent;
+      if (t === 'Marked unsuitable' || t === 'Visit ended early') return TONE.warn;
+      if (t === 'Cart line removed') return TONE.warn;
+      if (t === 'Deposit failed') return TONE.alert;
+      return TONE.neutral;
+    }
+    default:
+      return TONE.neutral;
+  }
 }
 
 function iconFor(event: TimelineEvent): ReactNode {
