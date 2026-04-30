@@ -630,11 +630,22 @@ async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> 
       id: `patient-event-${r.id}`,
       type: 'patient_event' as const,
       timestamp: r.created_at,
-      title: HUMAN_PATIENT_EVENT(r.event_type),
+      title: composePatientEventTitle(r),
       detail: composePatientEventDetail(r),
       actorAccountId: r.actor_account_id,
       hint: 'flag' as const,
     }));
+}
+
+// Title for a generic patient_events row. For cart_line_removed the
+// payload carries the line's display name so we surface "Removed
+// [name]" symmetrically with "Added [name]" on cart_item_added.
+function composePatientEventTitle(row: PatientEventRow): string {
+  if (row.event_type === 'cart_line_removed') {
+    const lineName = typeof row.payload?.line_name === 'string' ? row.payload.line_name : null;
+    if (lineName && lineName.trim().length > 0) return `Removed ${lineName}`;
+  }
+  return HUMAN_PATIENT_EVENT(row.event_type);
 }
 
 // Compose the detail line for a generic patient_events row. Where
@@ -677,9 +688,9 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     return label ?? note ?? undefined;
   }
   if (row.event_type === 'cart_line_removed') {
-    // Surface the reason category and any free-text note so the
-    // timeline reads as the audit it is. Categories: mistake,
-    // changed_mind, unsuitable. Free-text note appended when present.
+    // Title now carries "Removed [name]" so the detail focuses on
+    // WHY: reason category + free-text note. Categories: mistake,
+    // changed_mind, unsuitable.
     const reason = typeof payload.reason === 'string' ? payload.reason : null;
     const label =
       reason === 'mistake'
