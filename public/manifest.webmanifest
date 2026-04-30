@@ -11,20 +11,26 @@
   "lang": "en-GB",
   "icons": [
     {
-      "src": "/lounge-fav.png",
+      "src": "/lounge-fav.png?v=3",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/lounge-fav.png",
+      "src": "/lounge-fav.png?v=3",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/lounge-fav.png",
+      "src": "/android-lounge-favicon.png?v=3",
       "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/android-lounge-favicon.png?v=3",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
