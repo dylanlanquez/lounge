@@ -15,6 +15,7 @@ import {
   StatusPill,
 } from '../components/index.ts';
 import { PatientEditModal } from '../components/PatientEditModal/PatientEditModal.tsx';
+import { WaiverSheet } from '../components/WaiverSheet/WaiverSheet.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -101,7 +102,10 @@ export function PatientProfile() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
             <Hero patient={patient} cases={cases} onEdit={() => setEditSection('profile')} />
             <CareDetails patient={patient} onEdit={() => setEditSection('care')} />
-            <WaiverStatus patientId={patient.id} />
+            <WaiverStatus
+              patientId={patient.id}
+              patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
+            />
             <BeforeAfterGallery
               patient={patient}
               files={files}
@@ -715,9 +719,14 @@ function formatDate(iso: string | null): string | null {
 // whether the patient is paperwork-clear before bringing them through.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function WaiverStatus({ patientId }: { patientId: string }) {
+function WaiverStatus({ patientId, patientName }: { patientId: string; patientName: string }) {
   const { sections, loading: sectionsLoading } = useWaiverSections();
-  const { latest, loading: latestLoading } = usePatientWaiverState(patientId);
+  const { latest, loading: latestLoading, refresh } = usePatientWaiverState(patientId);
+
+  // Section currently being signed via the pencil shortcut. Single-
+  // section flow (the receptionist taps the pencil for one row at a
+  // time); WaiverSheet handles the actual pad + persistence.
+  const [signingSection, setSigningSection] = useState<WaiverSection | null>(null);
 
   const activeSections = useMemo(() => sections.filter((s) => s.active), [sections]);
   const counts = useMemo(() => {
@@ -777,10 +786,24 @@ function WaiverStatus({ patientId }: { patientId: string }) {
               section={sec}
               latest={latest}
               isLast={i === activeSections.length - 1}
+              onSign={() => setSigningSection(sec)}
             />
           ))}
         </ul>
       )}
+
+      <WaiverSheet
+        open={signingSection !== null}
+        onClose={() => setSigningSection(null)}
+        patientId={patientId}
+        visitId={null}
+        sections={signingSection ? [signingSection] : []}
+        patientName={patientName}
+        onAllSigned={() => {
+          setSigningSection(null);
+          refresh();
+        }}
+      />
     </Card>
   );
 }
@@ -795,10 +818,12 @@ function WaiverRow({
   section,
   latest,
   isLast,
+  onSign,
 }: {
   section: WaiverSection;
   latest: Map<string, WaiverSignatureSummary>;
   isLast: boolean;
+  onSign: () => void;
 }) {
   const state = sectionSignatureState(section, latest);
   const sig = latest.get(section.key);
@@ -859,14 +884,47 @@ function WaiverRow({
       </span>
       <span
         style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
           flexShrink: 0,
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.medium,
-          color: statusColor,
-          fontVariantNumeric: 'tabular-nums',
         }}
       >
-        {statusText}
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: statusColor,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {statusText}
+        </span>
+        {state !== 'current' ? (
+          <button
+            type="button"
+            onClick={onSign}
+            aria-label={`Sign ${section.title}`}
+            title={`Sign ${section.title}`}
+            style={{
+              appearance: 'none',
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.inkMuted,
+              borderRadius: theme.radius.input,
+              width: 28,
+              height: 28,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              padding: 0,
+              flexShrink: 0,
+            }}
+          >
+            <Pencil size={14} aria-hidden />
+          </button>
+        ) : null}
       </span>
     </li>
   );
