@@ -407,13 +407,22 @@ const PreviewFrame = forwardRef<
 >(
   function PreviewFrame({ mobile, contentHeight }, ref) {
     const wrapRef = useRef<HTMLDivElement | null>(null);
-    const [scale, setScale] = useState(0.6);
+    // Default scale at 1.0 — the dialog is wider than A4 on
+    // desktop so we never need to scale up. Resize-observer
+    // shrinks below 1 only on narrow viewports.
+    const [scale, setScale] = useState(1);
     useEffect(() => {
       const el = wrapRef.current;
       if (!el) return;
       const measure = (): void => {
         const w = el.clientWidth;
-        if (w > 0) setScale(w / A4_WIDTH_PX);
+        if (w > 0) {
+          // Cap at 1: never scale UP. A dialog wider than A4
+          // would otherwise blow the doc up to 110%+ and
+          // overflow horizontally — exactly the behaviour the
+          // user kept seeing.
+          setScale(Math.min(1, w / A4_WIDTH_PX));
+        }
       };
       measure();
       const ro = new ResizeObserver(measure);
@@ -428,6 +437,9 @@ const PreviewFrame = forwardRef<
     const docHeightPx = contentHeight ?? A4_TWO_PAGES_PX;
     const iframeHeight = Math.min(docHeightPx, A4_TWO_PAGES_PX);
     const scaledHeight = iframeHeight * scale;
+    // Scaled width for the inner box so an at-or-near-100% scale
+    // doesn't leave the iframe overlapping the wrapper edge.
+    const scaledWidth = A4_WIDTH_PX * scale;
     const visibleHeight = mobile ? '60dvh' : '70dvh';
 
     return (
@@ -436,23 +448,31 @@ const PreviewFrame = forwardRef<
         style={{
           width: '100%',
           maxHeight: visibleHeight,
-          overflow: 'auto',
+          // overflow:hidden vertically would clip the second page;
+          // overflow:auto on Y so the receptionist can scroll
+          // through both pages, overflow:hidden on X so the
+          // scaled-up corners can never produce a horizontal bar
+          // (which they did when the dialog grew slightly wider
+          // than 794 and the scale ratio rounded above 1).
+          overflowY: 'auto',
+          overflowX: 'hidden',
           borderRadius: theme.radius.card,
           background: theme.color.bg,
-          // Subtle inner shadow to give the canvas depth without
-          // competing with the document's own card chrome.
           boxShadow: 'inset 0 1px 0 rgba(14, 20, 20, 0.04)',
           padding: theme.space[3],
+          // Centre the doc when the dialog is wider than A4 — the
+          // canvas no longer stretches edge-to-edge but the
+          // document is still visually anchored.
+          display: 'flex',
+          justifyContent: 'center',
         }}
       >
         <div
           style={{
-            // Scaled doc height drives the wrapper so the inner
-            // overflow scroll exposes both pages at their visual
-            // size (not the unscaled 2244px).
-            width: '100%',
+            width: scaledWidth,
             height: scaledHeight,
             position: 'relative',
+            flex: '0 0 auto',
           }}
         >
           <iframe
