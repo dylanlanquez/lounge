@@ -2086,15 +2086,6 @@ function StartStep({
           value={`${patient.first_name} ${patient.last_name}`.trim()}
           first
         />
-        <SummaryRow
-          icon={<ShoppingBag size={18} />}
-          label="Items"
-          value={
-            stagedItems.length === 0
-              ? 'None'
-              : `${stagedItems.length} line${stagedItems.length === 1 ? '' : 's'} · ${formatPence(stagedTotalPence)}`
-          }
-        />
         {jbRef ? <SummaryRow icon={<Box size={18} />} label="Job box" value={`JB${jbRef}`} /> : null}
         <SummaryRow
           icon={<ShieldCheck size={18} />}
@@ -2103,38 +2094,77 @@ function StartStep({
           accent={consentSigned}
         />
         {stagedItems.length > 0 ? (
-          <div style={{ marginTop: theme.space[5], paddingTop: theme.space[4], borderTop: `1px solid ${theme.color.border}`, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide, fontWeight: theme.type.weight.semibold }}>
-              Items
-            </p>
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <div
+            style={{
+              marginTop: theme.space[5],
+              paddingTop: theme.space[4],
+              borderTop: `1px solid ${theme.color.border}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+              <ShoppingBag size={18} aria-hidden style={{ color: theme.color.inkMuted }} />
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkSubtle,
+                  textTransform: 'uppercase',
+                  letterSpacing: theme.type.tracking.wide,
+                  fontWeight: theme.type.weight.semibold,
+                }}
+              >
+                Items
+              </p>
+            </div>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {stagedItems.map((it) => (
                 <li
                   key={it.key}
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: theme.type.size.sm,
+                    gap: theme.space[3],
+                    fontSize: theme.type.size.base,
                     color: theme.color.ink,
+                    lineHeight: 1.5,
                   }}
                 >
-                  <span>
-                    {it.qty > 1 ? `${it.qty} × ` : ''}
-                    {it.catalogue.name}
-                    {it.options.arch ? ` · ${capitalise(it.options.arch)}` : ''}
-                    {(it.options.upgrades ?? []).length > 0
-                      ? ` · ${(it.options.upgrades ?? []).map((u) => u.name).join(' · ')}`
-                      : ''}
-                  </span>
-                  <span style={{ fontVariantNumeric: 'tabular-nums', color: theme.color.inkMuted }}>
+                  <span>{formatItemDescriptor(it)}</span>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.sm,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: theme.color.inkMuted,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
                     {formatPence(stagedLineTotalPence(it))}
                   </span>
                 </li>
               ))}
             </ul>
+            <div
+              style={{
+                marginTop: theme.space[2],
+                paddingTop: theme.space[3],
+                borderTop: `1px solid ${theme.color.border}`,
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+              }}
+            >
+              <span>Subtotal</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatPence(stagedTotalPence)}</span>
+            </div>
           </div>
-        ) : null}
+        ) : (
+          <SummaryRow icon={<ShoppingBag size={18} />} label="Items" value="None" />
+        )}
       </Card>
     </div>
   );
