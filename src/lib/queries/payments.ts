@@ -28,6 +28,10 @@ export async function recordCashPayment(
   amountPence: number,
   notes?: string
 ): Promise<PaymentRow> {
+  // Stamp the staff member so the timeline's "Payment captured"
+  // event renders "by [name]". Best-effort: NULL on resolver
+  // failure rather than blocking the till.
+  const { data: accountId } = await supabase.rpc('auth_account_id');
   const { data, error } = await supabase
     .from('lng_payments')
     .insert({
@@ -37,6 +41,7 @@ export async function recordCashPayment(
       amount_pence: amountPence,
       status: 'succeeded',
       succeeded_at: new Date().toISOString(),
+      taken_by: (accountId as string | null) ?? null,
       notes: notes ?? null,
     })
     .select('*')
