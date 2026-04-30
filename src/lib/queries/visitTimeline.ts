@@ -320,6 +320,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
               timestamp: visit.closed_at,
               title: 'Job box freed',
               detail: `JB${visit.jb_ref} is available again`,
+              actorAccountId: visit.receptionist_id,
               hint: 'box',
             });
           }
@@ -330,6 +331,11 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             type: 'visit_closed',
             timestamp: visit.closed_at,
             title: 'Visit closed',
+            // Same staff that arrived the visit — closing fires
+            // from the same logged-in session in the common case.
+            // Future improvement: a dedicated closed_by column on
+            // lng_visits would let us record a different staff.
+            actorAccountId: visit.receptionist_id,
             hint: 'flag',
           });
         }

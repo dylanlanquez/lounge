@@ -86,6 +86,7 @@ export async function createWalkInVisit(
   await supabase.from('patient_events').insert({
     patient_id: input.patient_id,
     event_type: 'walk_in_arrived',
+    actor_account_id: (walkInAccountId as string | null) ?? null,
     payload: {
       visit_id: visit.id,
       walk_in_id: walkIn.id,
@@ -186,9 +187,11 @@ export async function markNoShow(
   if (error) throw new Error(error.message);
 
   if (!context.patientId) return;
+  const { data: noShowAccountId } = await supabase.rpc('auth_account_id');
   await supabase.from('patient_events').insert({
     patient_id: context.patientId,
     event_type: 'no_show',
+    actor_account_id: (noShowAccountId as string | null) ?? null,
     payload: {
       appointment_id: appointmentId,
       reason,
@@ -242,6 +245,7 @@ export async function reverseNoShow(
   await supabase.from('patient_events').insert({
     patient_id: apptRow.patient_id,
     event_type: 'no_show_reversed',
+    actor_account_id: (accountId as string | null) ?? null,
     payload: {
       appointment_id: apptRow.id,
       staff_account_id: accountId ?? null,
@@ -273,6 +277,7 @@ export async function markVirtualMeetingJoined(appointmentId: string): Promise<v
   await supabase.from('patient_events').insert({
     patient_id: appt.patient_id,
     event_type: 'virtual_meeting_joined',
+    actor_account_id: (accountId as string | null) ?? null,
     payload: {
       appointment_id: appt.id,
       staff_account_id: accountId ?? null,
@@ -320,6 +325,7 @@ export async function markAppointmentArrived(
   await supabase.from('patient_events').insert({
     patient_id: appt.patient_id,
     event_type: 'visit_arrived',
+    actor_account_id: receptionistId,
     payload: { visit_id: visit.id, appointment_id: appt.id, source: 'calendly' },
   });
 
