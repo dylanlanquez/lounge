@@ -79,6 +79,9 @@ export { BeforeAfterGallery, MarketingGallery } from './PhotoGallery/PhotoGaller
 export { StickyPageHeader } from './StickyPageHeader/StickyPageHeader.tsx';
 export type { StickyPageHeaderProps } from './StickyPageHeader/StickyPageHeader.tsx';
 
+export { DateRangePicker } from './DateRangePicker/DateRangePicker.tsx';
+export type { DateRangePickerProps } from './DateRangePicker/DateRangePicker.tsx';
+
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';

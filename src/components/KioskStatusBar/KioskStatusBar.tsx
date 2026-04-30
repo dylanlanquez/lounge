@@ -1,4 +1,4 @@
-import { Settings } from 'lucide-react';
+import { BarChart3, Receipt, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
@@ -32,6 +32,8 @@ export function KioskStatusBar() {
 
   if (authLoading || !user) return null;
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
+  const showReportsButton = !!account && account.can_view_reports;
+  const showFinancialsButton = !!account && account.can_view_financials;
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -77,39 +79,27 @@ export function KioskStatusBar() {
         />
       </span>
 
-      {/* Right cluster: Settings · Wi-Fi · Battery · Date · Time.
-          The Admin gear is only rendered for admins (or the super
-          admin) — receptionists never see it. The /admin route also
-          enforces the same gate as a defense-in-depth. */}
+      {/* Right cluster: Reports · Financials · Settings · Wi-Fi · Battery
+          · Date · Time. Each entry is gated on the matching permission
+          flag — receptionists never see the doors they can't open. The
+          routes themselves enforce the same gate as defense-in-depth. */}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
-        {showAdminButton ? (
-          <>
-            <button
-              type="button"
-              aria-label="Admin"
-              onClick={() => navigate('/admin')}
-              style={{
-                appearance: 'none',
-                border: 'none',
-                background: 'transparent',
-                color: theme.color.ink,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 24,
-                height: 24,
-                padding: 0,
-                borderRadius: theme.radius.pill,
-                WebkitTapHighlightColor: 'transparent',
-                outline: 'none',
-              }}
-            >
-              <Settings size={15} />
-            </button>
-            <Divider />
-          </>
+        {showReportsButton ? (
+          <KioskIconButton label="Reports" onClick={() => navigate('/reports')}>
+            <BarChart3 size={15} />
+          </KioskIconButton>
         ) : null}
+        {showFinancialsButton ? (
+          <KioskIconButton label="Financials" onClick={() => navigate('/financials')}>
+            <Receipt size={15} />
+          </KioskIconButton>
+        ) : null}
+        {showAdminButton ? (
+          <KioskIconButton label="Admin" onClick={() => navigate('/admin')}>
+            <Settings size={15} />
+          </KioskIconButton>
+        ) : null}
+        {showReportsButton || showFinancialsButton || showAdminButton ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}
@@ -396,6 +386,47 @@ function Divider() {
         flexShrink: 0,
       }}
     />
+  );
+}
+
+// Square 24×24 icon button used by the kiosk top-bar entries (Reports,
+// Financials, Admin). One helper rather than three near-identical
+// inlined <button> tags so any future tweak — focus ring, colour shift,
+// disabled state — flows to every entry consistently.
+function KioskIconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        color: theme.color.ink,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 24,
+        height: 24,
+        padding: 0,
+        borderRadius: theme.radius.pill,
+        WebkitTapHighlightColor: 'transparent',
+        outline: 'none',
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
