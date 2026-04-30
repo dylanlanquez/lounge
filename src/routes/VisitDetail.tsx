@@ -16,6 +16,7 @@ import {
   Loader2,
   Plus,
   Printer,
+  RotateCcw,
   ShoppingCart,
   StickyNote,
   UserPlus,
@@ -49,7 +50,14 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { formatVisitCrumb, recordUnsuitability, useVisitDetail } from '../lib/queries/visits.ts';
+import {
+  formatVisitCrumb,
+  recordUnsuitability,
+  reverseUnsuitability,
+  useLatestUnsuitability,
+  useVisitDetail,
+} from '../lib/queries/visits.ts';
+import type { VisitRow } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
@@ -152,6 +160,9 @@ export function VisitDetail() {
   const [unsuitableBusy, setUnsuitableBusy] = useState(false);
   const [unsuitableError, setUnsuitableError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
+  // Drives the unsuitable header line + reverse-flow toast wording.
+  // Re-fetched whenever the visit refreshes.
+  const { data: latestUnsuitable } = useLatestUnsuitability(id ?? null);
 
   // Waiver state. Required sections are derived from the cart's
   // service_types when items exist (post-arrival truth) and fall back to
@@ -371,6 +382,14 @@ export function VisitDetail() {
   // the over-deposit case so we never produce a negative charge here.
   const total = Math.max(0, subtotal - discount - depositPence);
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
+  // Visit terminated by an unsuitability finding. Same as cartLocked
+  // but specifically lit when the lock is reversible (admin can flip
+  // back via the in-app reverse button), unlike paid which is final.
+  const isUnsuitable = visit?.status === 'unsuitable';
+  // Productive actions (cart edits, tech note, LWO print, waiver
+  // viewing, payment) are gated behind both: paid carts are immutable
+  // forever, unsuitable visits are immutable until reversed.
+  const productiveLocked = cartLocked || isUnsuitable;
 
   // Visits that have already terminated (complete / unsuitable /
   // cancelled) are read-only for unsuitability — no second mark.
@@ -439,6 +458,21 @@ export function VisitDetail() {
       setPickerOpen(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
+    }
+  };
+
+  const [reverseBusy, setReverseBusy] = useState(false);
+  const submitReverseUnsuitable = async () => {
+    if (!visit || !patient) return;
+    setReverseBusy(true);
+    setError(null);
+    try {
+      await reverseUnsuitability({ patient_id: patient.id, visit_id: visit.id });
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reverse');
+    } finally {
+      setReverseBusy(false);
     }
   };
 
@@ -648,6 +682,9 @@ export function VisitDetail() {
                 scheduledAt={appointment?.start_at ?? null}
                 arrivedAt={visit.opened_at}
                 completedAt={visit.closed_at}
+                visitStatus={visit.status}
+                unsuitableAt={latestUnsuitable?.recorded_at ?? null}
+                unsuitableBy={latestUnsuitable?.recorded_by_name ?? null}
               />
               <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', marginTop: theme.space[4] }}>
                 {showableRef(patient?.internal_ref) ? (
@@ -675,7 +712,12 @@ export function VisitDetail() {
                 <MetaPill icon={visitStatusIcon(visit.status)} tone={visitStatusTone(visit.status)} size="sm">
                   {visitStatusLabel(visit.status)}
                 </MetaPill>
-                {cart ? (
+                {cart && visit.status !== 'unsuitable' ? (
+                  // Hide the "Cart open" pill when the visit is
+                  // unsuitable. The visit-level status pill already
+                  // says "Unsuitable" and the cart is locked behind
+                  // the scenes; an "open" cart label would just
+                  // contradict the lock state.
                   <MetaPill
                     icon={cartStatusIcon(cart.status)}
                     tone={cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show'}
@@ -701,11 +743,11 @@ export function VisitDetail() {
               signaturesLoading={!patient || patientSignaturesLoading}
               onOpen={() => setWaiverOpen(true)}
               // Surface the "View" affordance only when a doc is
-              // buildable — every required section has a matching
-              // signature. The bottom action row used to host this
-              // button; pulling it into the ready banner frees a
-              // slot in that row.
+              // buildable. While the visit is unsuitable the button
+              // stays visible but dimmed to match the rest of the
+              // locked surface.
               onView={waiverDoc ? () => setWaiverViewerOpen(true) : undefined}
+              viewDisabled={isUnsuitable}
             />
 
             <Card padding="lg">
@@ -713,7 +755,7 @@ export function VisitDetail() {
                 <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
                   Cart
                 </h2>
-                {items.length > 0 && !cartLocked ? (
+                {items.length > 0 && !productiveLocked ? (
                   <Button variant="secondary" size="sm" onClick={openPicker}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                       <Plus size={16} /> Add item
@@ -730,7 +772,7 @@ export function VisitDetail() {
                   title="No items yet"
                   description="Pick from the shared catalogue. Suggestions populate based on the booking type and intake answers."
                   action={
-                    <Button variant="primary" onClick={openPicker} disabled={cartLocked}>
+                    <Button variant="primary" onClick={openPicker} disabled={productiveLocked}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                         <Plus size={16} /> Add item
                       </span>
@@ -738,7 +780,18 @@ export function VisitDetail() {
                   }
                 />
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: theme.space[3],
+                    // Visit terminated by an unsuitability finding —
+                    // dim the lines so the locked state reads at a
+                    // glance. CartLineItem already disables qty +
+                    // delete via the `disabled` prop below.
+                    opacity: isUnsuitable ? 0.55 : 1,
+                  }}
+                >
                   {items.map((it) => {
                     const composed = composeUpgradeLabel(it.name, it.upgrades, upgradePositionById);
                     return (
@@ -752,7 +805,7 @@ export function VisitDetail() {
                         onIncrement={() => inc(it.id, it.quantity)}
                         onDecrement={() => dec(it.id, it.quantity)}
                         onRemove={() => rm(it.id)}
-                        disabled={busyItem === it.id || cartLocked}
+                        disabled={busyItem === it.id || productiveLocked}
                         quantityEnabled={it.quantity_enabled}
                         thumbnailUrl={it.image_url}
                       />
@@ -773,24 +826,28 @@ export function VisitDetail() {
             </Card>
 
             {items.length > 0 ? (
-              // Two rows: Mark unsuitable lives on its own line on the
-              // left so the destructive action visually distances
-              // itself from the productive cluster (tech note + LWO +
-              // payment) on the right. Productive cluster wraps if
-              // needed; the destructive button is always alone.
+              // Two rows. Productive cluster (tech note, LWO,
+              // pay/reverse) sits on top, right-aligned. Destructive
+              // "Mark unsuitable" sits on its own row below, left-
+              // aligned, only while the visit is still active. When
+              // the visit is unsuitable the productive cluster dims
+              // and the primary becomes a Reverse button.
               <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-                {canMarkUnsuitable ? (
-                  <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-                    <Button variant="tertiary" onClick={openUnsuitable}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                        <Ban size={16} aria-hidden />
-                        Mark unsuitable
-                      </span>
-                    </Button>
-                  </div>
-                ) : null}
-                <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Button variant="secondary" onClick={openNoteEditor}>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: theme.space[2],
+                    justifyContent: 'flex-end',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    // Dim the productive cluster while the visit is
+                    // locked by an unsuitability finding. The Reverse
+                    // primary button stays at full opacity inside this
+                    // cluster — see its own override below.
+                    opacity: isUnsuitable ? 0.55 : 1,
+                  }}
+                >
+                  <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <StickyNote size={16} aria-hidden />
                       {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
@@ -799,7 +856,7 @@ export function VisitDetail() {
                   <Button
                     variant="secondary"
                     onClick={handlePrintLwo}
-                    disabled={!appointment?.appointment_ref}
+                    disabled={!appointment?.appointment_ref || productiveLocked}
                     title={
                       appointment?.appointment_ref
                         ? undefined
@@ -811,27 +868,53 @@ export function VisitDetail() {
                       Print LWO
                     </span>
                   </Button>
-                  <Button
-                    variant="primary"
-                    showArrow
-                    disabled={cartLocked}
-                    onClick={() =>
-                      navigate(`/visit/${visit.id}/pay`, {
-                        state: {
-                          from: 'visit',
-                          visitId: visit.id,
-                          visitOpenedAt: visit.opened_at,
-                          // Pass the visit's own entry through so Pay's
-                          // breadcrumb can render the full chain and the
-                          // visit-link can pop back with the right state.
-                          visitEntry: location.state,
-                        },
-                      })
-                    }
-                  >
-                    Take payment {formatPence(total)}
-                  </Button>
+                  {isUnsuitable ? (
+                    // Reverse-the-flag affordance. Stays full
+                    // opacity inside the dimmed cluster so it reads
+                    // as the only live action while terminated.
+                    <span style={{ opacity: 1 / 0.55 }}>
+                      <Button variant="primary" onClick={submitReverseUnsuitable} loading={reverseBusy}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                          <RotateCcw size={16} aria-hidden />
+                          Reverse unsuitable
+                        </span>
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      showArrow
+                      disabled={cartLocked}
+                      onClick={() =>
+                        navigate(`/visit/${visit.id}/pay`, {
+                          state: {
+                            from: 'visit',
+                            visitId: visit.id,
+                            visitOpenedAt: visit.opened_at,
+                            // Pass the visit's own entry through so
+                            // Pay's breadcrumb can render the full
+                            // chain and the visit-link can pop back
+                            // with the right state.
+                            visitEntry: location.state,
+                          },
+                        })
+                      }
+                    >
+                      Take payment {formatPence(total)}
+                    </Button>
+                  )}
                 </div>
+
+                {canMarkUnsuitable ? (
+                  <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                    <Button variant="tertiary" onClick={openUnsuitable}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                        <Ban size={16} aria-hidden />
+                        Mark unsuitable
+                      </span>
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1328,6 +1411,7 @@ function WaiverCard({
   signaturesLoading,
   onOpen,
   onView,
+  viewDisabled,
 }: {
   flag: ReturnType<typeof summariseWaiverFlag>;
   requiredCount: number;
@@ -1345,8 +1429,12 @@ function WaiverCard({
   // Optional: when supplied, the ready-state banner renders a "View"
   // button that opens the printable waiver dialog. Caller passes this
   // only when a doc is actually buildable (every required section has
-  // a matching signature) so we don't surface a disabled action.
+  // a matching signature) so we don't surface an inert action.
   onView?: () => void;
+  // When true, the View button stays visible but disabled + dimmed.
+  // Used while the visit is locked (unsuitable) so the affordance
+  // matches the rest of the dimmed productive surface.
+  viewDisabled?: boolean;
 }) {
   const wrapStyle = (border: string): React.CSSProperties => ({
     display: 'flex',
@@ -1433,7 +1521,13 @@ function WaiverCard({
           </p>
         </div>
         {onView ? (
-          <Button variant="secondary" size="sm" onClick={onView}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onView}
+            disabled={viewDisabled}
+            style={viewDisabled ? { opacity: 0.55 } : undefined}
+          >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
               <FileText size={14} aria-hidden /> View
             </span>
@@ -1525,6 +1619,9 @@ function LifecycleStrip({
   scheduledAt,
   arrivedAt,
   completedAt,
+  visitStatus,
+  unsuitableAt,
+  unsuitableBy,
 }: {
   arrivalType: 'walk_in' | 'scheduled';
   bookedAt: string | null;
@@ -1532,10 +1629,17 @@ function LifecycleStrip({
   scheduledAt: string | null;
   arrivedAt: string;
   completedAt: string | null;
+  visitStatus: VisitRow['status'];
+  // Latest unsuitability record. When status='unsuitable' we render
+  // a "Marked Unsuitable" line in place of "Completed" plus a "By
+  // [name]" sub-line so staff sees who terminated the visit.
+  unsuitableAt: string | null;
+  unsuitableBy: string | null;
 }) {
   const isScheduled = arrivalType === 'scheduled';
   const bookedLabel =
     bookingSource === 'calendly' ? 'Booked on Calendly' : 'Booked';
+  const isUnsuitable = visitStatus === 'unsuitable';
   return (
     <dl
       style={{
@@ -1553,12 +1657,20 @@ function LifecycleStrip({
         <LifecycleLine label="Scheduled" iso={scheduledAt} />
       ) : null}
       <LifecycleLine label="Arrived" iso={arrivedAt} />
-      {completedAt ? <LifecycleLine label="Completed" iso={completedAt} /> : null}
+      {isUnsuitable && unsuitableAt ? (
+        <LifecycleLine
+          label="Marked Unsuitable"
+          iso={unsuitableAt}
+          subline={unsuitableBy ? `By ${unsuitableBy}` : null}
+        />
+      ) : completedAt ? (
+        <LifecycleLine label="Completed" iso={completedAt} />
+      ) : null}
     </dl>
   );
 }
 
-function LifecycleLine({ label, iso }: { label: string; iso: string }) {
+function LifecycleLine({ label, iso, subline }: { label: string; iso: string; subline?: string | null }) {
   return (
     <>
       <dt
@@ -1582,7 +1694,19 @@ function LifecycleLine({ label, iso }: { label: string; iso: string }) {
           fontVariantNumeric: 'tabular-nums',
         }}
       >
-        {formatLifecycle(iso)}
+        <div>{formatLifecycle(iso)}</div>
+        {subline ? (
+          <div
+            style={{
+              marginTop: 2,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'normal',
+            }}
+          >
+            {subline}
+          </div>
+        ) : null}
       </dd>
     </>
   );
