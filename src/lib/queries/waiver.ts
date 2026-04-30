@@ -247,6 +247,81 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
   return { rows, loading, error, refresh };
 }
 
+// Signatures attached to a single visit — the source the View Waiver
+// dialog on VisitDetail reads from. Filtered by visit_id rather than
+// patient_id so we never accidentally fold a previous visit's
+// waivers into the current one's printout.
+export function useVisitWaiverSignatures(visitId: string | null | undefined): SignedWaiversResult {
+  const [rows, setRows] = useState<SignedWaiverRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    if (!visitId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    let cancelled = false;
+    (async () => {
+      const { data, error: err } = await supabase
+        .from('lng_waiver_signatures')
+        .select(
+          `id, section_key, section_version, signed_at, signature_svg, terms_snapshot, visit_id,
+           section:section_key(title),
+           witness:witnessed_by(first_name, last_name)`,
+        )
+        .eq('visit_id', visitId)
+        .order('signed_at', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setRows([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        setLoading(false);
+        return;
+      }
+      const mapped: SignedWaiverRow[] = ((data ?? []) as Array<Record<string, unknown>>).map((r) => {
+        const section = (r.section as { title?: string } | null) ?? null;
+        const witness = (r.witness as { first_name?: string; last_name?: string } | null) ?? null;
+        const witnessName = witness
+          ? `${witness.first_name ?? ''} ${witness.last_name ?? ''}`.trim() || null
+          : null;
+        const termsSnapshot = r.terms_snapshot;
+        return {
+          id: r.id as string,
+          section_key: r.section_key as string,
+          section_title: section?.title ?? null,
+          section_version: r.section_version as string,
+          signed_at: r.signed_at as string,
+          signature_svg: r.signature_svg as string,
+          terms_snapshot: Array.isArray(termsSnapshot) ? (termsSnapshot as string[]) : null,
+          witness_name: witnessName,
+          visit_id: (r.visit_id as string | null) ?? null,
+        };
+      });
+      setRows(mapped);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visitId, tick]);
+
+  useRealtimeRefresh(
+    visitId ? [{ table: 'lng_waiver_signatures', filter: `visit_id=eq.${visitId}` }] : [],
+    refresh,
+  );
+
+  return { rows, loading, error, refresh };
+}
+
 // ---------- Pure section-resolution helpers ----------
 //
 // Required-sections logic is deliberately extracted from the React hooks
