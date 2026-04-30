@@ -186,38 +186,31 @@ function renderItemRow(item: WaiverDocItem): string {
   </tr>`;
 }
 
-// Items section. When the visit has both denture and appliance lines
-// the sub-headers (".items-subhead") split them into two sections
-// inside the same table — same posture Checkpoint and the LWO use,
-// adapted to the patient-facing typography.
+// Items section. Single flat table — no "Denture services" /
+// "Appliances" sub-headers. The category split is internal lab
+// taxonomy and adds no value on a customer-facing receipt; the
+// row's own description (e.g. "Broken tooth on denture", "Click-in
+// veneers") already carries the information without forcing the
+// reader to parse a sub-heading.
 function renderItemsTable(rows: WaiverDocItem[]): string {
   if (rows.length === 0) {
     return `<p style="font-size:11px;color:var(--muted);margin:6px 0">No billable items recorded for this visit.</p>`;
   }
-  const denture = rows.filter((r) => r.category === 'denture');
-  const appliance = rows.filter((r) => r.category === 'appliance');
-  const both = denture.length > 0 && appliance.length > 0;
-  const tableHead = `<colgroup>
-    <col />
-    <col style="width:60px" />
-    <col style="width:100px" />
-    <col style="width:110px" />
-  </colgroup>
-  <thead><tr>
-    <th>Description</th>
-    <th class="center">Qty</th>
-    <th class="num">Each</th>
-    <th class="num">Amount</th>
-  </tr></thead>`;
-  const body = both
-    ? `<tbody>
-        <tr><td colspan="4" class="items-subhead">Denture services</td></tr>
-        ${denture.map(renderItemRow).join('')}
-        <tr><td colspan="4" class="items-subhead">Appliances</td></tr>
-        ${appliance.map(renderItemRow).join('')}
-      </tbody>`
-    : `<tbody>${rows.map(renderItemRow).join('')}</tbody>`;
-  return `<table class="items">${tableHead}${body}</table>`;
+  return `<table class="items">
+    <colgroup>
+      <col />
+      <col style="width:60px" />
+      <col style="width:100px" />
+      <col style="width:110px" />
+    </colgroup>
+    <thead><tr>
+      <th>Description</th>
+      <th class="center">Qty</th>
+      <th class="num">Each</th>
+      <th class="num">Amount</th>
+    </tr></thead>
+    <tbody>${rows.map(renderItemRow).join('')}</tbody>
+  </table>`;
 }
 
 // Two-page A4 layout, designed for the patient's pocket folder
@@ -336,18 +329,20 @@ const A4_CSS = (accent: string): string => `
   ol.terms li::before{content:counter(term)".";position:absolute;left:-2px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
 
   /* ── Signature card ──────────────────────────────────────────── */
-  /* Forced onto its own break so it always lands at the foot of
-     page 2 — the print engine pushes a new sheet here even if
-     the terms above happen to leave room on page 1. */
-  .sig-card{page-break-before:always;break-before:page;margin-top:0;padding:18px 20px;border:1px solid var(--rule);border-radius:14px;background:var(--surface);box-shadow:0 1px 0 rgba(14,20,20,0.02)}
-  .sig-card .sig-eyebrow{font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin-bottom:6px}
-  .sig-card .sig-name{font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:8px}
-  .sig-card .pad{display:block;width:100%;max-width:340px;height:96px;padding:4px 6px;border-bottom:1px solid var(--rule);position:relative}
+  /* Scaled to ~75% of the previous version — same proportions,
+     less footprint. break-inside:avoid keeps it whole so the card
+     never splits across the page boundary, but no forced
+     page-break-before because that pushed it onto a third sheet
+     when the terms ended early on page 2. */
+  .sig-card{break-inside:avoid;margin-top:14px;padding:14px 16px;border:1px solid var(--rule);border-radius:11px;background:var(--surface);box-shadow:0 1px 0 rgba(14,20,20,0.02)}
+  .sig-card .sig-eyebrow{font-size:7.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin-bottom:5px}
+  .sig-card .sig-name{font-size:12px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:6px}
+  .sig-card .pad{display:block;width:100%;max-width:255px;height:72px;padding:3px 5px;border-bottom:1px solid var(--rule);position:relative}
   .sig-card .pad svg{display:block;width:100%;height:100%}
-  .sig-card .pad-blank{display:flex;align-items:center;justify-content:center;color:var(--subtle);font-size:10px}
-  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:28px;row-gap:6px;margin-top:12px}
-  .sig-meta .label{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:1px}
-  .sig-meta .value{font-size:11px;color:var(--ink);font-weight:500}
+  .sig-card .pad-blank{display:flex;align-items:center;justify-content:center;color:var(--subtle);font-size:9px}
+  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:21px;row-gap:5px;margin-top:9px}
+  .sig-meta .label{font-size:7px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:1px}
+  .sig-meta .value{font-size:9.5px;color:var(--ink);font-weight:500}
 `;
 
 export function buildWaiverDocument(input: WaiverDocInput): string {
@@ -399,9 +394,11 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
          </div>
        </div>`;
 
-  const notesHtml = input.notes
-    ? `<div class="notes"><div class="label">Note from your clinician</div><div class="value">${escapeHtml(input.notes)}</div></div>`
-    : '';
+  // visit.notes is the lab-facing tech note (printed on the LWO).
+  // It's not customer-facing — patients don't need to see the
+  // shade-clarification jot the receptionist made for the
+  // technician — so the customer waiver document deliberately
+  // does not surface it.
 
   const latest = input.sections.reduce(
     (acc, s) => (s.signedAt > acc.signedAt ? s : acc),
@@ -477,8 +474,6 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     <div class="sec">
       ${paymentRowHtml}
     </div>
-
-    ${notesHtml}
 
     <div class="terms-h">Terms you agreed to</div>
     <p class="terms-deck">By signing, ${name} confirmed they understood every clause below and accepted the work and warranty terms as described. Continued overleaf.</p>
