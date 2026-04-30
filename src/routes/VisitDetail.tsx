@@ -274,7 +274,7 @@ export function VisitDetail() {
       // contact email or address. When that lands the values can move
       // to a useLocationForBrand() hook without touching the renderer.
       brand: {
-        name: 'Venneir Lounge',
+        name: 'Venneir',
         // Customer service email — what the patient writes to with
         // questions about their visit. accounts@venneir.com is for
         // finance / invoicing only and is not the right contact
