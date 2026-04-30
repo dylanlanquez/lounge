@@ -37,9 +37,11 @@ export function Patients() {
 
   // Scroll to the top of the list whenever the page changes (next /
   // prev). The route doesn't change so the App-level ScrollToTop
-  // doesn't fire here — handle it ourselves.
+  // doesn't fire here — handle it ourselves. The page scroll lives
+  // on #root (body is pinned to the viewport for iOS rubber-band),
+  // so window.scrollTo would be a no-op.
   useEffect(() => {
-    window.scrollTo(0, 0);
+    document.getElementById('root')?.scrollTo(0, 0);
   }, [page]);
 
   if (authLoading) return null;

@@ -43,6 +43,20 @@ export interface CartItemRow {
   // render this as a small thumbnail. Null on ad-hoc rows that didn't
   // come from the picker.
   image_url: string | null;
+  // Upgrade snapshots attached to this line at insert time (Scalloped
+  // etc.). Their price_pence is already rolled into unit_price_pence,
+  // so they contribute to line_total via the existing generated
+  // column — these names are display-only on the cart line.
+  upgrades: CartItemUpgradeRow[];
+}
+
+export interface CartItemUpgradeRow {
+  id: string;
+  cart_item_id: string;
+  upgrade_id: string | null;
+  upgrade_code: string;
+  upgrade_name: string;
+  price_pence: number;
 }
 
 // Per-instance line input. The picker passes one of these per "tick" of
@@ -115,7 +129,30 @@ export function useCart(visitId: string | undefined): UseCartResult {
           .eq('cart_id', cartRow.id)
           .order('sort_order', { ascending: true })
           .order('created_at', { ascending: true });
-        if (!cancelled) setItems((rows ?? []) as CartItemRow[]);
+        const baseItems = (rows ?? []) as Omit<CartItemRow, 'upgrades'>[];
+        // Pull every upgrade snapshot for this cart in one round-trip,
+        // then group by cart_item_id. Avoids N+1 queries when a cart
+        // has many lines.
+        let upgradeRows: CartItemUpgradeRow[] = [];
+        if (baseItems.length > 0) {
+          const itemIds = baseItems.map((it) => it.id);
+          const { data: ups } = await supabase
+            .from('lng_cart_item_upgrades')
+            .select('id, cart_item_id, upgrade_id, upgrade_code, upgrade_name, price_pence')
+            .in('cart_item_id', itemIds);
+          upgradeRows = (ups ?? []) as CartItemUpgradeRow[];
+        }
+        const upgradesByItem = new Map<string, CartItemUpgradeRow[]>();
+        for (const u of upgradeRows) {
+          const list = upgradesByItem.get(u.cart_item_id) ?? [];
+          list.push(u);
+          upgradesByItem.set(u.cart_item_id, list);
+        }
+        if (!cancelled) {
+          setItems(
+            baseItems.map((it) => ({ ...it, upgrades: upgradesByItem.get(it.id) ?? [] })),
+          );
+        }
       } else {
         setItems([]);
       }
@@ -218,18 +255,27 @@ export async function addCatalogueItemsToCart(
     quantity_enabled: catalogue.quantity_enabled,
     image_url: catalogue.image_url,
   };
+  // Upgrade pence is rolled into unit_price_pence on every spawned
+  // cart line so line_total_pence (a generated column = unit * qty -
+  // discount) and the cart subtotal trigger stay correct without
+  // schema changes. The lng_cart_item_upgrades rows below are kept
+  // as immutable display-only snapshots — the receptionist still sees
+  // "Scalloped" listed under the line, but the price already lives
+  // in the parent line's unit price.
+  const upgrades = options.upgrades ?? [];
+  const upgradePerInstancePence = upgrades.reduce((sum, u) => sum + u.price_pence, 0);
   const rows = [];
   for (let i = 0; i < qty; i++) {
-    rows.push({ ...baseSnapshot, unit_price_pence: i === 0 ? baseUnitPence : extraPence });
+    const baseForInstance = i === 0 ? baseUnitPence : extraPence;
+    rows.push({ ...baseSnapshot, unit_price_pence: baseForInstance + upgradePerInstancePence });
   }
   const { data, error } = await supabase.from('lng_cart_items').insert(rows).select('*');
   if (error) throw new Error(error.message);
-  const inserted = (data ?? []) as CartItemRow[];
+  const inserted = (data ?? []).map((it) => ({ ...(it as Omit<CartItemRow, 'upgrades'>), upgrades: [] as CartItemUpgradeRow[] })) as CartItemRow[];
 
   // Upgrade snapshots — one row per (cart_item, upgrade) pair. Upgrade
   // cost rides every quantity tick (qty 2 with Scalloped → 2 cart items
   // each with a Scalloped upgrade row), matching the line-pricing model.
-  const upgrades = options.upgrades ?? [];
   if (upgrades.length > 0 && inserted.length > 0) {
     const upgradeRows = inserted.flatMap((item) =>
       upgrades.map((u) => ({

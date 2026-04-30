@@ -239,9 +239,11 @@ export function Arrival() {
   const [step, setStep] = useState<Step>('service');
   // Reset scroll on every step transition. The Arrival route doesn't
   // change URL between steps (it's all internal state) so the App-level
-  // ScrollToTop doesn't fire here — handle it ourselves.
+  // ScrollToTop doesn't fire here — handle it ourselves. The page
+  // scroll lives on #root (body is pinned to the viewport for iOS
+  // rubber-band), so window.scrollTo would be a no-op.
   useEffect(() => {
-    window.scrollTo(0, 0);
+    document.getElementById('root')?.scrollTo(0, 0);
   }, [step]);
   const [appointment, setAppointment] = useState<AppointmentContext | null>(null);
   const [patient, setPatient] = useState<PatientLite | null>(null);
@@ -282,6 +284,13 @@ export function Arrival() {
     });
   };
   const [submitting, setSubmitting] = useState(false);
+  // Synchronous re-entry guard. setSubmitting(true) is batched and the
+  // button's disabled prop doesn't paint until React commits, leaving
+  // a small window where a double-tap could fire handleStartAppointment
+  // twice and spawn two walk-in rows + two lng_appointments markers
+  // (no idempotency in createWalkInVisit). The ref blocks the second
+  // call before any await.
+  const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   // Waiver step is driven from the persistent footer instead of an
   // inline button. We mirror the WaiverInline's readiness + busy
@@ -516,6 +525,8 @@ export function Arrival() {
   const handleStartAppointment = async () => {
     if (!patient) return;
     if (mode === 'appointment' && !appointment) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -619,6 +630,7 @@ export function Arrival() {
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start appointment');
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

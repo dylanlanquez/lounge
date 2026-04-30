@@ -1019,13 +1019,15 @@ function composeBannerBody(flag: ReturnType<typeof summariseWaiverFlag>): string
 }
 
 // Compose a one-line subtitle for a cart item using the catalogue
-// snapshot — arch / shade / notes — so the receptionist sees what was
-// configured without opening the row.
+// snapshot — arch / shade / notes / upgrades — so the receptionist
+// sees what was configured without opening the row. Upgrade prices
+// are already baked into unit_price_pence; this is name-only.
 function cartItemSubtitle(item: {
   description: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
   shade: string | null;
   notes: string | null;
+  upgrades: { upgrade_name: string }[];
 }): string | null {
   const parts: string[] = [];
   if (item.arch === 'upper') parts.push('Upper');
@@ -1033,6 +1035,7 @@ function cartItemSubtitle(item: {
   else if (item.arch === 'both') parts.push('Upper and lower');
   if (item.shade) parts.push(`shade ${item.shade}`);
   if (item.notes) parts.push(item.notes);
+  for (const u of item.upgrades) parts.push(u.upgrade_name);
   if (parts.length > 0) return parts.join(' · ');
   return item.description;
 }
