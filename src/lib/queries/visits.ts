@@ -454,6 +454,11 @@ interface VisitDetailResult {
   patient: PatientRow | null;
   deposit: AppointmentDeposit | null;
   appointment: VisitAppointmentContext | null;
+  // Display name of the receptionist who opened the visit. Resolved
+  // from lng_visits.receptionist_id → accounts. Surfaces on printed
+  // documents (LWO header) and the visit lifecycle strip; null when
+  // the column isn't populated or the account row was deleted.
+  receptionistName: string | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -464,6 +469,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
   const [patient, setPatient] = useState<PatientRow | null>(null);
   const [deposit, setDeposit] = useState<AppointmentDeposit | null>(null);
   const [appointment, setAppointment] = useState<VisitAppointmentContext | null>(null);
+  const [receptionistName, setReceptionistName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -588,6 +594,28 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           setAppointment(null);
           setDeposit(null);
         }
+
+        // Resolve the receptionist's display name. lng_visits stores
+        // an account id; the printable LWO and any future audit
+        // surface need a human-readable name. A missing account row
+        // (deleted staff) leaves the name null and downstream renders
+        // a dash — it never blocks the visit page from loading.
+        if (visitRow.receptionist_id) {
+          const { data: acct } = await supabase
+            .from('accounts')
+            .select('name, first_name, last_name')
+            .eq('id', visitRow.receptionist_id)
+            .maybeSingle();
+          if (!cancelled) {
+            const a = acct as { name: string | null; first_name: string | null; last_name: string | null } | null;
+            const composed =
+              (a?.name && a.name.trim()) ||
+              [a?.first_name, a?.last_name].filter(Boolean).join(' ').trim();
+            setReceptionistName(composed || null);
+          }
+        } else if (!cancelled) {
+          setReceptionistName(null);
+        }
       }
       setLoading(false);
     })();
@@ -611,5 +639,5 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
     refresh,
   );
 
-  return { visit, patient, deposit, appointment, loading, error, refresh };
+  return { visit, patient, deposit, appointment, receptionistName, loading, error, refresh };
 }
