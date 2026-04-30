@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { LogOut, Settings, ArrowLeft } from 'lucide-react';
+import { ArrowLeft, BarChart3, LogOut, Receipt, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -23,6 +23,8 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
   const { user, signOut } = useAuth();
   const { account } = useCurrentAccount();
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
+  const showReportsButton = !!account && account.can_view_reports;
+  const showFinancialsButton = !!account && account.can_view_financials;
 
   if (variant === 'subpage') {
     return (
@@ -79,6 +81,28 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
       {user ? <Avatar name={user.email ?? 'You'} size={isMobile ? 'sm' : 'md'} badge="online" /> : null}
       {isMobile ? (
         <>
+          {showReportsButton ? (
+            <button
+              type="button"
+              aria-label="Reports"
+              title="Reports"
+              onClick={() => navigate('/reports')}
+              style={iconButtonStyle}
+            >
+              <BarChart3 size={18} />
+            </button>
+          ) : null}
+          {showFinancialsButton ? (
+            <button
+              type="button"
+              aria-label="Financials"
+              title="Financials"
+              onClick={() => navigate('/financials')}
+              style={iconButtonStyle}
+            >
+              <Receipt size={18} />
+            </button>
+          ) : null}
           {showAdminButton ? (
             <button
               type="button"
@@ -100,6 +124,20 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
         </>
       ) : (
         <>
+          {showReportsButton ? (
+            <Button variant="tertiary" size="sm" onClick={() => navigate('/reports')}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <BarChart3 size={16} /> Reports
+              </span>
+            </Button>
+          ) : null}
+          {showFinancialsButton ? (
+            <Button variant="tertiary" size="sm" onClick={() => navigate('/financials')}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <Receipt size={16} /> Financials
+              </span>
+            </Button>
+          ) : null}
           {showAdminButton ? (
             <Button variant="tertiary" size="sm" onClick={() => navigate('/admin')}>
               Admin

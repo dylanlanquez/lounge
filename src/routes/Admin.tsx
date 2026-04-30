@@ -31,6 +31,9 @@ import {
   addStaffMemberByEmail,
   deactivateStaffMember,
   reactivateStaffMember,
+  setCanCountCash,
+  setCanViewFinancials,
+  setCanViewReports,
   setIsAdmin,
   setIsManager,
   setStaffName,
@@ -1382,7 +1385,15 @@ function StaffTab() {
   const [deactivating, setDeactivating] = useState<StaffRow | null>(null);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
 
+  // Permissions sheet — fine-grained Reports / Financials / Cash count
+  // flags. Reports default-on for everyone, the other two default-off
+  // and are super-admin-grant only. Sheet shows all three so an admin
+  // can read what's set even if they can't change everything.
+  const [permsOpen, setPermsOpen] = useState<StaffRow | null>(null);
+  const [permsBusy, setPermsBusy] = useState<string | null>(null);
+
   const canEditAdmin = currentAccount?.is_super_admin === true;
+  const canEditFinancialPerms = currentAccount?.is_super_admin === true;
 
   const visibleStaff = showInactive
     ? staff.data
@@ -1496,6 +1507,34 @@ function StaffTab() {
     }
   };
 
+  // Generic toggle helper for the three new permission flags. Centralises
+  // the busy/error/refresh handling so the sheet's three rows stay tidy.
+  const togglePerm = async (
+    staffMemberId: string,
+    flag: 'reports' | 'financials' | 'cash',
+    next: boolean,
+  ) => {
+    setPermsBusy(`${staffMemberId}:${flag}`);
+    setError(null);
+    try {
+      if (flag === 'reports') await setCanViewReports(staffMemberId, next);
+      else if (flag === 'financials') await setCanViewFinancials(staffMemberId, next);
+      else if (flag === 'cash') await setCanCountCash(staffMemberId, next);
+      staff.refresh();
+      // Re-seed the open sheet from the refreshed list — keeps the sheet
+      // checkboxes in lock-step with the underlying row.
+      setPermsOpen((cur) => {
+        if (!cur || cur.staff_member_id !== staffMemberId) return cur;
+        const refreshed = staff.data.find((s) => s.staff_member_id === staffMemberId);
+        return refreshed ?? cur;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPermsBusy(null);
+    }
+  };
+
   return (
     <Card padding="lg">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3], flexWrap: 'wrap' }}>
@@ -1597,6 +1636,11 @@ function StaffTab() {
                         <Button variant="tertiary" size="sm" onClick={() => openEdit(s)}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                             <Pencil size={14} aria-hidden /> Edit name
+                          </span>
+                        </Button>
+                        <Button variant="tertiary" size="sm" onClick={() => setPermsOpen(s)}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <ShieldAlert size={14} aria-hidden /> Permissions
                           </span>
                         </Button>
                         {isSuperAdminRow || isMe ? null : (
@@ -1736,7 +1780,111 @@ function StaffTab() {
       >
         <div />
       </BottomSheet>
+
+      <BottomSheet
+        open={permsOpen !== null}
+        onClose={() => permsBusy === null && setPermsOpen(null)}
+        dismissable={permsBusy === null}
+        title={permsOpen ? `${permsOpen.display_name} — Permissions` : 'Permissions'}
+        description="Granular access. Reports is operational and on by default; Financials and Cash counting are super-admin-grants only."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setPermsOpen(null)} disabled={permsBusy !== null}>
+              Done
+            </Button>
+          </div>
+        }
+      >
+        {permsOpen ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+            <PermissionRow
+              title="Reports"
+              description="Opens the Reports tab — operational dashboards covering bookings, demographics, marketing, service mix, lifetime value."
+              checked={permsOpen.can_view_reports}
+              busy={permsBusy === `${permsOpen.staff_member_id}:reports`}
+              onChange={(v) => togglePerm(permsOpen.staff_member_id, 'reports', v)}
+            />
+            <PermissionRow
+              title="Financials"
+              description="Opens the Financials tab — sales, discounts, voids, anomaly flags, cash reconciliation. Super-admin-grant only."
+              checked={permsOpen.can_view_financials}
+              busy={permsBusy === `${permsOpen.staff_member_id}:financials`}
+              disabled={!canEditFinancialPerms}
+              disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Financials access.'}
+              onChange={(v) => togglePerm(permsOpen.staff_member_id, 'financials', v)}
+            />
+            <PermissionRow
+              title="Cash counting"
+              description="Lets this person initiate a cash reconciliation count. Sign-off still requires a different manager. Super-admin-grant only."
+              checked={permsOpen.can_count_cash}
+              busy={permsBusy === `${permsOpen.staff_member_id}:cash`}
+              disabled={!canEditFinancialPerms}
+              disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
+              onChange={(v) => togglePerm(permsOpen.staff_member_id, 'cash', v)}
+            />
+          </div>
+        ) : (
+          <div />
+        )}
+      </BottomSheet>
     </Card>
+  );
+}
+
+// Single row in the Permissions sheet. Title + explanation + toggle.
+// Disabled with a reason line when the current operator isn't allowed
+// to flip this particular flag — the brief is explicit that we never
+// hide the door, we just say why it's locked.
+function PermissionRow({
+  title,
+  description,
+  checked,
+  onChange,
+  busy,
+  disabled = false,
+  disabledReason,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  busy: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr auto',
+        gap: theme.space[3],
+        alignItems: 'flex-start',
+        padding: theme.space[3],
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.bg,
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
+          {title}
+        </p>
+        <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm, lineHeight: 1.4 }}>
+          {description}
+        </p>
+        {disabled && disabledReason ? (
+          <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkSubtle, fontSize: theme.type.size.xs }}>
+            {disabledReason}
+          </p>
+        ) : null}
+      </div>
+      <Checkbox
+        checked={checked}
+        onChange={onChange}
+        disabled={disabled || busy}
+        ariaLabel={title}
+      />
+    </div>
   );
 }
 

@@ -18,6 +18,13 @@ export interface StaffRow {
   staff_member_id: string;
   is_admin: boolean;
   is_manager: boolean;
+  // Granular permission flags introduced alongside Reports + Financials.
+  // Reports defaults true (every staff member sees operational reports);
+  // Financials and cash counting default false (super-admin grants
+  // them deliberately).
+  can_view_reports: boolean;
+  can_view_financials: boolean;
+  can_count_cash: boolean;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -41,6 +48,9 @@ interface RawJoinedRow {
   account_id: string;
   is_admin: boolean | null;
   is_manager: boolean | null;
+  can_view_reports: boolean | null;
+  can_view_financials: boolean | null;
+  can_count_cash: boolean | null;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -75,6 +85,9 @@ function mapRow(r: RawJoinedRow): StaffRow {
     staff_member_id: r.id,
     is_admin: r.is_admin === true,
     is_manager: r.is_manager === true,
+    can_view_reports: r.can_view_reports === true,
+    can_view_financials: r.can_view_financials === true,
+    can_count_cash: r.can_count_cash === true,
     status: r.status,
     hired_at: r.hired_at,
     deactivated_at: r.deactivated_at,
@@ -87,7 +100,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
+  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -142,6 +155,40 @@ export async function setIsAdmin(staffMemberId: string, isAdmin: boolean): Promi
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ is_admin: isAdmin })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles can_view_reports. Default-true column; flipping off removes
+// a staff member's access to the operational Reports tab.
+export async function setCanViewReports(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ can_view_reports: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles can_view_financials. Super-admin-grants only — the UI gates
+// the toggle, but the column itself is just a boolean here. Granting
+// this opens the Financials tab and the cash reconciliation read
+// view.
+export async function setCanViewFinancials(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ can_view_financials: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles can_count_cash. Granting this lets the staff member
+// initiate a new cash reconciliation count. They still need a manager
+// re-auth at sign-off time (different staff than counter), so this
+// flag alone is not "do whatever you want with the safe".
+export async function setCanCountCash(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ can_count_cash: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
@@ -332,6 +379,9 @@ export interface CurrentStaffMembership {
   staff_member_id: string;
   is_admin: boolean;
   is_manager: boolean;
+  can_view_reports: boolean;
+  can_view_financials: boolean;
+  can_count_cash: boolean;
   status: 'active' | 'inactive';
 }
 
@@ -340,21 +390,33 @@ export async function fetchCurrentStaffMembership(
 ): Promise<CurrentStaffMembership | null> {
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, status')
+    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
     // Pre-migration safety: if the table doesn't exist yet, treat as
-    // "no membership" rather than throwing.
+    // "no membership" rather than throwing. Older code paths still
+    // call this before the foundation migration is applied in dev.
     if (error.code === '42P01') return null;
     throw new Error(error.message);
   }
   if (!data) return null;
-  const r = data as { id: string; is_admin: boolean; is_manager: boolean; status: 'active' | 'inactive' };
+  const r = data as {
+    id: string;
+    is_admin: boolean;
+    is_manager: boolean;
+    can_view_reports: boolean | null;
+    can_view_financials: boolean | null;
+    can_count_cash: boolean | null;
+    status: 'active' | 'inactive';
+  };
   return {
     staff_member_id: r.id,
     is_admin: r.is_admin === true,
     is_manager: r.is_manager === true,
+    can_view_reports: r.can_view_reports === true,
+    can_view_financials: r.can_view_financials === true,
+    can_count_cash: r.can_count_cash === true,
     status: r.status,
   };
 }

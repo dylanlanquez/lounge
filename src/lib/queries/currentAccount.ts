@@ -42,11 +42,16 @@ export interface CurrentAccount {
   location_id: string | null;
   account_types: string[];
   // Lounge-staff membership flags. is_lng_staff is the gate to the
-  // app; is_admin gates /admin specifically.
+  // app; is_admin gates /admin specifically. The three can_* flags
+  // are introduced alongside Reports + Financials and gate the
+  // matching top-level destinations.
   staff_member_id: string | null;
   is_lng_staff: boolean;
   is_admin: boolean;
   is_manager: boolean;
+  can_view_reports: boolean;
+  can_view_financials: boolean;
+  can_count_cash: boolean;
   is_super_admin: boolean;
 }
 
@@ -122,6 +127,11 @@ export function useCurrentAccount(): Result {
           : fn ?? ln ?? r.name?.trim() ?? r.login_email.split('@')[0] ?? r.login_email;
       const isSuperAdmin = r.login_email === SUPER_ADMIN_EMAIL;
       const isActiveStaff = membership?.status === 'active';
+      // Permission resolution: the super admin always passes every
+      // gate (so a brand new install can be administered without
+      // bootstrap chicken-and-egg). For everyone else, the flag must
+      // be explicitly true on the staff_members row AND the row must
+      // be active.
       setAccount({
         account_id: r.id,
         auth_user_id: r.auth_user_id,
@@ -135,6 +145,12 @@ export function useCurrentAccount(): Result {
         is_lng_staff: isActiveStaff || isSuperAdmin,
         is_admin: (isActiveStaff && membership?.is_admin === true) || isSuperAdmin,
         is_manager: isActiveStaff && membership?.is_manager === true,
+        can_view_reports:
+          (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
+        can_view_financials:
+          (isActiveStaff && membership?.can_view_financials === true) || isSuperAdmin,
+        can_count_cash:
+          (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
         is_super_admin: isSuperAdmin,
       });
       setLoading(false);
