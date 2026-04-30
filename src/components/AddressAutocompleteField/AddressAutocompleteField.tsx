@@ -46,7 +46,7 @@ export function AddressAutocompleteField({
   const blurTimerRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const { state, selectSuggestion, ready } = useAddressAutocomplete({
+  const { state, selectSuggestion, availability } = useAddressAutocomplete({
     query: value,
     // Only fetch while the input is focused. Defocus pauses
     // suggestion polling so a stale value doesn't keep hitting
@@ -68,16 +68,16 @@ export function AddressAutocompleteField({
   });
 
   // Open the dropdown as soon as the query crosses the minimum
-  // length, not just when results land. Earlier the panel only
-  // showed once `suggestions.length > 0`, which made a slow
-  // Google load or a zero-result query look like the picker was
-  // dead. Now there's always feedback once the patient has typed
-  // enough — loading shimmer, list, "No matches", or error.
+  // length, but only when autocomplete is actually wired up. If
+  // the API key is missing or "Places API (New)" isn't enabled,
+  // availability flips to 'unavailable' and the field falls back
+  // to a plain input — no dropdown, no permanent spinner.
   const trimmed = value.trim();
   const queryReady = trimmed.length >= 3;
-  const visibleDropdown = focused && queryReady;
-  const showSpinner = !ready || state.loading;
-  const showEmpty = ready && !state.loading && state.suggestions.length === 0 && !state.error;
+  const visibleDropdown = focused && queryReady && availability !== 'unavailable';
+  const showSpinner = availability === 'loading' || state.loading;
+  const showEmpty =
+    availability === 'ready' && !state.loading && state.suggestions.length === 0 && !state.error;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!visibleDropdown) return;
@@ -160,11 +160,6 @@ export function AddressAutocompleteField({
         {helper ? (
           <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
             {helper}
-          </span>
-        ) : null}
-        {ready && state.loading ? (
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-            Searching addresses…
           </span>
         ) : null}
       </label>
