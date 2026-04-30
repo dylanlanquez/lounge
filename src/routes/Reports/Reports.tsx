@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   Card,
+  DateRangePicker,
   EmptyState,
   SegmentedControl,
 } from '../../components/index.ts';
@@ -11,16 +12,17 @@ import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
+import { defaultDateRange, type DateRange } from '../../lib/dateRange.ts';
 import { BarChart3 } from 'lucide-react';
+import { OverviewTab } from './OverviewTab.tsx';
 
 // Reports — operational dashboards. Visible to anyone with
 // can_view_reports (default true for every Lounge staff member).
 //
 // Sub-pages live in their own files for readability and to keep this
-// route file from growing into another 2000-line beast like Admin.
-// Each tab is a self-contained component that owns its data fetch +
-// filters + chart shape. The shell here just routes between them and
-// applies the auth gate.
+// route from growing into another 2000-line beast like Admin. Each
+// tab is a self-contained component that takes the shared DateRange
+// as a prop and owns its own data fetch + filters + charts.
 
 type Tab =
   | 'overview'
@@ -44,12 +46,14 @@ export function Reports() {
   const { account, loading: accountLoading } = useCurrentAccount();
   const isMobile = useIsMobile(640);
   const [tab, setTab] = useState<Tab>('overview');
+  // The date range is owned at the route level so switching tabs
+  // preserves whatever period the user was looking at. Defaults to
+  // the last 30 days — long enough for trends, short enough for a
+  // snappy first paint.
+  const [range, setRange] = useState<DateRange>(() => defaultDateRange());
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
-  // Reports is the operational lens. Every active staff member with
-  // can_view_reports gets in (default true). Defense-in-depth gate;
-  // the top-bar entry is also hidden to non-permitted users.
   if (!account || !account.can_view_reports) {
     return <Navigate to="/" replace />;
   }
@@ -69,38 +73,53 @@ export function Reports() {
       }}
     >
       <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
-        <h1
+        {/* Header row: title left, date range picker right. Wraps on
+            narrow widths so the picker drops below the title. */}
+        <div
           style={{
-            margin: 0,
-            fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: theme.space[3],
+            flexWrap: 'wrap',
             marginBottom: theme.space[2],
           }}
         >
-          Reports
-        </h1>
-        <p
-          style={{
-            margin: `0 0 ${theme.space[5]}px`,
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
-            maxWidth: 640,
-          }}
-        >
-          Live operational reports. Every signed-in staff member sees these.
-          Money-side reports live in <strong>Financials</strong> — gated separately.
-        </p>
+          <div>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
+                fontWeight: theme.type.weight.semibold,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              Reports
+            </h1>
+            <p
+              style={{
+                margin: `${theme.space[2]}px 0 0`,
+                color: theme.color.inkMuted,
+                fontSize: theme.type.size.sm,
+                maxWidth: 640,
+              }}
+            >
+              Live operational reports. Every signed-in staff member sees these.
+              Money-side reports live in <strong>Financials</strong> — gated separately.
+            </p>
+          </div>
+          <DateRangePicker value={range} onChange={setRange} />
+        </div>
 
-        <div style={{ marginBottom: theme.space[5], overflowX: 'auto' }}>
+        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5], overflowX: 'auto' }}>
           <SegmentedControl<Tab> value={tab} onChange={setTab} options={TABS} />
         </div>
 
-        {/* Each tab is rendered inline here for now — every page will
-            land its own component as the section grows in follow-up
-            PRs. Foundation just shows the placeholder so the shape is
-            visible and gates / nav can be tested end-to-end. */}
-        <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
+        {tab === 'overview' ? (
+          <OverviewTab range={range} />
+        ) : (
+          <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
+        )}
       </div>
     </main>
   );

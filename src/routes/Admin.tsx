@@ -10,6 +10,7 @@ import {
   Input,
   SegmentedControl,
   Skeleton,
+  StatCard,
   StatusPill,
   Toast,
 } from '../components/index.ts';
@@ -258,12 +259,12 @@ function CalendlyTab() {
           <Skeleton height={120} />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: theme.space[3] }}>
-            <DiagTile label="Webhook deliveries" value={String(d.deliveriesTotal)} />
-            <DiagTile label="Processed" value={String(d.deliveriesProcessed)} />
-            <DiagTile label="Failed" value={String(d.deliveriesFailed)} tone={d.deliveriesFailed > 0 ? 'alert' : 'normal'} />
-            <DiagTile label="Calendly appts" value={String(d.lngAppointmentsCalendly)} />
-            <DiagTile label="Errors (24h)" value={String(d.recentFailures)} tone={d.recentFailures > 0 ? 'alert' : 'normal'} />
-            <DiagTile
+            <StatCard label="Webhook deliveries" value={String(d.deliveriesTotal)} />
+            <StatCard label="Processed" value={String(d.deliveriesProcessed)} />
+            <StatCard label="Failed" value={String(d.deliveriesFailed)} tone={d.deliveriesFailed > 0 ? 'alert' : 'normal'} />
+            <StatCard label="Calendly appts" value={String(d.lngAppointmentsCalendly)} />
+            <StatCard label="Errors (24h)" value={String(d.recentFailures)} tone={d.recentFailures > 0 ? 'alert' : 'normal'} />
+            <StatCard
               label="Last delivery"
               value={d.lastDelivery ? new Date(d.lastDelivery).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
             />
@@ -364,42 +365,6 @@ function CalendlyTab() {
           <Toast tone={toast.tone === 'info' ? 'info' : toast.tone === 'error' ? 'error' : 'success'} title={toast.title} description={toast.description} duration={6000} onDismiss={() => setToast(null)} />
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function DiagTile({ label, value, tone = 'normal' }: { label: string; value: string; tone?: 'normal' | 'alert' }) {
-  return (
-    <div
-      style={{
-        background: theme.color.surface,
-        borderRadius: theme.radius.card,
-        padding: theme.space[4],
-        boxShadow: theme.shadow.card,
-      }}
-    >
-      <span
-        style={{
-          fontSize: theme.type.size.xs,
-          color: theme.color.inkMuted,
-          fontWeight: theme.type.weight.medium,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-        }}
-      >
-        {label}
-      </span>
-      <p
-        style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.lg,
-          fontWeight: theme.type.weight.semibold,
-          color: tone === 'alert' ? theme.color.alert : theme.color.ink,
-          fontVariantNumeric: 'tabular-nums',
-        }}
-      >
-        {value}
-      </p>
     </div>
   );
 }
