@@ -85,6 +85,13 @@ export type { DateRangePickerProps } from './DateRangePicker/DateRangePicker.tsx
 export { StatCard } from './StatCard/StatCard.tsx';
 export type { StatCardProps, StatCardTone } from './StatCard/StatCard.tsx';
 
+export { LineChart } from './Charts/LineChart.tsx';
+export type { LineChartProps, LineChartSeries } from './Charts/LineChart.tsx';
+export { BarChart } from './Charts/BarChart.tsx';
+export type { BarChartProps, BarChartBar } from './Charts/BarChart.tsx';
+export { Funnel } from './Charts/Funnel.tsx';
+export type { FunnelProps, FunnelStage } from './Charts/Funnel.tsx';
+
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';

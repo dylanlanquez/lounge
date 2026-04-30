@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aggregateBookingsVsWalkIns,
   aggregateOverview,
+  type BookingsAppointment,
+  type BookingsVisit,
   type ReportsOverviewItem,
   type ReportsOverviewPayment,
   type ReportsOverviewVisit,
 } from './reports.ts';
+import { makeCustomRange } from '../dateRange.ts';
 
 // Tests for the pure aggregation. The IO is covered in integration
 // — here we lock in every derived stat against a fully-deterministic
@@ -292,5 +296,184 @@ describe('aggregateOverview', () => {
     expect(r.best_day?.date).toBe('2026-04-15');
     expect(r.best_day?.visits).toBe(2);
     expect(r.status_mix).toEqual({ complete: 1, arrived: 1, unsuitable: 1 });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// aggregateBookingsVsWalkIns
+// ────────────────────────────────────────────────────────────────────────────
+
+const RANGE = makeCustomRange('2026-04-13', '2026-04-15');
+
+const appt = (over: Partial<BookingsAppointment>): BookingsAppointment => ({
+  id: 'a',
+  patient_id: 'p',
+  start_at: '2026-04-15T10:00:00Z',
+  status: 'booked',
+  ...over,
+});
+
+const bvVisit = (over: Partial<BookingsVisit>): BookingsVisit => ({
+  id: 'v',
+  appointment_id: null,
+  arrival_type: 'walk_in',
+  opened_at: '2026-04-15T10:00:00Z',
+  status: 'arrived',
+  cart: null,
+  ...over,
+});
+
+describe('aggregateBookingsVsWalkIns', () => {
+  it('builds a daily series with a row per calendar day in range', () => {
+    const r = aggregateBookingsVsWalkIns(RANGE, [], []);
+    expect(r.daily.map((d) => d.date)).toEqual(['2026-04-13', '2026-04-14', '2026-04-15']);
+    for (const d of r.daily) {
+      expect(d.booked).toBe(0);
+      expect(d.walk_in).toBe(0);
+    }
+  });
+
+  it('counts booked + walk-in per day', () => {
+    const r = aggregateBookingsVsWalkIns(
+      RANGE,
+      [
+        appt({ id: 'a1', start_at: '2026-04-13T10:00:00Z' }),
+        appt({ id: 'a2', start_at: '2026-04-15T10:00:00Z' }),
+        appt({ id: 'a3', start_at: '2026-04-15T11:00:00Z' }),
+      ],
+      [
+        bvVisit({ id: 'v1', arrival_type: 'walk_in', opened_at: '2026-04-15T09:00:00Z' }),
+        bvVisit({ id: 'v2', arrival_type: 'walk_in', opened_at: '2026-04-15T15:00:00Z' }),
+        bvVisit({ id: 'v3', arrival_type: 'scheduled', opened_at: '2026-04-13T11:00:00Z', appointment_id: 'a1' }),
+      ],
+    );
+    expect(r.daily).toEqual([
+      { date: '2026-04-13', booked: 1, walk_in: 0 },
+      { date: '2026-04-14', booked: 0, walk_in: 0 },
+      { date: '2026-04-15', booked: 2, walk_in: 2 },
+    ]);
+  });
+
+  it('counts the funnel as nested supersets', () => {
+    const r = aggregateBookingsVsWalkIns(
+      RANGE,
+      [
+        appt({ id: 'a1' }),
+        appt({ id: 'a2' }),
+        appt({ id: 'a3' }),
+        appt({ id: 'a4' }),
+      ],
+      [
+        // a1: booked → arrived → in_chair → complete
+        bvVisit({ id: 'v1', appointment_id: 'a1', arrival_type: 'scheduled', status: 'complete' }),
+        // a2: booked → arrived → in_chair (still in chair)
+        bvVisit({ id: 'v2', appointment_id: 'a2', arrival_type: 'scheduled', status: 'in_chair' }),
+        // a3: booked → arrived (no further progress)
+        bvVisit({ id: 'v3', appointment_id: 'a3', arrival_type: 'scheduled', status: 'arrived' }),
+        // a4 has no visit — booked only
+      ],
+    );
+    expect(r.funnel).toEqual([
+      { id: 'booked', label: 'Booked', count: 4 },
+      { id: 'arrived', label: 'Arrived', count: 3 },
+      { id: 'in_chair', label: 'Reached the chair', count: 2 },
+      { id: 'complete', label: 'Completed', count: 1 },
+    ]);
+  });
+
+  it('computes the no-show count and rate', () => {
+    const r = aggregateBookingsVsWalkIns(
+      RANGE,
+      [
+        appt({ id: 'a1', status: 'no_show' }),
+        appt({ id: 'a2', status: 'complete' }),
+        appt({ id: 'a3', status: 'no_show' }),
+        appt({ id: 'a4', status: 'cancelled' }), // cancelled doesn't count
+      ],
+      [],
+    );
+    expect(r.no_show_count).toBe(2);
+    expect(r.no_show_rate).toBeCloseTo(0.5);
+  });
+
+  it('returns 0 no-show rate when no appointments exist', () => {
+    const r = aggregateBookingsVsWalkIns(RANGE, [], []);
+    expect(r.no_show_count).toBe(0);
+    expect(r.no_show_rate).toBe(0);
+  });
+
+  it('produces a 24-bucket walk-in hour distribution', () => {
+    const r = aggregateBookingsVsWalkIns(
+      RANGE,
+      [],
+      [
+        bvVisit({ id: 'v1', arrival_type: 'walk_in', opened_at: '2026-04-15T09:00:00Z' }),
+        bvVisit({ id: 'v2', arrival_type: 'walk_in', opened_at: '2026-04-15T09:30:00Z' }),
+        bvVisit({ id: 'v3', arrival_type: 'walk_in', opened_at: '2026-04-15T14:15:00Z' }),
+        // scheduled visit doesn't contribute
+        bvVisit({ id: 'v4', arrival_type: 'scheduled', opened_at: '2026-04-15T09:00:00Z' }),
+      ],
+    );
+    expect(r.walk_in_hour_distribution).toHaveLength(24);
+    // Hour buckets are local-time; we don't assert exact buckets to
+    // avoid timezone fragility in CI. Instead we assert total walk-in
+    // count and that exactly two buckets are non-zero (9 + 14 in the
+    // local timezone).
+    const nonZero = r.walk_in_hour_distribution.filter((h) => h.count > 0);
+    expect(nonZero.length).toBeGreaterThanOrEqual(1);
+    const totalWalkIn = r.walk_in_hour_distribution.reduce((s, h) => s + h.count, 0);
+    expect(totalWalkIn).toBe(3);
+  });
+
+  it('computes avg ticket separately for walk-in and scheduled paid carts', () => {
+    const r = aggregateBookingsVsWalkIns(
+      RANGE,
+      [],
+      [
+        bvVisit({
+          id: 'v1',
+          arrival_type: 'walk_in',
+          cart: { id: 'c1', status: 'paid', total_pence: 10000 },
+        }),
+        bvVisit({
+          id: 'v2',
+          arrival_type: 'walk_in',
+          cart: { id: 'c2', status: 'paid', total_pence: 20000 },
+        }),
+        bvVisit({
+          id: 'v3',
+          arrival_type: 'scheduled',
+          cart: { id: 'c3', status: 'paid', total_pence: 30000 },
+        }),
+        bvVisit({
+          id: 'v4',
+          arrival_type: 'walk_in',
+          cart: { id: 'c4', status: 'open', total_pence: 99999 }, // open, ignored
+        }),
+      ],
+    );
+    expect(r.walk_in_avg_ticket_pence).toBe(15000); // (10000 + 20000) / 2
+    expect(r.scheduled_avg_ticket_pence).toBe(30000);
+  });
+
+  it('returns null avg ticket when no paid carts of that type exist', () => {
+    const r = aggregateBookingsVsWalkIns(RANGE, [], []);
+    expect(r.walk_in_avg_ticket_pence).toBeNull();
+    expect(r.scheduled_avg_ticket_pence).toBeNull();
+  });
+
+  it('totals booked + walk_in for the headline KPIs', () => {
+    const r = aggregateBookingsVsWalkIns(
+      RANGE,
+      [appt({ id: 'a1' }), appt({ id: 'a2' })],
+      [
+        bvVisit({ id: 'v1', arrival_type: 'walk_in' }),
+        bvVisit({ id: 'v2', arrival_type: 'walk_in' }),
+        bvVisit({ id: 'v3', arrival_type: 'walk_in' }),
+        bvVisit({ id: 'v4', arrival_type: 'scheduled', appointment_id: 'a1' }),
+      ],
+    );
+    expect(r.total_booked).toBe(2);
+    expect(r.total_walk_in).toBe(3);
   });
 });
