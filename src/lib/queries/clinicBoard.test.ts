@@ -250,6 +250,7 @@ function makeVisit(overrides: Partial<EnrichedActiveVisit> = {}): EnrichedActive
     service_type: null,
     appliance_type: null,
     bucket: 'consult',
+    secondary_buckets: [],
     descriptor: '',
     searchable: '',
     amount_due_pence: null,

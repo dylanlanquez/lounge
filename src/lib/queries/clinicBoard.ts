@@ -86,6 +86,13 @@ export interface EnrichedActiveVisit {
   appliance_type: string | null;
   // Computed display fields
   bucket: ClinicSectionKey;
+  // Other ClinicSectionKey buckets the live cart spans beyond the
+  // primary one. Empty when every active item maps to a single
+  // section. The card uses this to render a "Also: Denture repair"
+  // sub-line so a multi-service visit is visible at a glance — the
+  // patient still lives in their primary section, but staff can see
+  // they're also doing other work.
+  secondary_buckets: ClinicSectionKey[];
   descriptor: string;
   searchable: string;
   // Pricing
@@ -478,13 +485,19 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
         // booking metadata. A walk-in booked as a denture repair that
         // ends up getting a same-day appliance should move into the
         // appliance section without staff doing anything.
-        const cartBucket = bucketFromCartItems(activeItems);
+        //
+        // bucketsFromCartItems also returns the secondary buckets so
+        // the card can show a "Also: …" hint when one cart spans
+        // multiple sections (denture repair + click-in veneer, etc.).
+        const { primary: cartBucket, secondary: cartSecondary } =
+          bucketsFromCartItems(activeItems);
         const bucket =
           cartBucket
           ?? bucketForVisit({
             event_type_label: eventTypeLabel,
             service_type: serviceType,
           });
+        const secondaryBuckets = cartSecondary;
 
         // Descriptor: list the active basket lines so staff sees the
         // current items, not the booking intake snapshot. Falls back
@@ -540,6 +553,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           service_type: serviceType,
           appliance_type: applianceType,
           bucket,
+          secondary_buckets: secondaryBuckets,
           descriptor,
           // Searchable is computed last so it sees the final descriptor.
           searchable: '',
@@ -586,13 +600,20 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
   return { visits, loading, error, refresh };
 }
 
-// Cart → bucket. Walks the active basket, counts hits per service
-// section, and returns the bucket with the most lines (ties broken
-// by the first match). Returns null when the cart has no items with
-// a recognised catalogue.service_type — the caller falls back to the
-// booking-derived bucket in that case.
-function bucketFromCartItems(items: CartItemBoardJoin[]): ClinicSectionKey | null {
-  if (items.length === 0) return null;
+// Cart → buckets. Walks the active basket, counts hits per service
+// section, and returns the bucket with the most lines as primary
+// (ties broken by the first match). Other buckets the cart spans are
+// returned as `secondary` in CLINIC_SECTION_ORDER so the card can
+// render a "Also: …" hint for multi-service visits (a denture repair
+// + a click-in veneer + a retainer all sit on the same patient).
+// Returns { primary: null, secondary: [] } when no item has a
+// recognised catalogue.service_type — the caller falls back to the
+// booking-derived bucket.
+function bucketsFromCartItems(items: CartItemBoardJoin[]): {
+  primary: ClinicSectionKey | null;
+  secondary: ClinicSectionKey[];
+} {
+  if (items.length === 0) return { primary: null, secondary: [] };
   const counts = new Map<ClinicSectionKey, number>();
   for (const it of items) {
     const cat = pickOne(it.catalogue);
@@ -602,16 +623,19 @@ function bucketFromCartItems(items: CartItemBoardJoin[]): ClinicSectionKey | nul
     if (!bucket) continue;
     counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
   }
-  if (counts.size === 0) return null;
-  let best: ClinicSectionKey | null = null;
+  if (counts.size === 0) return { primary: null, secondary: [] };
+  let primary: ClinicSectionKey | null = null;
   let bestCount = -1;
   for (const [b, c] of counts) {
     if (c > bestCount) {
-      best = b;
+      primary = b;
       bestCount = c;
     }
   }
-  return best;
+  const secondary = CLINIC_SECTION_ORDER.filter(
+    (b) => counts.has(b) && b !== primary,
+  );
+  return { primary, secondary };
 }
 
 // Cart → descriptor. Joins active item names with " · " — the same
