@@ -34,11 +34,23 @@ export interface PatientEditModalPatient {
   portal_ship_country_code?: string | null;
 }
 
+// Which fieldset the modal exposes. Each section on the patient
+// profile (the Hero card, the Care details card) opens the modal
+// scoped to its own fields, so a pencil click reveals only what
+// that surface owns — staff can't edit clinical notes from the
+// identity card and vice versa.
+export type PatientEditSection = 'profile' | 'care';
+
 export interface PatientEditModalProps {
   open: boolean;
   patient: PatientEditModalPatient;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
+  // Which sub-form to render. 'profile' = identity + delivery
+  // address. 'care' = vitals + kin + clinical notes. The save
+  // payload narrows accordingly so the patient row only takes the
+  // changes the user actually saw.
+  section: PatientEditSection;
 }
 
 interface DraftIdentity {
@@ -89,12 +101,20 @@ function emptyClinical(p: PatientEditModalPatient): DraftClinical {
   };
 }
 
-export function PatientEditModal({ open, patient, onClose, onSaved }: PatientEditModalProps) {
+export function PatientEditModal({
+  open,
+  patient,
+  onClose,
+  onSaved,
+  section,
+}: PatientEditModalProps) {
   const isLinked = Boolean(patient.shopify_customer_id);
   const [identity, setIdentity] = useState<DraftIdentity>(() => emptyIdentity(patient));
   const [clinical, setClinical] = useState<DraftClinical>(() => emptyClinical(patient));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const showProfile = section === 'profile';
+  const showCare = section === 'care';
 
   const handleClose = () => {
     if (saving) return;
@@ -102,49 +122,61 @@ export function PatientEditModal({ open, patient, onClose, onSaved }: PatientEdi
   };
 
   const handleSave = async () => {
-    if (!identity.firstName.trim() || !identity.lastName.trim()) {
-      setError('First name and last name are required.');
-      return;
-    }
-    if (identity.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email.trim())) {
-      setError('That email does not look right.');
-      return;
+    // Validation only kicks in for the section the user can see
+    // — name is required on the profile section, never on care.
+    if (showProfile) {
+      if (!identity.firstName.trim() || !identity.lastName.trim()) {
+        setError('First name and last name are required.');
+        return;
+      }
+      if (identity.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email.trim())) {
+        setError('That email does not look right.');
+        return;
+      }
     }
     setError(null);
     setSaving(true);
     try {
-      // Build identity payload only with fields the user actually
-      // touched. Empty strings still send — that's the form's way of
-      // clearing a field. Address sends as a unit only if at least
-      // one address sub-field has a value.
+      // Country isn't surfaced in the form anymore (Shopify sync
+      // handles it); preserve the existing value rather than
+      // clearing it on save. Address sends as a unit only if at
+      // least one sub-field has a value.
       const hasAddress = Boolean(
-        identity.addressLine1 || identity.addressLine2 || identity.city || identity.postcode || identity.countryCode,
+        identity.addressLine1 || identity.addressLine2 || identity.city || identity.postcode,
       );
-      const identityPayload = {
-        firstName: identity.firstName.trim() || null,
-        lastName: identity.lastName.trim() || null,
-        email: identity.email.trim() || null,
-        phone: identity.phone.trim() || null,
-        address: hasAddress
-          ? {
-              address1: identity.addressLine1.trim() || null,
-              address2: identity.addressLine2.trim() || null,
-              city: identity.city.trim() || null,
-              postcode: identity.postcode.trim() || null,
-              countryCode: identity.countryCode.trim().toUpperCase() || null,
-            }
-          : null,
-      };
+      const identityPayload = showProfile
+        ? {
+            firstName: identity.firstName.trim() || null,
+            lastName: identity.lastName.trim() || null,
+            email: identity.email.trim() || null,
+            phone: identity.phone.trim() || null,
+            address: hasAddress
+              ? {
+                  address1: identity.addressLine1.trim() || null,
+                  address2: identity.addressLine2.trim() || null,
+                  city: identity.city.trim() || null,
+                  postcode: identity.postcode.trim() || null,
+                  // Country is read-only on the profile and not
+                  // shown on the form — pass through whatever the
+                  // patient row already has so the staff edit
+                  // doesn't accidentally null it out.
+                  countryCode: patient.portal_ship_country_code ?? null,
+                }
+              : null,
+          }
+        : undefined;
 
-      const clinicalPayload = {
-        date_of_birth: clinical.dateOfBirth || null,
-        sex: clinical.sex.trim() || null,
-        allergies: clinical.allergies.trim() || null,
-        emergency_contact_name: clinical.emergencyContactName.trim() || null,
-        emergency_contact_phone: clinical.emergencyContactPhone.trim() || null,
-        communication_preferences: clinical.communicationPreferences.trim() || null,
-        notes: clinical.notes.trim() || null,
-      };
+      const clinicalPayload = showCare
+        ? {
+            date_of_birth: clinical.dateOfBirth || null,
+            sex: clinical.sex.trim() || null,
+            allergies: clinical.allergies.trim() || null,
+            emergency_contact_name: clinical.emergencyContactName.trim() || null,
+            emergency_contact_phone: clinical.emergencyContactPhone.trim() || null,
+            communication_preferences: clinical.communicationPreferences.trim() || null,
+            notes: clinical.notes.trim() || null,
+          }
+        : undefined;
 
       await staffUpdatePatient({
         patientId: patient.id,
@@ -164,7 +196,7 @@ export function PatientEditModal({ open, patient, onClose, onSaved }: PatientEdi
     <Dialog
       open={open}
       onClose={handleClose}
-      title="Edit patient details"
+      title={showProfile ? 'Edit profile' : 'Edit care details'}
       width={640}
       dismissable={!saving}
       footer={
@@ -173,114 +205,122 @@ export function PatientEditModal({ open, patient, onClose, onSaved }: PatientEdi
             Cancel
           </Button>
           <Button variant="primary" onClick={handleSave} loading={saving}>
-            {isLinked ? 'Save and update online account' : 'Save changes'}
+            {showProfile && isLinked ? 'Save and update online account' : 'Save changes'}
           </Button>
         </div>
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-        {isLinked ? <LinkedAccountWarning /> : null}
+        {/* The Shopify-link warning is only relevant when the user
+            is editing identity — clinical fields don't sync online. */}
+        {showProfile && isLinked ? <LinkedAccountWarning /> : null}
 
-        <SectionHeader title="Identity" subtitle={isLinked ? 'Synced to venneir.com and One Click' : 'Stored at the lab only'} />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
-          <Input
-            label="First name"
-            value={identity.firstName}
-            onChange={(e) => setIdentity((s) => ({ ...s, firstName: e.target.value }))}
-          />
-          <Input
-            label="Last name"
-            value={identity.lastName}
-            onChange={(e) => setIdentity((s) => ({ ...s, lastName: e.target.value }))}
-          />
-          <Input
-            label="Email"
-            type="email"
-            leadingIcon={<Mail size={16} />}
-            value={identity.email}
-            onChange={(e) => setIdentity((s) => ({ ...s, email: e.target.value }))}
-          />
-          <Input
-            label="Phone"
-            type="tel"
-            value={identity.phone}
-            onChange={(e) => setIdentity((s) => ({ ...s, phone: e.target.value }))}
-          />
-        </div>
+        {showProfile ? (
+          <>
+            <SectionHeader title="Identity" subtitle={isLinked ? 'Synced to venneir.com and One Click' : 'Stored at the lab only'} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
+              <Input
+                label="First name"
+                value={identity.firstName}
+                onChange={(e) => setIdentity((s) => ({ ...s, firstName: e.target.value }))}
+              />
+              <Input
+                label="Last name"
+                value={identity.lastName}
+                onChange={(e) => setIdentity((s) => ({ ...s, lastName: e.target.value }))}
+              />
+              <Input
+                label="Email"
+                type="email"
+                leadingIcon={<Mail size={16} />}
+                value={identity.email}
+                onChange={(e) => setIdentity((s) => ({ ...s, email: e.target.value }))}
+              />
+              <Input
+                label="Phone"
+                type="tel"
+                value={identity.phone}
+                onChange={(e) => setIdentity((s) => ({ ...s, phone: e.target.value }))}
+              />
+            </div>
 
-        <SectionHeader title="Delivery address" subtitle={isLinked ? 'Used for online orders too' : 'Stored at the lab only'} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          <Input
-            label="Address line 1"
-            value={identity.addressLine1}
-            onChange={(e) => setIdentity((s) => ({ ...s, addressLine1: e.target.value }))}
-          />
-          <Input
-            label="Address line 2"
-            value={identity.addressLine2}
-            onChange={(e) => setIdentity((s) => ({ ...s, addressLine2: e.target.value }))}
-          />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: theme.space[4] }}>
+            <SectionHeader title="Delivery address" subtitle={isLinked ? 'Used for online orders too' : 'Stored at the lab only'} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+              <Input
+                label="Address line 1"
+                value={identity.addressLine1}
+                onChange={(e) => setIdentity((s) => ({ ...s, addressLine1: e.target.value }))}
+              />
+              <Input
+                label="Address line 2"
+                value={identity.addressLine2}
+                onChange={(e) => setIdentity((s) => ({ ...s, addressLine2: e.target.value }))}
+              />
+              {/* Country has been dropped from the staff edit form
+                  — Shopify sync handles it and surfacing the field
+                  here just invites accidental edits. The patient
+                  row's existing country code is preserved on save. */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
+                <Input
+                  label="City"
+                  value={identity.city}
+                  onChange={(e) => setIdentity((s) => ({ ...s, city: e.target.value }))}
+                />
+                <Input
+                  label="Postcode"
+                  value={identity.postcode}
+                  onChange={(e) => setIdentity((s) => ({ ...s, postcode: e.target.value }))}
+                />
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {showCare ? (
+          <>
+            <SectionHeader title="Care details" subtitle="Stored at the lab. Not shared with the customer's online account." />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
+              <Input
+                label="Date of birth"
+                type="date"
+                value={clinical.dateOfBirth}
+                onChange={(e) => setClinical((s) => ({ ...s, dateOfBirth: e.target.value }))}
+              />
+              <Input
+                label="Sex"
+                value={clinical.sex}
+                onChange={(e) => setClinical((s) => ({ ...s, sex: e.target.value }))}
+              />
+              <Input
+                label="Emergency contact name"
+                value={clinical.emergencyContactName}
+                onChange={(e) => setClinical((s) => ({ ...s, emergencyContactName: e.target.value }))}
+              />
+              <Input
+                label="Emergency contact phone"
+                type="tel"
+                value={clinical.emergencyContactPhone}
+                onChange={(e) => setClinical((s) => ({ ...s, emergencyContactPhone: e.target.value }))}
+              />
+              <Input
+                label="Allergies and sensitivities"
+                value={clinical.allergies}
+                onChange={(e) => setClinical((s) => ({ ...s, allergies: e.target.value }))}
+              />
+              <Input
+                label="Communication preferences"
+                value={clinical.communicationPreferences}
+                onChange={(e) => setClinical((s) => ({ ...s, communicationPreferences: e.target.value }))}
+              />
+            </div>
+
             <Input
-              label="City"
-              value={identity.city}
-              onChange={(e) => setIdentity((s) => ({ ...s, city: e.target.value }))}
+              label="Permanent notes"
+              value={clinical.notes}
+              onChange={(e) => setClinical((s) => ({ ...s, notes: e.target.value }))}
             />
-            <Input
-              label="Postcode"
-              value={identity.postcode}
-              onChange={(e) => setIdentity((s) => ({ ...s, postcode: e.target.value }))}
-            />
-            <Input
-              label="Country (ISO)"
-              value={identity.countryCode}
-              maxLength={2}
-              onChange={(e) => setIdentity((s) => ({ ...s, countryCode: e.target.value.toUpperCase() }))}
-            />
-          </div>
-        </div>
-
-        <SectionHeader title="Clinical notes" subtitle="Stored at the lab. Not shared with the customer's online account." />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
-          <Input
-            label="Date of birth"
-            type="date"
-            value={clinical.dateOfBirth}
-            onChange={(e) => setClinical((s) => ({ ...s, dateOfBirth: e.target.value }))}
-          />
-          <Input
-            label="Sex"
-            value={clinical.sex}
-            onChange={(e) => setClinical((s) => ({ ...s, sex: e.target.value }))}
-          />
-          <Input
-            label="Allergies and sensitivities"
-            value={clinical.allergies}
-            onChange={(e) => setClinical((s) => ({ ...s, allergies: e.target.value }))}
-          />
-          <Input
-            label="Communication preferences"
-            value={clinical.communicationPreferences}
-            onChange={(e) => setClinical((s) => ({ ...s, communicationPreferences: e.target.value }))}
-          />
-          <Input
-            label="Emergency contact name"
-            value={clinical.emergencyContactName}
-            onChange={(e) => setClinical((s) => ({ ...s, emergencyContactName: e.target.value }))}
-          />
-          <Input
-            label="Emergency contact phone"
-            type="tel"
-            value={clinical.emergencyContactPhone}
-            onChange={(e) => setClinical((s) => ({ ...s, emergencyContactPhone: e.target.value }))}
-          />
-        </div>
-
-        <Input
-          label="Permanent notes"
-          value={clinical.notes}
-          onChange={(e) => setClinical((s) => ({ ...s, notes: e.target.value }))}
-        />
+          </>
+        ) : null}
 
         {error ? (
           <div
