@@ -28,7 +28,9 @@ import {
   Breadcrumb,
   Button,
   Card,
+  DropdownSelect,
   EmptyState,
+  Input,
   MarketingGallery,
   MultiSelectDropdown,
   Skeleton,
@@ -60,6 +62,14 @@ import {
   useVisitDetail,
 } from '../lib/queries/visits.ts';
 import type { VisitEndReason, VisitRow } from '../lib/queries/visits.ts';
+import {
+  applyCartDiscount,
+  listManagers,
+  removeCartDiscount,
+  setManagerEmailLookup,
+  useActiveCartDiscount,
+  type ManagerRow,
+} from '../lib/queries/cartDiscounts.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
@@ -93,6 +103,7 @@ export function VisitDetail() {
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
+  const { active: activeDiscount, refresh: refreshDiscount } = useActiveCartDiscount(cart?.id ?? null);
   // Catalogue is the source of truth for include_on_lwo. Cart items
   // carry catalogue_id snapshots, so we can look the live flag up at
   // print time without snapshotting it onto cart_items (snapshotted
@@ -186,6 +197,20 @@ export function VisitDetail() {
   const [completeMethod, setCompleteMethod] = useState<'in_person' | 'shipping'>('in_person');
   const [completeBusy, setCompleteBusy] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+
+  // Cart-level discount state. Apply / Remove share the same sheet
+  // shape — picker for the manager, password for the manager,
+  // reason text. Manager re-auths via approveAsManager (parallel
+  // Supabase client; doesn't disturb the cashier's session).
+  const [discountSheet, setDiscountSheet] = useState<'apply' | 'remove' | null>(null);
+  const [discountAmountText, setDiscountAmountText] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
+  const [discountManagerId, setDiscountManagerId] = useState<string>('');
+  const [discountManagerPassword, setDiscountManagerPassword] = useState('');
+  const [discountManagers, setDiscountManagers] = useState<ManagerRow[]>([]);
+  const [discountBusy, setDiscountBusy] = useState(false);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+
   const isMobile = useIsMobile(640);
   // Drives the unsuitable header line + reverse-flow toast wording.
   // Re-fetched whenever the visit refreshes.
@@ -400,7 +425,13 @@ export function VisitDetail() {
   if (!user) return <Navigate to="/sign-in" replace />;
 
   const subtotal = items.reduce((sum, i) => sum + i.line_total_pence, 0);
-  const discount = items.reduce((sum, i) => sum + i.discount_pence, 0);
+  const lineDiscount = items.reduce((sum, i) => sum + i.discount_pence, 0);
+  // Cart-level (sale-wide) discount, applied via the manager-
+  // approved Apply Discount sheet. The cart's generated total_pence
+  // already factors this in; we surface it here so the receipt /
+  // pay screen / Totals card can show the line.
+  const cartDiscount = cart?.discount_pence ?? 0;
+  const discount = lineDiscount + cartDiscount;
   // Only successful deposits credit the till. A failed deposit is shown
   // visually elsewhere; the bill still sums to the full subtotal.
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
@@ -504,6 +535,73 @@ export function VisitDetail() {
       setCompleteError(e instanceof Error ? e.message : 'Could not complete');
     } finally {
       setCompleteBusy(false);
+    }
+  };
+
+  const openDiscountSheet = async (mode: 'apply' | 'remove') => {
+    setDiscountError(null);
+    setDiscountAmountText('');
+    setDiscountReason('');
+    setDiscountManagerId('');
+    setDiscountManagerPassword('');
+    setDiscountSheet(mode);
+    try {
+      const list = await listManagers();
+      setDiscountManagers(list);
+      // Cache the email-by-id map so approveAsManager can look up
+      // the manager's login_email when verifying their password.
+      setManagerEmailLookup(list);
+    } catch (e) {
+      setDiscountError(e instanceof Error ? e.message : 'Could not load managers');
+    }
+  };
+
+  const submitApplyDiscount = async () => {
+    if (!cart) return;
+    const float = Number(discountAmountText.replace(/[^\d.]/g, ''));
+    const pence = Math.round(float * 100);
+    if (!Number.isFinite(pence) || pence <= 0) {
+      setDiscountError('Enter a positive amount.');
+      return;
+    }
+    setDiscountBusy(true);
+    setDiscountError(null);
+    try {
+      await applyCartDiscount({
+        cart_id: cart.id,
+        amount_pence: pence,
+        reason: discountReason,
+        approver_id: discountManagerId,
+        approver_password: discountManagerPassword,
+      });
+      setDiscountSheet(null);
+      refresh();
+      refreshDiscount();
+    } catch (e) {
+      setDiscountError(e instanceof Error ? e.message : 'Could not apply');
+    } finally {
+      setDiscountBusy(false);
+    }
+  };
+
+  const submitRemoveDiscount = async () => {
+    if (!cart) return;
+    setDiscountBusy(true);
+    setDiscountError(null);
+    try {
+      await removeCartDiscount({
+        cart_id: cart.id,
+        reason: discountReason,
+        approver_id: discountManagerId,
+        approver_password: discountManagerPassword,
+      });
+      setDiscountSheet(null);
+      refresh();
+      refreshDiscount();
+    } catch (e) {
+      setDiscountError(e instanceof Error ? e.message : 'Could not remove');
+    } finally {
+      setDiscountBusy(false);
     }
   };
 
@@ -993,6 +1091,21 @@ export function VisitDetail() {
                     End visit early
                   </span>
                 </Button>
+              ) : null}
+              {/* Discount control. Visible only when there are
+                  items + cart still open. Toggles between Apply
+                  Discount and Remove Discount based on whether one
+                  is active. Both routes through manager re-auth. */}
+              {items.length > 0 && !productiveLocked ? (
+                activeDiscount ? (
+                  <Button variant="tertiary" onClick={() => openDiscountSheet('remove')}>
+                    Remove discount
+                  </Button>
+                ) : (
+                  <Button variant="tertiary" onClick={() => openDiscountSheet('apply')}>
+                    Apply discount
+                  </Button>
+                )
               ) : null}
               {items.length > 0 ? (
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
@@ -1746,6 +1859,112 @@ export function VisitDetail() {
               }}
             >
               {completeError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      {/* Apply / Remove discount sheet. Same shape for both modes:
+          manager dropdown + manager password (re-auth) + reason +
+          (apply only) amount. Submitting calls the right mutation
+          which keeps lng_carts.discount_pence in sync with the
+          audit table; total_pence is generated so the cart card +
+          Pay screen pick up the new total without extra plumbing. */}
+      <BottomSheet
+        open={discountSheet !== null}
+        onClose={() => !discountBusy && setDiscountSheet(null)}
+        dismissable={!discountBusy}
+        title={discountSheet === 'remove' ? 'Remove discount' : 'Apply discount'}
+        description={
+          discountSheet === 'remove'
+            ? 'Removing the discount restores the full bill. Manager re-enters their password to authorise — this lands on the audit row alongside the original approver.'
+            : 'Sale-wide discount on this visit. Manager re-enters their password to authorise; both your name and theirs land on the audit row.'
+        }
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={() => setDiscountSheet(null)} disabled={discountBusy}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={discountSheet === 'remove' ? submitRemoveDiscount : submitApplyDiscount}
+              loading={discountBusy}
+            >
+              {discountSheet === 'remove' ? 'Remove discount' : 'Apply discount'}
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          {discountSheet === 'apply' ? (
+            <Input
+              label="Discount amount (£)"
+              inputMode="decimal"
+              value={discountAmountText}
+              onChange={(e) => setDiscountAmountText(e.target.value)}
+              placeholder="e.g. 25.00"
+              autoFocus
+            />
+          ) : null}
+          <Input
+            label="Reason"
+            value={discountReason}
+            onChange={(e) => setDiscountReason(e.target.value)}
+            placeholder={
+              discountSheet === 'remove'
+                ? 'Why is the discount being removed?'
+                : 'Why is the discount being given? (e.g. compensation, repeat-patient courtesy)'
+            }
+          />
+          <div
+            style={{
+              padding: theme.space[3],
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.bg,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[3],
+            }}
+          >
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Manager sign-off
+            </span>
+            <DropdownSelect<string>
+              label="Approving manager"
+              required
+              value={discountManagerId}
+              options={discountManagers.map((m) => ({ value: m.id, label: m.name }))}
+              onChange={(v) => setDiscountManagerId(v)}
+              placeholder={discountManagers.length === 0 ? 'No managers configured. Add one in Admin > Staff.' : 'Pick a manager'}
+              disabled={discountManagers.length === 0}
+            />
+            <Input
+              label="Manager password"
+              type="password"
+              value={discountManagerPassword}
+              onChange={(e) => setDiscountManagerPassword(e.target.value)}
+            />
+          </div>
+          {discountError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {discountError}
             </p>
           ) : null}
         </div>

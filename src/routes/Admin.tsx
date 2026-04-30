@@ -27,6 +27,7 @@ import {
   type LoungeLocation,
   type StripeTerminalLocation,
 } from '../lib/queries/terminalReaders.ts';
+import { setIsManager, useStaff } from '../lib/queries/staff.ts';
 import { BottomSheet } from '../components/index.ts';
 import {
   useReceptionistSessions,
@@ -78,7 +79,7 @@ import {
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers' | 'upgrades';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -123,6 +124,7 @@ export function Admin() {
               { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
               { value: 'devices', label: 'Devices' },
+              { value: 'staff', label: 'Staff' },
               { value: 'failures', label: 'Failures' },
               { value: 'testing', label: 'Testing' },
             ]}
@@ -143,6 +145,8 @@ export function Admin() {
           <ReportsTab />
         ) : tab === 'devices' ? (
           <DevicesTab />
+        ) : tab === 'staff' ? (
+          <StaffTab />
         ) : tab === 'testing' ? (
           <TestingTab />
         ) : (
@@ -999,6 +1003,84 @@ function DevicesTab() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function StaffTab() {
+  const staff = useStaff();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = async (id: string, next: boolean) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await setIsManager(id, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Card padding="lg">
+      <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+        Staff
+      </h2>
+      <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+        Toggle Manager on for staff who can authorise discounts and voids. Managers re-enter their password when signing off, the dropdown alone isn't enough.
+      </p>
+      {staff.loading ? (
+        <Skeleton height={120} />
+      ) : staff.error ? (
+        <p style={{ color: theme.color.alert, margin: 0 }}>Could not load staff: {staff.error}</p>
+      ) : staff.data.length === 0 ? (
+        <EmptyState
+          icon={<Users size={20} />}
+          title="No staff accounts found"
+          description="Staff accounts come from the auth + accounts tables. Add one in Supabase first."
+        />
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {staff.data.map((s) => (
+            <li
+              key={s.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[3],
+                padding: theme.space[3],
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: 12,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
+                  {s.display_name}
+                </p>
+                <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
+                  {s.login_email || 'No login email'}
+                </p>
+              </div>
+              <Checkbox
+                checked={s.is_manager}
+                onChange={(v) => toggle(s.id, v)}
+                disabled={busyId === s.id}
+                label="Manager"
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      {error ? (
+        <p role="alert" style={{ marginTop: theme.space[3], color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          {error}
+        </p>
+      ) : null}
+    </Card>
   );
 }
 
