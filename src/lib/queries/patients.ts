@@ -201,9 +201,28 @@ export async function staffUpdatePatient(args: {
       clinical: args.clinical,
     },
   });
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Transport-level failure (network, CORS, non-JSON response).
+    // Log the full Supabase error object so devtools can show the
+    // status code / response context the toast can't fit.
+    // eslint-disable-next-line no-console
+    console.error('[staff-update-patient] transport error', error);
+    throw new Error(error.message);
+  }
   if (!data?.ok) {
-    throw new Error(data?.detail ?? data?.error ?? 'update_failed');
+    // Application-level failure surfaced by the function as
+    // { ok: false, error, detail, details? }. The function also
+    // writes the same failure to lng_system_failures so an admin can
+    // triage even after the toast is dismissed; logging the full
+    // response here gives whichever dev opens devtools the same view.
+    // eslint-disable-next-line no-console
+    console.error('[staff-update-patient] update rejected', data);
+    const err = new Error(data?.detail ?? data?.error ?? 'update_failed');
+    // Attach the error_kind so the UI can offer a "show details" link
+    // that points at the matching lng_system_failures row.
+    (err as Error & { errorKind?: string }).errorKind =
+      typeof data?.error === 'string' ? data.error : 'update_failed';
+    throw err;
   }
   return {
     identitySynced: !!data.identity_synced,
