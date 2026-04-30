@@ -295,10 +295,14 @@ function renderLetterhead(c: Cursor, input: WaiverDocInput, assets: LetterheadAs
   setText(pdf, 8.5, MUTED, 'normal');
   pdf.text(input.brand.contactEmail, MARGIN_L, startY + logoH + 5.5);
 
-  // Right side: visit reference label, value, date.
+  // Right side header. Visit mode shows the LAP ref + date; waiver
+  // mode swaps the label and renders the signed date as the primary
+  // value. Both use the same vertical rhythm so the layout is
+  // identical regardless of kind.
   const rightX = PAGE_W - MARGIN_R;
+  const referenceLabel = (input.referenceLabel ?? 'Visit reference').toUpperCase();
   setText(pdf, 7.5, SUBTLE, 'bold');
-  pdf.text('VISIT REFERENCE', rightX, startY + 1.5, { align: 'right' });
+  pdf.text(referenceLabel, rightX, startY + 1.5, { align: 'right' });
   setText(pdf, 13, c.accent, 'bold');
   pdf.text(input.lapRef, rightX, startY + 6.2, { align: 'right' });
   setText(pdf, 9, MUTED, 'normal');
@@ -720,9 +724,15 @@ export async function buildWaiverPdf(input: WaiverDocInput): Promise<Blob> {
     format: logo.format,
   });
   renderPatientGrid(cursor, input);
-  renderItemsTable(cursor, input);
-  renderTotals(cursor, input);
-  renderPaymentRow(cursor, input);
+  // Visit-mode-only blocks. Waiver-mode patient-profile documents
+  // have no transaction context, so we skip the items table, totals
+  // breakdown and payment row entirely — they'd render as either an
+  // empty placeholder or a misleading "Awaiting payment" pill.
+  if (input.kind !== 'waiver') {
+    renderItemsTable(cursor, input);
+    renderTotals(cursor, input);
+    renderPaymentRow(cursor, input);
+  }
   renderTerms(cursor, input, patientName);
   await renderSignatureCard(cursor, input, patientName);
 

@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Eye, FileSignature, Files, Info, Layers, Pencil, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import {
   Avatar,
   BeforeAfterGallery,
@@ -16,6 +16,8 @@ import {
 } from '../components/index.ts';
 import { PatientEditModal } from '../components/PatientEditModal/PatientEditModal.tsx';
 import { WaiverSheet } from '../components/WaiverSheet/WaiverSheet.tsx';
+import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
+import type { WaiverDocInput } from '../lib/waiverDocument.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -144,7 +146,7 @@ export function PatientProfile() {
             />
             <CaseHistory cases={cases} loading={casesLoading} />
             <SignedWaiversHistory
-              patientId={patient.id}
+              patient={patient}
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
               isMobile={isMobile}
             />
@@ -1696,16 +1698,26 @@ function CaseBucketBadge({ color, label, count }: { color: string; label: string
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SignedWaiversHistory({
-  patientId,
+  patient,
   patientName,
   isMobile,
 }: {
-  patientId: string;
+  patient: PatientProfileRow;
   patientName: string;
   isMobile: boolean;
 }) {
-  const { rows, loading, error } = useSignedWaivers(patientId);
+  const { rows, loading, error } = useSignedWaivers(patient.id);
   const { sections } = useWaiverSections();
+  // Single dialog instance for the section. Selecting a row sets the
+  // viewer's input; closing it clears the row. The dialog itself is
+  // pure rendering — the doc memo lives here so the row → doc
+  // transformation is in one place rather than re-derived inside the
+  // dialog or each row.
+  const [viewerRow, setViewerRow] = useState<SignedWaiverRow | null>(null);
+  const viewerDoc = useMemo<WaiverDocInput | null>(
+    () => (viewerRow ? buildSignedWaiverDoc(viewerRow, patient, patientName) : null),
+    [viewerRow, patient, patientName],
+  );
   // Map section_key → the live current version. Used by the table to
   // decide whether each row's version chip should render green (this
   // signature is at the published terms) or muted (the patient signed
@@ -1741,8 +1753,8 @@ function SignedWaiversHistory({
                 <li key={r.id}>
                   <SignedWaiverCard
                     row={r}
-                    patientName={patientName}
                     isCurrent={currentByKey.get(r.section_key) === r.section_version}
+                    onView={() => setViewerRow(r)}
                   />
                 </li>
               ))}
@@ -1750,8 +1762,8 @@ function SignedWaiversHistory({
           ) : (
             <SignedWaiverTable
               rows={pager.visible}
-              patientName={patientName}
               currentByKey={currentByKey}
+              onView={(row) => setViewerRow(row)}
             />
           )}
           <ListPager
@@ -1762,18 +1774,115 @@ function SignedWaiversHistory({
           />
         </>
       )}
+      <WaiverViewerDialog
+        open={viewerRow !== null}
+        onClose={() => setViewerRow(null)}
+        doc={viewerDoc}
+        // No visit context for patient-profile waivers — emails go
+        // through the email-waiver function which audits against a
+        // visit. Passing null + allowEmail=false keeps the dialog
+        // consistent with that constraint instead of letting the
+        // user click Email and hit the visit-missing error path.
+        visitId={null}
+        patientEmail={patient.email}
+        allowEmail={false}
+      />
     </CollapsibleCard>
   );
 }
 
+// Build a waiver-mode WaiverDocInput from a single signed-waiver row.
+// "Waiver mode" means the document carries no transaction context
+// (no LAP, no items, no totals, no payment) — the right-side header
+// shows "Signed" + the date instead of a visit reference, and the
+// renderer skips the items table, totals breakdown and payment row
+// entirely. Callers compose the full dialog input here so the dialog
+// stays a pure renderer regardless of whether it's mounted on
+// VisitDetail or PatientProfile.
+function buildSignedWaiverDoc(
+  row: SignedWaiverRow,
+  patient: PatientProfileRow,
+  patientName: string,
+): WaiverDocInput | null {
+  if (!row.terms_snapshot || row.terms_snapshot.length === 0) {
+    // Render-time error rather than a silent empty-terms doc — admin
+    // can fix the underlying row by re-signing the section.
+    return null;
+  }
+  // Short signed-date label for the right-side header. Keeps the
+  // typographic rhythm matched to the visit-mode LAP block (mono,
+  // accent, ~13pt) without forcing a real LAP value into the data.
+  const signedShort = (() => {
+    const d = new Date(row.signed_at);
+    if (Number.isNaN(d.getTime())) return row.signed_at;
+    return d
+      .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      .toUpperCase();
+  })();
+  const slugDate = (() => {
+    const d = new Date(row.signed_at);
+    if (Number.isNaN(d.getTime())) return 'unknown-date';
+    return d.toISOString().slice(0, 10);
+  })();
+  const sectionSlug = (row.section_title ?? row.section_key)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const nameSlug = patientName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return {
+    kind: 'waiver',
+    referenceLabel: 'Signed',
+    lapRef: signedShort,
+    documentSlug: [nameSlug, sectionSlug, slugDate].filter(Boolean).join('-'),
+    visitType: row.section_title,
+    patient: {
+      fullName: patientName,
+      dateOfBirth: patient.date_of_birth,
+      sex: patient.sex,
+      email: patient.email,
+      phone: patient.phone,
+      addressLine1: patient.portal_ship_line1,
+      addressLine2: patient.portal_ship_line2,
+      city: patient.portal_ship_city,
+      postcode: patient.portal_ship_postcode,
+    },
+    visitOpenedAt: row.signed_at,
+    witnessName: row.witness_name,
+    items: [],
+    notes: null,
+    sections: [
+      {
+        title: row.section_title ?? row.section_key,
+        version: row.section_version,
+        terms: row.terms_snapshot,
+        signedAt: row.signed_at,
+        witnessName: row.witness_name,
+      },
+    ],
+    signatureSvg: row.signature_svg,
+    payment: null,
+    brand: {
+      name: 'Venneir',
+      contactEmail: 'cs@venneir.com',
+      vatNumber: 'GB406459983',
+      logoUrl: window.location.origin + '/black-venneir-logo.png',
+      addressLine: null,
+    },
+    accentColor: theme.color.accent,
+  };
+}
+
 function SignedWaiverTable({
   rows,
-  patientName,
   currentByKey,
+  onView,
 }: {
   rows: SignedWaiverRow[];
-  patientName: string;
   currentByKey: Map<string, string>;
+  onView: (row: SignedWaiverRow) => void;
 }) {
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -1813,7 +1922,7 @@ function SignedWaiverTable({
                 {r.witness_name ?? <span style={{ color: theme.color.inkSubtle }}>not recorded</span>}
               </td>
               <td style={{ ...tableCellStyle, textAlign: 'right' }}>
-                <SignatureActions row={r} patientName={patientName} />
+                <SignatureActions onView={() => onView(r)} />
               </td>
             </tr>
           ))}
@@ -1825,12 +1934,12 @@ function SignedWaiverTable({
 
 function SignedWaiverCard({
   row,
-  patientName,
   isCurrent,
+  onView,
 }: {
   row: SignedWaiverRow;
-  patientName: string;
   isCurrent: boolean;
+  onView: () => void;
 }) {
   return (
     <div
@@ -1855,7 +1964,7 @@ function SignedWaiverCard({
         {row.witness_name ? ` · witnessed by ${row.witness_name}` : ''}
       </span>
       <div style={{ display: 'flex', gap: theme.space[2], marginTop: theme.space[1] }}>
-        <SignatureActions row={row} patientName={patientName} />
+        <SignatureActions onView={onView} />
       </div>
     </div>
   );
@@ -1896,100 +2005,15 @@ function VersionPill({ version, isCurrent }: { version: string; isCurrent: boole
   );
 }
 
-function SignatureActions({ row, patientName }: { row: SignedWaiverRow; patientName: string }) {
-  const onDownload = () => downloadSignatureSvg(row, patientName);
-  const onPrint = () => printSignedWaiver(row, patientName);
+function SignatureActions({ onView }: { onView: () => void }) {
   return (
     <span style={{ display: 'inline-flex', gap: theme.space[1] }}>
-      <button type="button" onClick={onDownload} style={iconButtonStyle} aria-label="Download signature SVG">
-        <Download size={14} />
-        <span>Download</span>
-      </button>
-      <button type="button" onClick={onPrint} style={iconButtonStyle} aria-label="Print waiver">
-        <Printer size={14} />
-        <span>Print</span>
+      <button type="button" onClick={onView} style={iconButtonStyle} aria-label="View signed waiver">
+        <Eye size={14} />
+        <span>View</span>
       </button>
     </span>
   );
-}
-
-function downloadSignatureSvg(row: SignedWaiverRow, patientName: string): void {
-  const filename = sanitiseFilename(
-    `waiver-${patientName}-${row.section_title ?? row.section_key}-${formatShortDate(row.signed_at)}.svg`
-  );
-  const blob = new Blob([row.signature_svg], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  // Revoke the object URL on the next tick so the browser has time to
-  // honour the download click before the blob is freed.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function printSignedWaiver(row: SignedWaiverRow, patientName: string): void {
-  const win = window.open('', '_blank', 'noopener,noreferrer,width=820,height=1024');
-  if (!win) return;
-  const sectionTitle = row.section_title ?? row.section_key;
-  const terms = row.terms_snapshot ?? [];
-  const html = `<!doctype html>
-<html lang="en-GB">
-<head>
-<meta charset="UTF-8" />
-<title>Waiver — ${escapeHtml(patientName)} — ${escapeHtml(sectionTitle)}</title>
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; color: #0E1414; padding: 32px; max-width: 720px; margin: 0 auto; line-height: 1.5; }
-  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  .meta { color: rgba(14, 20, 20, 0.6); font-size: 13px; margin-bottom: 24px; }
-  .meta strong { color: #0E1414; font-weight: 600; }
-  .terms { font-size: 13px; line-height: 1.55; }
-  .terms p { margin: 0 0 10px; }
-  .signature { margin-top: 32px; border-top: 1px solid rgba(14, 20, 20, 0.12); padding-top: 16px; }
-  .signature h2 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(14, 20, 20, 0.6); margin: 0 0 8px; }
-  .signature svg { max-width: 320px; height: auto; }
-  @media print {
-    body { padding: 0; }
-  }
-</style>
-</head>
-<body>
-  <h1>${escapeHtml(sectionTitle)}</h1>
-  <p class="meta">
-    <strong>${escapeHtml(patientName)}</strong> ·
-    Version ${escapeHtml(row.section_version)} ·
-    Signed ${escapeHtml(formatLongDateTime(row.signed_at))}${
-      row.witness_name ? ` · witnessed by ${escapeHtml(row.witness_name)}` : ''
-    }
-  </p>
-  <div class="terms">
-    ${terms.map((t) => `<p>${escapeHtml(t)}</p>`).join('')}
-  </div>
-  <div class="signature">
-    <h2>Signature</h2>
-    ${row.signature_svg}
-  </div>
-  <script>window.addEventListener('load', () => { window.focus(); window.print(); });</script>
-</body>
-</html>`;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function sanitiseFilename(s: string): string {
-  return s.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
 }
 
 function formatLongDateTime(iso: string): string {

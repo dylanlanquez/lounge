@@ -51,12 +51,19 @@ export interface WaiverViewerDialogProps {
   open: boolean;
   onClose: () => void;
   // Pre-shaped document input. The dialog never reaches into
-  // lng_visits / lng_cart_items itself — the parent (VisitDetail)
-  // composes everything, including filtering impression-appointment
-  // lines out, so the dialog stays a pure renderer.
+  // lng_visits / lng_cart_items itself — the parent (VisitDetail
+  // or PatientProfile) composes everything, including filtering
+  // impression-appointment lines out, so the dialog stays a pure
+  // renderer.
   doc: WaiverDocInput | null;
   visitId: string | null;
   patientEmail: string | null;
+  // Whether the Email action is offered. Defaults to true. Set to
+  // false on surfaces with no visit context (the patient profile's
+  // waiver-only documents) — the email-waiver edge function audits
+  // sends against a visit, so a visit-less waiver can't be emailed
+  // through it. Print and Download still work unchanged.
+  allowEmail?: boolean;
 }
 
 type Mode = 'preview' | 'compose';
@@ -72,6 +79,7 @@ export function WaiverViewerDialog({
   doc,
   visitId,
   patientEmail,
+  allowEmail = true,
 }: WaiverViewerDialogProps) {
   const isMobile = useIsMobile();
   const [mode, setMode] = useState<Mode>('preview');
@@ -147,7 +155,7 @@ export function WaiverViewerDialog({
 
   if (!doc) return null;
 
-  const fileName = waiverDocumentFileName(doc.lapRef);
+  const fileName = waiverDocumentFileName(doc);
 
   // Action handlers ────────────────────────────────────────────────────────
   // Each handler pulls the latest html via the memo to avoid
@@ -269,19 +277,21 @@ export function WaiverViewerDialog({
                     {busy && status.label === 'Building PDF…' ? 'Building…' : 'Download'}
                   </span>
                 </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setMode('compose');
-                    setStatus({ kind: 'idle' });
-                  }}
-                  disabled={busy}
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <Mail size={18} aria-hidden />
-                    Email
-                  </span>
-                </Button>
+                {allowEmail ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setMode('compose');
+                      setStatus({ kind: 'idle' });
+                    }}
+                    disabled={busy}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <Mail size={18} aria-hidden />
+                      Email
+                    </span>
+                  </Button>
+                ) : null}
               </>
             ) : (
               <Button
