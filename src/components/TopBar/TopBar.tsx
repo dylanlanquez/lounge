@@ -6,6 +6,7 @@ import { Button } from '../Button/Button.tsx';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { useAuth } from '../../lib/auth.tsx';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 
 export interface TopBarProps {
   // 'home' shows logo + avatar + admin + sign-out menu.
@@ -20,6 +21,8 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const { user, signOut } = useAuth();
+  const { account } = useCurrentAccount();
+  const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
 
   if (variant === 'subpage') {
     return (
@@ -76,14 +79,16 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
       {user ? <Avatar name={user.email ?? 'You'} size={isMobile ? 'sm' : 'md'} badge="online" /> : null}
       {isMobile ? (
         <>
-          <button
-            type="button"
-            aria-label="Admin"
-            onClick={() => navigate('/admin')}
-            style={iconButtonStyle}
-          >
-            <Settings size={18} />
-          </button>
+          {showAdminButton ? (
+            <button
+              type="button"
+              aria-label="Admin"
+              onClick={() => navigate('/admin')}
+              style={iconButtonStyle}
+            >
+              <Settings size={18} />
+            </button>
+          ) : null}
           <button
             type="button"
             aria-label="Sign out"
@@ -95,9 +100,11 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
         </>
       ) : (
         <>
-          <Button variant="tertiary" size="sm" onClick={() => navigate('/admin')}>
-            Admin
-          </Button>
+          {showAdminButton ? (
+            <Button variant="tertiary" size="sm" onClick={() => navigate('/admin')}>
+              Admin
+            </Button>
+          ) : null}
           <Button variant="tertiary" size="sm" onClick={signOut}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
               <LogOut size={16} /> Sign out

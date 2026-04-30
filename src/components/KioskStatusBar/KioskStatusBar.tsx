@@ -1,6 +1,7 @@
 import { Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';
@@ -23,12 +24,14 @@ export const KIOSK_STATUS_BAR_HEIGHT = 32;
 // doesn't carry a phantom 32px gap.
 export function KioskStatusBar() {
   const { user, loading: authLoading } = useAuth();
+  const { account } = useCurrentAccount();
   const now = useNow(60_000);
   const { level, charging, supported: batterySupported } = useBattery();
   const network = useNetwork();
   const navigate = useNavigate();
 
   if (authLoading || !user) return null;
+  const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -74,32 +77,39 @@ export function KioskStatusBar() {
         />
       </span>
 
-      {/* Right cluster: Settings · Wi-Fi · Battery · Date · Time */}
+      {/* Right cluster: Settings · Wi-Fi · Battery · Date · Time.
+          The Admin gear is only rendered for admins (or the super
+          admin) — receptionists never see it. The /admin route also
+          enforces the same gate as a defense-in-depth. */}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
-        <button
-          type="button"
-          aria-label="Admin"
-          onClick={() => navigate('/admin')}
-          style={{
-            appearance: 'none',
-            border: 'none',
-            background: 'transparent',
-            color: theme.color.ink,
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 24,
-            height: 24,
-            padding: 0,
-            borderRadius: theme.radius.pill,
-            WebkitTapHighlightColor: 'transparent',
-            outline: 'none',
-          }}
-        >
-          <Settings size={15} />
-        </button>
-        <Divider />
+        {showAdminButton ? (
+          <>
+            <button
+              type="button"
+              aria-label="Admin"
+              onClick={() => navigate('/admin')}
+              style={{
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                color: theme.color.ink,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 24,
+                height: 24,
+                padding: 0,
+                borderRadius: theme.radius.pill,
+                WebkitTapHighlightColor: 'transparent',
+                outline: 'none',
+              }}
+            >
+              <Settings size={15} />
+            </button>
+            <Divider />
+          </>
+        ) : null}
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}

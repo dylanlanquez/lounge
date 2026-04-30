@@ -33,6 +33,7 @@ import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.t
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useKeyboardOpen } from '../lib/useKeyboardOpen.ts';
 import { type ParsedAddress } from '../lib/useAddressAutocomplete.ts';
@@ -247,6 +248,7 @@ export function Arrival() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
+  const { account: currentAccount } = useCurrentAccount();
   const isMobile = useIsMobile(640);
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
@@ -679,7 +681,11 @@ export function Arrival() {
 
   // Render shell ───────────────────────────────────────────────────────
   const currentStepIndex = STEPS.findIndex((s) => s.id === step);
-  const staffName = (user.user_metadata?.name as string | undefined) ?? user.email ?? 'Staff';
+  // Witness default for any waiver signed during arrival. Pulls from
+  // the staff member's accounts row (first_name + last_name) so the
+  // name on every signature is the real human's, not the auth email.
+  // Falls back to email if the accounts row hasn't loaded yet.
+  const staffName = currentAccount?.display_name ?? user.email ?? 'Staff';
 
   return (
     <main

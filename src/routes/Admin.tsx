@@ -27,7 +27,7 @@ import {
   type LoungeLocation,
   type StripeTerminalLocation,
 } from '../lib/queries/terminalReaders.ts';
-import { setIsManager, useStaff } from '../lib/queries/staff.ts';
+import { setIsAdmin, setIsManager, setStaffName, useStaff, type StaffRow } from '../lib/queries/staff.ts';
 import {
   reconcileTerminalPayment,
   useCardPaymentHealth,
@@ -84,16 +84,26 @@ import {
   type UpgradeRow,
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 
 type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
+  const { account, loading: accountLoading } = useCurrentAccount();
   const isMobile = useIsMobile(640);
   const [tab, setTab] = useState<Tab>('calendly');
 
-  if (authLoading) return null;
+  if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
+  // Admin gate: account_types must contain 'admin', or be the super
+  // admin email. Anything else falls through to the home redirect —
+  // non-admin staff can use everything else in Lounge but Admin (and
+  // therefore Staff config, Waivers, Stripe payment log etc.) is
+  // off-limits.
+  if (!account || (!account.is_admin && !account.is_super_admin)) {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <main
@@ -1342,10 +1352,21 @@ function formatRelative(iso: string): string {
 
 function StaffTab() {
   const staff = useStaff();
+  const { account: currentAccount } = useCurrentAccount();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<StaffRow | null>(null);
+  const [draftFirst, setDraftFirst] = useState('');
+  const [draftLast, setDraftLast] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
 
-  const toggle = async (id: string, next: boolean) => {
+  // Only the super admin can promote/demote admins. A normal admin
+  // shouldn't be able to lock the super admin out by clearing every
+  // 'admin' from account_types, and the manager / name fields are
+  // safe for any admin to edit.
+  const canEditAdmin = currentAccount?.is_super_admin === true;
+
+  const toggleManager = async (id: string, next: boolean) => {
     setBusyId(id);
     setError(null);
     try {
@@ -1358,13 +1379,48 @@ function StaffTab() {
     }
   };
 
+  const toggleAdmin = async (id: string, next: boolean) => {
+    if (!canEditAdmin) return;
+    setBusyId(id);
+    setError(null);
+    try {
+      await setIsAdmin(id, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openEdit = (row: StaffRow) => {
+    setEditing(row);
+    setDraftFirst(row.first_name ?? '');
+    setDraftLast(row.last_name ?? '');
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setEditBusy(true);
+    setError(null);
+    try {
+      await setStaffName(editing.id, draftFirst, draftLast);
+      staff.refresh();
+      setEditing(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   return (
     <Card padding="lg">
       <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
         Staff
       </h2>
       <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-        Toggle Manager on for staff who can authorise discounts and voids. Managers re-enter their password when signing off, the dropdown alone isn't enough.
+        Names land on every signature attribution and pre-fill the witness field on waivers. Manager toggle authorises discounts and voids. Admin toggle controls access to this Admin tab itself{canEditAdmin ? '' : ' and is locked to the super admin'}.
       </p>
       {staff.loading ? (
         <Skeleton height={120} />
@@ -1389,22 +1445,48 @@ function StaffTab() {
                 background: theme.color.surface,
                 border: `1px solid ${theme.color.border}`,
                 borderRadius: 12,
+                flexWrap: 'wrap',
               }}
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
                 <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
                   {s.display_name}
+                  {!s.first_name || !s.last_name ? (
+                    <span
+                      style={{
+                        marginLeft: theme.space[2],
+                        fontSize: theme.type.size.xs,
+                        color: theme.color.warn,
+                        fontWeight: theme.type.weight.medium,
+                      }}
+                    >
+                      Name incomplete
+                    </span>
+                  ) : null}
                 </p>
                 <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
                   {s.login_email || 'No login email'}
                 </p>
               </div>
-              <Checkbox
-                checked={s.is_manager}
-                onChange={(v) => toggle(s.id, v)}
-                disabled={busyId === s.id}
-                label="Manager"
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+                <Checkbox
+                  checked={s.is_manager}
+                  onChange={(v) => toggleManager(s.id, v)}
+                  disabled={busyId === s.id}
+                  label="Manager"
+                />
+                <Checkbox
+                  checked={s.is_admin}
+                  onChange={(v) => toggleAdmin(s.id, v)}
+                  disabled={busyId === s.id || !canEditAdmin}
+                  label="Admin"
+                />
+                <Button variant="tertiary" size="sm" onClick={() => openEdit(s)}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                    <Pencil size={14} aria-hidden /> Edit name
+                  </span>
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
@@ -1414,6 +1496,40 @@ function StaffTab() {
           {error}
         </p>
       ) : null}
+
+      <BottomSheet
+        open={editing !== null}
+        onClose={() => !editBusy && setEditing(null)}
+        dismissable={!editBusy}
+        title={editing ? `Edit ${editing.display_name}` : 'Edit staff'}
+        description="First and last name are used wherever this account leaves a mark — waiver witness, timeline 'by Dylan Lane' attribution, signed-document footer."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setEditing(null)} disabled={editBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={saveEdit} loading={editBusy}>
+              Save
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <Input
+            label="First name"
+            value={draftFirst}
+            onChange={(e) => setDraftFirst(e.target.value)}
+            placeholder="e.g. Dylan"
+            autoFocus
+          />
+          <Input
+            label="Last name"
+            value={draftLast}
+            onChange={(e) => setDraftLast(e.target.value)}
+            placeholder="e.g. Lane"
+          />
+        </div>
+      </BottomSheet>
     </Card>
   );
 }
