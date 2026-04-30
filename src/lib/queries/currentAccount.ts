@@ -1,37 +1,34 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useAuth } from '../auth.tsx';
+import { fetchCurrentStaffMembership } from './staff.ts';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// useCurrentAccount — resolves the signed-in user's row from
-// public.accounts (Meridian's shared identity table) and exposes the
-// fields Lounge surfaces UX-wise.
+// useCurrentAccount — resolves the signed-in user's identity row from
+// public.accounts (shared with Meridian) PLUS their lng_staff_members
+// row (Lounge-only). The accounts row gives identity (name, email,
+// auth pairing); the staff row gives Lounge-specific permission flags.
 //
-// The auth.users id and accounts.id are different. RPC auth_account_id
-// translates between them (the same RPC used everywhere we stamp
-// actor ids on inserts). This hook fetches the row in one shot per
-// session and caches it in component state.
+// Permission flags now live on lng_staff_members rather than
+// accounts.account_types — that's what keeps Lounge admin and
+// Meridian admin completely independent. Demoting a Lounge admin
+// flips one boolean here; it doesn't touch Meridian's role model.
 //
-// What we expose:
-//   • account_id      — accounts.id (NOT auth.users.id)
-//   • first_name, last_name
-//   • display_name    — composed: "First Last", falls back to single
-//                       name, then email local-part. Used for the
-//                       witness field default and any "by Dylan Lane"
-//                       attribution.
-//   • login_email     — accounts.login_email
-//   • account_types   — array; e.g. ['admin', 'lab']
-//   • is_admin        — 'admin' is in account_types
-//   • is_super_admin  — login_email === SUPER_ADMIN_EMAIL. The super
-//                       admin can grant/revoke 'admin' on others; a
-//                       normal admin can't promote themselves.
+// Three derived booleans the rest of Lounge cares about:
 //
-// Single super admin for now: dylan@lanquez.com. That's a hard-coded
-// rule rather than a database flag because the role is operationally
-// fixed (it's the account-owner of the Stripe + Supabase project),
-// not something staff toggles. If that ever changes we'd graduate it
-// to a column.
-// ─────────────────────────────────────────────────────────────────────────────
+//   • is_lng_staff   — has an active row in lng_staff_members. False
+//                      means this account exists in Meridian-land but
+//                      isn't part of the Lounge clinic. UI gates on
+//                      this everywhere; non-staff land on a "you don't
+//                      have access" surface rather than the till.
+//   • is_admin       — is_lng_staff && lng_staff_members.is_admin.
+//                      Gates the Admin tab + Settings entry points.
+//   • is_super_admin — login_email === SUPER_ADMIN_EMAIL. Only the
+//                      super admin can promote/demote other admins
+//                      via the Staff tab UI.
+//
+// `is_admin` aliasing: we keep the existing field name so the Admin
+// tab gate code doesn't have to migrate. It now means "Lounge admin"
+// rather than "Meridian admin" — distinct concept, same shape.
 
 export const SUPER_ADMIN_EMAIL = 'dylan@lanquez.com';
 
@@ -44,7 +41,12 @@ export interface CurrentAccount {
   login_email: string;
   location_id: string | null;
   account_types: string[];
+  // Lounge-staff membership flags. is_lng_staff is the gate to the
+  // app; is_admin gates /admin specifically.
+  staff_member_id: string | null;
+  is_lng_staff: boolean;
   is_admin: boolean;
+  is_manager: boolean;
   is_super_admin: boolean;
 }
 
@@ -69,7 +71,6 @@ export function useCurrentAccount(): Result {
     }
     let cancelled = false;
     (async () => {
-      // auth.users.id → accounts.id via the existing RPC.
       const { data: idRaw, error: idErr } = await supabase.rpc('auth_account_id');
       if (cancelled) return;
       if (idErr) {
@@ -79,31 +80,31 @@ export function useCurrentAccount(): Result {
       }
       const accountId = idRaw as string | null;
       if (!accountId) {
-        // Auth user without a paired accounts row — surface as null
-        // rather than throwing so callers degrade gracefully (witness
-        // fields fall back to email, admin gate fails safely closed).
         setAccount(null);
         setLoading(false);
         return;
       }
 
-      const { data: row, error: rowErr } = await supabase
-        .from('accounts')
-        .select('id, auth_user_id, first_name, last_name, name, login_email, location_id, account_types')
-        .eq('id', accountId)
-        .maybeSingle();
+      const [accountRes, membership] = await Promise.all([
+        supabase
+          .from('accounts')
+          .select('id, auth_user_id, first_name, last_name, name, login_email, location_id, account_types')
+          .eq('id', accountId)
+          .maybeSingle(),
+        fetchCurrentStaffMembership(accountId).catch(() => null),
+      ]);
       if (cancelled) return;
-      if (rowErr) {
-        setError(rowErr.message);
+      if (accountRes.error) {
+        setError(accountRes.error.message);
         setLoading(false);
         return;
       }
-      if (!row) {
+      if (!accountRes.data) {
         setAccount(null);
         setLoading(false);
         return;
       }
-      const r = row as {
+      const r = accountRes.data as {
         id: string;
         auth_user_id: string | null;
         first_name: string | null;
@@ -119,7 +120,8 @@ export function useCurrentAccount(): Result {
         fn && ln
           ? `${fn} ${ln}`
           : fn ?? ln ?? r.name?.trim() ?? r.login_email.split('@')[0] ?? r.login_email;
-      const types = r.account_types ?? [];
+      const isSuperAdmin = r.login_email === SUPER_ADMIN_EMAIL;
+      const isActiveStaff = membership?.status === 'active';
       setAccount({
         account_id: r.id,
         auth_user_id: r.auth_user_id,
@@ -128,9 +130,12 @@ export function useCurrentAccount(): Result {
         display_name: display,
         login_email: r.login_email,
         location_id: r.location_id,
-        account_types: types,
-        is_admin: types.includes('admin'),
-        is_super_admin: r.login_email === SUPER_ADMIN_EMAIL,
+        account_types: r.account_types ?? [],
+        staff_member_id: membership?.staff_member_id ?? null,
+        is_lng_staff: isActiveStaff || isSuperAdmin,
+        is_admin: (isActiveStaff && membership?.is_admin === true) || isSuperAdmin,
+        is_manager: isActiveStaff && membership?.is_manager === true,
+        is_super_admin: isSuperAdmin,
       });
       setLoading(false);
     })();

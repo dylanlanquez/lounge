@@ -27,7 +27,16 @@ import {
   type LoungeLocation,
   type StripeTerminalLocation,
 } from '../lib/queries/terminalReaders.ts';
-import { setIsAdmin, setIsManager, setStaffName, useStaff, type StaffRow } from '../lib/queries/staff.ts';
+import {
+  addStaffMemberByEmail,
+  deactivateStaffMember,
+  reactivateStaffMember,
+  setIsAdmin,
+  setIsManager,
+  setStaffName,
+  useStaff,
+  type StaffRow,
+} from '../lib/queries/staff.ts';
 import {
   reconcileTerminalPayment,
   useCardPaymentHealth,
@@ -1359,18 +1368,32 @@ function StaffTab() {
   const [draftFirst, setDraftFirst] = useState('');
   const [draftLast, setDraftLast] = useState('');
   const [editBusy, setEditBusy] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
-  // Only the super admin can promote/demote admins. A normal admin
-  // shouldn't be able to lock the super admin out by clearing every
-  // 'admin' from account_types, and the manager / name fields are
-  // safe for any admin to edit.
+  // Add-staff sheet
+  const [addOpen, setAddOpen] = useState(false);
+  const [addEmail, setAddEmail] = useState('');
+  const [addAdmin, setAddAdmin] = useState(false);
+  const [addManager, setAddManager] = useState(false);
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  // Deactivate confirm sheet
+  const [deactivating, setDeactivating] = useState<StaffRow | null>(null);
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
+
   const canEditAdmin = currentAccount?.is_super_admin === true;
 
-  const toggleManager = async (id: string, next: boolean) => {
-    setBusyId(id);
+  const visibleStaff = showInactive
+    ? staff.data
+    : staff.data.filter((s) => s.status === 'active');
+  const inactiveCount = staff.data.filter((s) => s.status === 'inactive').length;
+
+  const toggleManager = async (staffMemberId: string, next: boolean) => {
+    setBusyId(staffMemberId);
     setError(null);
     try {
-      await setIsManager(id, next);
+      await setIsManager(staffMemberId, next);
       staff.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1379,12 +1402,12 @@ function StaffTab() {
     }
   };
 
-  const toggleAdmin = async (id: string, next: boolean) => {
+  const toggleAdmin = async (staffMemberId: string, next: boolean) => {
     if (!canEditAdmin) return;
-    setBusyId(id);
+    setBusyId(staffMemberId);
     setError(null);
     try {
-      await setIsAdmin(id, next);
+      await setIsAdmin(staffMemberId, next);
       staff.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1404,7 +1427,7 @@ function StaffTab() {
     setEditBusy(true);
     setError(null);
     try {
-      await setStaffName(editing.id, draftFirst, draftLast);
+      await setStaffName(editing.account_id, draftFirst, draftLast);
       staff.refresh();
       setEditing(null);
     } catch (e) {
@@ -1414,83 +1437,199 @@ function StaffTab() {
     }
   };
 
+  const openAdd = () => {
+    setAddEmail('');
+    setAddAdmin(false);
+    setAddManager(false);
+    setAddError(null);
+    setAddOpen(true);
+  };
+
+  const submitAdd = async () => {
+    setAddBusy(true);
+    setAddError(null);
+    try {
+      const result = await addStaffMemberByEmail(addEmail, {
+        is_admin: addAdmin && canEditAdmin,
+        is_manager: addManager,
+      });
+      if (!result) {
+        setAddError(
+          'No account exists with that email. Ask the person to sign in to Meridian first, or send them a Supabase invite.',
+        );
+        return;
+      }
+      staff.refresh();
+      setAddOpen(false);
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  const submitDeactivate = async () => {
+    if (!deactivating) return;
+    setDeactivateBusy(true);
+    setError(null);
+    try {
+      await deactivateStaffMember(deactivating.staff_member_id);
+      staff.refresh();
+      setDeactivating(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeactivateBusy(false);
+    }
+  };
+
+  const reactivate = async (staffMemberId: string) => {
+    setBusyId(staffMemberId);
+    setError(null);
+    try {
+      await reactivateStaffMember(staffMemberId);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <Card padding="lg">
-      <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-        Staff
-      </h2>
-      <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-        Names land on every signature attribution and pre-fill the witness field on waivers. Manager toggle authorises discounts and voids. Admin toggle controls access to this Admin tab itself{canEditAdmin ? '' : ' and is locked to the super admin'}.
-      </p>
-      {staff.loading ? (
-        <Skeleton height={120} />
-      ) : staff.error ? (
-        <p style={{ color: theme.color.alert, margin: 0 }}>Could not load staff: {staff.error}</p>
-      ) : staff.data.length === 0 ? (
-        <EmptyState
-          icon={<Users size={20} />}
-          title="No staff accounts found"
-          description="Staff accounts come from the auth + accounts tables. Add one in Supabase first."
-        />
-      ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {staff.data.map((s) => (
-            <li
-              key={s.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: theme.space[3],
-                padding: theme.space[3],
-                background: theme.color.surface,
-                border: `1px solid ${theme.color.border}`,
-                borderRadius: 12,
-                flexWrap: 'wrap',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
-                  {s.display_name}
-                  {!s.first_name || !s.last_name ? (
-                    <span
-                      style={{
-                        marginLeft: theme.space[2],
-                        fontSize: theme.type.size.xs,
-                        color: theme.color.warn,
-                        fontWeight: theme.type.weight.medium,
-                      }}
-                    >
-                      Name incomplete
-                    </span>
-                  ) : null}
-                </p>
-                <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
-                  {s.login_email || 'No login email'}
-                </p>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
-                <Checkbox
-                  checked={s.is_manager}
-                  onChange={(v) => toggleManager(s.id, v)}
-                  disabled={busyId === s.id}
-                  label="Manager"
-                />
-                <Checkbox
-                  checked={s.is_admin}
-                  onChange={(v) => toggleAdmin(s.id, v)}
-                  disabled={busyId === s.id || !canEditAdmin}
-                  label="Admin"
-                />
-                <Button variant="tertiary" size="sm" onClick={() => openEdit(s)}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                    <Pencil size={14} aria-hidden /> Edit name
-                  </span>
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3], flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+            Staff
+          </h2>
+          <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm, maxWidth: 640 }}>
+            Only the people listed here can use Lounge. Add or deactivate without touching anyone's Meridian access. Names land on every signature, payment, and discount they sign off; pre-fill the witness field on waivers automatically.{canEditAdmin ? '' : ' Admin promotions are locked to the super admin.'}
+          </p>
+        </div>
+        <Button variant="primary" size="sm" onClick={openAdd}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+            <Plus size={14} aria-hidden /> Add staff member
+          </span>
+        </Button>
+      </div>
+
+      <div style={{ marginTop: theme.space[5], marginBottom: theme.space[4] }}>
+        {staff.loading ? (
+          <Skeleton height={120} />
+        ) : staff.error ? (
+          <p style={{ color: theme.color.alert, margin: 0 }}>Could not load staff: {staff.error}</p>
+        ) : visibleStaff.length === 0 ? (
+          <EmptyState
+            icon={<Users size={20} />}
+            title="No staff yet"
+            description="Add the first staff member to get started."
+          />
+        ) : (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            {visibleStaff.map((s) => {
+              const isInactive = s.status === 'inactive';
+              const isMe = s.account_id === currentAccount?.account_id;
+              const isSuperAdminRow = s.login_email === 'dylan@lanquez.com';
+              return (
+                <li
+                  key={s.staff_member_id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    padding: theme.space[3],
+                    background: isInactive ? theme.color.bg : theme.color.surface,
+                    border: `1px solid ${theme.color.border}`,
+                    borderRadius: 12,
+                    flexWrap: 'wrap',
+                    opacity: isInactive ? 0.65 : 1,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
+                      <span>{s.display_name}</span>
+                      {isInactive ? (
+                        <StatusPill tone="cancelled" size="sm">
+                          Deactivated
+                        </StatusPill>
+                      ) : null}
+                      {!s.first_name || !s.last_name ? (
+                        <span
+                          style={{
+                            fontSize: theme.type.size.xs,
+                            color: theme.color.warn,
+                            fontWeight: theme.type.weight.medium,
+                          }}
+                        >
+                          Name incomplete
+                        </span>
+                      ) : null}
+                    </p>
+                    <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
+                      {s.login_email || 'No login email'}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+                    {isInactive ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => reactivate(s.staff_member_id)}
+                        loading={busyId === s.staff_member_id}
+                      >
+                        Reactivate
+                      </Button>
+                    ) : (
+                      <>
+                        <Checkbox
+                          checked={s.is_manager}
+                          onChange={(v) => toggleManager(s.staff_member_id, v)}
+                          disabled={busyId === s.staff_member_id}
+                          label="Manager"
+                        />
+                        <Checkbox
+                          checked={s.is_admin}
+                          onChange={(v) => toggleAdmin(s.staff_member_id, v)}
+                          disabled={busyId === s.staff_member_id || !canEditAdmin || isSuperAdminRow}
+                          label="Admin"
+                        />
+                        <Button variant="tertiary" size="sm" onClick={() => openEdit(s)}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <Pencil size={14} aria-hidden /> Edit name
+                          </span>
+                        </Button>
+                        {isSuperAdminRow || isMe ? null : (
+                          <Button
+                            variant="tertiary"
+                            size="sm"
+                            onClick={() => setDeactivating(s)}
+                          >
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
+                              <Trash2 size={14} aria-hidden /> Deactivate
+                            </span>
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {inactiveCount > 0 ? (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="tertiary" size="sm" onClick={() => setShowInactive((v) => !v)}>
+            {showInactive
+              ? `Hide ${inactiveCount} deactivated`
+              : `Show ${inactiveCount} deactivated`}
+          </Button>
+        </div>
+      ) : null}
+
       {error ? (
         <p role="alert" style={{ marginTop: theme.space[3], color: theme.color.alert, fontSize: theme.type.size.sm }}>
           {error}
@@ -1502,7 +1641,7 @@ function StaffTab() {
         onClose={() => !editBusy && setEditing(null)}
         dismissable={!editBusy}
         title={editing ? `Edit ${editing.display_name}` : 'Edit staff'}
-        description="First and last name are used wherever this account leaves a mark — waiver witness, timeline 'by Dylan Lane' attribution, signed-document footer."
+        description="First and last name are used wherever this account leaves a mark — waiver witness, timeline attribution, signed-document footer."
         footer={
           <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
             <Button variant="secondary" onClick={() => setEditing(null)} disabled={editBusy}>
@@ -1529,6 +1668,73 @@ function StaffTab() {
             placeholder="e.g. Lane"
           />
         </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={addOpen}
+        onClose={() => !addBusy && setAddOpen(false)}
+        dismissable={!addBusy}
+        title="Add staff member"
+        description="Adds an existing account to the Lounge staff list. They keep their existing access elsewhere; this just opts them into Lounge with the roles you pick."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setAddOpen(false)} disabled={addBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitAdd} loading={addBusy}>
+              Add
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <Input
+            label="Login email"
+            type="email"
+            value={addEmail}
+            onChange={(e) => setAddEmail(e.target.value)}
+            placeholder="e.g. sarah@venneir.com"
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: theme.space[5], flexWrap: 'wrap' }}>
+            <Checkbox
+              checked={addManager}
+              onChange={setAddManager}
+              label="Manager"
+            />
+            <Checkbox
+              checked={addAdmin}
+              onChange={setAddAdmin}
+              disabled={!canEditAdmin}
+              label={canEditAdmin ? 'Admin' : 'Admin (super admin only)'}
+            />
+          </div>
+          {addError ? (
+            <p role="alert" style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+              {addError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={deactivating !== null}
+        onClose={() => !deactivateBusy && setDeactivating(null)}
+        dismissable={!deactivateBusy}
+        title={deactivating ? `Deactivate ${deactivating.display_name}?` : 'Deactivate staff'}
+        description="They lose access to Lounge immediately. Their attribution on every past signature, payment, and discount they signed off stays in place. Their access to Meridian or any other Venneir tool is untouched. You can reactivate them later."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setDeactivating(null)} disabled={deactivateBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitDeactivate} loading={deactivateBusy}>
+              Deactivate
+            </Button>
+          </div>
+        }
+      >
+        <div />
       </BottomSheet>
     </Card>
   );

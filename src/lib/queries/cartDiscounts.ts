@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { approveAsManager } from './payments.ts';
+import { listManagers as listManagersFromStaff } from './staff.ts';
 
 // Cart-level (sale-wide) discount audit + mutations.
 //
@@ -135,36 +136,23 @@ function displayName(a: AccountJoin | AccountJoin[] | null): string | null {
   return fn ?? ln ?? flat.name?.trim() ?? null;
 }
 
-// Manager dropdown — accounts where is_manager = true. Sorted by
-// display name for stable picker order.
+// Manager dropdown — active lng_staff_members where is_manager = true.
+// Sorted by display name for stable picker order. Reads through the
+// new Lounge-side staff registry rather than the shared accounts
+// table so a Meridian-only person can never appear here.
 export interface ManagerRow {
-  id: string;
+  id: string; // accounts.id — used as approver_id when writing to lng_cart_discounts.approved_by
   name: string;
   login_email: string;
 }
 
 export async function listManagers(): Promise<ManagerRow[]> {
-  const { data, error } = await supabase
-    .from('accounts')
-    .select('id, first_name, last_name, name, login_email')
-    .eq('is_manager', true);
-  if (error) {
-    if (error.code === '42703' /* column missing pre-migration */ || error.code === 'PGRST200') return [];
-    throw new Error(error.message);
-  }
-  return ((data ?? []) as Array<{
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    name: string | null;
-    login_email: string | null;
-  }>)
-    .map((r) => ({
-      id: r.id,
-      name: displayName({ first_name: r.first_name, last_name: r.last_name, name: r.name ?? null }) ?? r.login_email ?? r.id,
-      login_email: r.login_email ?? '',
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const rows = await listManagersFromStaff();
+  // Adapt the staff registry shape to the legacy ManagerRow shape the
+  // consumers (Apply Discount sheet, Void Payment sheet) expect.
+  // `id` here is the accounts.id — that's what the approver FK points
+  // at on lng_cart_discounts.approved_by + lng_payment_voids.approved_by.
+  return rows.map((r) => ({ id: r.account_id, name: r.name, login_email: r.login_email }));
 }
 
 export interface ApplyDiscountInput {
