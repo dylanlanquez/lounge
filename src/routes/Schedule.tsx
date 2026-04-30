@@ -490,9 +490,22 @@ export function Schedule() {
                 {(() => {
                   const isVirtual = !!selected.join_url;
                   const status = selected.status;
-                  const showNoShow = status === 'booked' || (isVirtual && status === 'arrived');
+                  // Virtual no-show is desktop-only. Staff need to
+                  // have actually attempted the Google Meet to know
+                  // whether the patient connected, and that flow
+                  // lives on the desktop. From a tablet there's no
+                  // legitimate way to verify attendance, so hide the
+                  // button outright instead of letting it sit there
+                  // as a temptation. Same for the Join Meeting
+                  // button, which is wired to a desktop window.open.
+                  const isVirtualOnNonDesktop = isVirtual && !isDesktop;
+                  const showNoShow =
+                    !isVirtualOnNonDesktop &&
+                    (status === 'booked' || (isVirtual && status === 'arrived'));
                   const showVirtualJoin =
-                    isVirtual && (status === 'booked' || status === 'arrived' || status === 'no_show');
+                    isVirtual &&
+                    isDesktop &&
+                    (status === 'booked' || status === 'arrived' || status === 'no_show');
                   const showMarkArrived = !isVirtual && status === 'booked';
                   const showCloseOnly =
                     !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
@@ -551,32 +564,30 @@ export function Schedule() {
                         })()
                       ) : null}
                       {showVirtualJoin ? (
-                        isDesktop ? (
-                          <Button
-                            variant="primary"
-                            loading={busy}
-                            onClick={async () => {
-                              if (!selected || !selected.join_url) return;
-                              window.open(selected.join_url, '_blank', 'noopener,noreferrer');
-                              if (status === 'arrived' || status === 'no_show') return;
-                              setBusy(true);
-                              try {
-                                await markVirtualMeetingJoined(selected.id);
-                                setSelected(null);
-                                day.refresh();
-                                weekCounts.refresh();
-                              } catch (e) {
-                                setError(e instanceof Error ? e.message : 'Could not record join');
-                              } finally {
-                                setBusy(false);
-                              }
-                            }}
-                          >
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                              <Video size={16} /> {joinLabel}
-                            </span>
-                          </Button>
-                        ) : null
+                        <Button
+                          variant="primary"
+                          loading={busy}
+                          onClick={async () => {
+                            if (!selected || !selected.join_url) return;
+                            window.open(selected.join_url, '_blank', 'noopener,noreferrer');
+                            if (status === 'arrived' || status === 'no_show') return;
+                            setBusy(true);
+                            try {
+                              await markVirtualMeetingJoined(selected.id);
+                              setSelected(null);
+                              day.refresh();
+                              weekCounts.refresh();
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : 'Could not record join');
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <Video size={16} /> {joinLabel}
+                          </span>
+                        </Button>
                       ) : null}
                       {showMarkArrived ? (
                         <Button
@@ -694,8 +705,14 @@ export function Schedule() {
                   <AlertTriangle size={20} color={theme.color.alert} aria-hidden style={{ flexShrink: 0 }} />
                   <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
                     <strong>{formatLateDuration(minutesPastStart(selected.start_at, now))} late.</strong>{' '}
+                    {/* For virtual bookings on a non-desktop the
+                        No-show button isn't rendered, so don't
+                        promise it here — point staff at the
+                        desktop instead. */}
                     {selected.join_url
-                      ? 'If they have not connected, tap No-show.'
+                      ? isDesktop
+                        ? 'If they have not connected, tap No-show.'
+                        : 'If they have not connected, mark No-show from a desktop browser.'
                       : 'If they have not turned up, tap No-show.'}
                   </p>
                 </div>
@@ -715,15 +732,14 @@ export function Schedule() {
                   }}
                 >
                   <Monitor size={20} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
-                  {/* Earlier copy said "to join the meeting and
-                      record attendance", which staff read as
-                      covering no-show — they thought the No-show
-                      button needed desktop too and stopped tapping
-                      it. Only the meeting join is desktop-only;
-                      no-show works from anywhere. Spell that out so
-                      the action below is reachable. */}
+                  {/* Both joining the meeting and marking no-show
+                      require staff to verify attendance through the
+                      desktop Google Meet flow, so both buttons are
+                      hidden on non-desktop. The notice has to make
+                      that obvious — earlier copy implied no-show
+                      was tablet-friendly, which it isn't. */}
                   <p style={{ margin: 0, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-                    Virtual appointment. Joining the meeting needs a desktop browser at <strong>lounge.venneir.com</strong>. You can still tap <strong>No-show</strong> below if the patient never connected.
+                    Virtual appointment. Open <strong>lounge.venneir.com</strong> on a desktop to join the meeting and mark attendance. No-show can only be flagged from there too.
                   </p>
                 </div>
               ) : null}
