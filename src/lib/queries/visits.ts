@@ -10,7 +10,7 @@ export interface VisitRow {
   location_id: string;
   appointment_id: string | null;
   walk_in_id: string | null;
-  status: 'arrived' | 'in_chair' | 'complete' | 'unsuitable';
+  status: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early';
   arrival_type: 'walk_in' | 'scheduled';
   receptionist_id: string | null;
   opened_at: string;
@@ -646,73 +646,89 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
 
 // ---------- Unsuitability ----------
 
-export interface RecordUnsuitabilityInput {
+// Visit-level early-end reason. 'unsuitable' is the per-product
+// clinical path (still preferred via the Mark unsuitable / per-line
+// trash flows since it captures lng_unsuitability_records). The
+// other categories cover the cases where there's no per-product
+// finding to record — patient walked out, wrong booking, etc.
+export type VisitEndReason =
+  | 'unsuitable'
+  | 'patient_declined'
+  | 'patient_walked_out'
+  | 'wrong_booking'
+  | 'other';
+
+export interface EndVisitEarlyInput {
   patient_id: string;
   visit_id: string;
-  catalogue_ids: string[];
-  reason: string;
-  // True when every line on the visit is being marked unsuitable —
-  // the visit then terminates (status flips to 'unsuitable'). False
-  // when only some lines are marked: records are filed but the visit
-  // stays open so the remaining items can still be paid for.
-  endsVisit: boolean;
+  reason: Exclude<VisitEndReason, 'unsuitable'>;
+  note: string;
 }
 
-// Files one immutable unsuitability record per chosen catalogue item,
-// all sharing the same reason. When endsVisit=true (caller has told us
-// every line on the visit is being marked), flips the visit to
-// 'unsuitable' so it terminates and drops off the in-clinic board.
-// Otherwise the visit stays open. Always writes one patient_events
-// row so the timeline carries the audit trail.
-export async function recordUnsuitability(input: RecordUnsuitabilityInput): Promise<void> {
-  const reason = input.reason.trim();
-  if (reason.length === 0) throw new Error('Reason is required');
-  if (input.catalogue_ids.length === 0) throw new Error('At least one product is required');
+// End an active visit for a non-clinical reason. Soft-deletes every
+// active cart line with reason='changed_mind' (as a generic
+// "removed because the visit ended" marker, since changed_mind is
+// the closest existing category that doesn't require clinical
+// records). Stamps lng_visits.status='ended_early' plus
+// visit_end_reason / visit_end_note so the audit row is
+// self-contained. Reverse restores the lines exactly as it does
+// for unsuitable.
+export async function endVisitEarly(input: EndVisitEarlyInput): Promise<void> {
+  const note = input.note.trim();
+  if (note.length === 0) throw new Error('A reason is required to end the visit early');
 
   const { data: accountId } = await supabase.rpc('auth_account_id');
+  const removedBy = (accountId as string | null) ?? null;
 
-  // Insert one row per chosen product in a single round-trip. If the
-  // batch fails (RLS, FK, length check) we bail without touching the
-  // visit or the timeline — failing closed is the right default for
-  // an audit-grade action.
-  const rows = input.catalogue_ids.map((catalogue_id) => ({
-    patient_id: input.patient_id,
-    visit_id: input.visit_id,
-    catalogue_id,
-    reason,
-    recorded_by: (accountId as string | null) ?? null,
-  }));
-  const { error: recErr } = await supabase.from('lng_unsuitability_records').insert(rows);
-  if (recErr) throw new Error(recErr.message);
+  // Find the active cart for this visit so we can soft-delete its
+  // remaining lines. Empty-cart visits skip this step.
+  const { data: cartRow, error: cartErr } = await supabase
+    .from('lng_carts')
+    .select('id')
+    .eq('visit_id', input.visit_id)
+    .maybeSingle();
+  if (cartErr) throw new Error(cartErr.message);
 
-  // Only terminate the visit when every line was unsuitable. Partial
-  // submissions leave the visit open so the remaining lines can still
-  // be paid for (and printed, signed, etc.).
-  if (input.endsVisit) {
-    const { error: visitErr } = await supabase
-      .from('lng_visits')
-      .update({ status: 'unsuitable', closed_at: new Date().toISOString() })
-      .eq('id', input.visit_id);
-    if (visitErr) throw new Error(visitErr.message);
+  if (cartRow?.id) {
+    const { error: removeErr } = await supabase
+      .from('lng_cart_items')
+      .update({
+        removed_at: new Date().toISOString(),
+        removed_reason: 'changed_mind',
+        removed_by: removedBy,
+        removed_note: note,
+      })
+      .eq('cart_id', cartRow.id)
+      .is('removed_at', null);
+    if (removeErr) throw new Error(removeErr.message);
   }
 
-  // Timeline row. One per submission — the payload carries every
-  // catalogue_id that was flagged plus whether this submission ended
-  // the visit, so the timeline summary can render the full picture
-  // without joining back to lng_unsuitability_records.
-  // Best-effort: we don't roll back the records + status flip if this
-  // fails, since the audit trail is the source of truth.
+  // Flip the visit status. ended_early is distinct from unsuitable
+  // — same lock-state UX, but no clinical records attached.
+  const { error: visitErr } = await supabase
+    .from('lng_visits')
+    .update({
+      status: 'ended_early',
+      closed_at: new Date().toISOString(),
+      visit_end_reason: input.reason,
+      visit_end_note: note,
+    })
+    .eq('id', input.visit_id);
+  if (visitErr) throw new Error(visitErr.message);
+
+  // Timeline event. The reason category lets the timeline render
+  // the right copy ("Visit ended — Patient walked out") without a
+  // join back to lng_visits.
   await supabase.from('patient_events').insert({
     patient_id: input.patient_id,
-    event_type: 'patient_unsuitable_recorded',
-    actor_account_id: (accountId as string | null) ?? null,
-    notes: reason,
+    event_type: 'visit_ended_early',
+    actor_account_id: removedBy,
+    notes: note,
     payload: {
       visit_id: input.visit_id,
-      catalogue_ids: input.catalogue_ids,
-      reason,
-      ended_visit: input.endsVisit,
-      staff_account_id: (accountId as string | null) ?? null,
+      reason: input.reason,
+      note,
+      staff_account_id: removedBy,
     },
   });
 }
@@ -825,21 +841,32 @@ export async function removeCartLineWithReason(
   if (unsErr) throw new Error(unsErr.message);
   if ((unsuitableCount ?? 0) === 0) return { visit_terminated: false };
 
+  // Stamp the visit-level end reason/note alongside the status flip
+  // so the new constraint (status='unsuitable' requires reason+note)
+  // holds. The triggering removal's note becomes the visit-level
+  // note — it's the most recent staff input and the one that ended
+  // the visit.
   const { error: visitErr } = await supabase
     .from('lng_visits')
-    .update({ status: 'unsuitable', closed_at: new Date().toISOString() })
+    .update({
+      status: 'unsuitable',
+      closed_at: new Date().toISOString(),
+      visit_end_reason: 'unsuitable',
+      visit_end_note: note,
+    })
     .eq('id', input.visit_id);
   if (visitErr) throw new Error(visitErr.message);
 
   return { visit_terminated: true };
 }
 
-// Reverses the visit-level "unsuitable" terminus AND restores every
-// soft-deleted cart line on this visit (regardless of removal
-// reason). lng_unsuitability_records rows stay as audit — we never
-// mutate signed-off records — but the cart-item soft-delete is
-// un-flagged so the cart returns exactly as it was before the
-// removal sequence began.
+// Reverses either visit-level terminus ('unsuitable' OR
+// 'ended_early') AND restores every soft-deleted cart line on this
+// visit (regardless of removal reason). lng_unsuitability_records
+// rows stay as audit — we never mutate signed-off records — but the
+// cart-item soft-delete is un-flagged so the cart returns exactly
+// as it was before the removal sequence began. visit_end_reason
+// and visit_end_note also clear so the constraint stays satisfied.
 //
 // "Restore everything" is deliberate per Dylan's call: a "wrong
 // product" mistake reappears alongside the unsuitable lines, and
@@ -873,7 +900,12 @@ export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Pr
 
   const { error: visitErr } = await supabase
     .from('lng_visits')
-    .update({ status: 'in_chair', closed_at: null })
+    .update({
+      status: 'in_chair',
+      closed_at: null,
+      visit_end_reason: null,
+      visit_end_note: null,
+    })
     .eq('id', input.visit_id);
   if (visitErr) throw new Error(visitErr.message);
 
@@ -888,19 +920,49 @@ export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Pr
   });
 }
 
-// Latest unsuitability record on a visit, joined to the recording
-// staff member's account so the header can render "By [name]". Null
-// while no records exist yet.
+// Latest end-of-visit details (either path: 'unsuitable' or
+// 'ended_early'). The header lifecycle line uses these to render
+// "Marked Unsuitable [time] / By [name]" or "Visit Ended Early
+// [time] / By [name]". Null while the visit is still active.
+//
+// For 'unsuitable' the staff name comes from lng_unsuitability_records
+// (the latest record's recorded_by). For 'ended_early' it comes
+// from the latest patient_events row of type 'visit_ended_early'
+// matching this visit.
 export interface LatestUnsuitability {
   recorded_at: string;
+  // The reason text shown beneath the header line. For unsuitable
+  // it's the lng_unsuitability_records.reason from the latest
+  // record; for ended_early it's lng_visits.visit_end_note.
   reason: string;
   recorded_by_name: string | null;
+  // Discriminator so the header can render the right label.
+  category: 'unsuitable' | 'ended_early';
+  // Sub-category for 'ended_early' visits (patient_declined,
+  // patient_walked_out, wrong_booking, other). Null when category
+  // is 'unsuitable'.
+  end_reason: VisitEndReason | null;
 }
 
 interface LatestUnsuitabilityResult {
   data: LatestUnsuitability | null;
   loading: boolean;
   error: string | null;
+}
+
+interface AccountJoin {
+  first_name: string | null;
+  last_name: string | null;
+  name: string | null;
+}
+
+function displayAccountName(a: AccountJoin | AccountJoin[] | null | undefined): string | null {
+  const flat = Array.isArray(a) ? a[0] ?? null : a ?? null;
+  if (!flat) return null;
+  const fn = flat.first_name?.trim();
+  const ln = flat.last_name?.trim();
+  if (fn && ln) return `${fn} ${ln}`;
+  return fn ?? ln ?? flat.name?.trim() ?? null;
 }
 
 export function useLatestUnsuitability(visitId: string | null): LatestUnsuitabilityResult {
@@ -916,46 +978,103 @@ export function useLatestUnsuitability(visitId: string | null): LatestUnsuitabil
     }
     let cancelled = false;
     (async () => {
-      const { data: row, error: err } = await supabase
-        .from('lng_unsuitability_records')
-        .select('recorded_at, reason, recorded_by, account:accounts!recorded_by ( first_name, last_name, name )')
-        .eq('visit_id', visitId)
-        .order('recorded_at', { ascending: false })
-        .limit(1)
+      // Step A: read the visit row to learn status + end reason/note.
+      // Visits not in a terminal status return null — the header
+      // shouldn't surface anything until the visit ends.
+      const { data: vRow, error: vErr } = await supabase
+        .from('lng_visits')
+        .select('status, closed_at, visit_end_reason, visit_end_note')
+        .eq('id', visitId)
         .maybeSingle();
       if (cancelled) return;
-      if (err) {
-        if (err.code === '42P01' || err.code === 'PGRST200') {
-          setData(null);
-          setError(null);
-        } else {
-          setError(err.message);
-        }
+      if (vErr) {
+        setError(vErr.message);
         settle();
         return;
       }
-      if (!row) {
+      const v = vRow as {
+        status: string | null;
+        closed_at: string | null;
+        visit_end_reason: VisitEndReason | null;
+        visit_end_note: string | null;
+      } | null;
+      if (!v || (v.status !== 'unsuitable' && v.status !== 'ended_early')) {
         setData(null);
         settle();
         return;
       }
-      const r = row as {
-        recorded_at: string;
-        reason: string;
-        recorded_by: string | null;
-        account:
-          | { first_name: string | null; last_name: string | null; name: string | null }
-          | { first_name: string | null; last_name: string | null; name: string | null }[]
-          | null;
-      };
-      const a = Array.isArray(r.account) ? r.account[0] ?? null : r.account ?? null;
-      const fn = a?.first_name?.trim();
-      const ln = a?.last_name?.trim();
-      const display = fn && ln ? `${fn} ${ln}` : fn ?? ln ?? a?.name?.trim() ?? null;
+
+      // Step B: pull the staff name. For 'unsuitable' we have the
+      // recorded_by FK on the latest lng_unsuitability_records row;
+      // for 'ended_early' it lives on the patient_events row this
+      // function emits.
+      if (v.status === 'unsuitable') {
+        const { data: row, error: err } = await supabase
+          .from('lng_unsuitability_records')
+          .select('recorded_at, reason, account:accounts!recorded_by ( first_name, last_name, name )')
+          .eq('visit_id', visitId)
+          .order('recorded_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (cancelled) return;
+        if (err) {
+          if (err.code === '42P01' || err.code === 'PGRST200') {
+            setData(null);
+            setError(null);
+          } else {
+            setError(err.message);
+          }
+          settle();
+          return;
+        }
+        const r = row as { recorded_at: string; reason: string; account: AccountJoin | AccountJoin[] | null } | null;
+        if (!r) {
+          // status='unsuitable' without a record is the migration-
+          // backfilled case; fall back to the visit's own end note
+          // and skip the staff name.
+          setData({
+            recorded_at: v.closed_at ?? new Date(0).toISOString(),
+            reason: v.visit_end_note ?? '',
+            recorded_by_name: null,
+            category: 'unsuitable',
+            end_reason: null,
+          });
+          settle();
+          return;
+        }
+        setData({
+          recorded_at: r.recorded_at,
+          reason: r.reason,
+          recorded_by_name: displayAccountName(r.account),
+          category: 'unsuitable',
+          end_reason: null,
+        });
+        settle();
+        return;
+      }
+
+      // status === 'ended_early'
+      const { data: peRow, error: peErr } = await supabase
+        .from('patient_events')
+        .select('created_at, actor_account_id, account:accounts!actor_account_id ( first_name, last_name, name )')
+        .eq('event_type', 'visit_ended_early')
+        .filter('payload->>visit_id', 'eq', visitId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (cancelled) return;
+      if (peErr && peErr.code !== '42P01' && peErr.code !== 'PGRST200') {
+        setError(peErr.message);
+        settle();
+        return;
+      }
+      const pe = peRow as { created_at: string; account: AccountJoin | AccountJoin[] | null } | null;
       setData({
-        recorded_at: r.recorded_at,
-        reason: r.reason,
-        recorded_by_name: display,
+        recorded_at: pe?.created_at ?? v.closed_at ?? new Date(0).toISOString(),
+        reason: v.visit_end_note ?? '',
+        recorded_by_name: displayAccountName(pe?.account),
+        category: 'ended_early',
+        end_reason: v.visit_end_reason,
       });
       settle();
     })();

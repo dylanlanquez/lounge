@@ -1549,7 +1549,7 @@ function VisitStatusPill({ visit }: { visit: PatientVisitRow }) {
   const tone =
     visit.status === 'complete'
       ? 'complete'
-      : visit.status === 'unsuitable'
+      : visit.status === 'unsuitable' || visit.status === 'ended_early'
         ? 'unsuitable'
         : visit.status === 'in_chair'
           ? 'in_progress'
@@ -1593,6 +1593,8 @@ function humaniseVisitStatus(s: PatientVisitRow['status']): string {
       return 'Complete';
     case 'unsuitable':
       return 'Unsuitable';
+    case 'ended_early':
+      return 'Ended early';
   }
 }
 
@@ -1618,10 +1620,10 @@ function humaniseApptStatus(s: ScheduledApptStatus): string {
 function paymentLabel(v: PatientVisitRow): string {
   if (v.cart_status === 'paid' && v.cart_total_pence != null) return formatPence(v.cart_total_pence);
   if (v.cart_status === 'voided') return 'Voided';
-  // Unsuitable visits don't go to till. "Pending" implies money is
-  // still coming, which is misleading. The visit terminated; nothing
-  // is owed unless an admin reverses it later.
-  if (v.status === 'unsuitable') return 'Not charged';
+  // Terminated visits (unsuitable / ended_early) don't go to till.
+  // "Pending" implies money is still coming; it isn't. Nothing is
+  // owed unless an admin reverses the visit later.
+  if (v.status === 'unsuitable' || v.status === 'ended_early') return 'Not charged';
   return 'Pending';
 }
 

@@ -51,13 +51,14 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
+  endVisitEarly,
   formatVisitCrumb,
   removeCartLineWithReason,
   reverseUnsuitability,
   useLatestUnsuitability,
   useVisitDetail,
 } from '../lib/queries/visits.ts';
-import type { VisitRow } from '../lib/queries/visits.ts';
+import type { VisitEndReason, VisitRow } from '../lib/queries/visits.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
@@ -161,13 +162,15 @@ export function VisitDetail() {
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
-  // Visible "Mark unsuitable" button on the action row. Opens a
-  // multi-pick sheet so staff can mark several lines unsuitable in
-  // one go with one shared reason. Submit loops through the ticked
-  // items and calls removeCartLineWithReason for each, so the audit
-  // trail and the soft-delete + Reverse semantics stay identical to
-  // the trash-icon path.
+  // "End visit early" sheet — visible CTA on the action row for
+  // closing out a visit before the till. Reason picker (5 cards):
+  //   unsuitable        → reveals product picker; loops removeCartLineWithReason
+  //   patient_declined  → endVisitEarly with note
+  //   patient_walked_out→ endVisitEarly with note
+  //   wrong_booking     → endVisitEarly with note
+  //   other             → endVisitEarly with note
   const [unsuitOpen, setUnsuitOpen] = useState(false);
+  const [endReason, setEndReason] = useState<VisitEndReason>('unsuitable');
   const [unsuitItemIds, setUnsuitItemIds] = useState<string[]>([]);
   const [unsuitNote, setUnsuitNote] = useState('');
   const [unsuitBusy, setUnsuitBusy] = useState(false);
@@ -398,7 +401,16 @@ export function VisitDetail() {
   // Visit terminated by an unsuitability finding. Same as cartLocked
   // but specifically lit when the lock is reversible (admin can flip
   // back via the in-app reverse button), unlike paid which is final.
-  const isUnsuitable = visit?.status === 'unsuitable';
+  // Both terminal statuses (unsuitable / ended_early) trigger the
+  // same lock UX: dim the cart, suppress productive actions, expose
+  // the Reverse button. The labels differ (orange Unsuitable pill
+  // vs Ended-early lifecycle line) but the gating predicate is one.
+  const isVisitEnded =
+    visit?.status === 'unsuitable' || visit?.status === 'ended_early';
+  // Backwards-compat alias for the existing call sites that already
+  // use isUnsuitable for opacity/disabled props. Removing it would
+  // be a churn pass; the alias keeps the diff focused.
+  const isUnsuitable = isVisitEnded;
   // Productive actions (cart edits, tech note, LWO print, waiver
   // viewing, payment) are gated behind both: paid carts are immutable
   // forever, unsuitable visits are immutable until reversed.
@@ -507,43 +519,63 @@ export function VisitDetail() {
       items.filter((it): it is typeof it & { catalogue_id: string } => !!it.catalogue_id),
     [items]
   );
-  const canMarkUnsuitable = !isUnsuitable && unsuitEligibleItems.length > 0;
-  const unsuitWillEndVisit =
-    unsuitEligibleItems.length > 0 && unsuitItemIds.length === unsuitEligibleItems.length;
+  // The button is available on every active visit (regardless of
+  // cart contents). Empty cart visits especially benefit — they
+  // had no way to close out before. While the visit is active and
+  // not already ended, the button shows.
+  const canEndEarly = !isVisitEnded;
+  const unsuitWillEndAllItems =
+    endReason === 'unsuitable' &&
+    unsuitEligibleItems.length > 0 &&
+    unsuitItemIds.length === unsuitEligibleItems.length;
+  // The sheet's submission always ends the visit when reason is not
+  // 'unsuitable' (those go through endVisitEarly directly). For
+  // 'unsuitable', termination still depends on whether all eligible
+  // items are picked.
+  const sheetWillEndVisit = endReason !== 'unsuitable' || unsuitWillEndAllItems;
 
-  const openMarkUnsuitable = () => {
+  const openEndEarly = () => {
     setUnsuitError(null);
     setUnsuitNote('');
     setUnsuitItemIds([]);
+    setEndReason('unsuitable');
     setUnsuitOpen(true);
   };
 
-  const submitMarkUnsuitable = async () => {
+  const submitEndEarly = async () => {
     if (!visit || !patient) return;
-    if (unsuitItemIds.length === 0) {
-      setUnsuitError('Pick at least one product the patient was unsuitable for.');
-      return;
-    }
     if (unsuitNote.trim().length === 0) {
       setUnsuitError('A reason is required.');
+      return;
+    }
+    if (endReason === 'unsuitable' && unsuitItemIds.length === 0) {
+      setUnsuitError('Pick at least one product the patient was unsuitable for.');
       return;
     }
     setUnsuitBusy(true);
     setUnsuitError(null);
     try {
-      // Loop through the picked items; share the same note across
-      // all of them. Soft-delete + lng_unsuitability_records writes
-      // happen per item; the orchestrator decides termination on the
-      // last call when it sees an empty active cart.
-      for (const itemId of unsuitItemIds) {
-        const it = unsuitEligibleItems.find((x) => x.id === itemId);
-        if (!it) continue;
-        await removeCartLineWithReason({
-          cart_item_id: it.id,
-          catalogue_id: it.catalogue_id,
-          visit_id: visit.id,
+      if (endReason === 'unsuitable') {
+        // Loop through picked items via the unified removal flow.
+        // The orchestrator handles termination once active items
+        // hit zero.
+        for (const itemId of unsuitItemIds) {
+          const it = unsuitEligibleItems.find((x) => x.id === itemId);
+          if (!it) continue;
+          await removeCartLineWithReason({
+            cart_item_id: it.id,
+            catalogue_id: it.catalogue_id,
+            visit_id: visit.id,
+            patient_id: patient.id,
+            reason: 'unsuitable',
+            note: unsuitNote,
+          });
+        }
+      } else {
+        await endVisitEarly({
           patient_id: patient.id,
-          reason: 'unsuitable',
+          visit_id: visit.id,
+          reason: endReason,
           note: unsuitNote,
         });
       }
@@ -737,6 +769,8 @@ export function VisitDetail() {
                 visitStatus={visit.status}
                 unsuitableAt={latestUnsuitable?.recorded_at ?? null}
                 unsuitableBy={latestUnsuitable?.recorded_by_name ?? null}
+                unsuitableCategory={latestUnsuitable?.category ?? null}
+                unsuitableEndReason={latestUnsuitable?.end_reason ?? null}
               />
               <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', marginTop: theme.space[4] }}>
                 {/* All meta pills except the visit-status one dim
@@ -907,11 +941,11 @@ export function VisitDetail() {
                   flexWrap: 'wrap',
                 }}
               >
-                {canMarkUnsuitable ? (
-                  <Button variant="tertiary" onClick={openMarkUnsuitable}>
+                {canEndEarly ? (
+                  <Button variant="tertiary" onClick={openEndEarly}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <Ban size={16} aria-hidden />
-                      Mark unsuitable
+                      End visit early
                     </span>
                   </Button>
                 ) : null}
@@ -1344,20 +1378,21 @@ export function VisitDetail() {
         </div>
       </BottomSheet>
 
-      {/* Multi-pick Mark unsuitable sheet. Visible CTA on the action
-          row triggers this — staff who want to mark several products
-          unsuitable in one go pick them here with one shared reason.
-          Submit loops through removeCartLineWithReason so the audit
-          trail and the soft-delete + Reverse semantics stay
-          identical to the trash-icon path. */}
+      {/* End visit early sheet. Five reason categories — picking
+          'Patient unsuitable' reveals the product picker; the rest
+          end the visit on a non-clinical reason. Submit branches
+          accordingly: unsuitable loops removeCartLineWithReason,
+          everything else calls endVisitEarly which soft-deletes any
+          remaining items and stamps lng_visits.visit_end_reason +
+          visit_end_note. Reverse restores the lines exactly. */}
       <BottomSheet
         open={unsuitOpen}
         onClose={() => !unsuitBusy && setUnsuitOpen(false)}
         dismissable={!unsuitBusy}
-        title="Mark patient unsuitable"
+        title="End visit early"
         description={
-          unsuitWillEndVisit
-            ? 'Every product on this visit will be marked unsuitable. The visit ends here. Only an admin can reverse it.'
+          sheetWillEndVisit
+            ? 'The visit ends here. Soft-deleted lines come back if you Reverse later. Only an admin can reverse outside the app.'
             : 'Records on the patient timeline that the patient was unsuitable for the picked products. The visit stays open for any product you don’t tick.'
         }
         footer={
@@ -1375,27 +1410,96 @@ export function VisitDetail() {
                 <X size={16} aria-hidden /> Cancel
               </span>
             </Button>
-            <Button variant="primary" onClick={submitMarkUnsuitable} loading={unsuitBusy}>
+            <Button variant="primary" onClick={submitEndEarly} loading={unsuitBusy}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <Ban size={16} aria-hidden />
-                {unsuitWillEndVisit ? 'Mark unsuitable & end visit' : 'Mark unsuitable'}
+                {sheetWillEndVisit ? 'End visit' : 'Mark unsuitable'}
               </span>
             </Button>
           </div>
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          <MultiSelectDropdown<string>
-            label="Products"
-            required
-            values={unsuitItemIds}
-            options={unsuitEligibleItems.map((it) => ({ value: it.id, label: it.name }))}
-            onChange={(next) => setUnsuitItemIds(next)}
-            placeholder="Pick from the basket"
-            totalNoun="products"
-          />
+          {/* Five radio cards. Picking 'unsuitable' reveals the
+              product picker below; the others use only the reason
+              textarea. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Reason category <span style={{ color: theme.color.alert }}>*</span>
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {([
+                { value: 'unsuitable', label: 'Patient unsuitable', sub: 'Clinical decision. Pick the products it applies to.' },
+                { value: 'patient_declined', label: 'Patient declined', sub: 'Patient changed their mind or no longer wants the work.' },
+                { value: 'patient_walked_out', label: 'Patient walked out', sub: 'Patient left without finishing the visit.' },
+                { value: 'wrong_booking', label: 'Wrong booking', sub: 'We can’t deliver what they came for today.' },
+                { value: 'other', label: 'Other', sub: 'Anything else. Reason note explains it.' },
+              ] as const).map((opt) => {
+                const isSel = endReason === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEndReason(opt.value)}
+                    style={{
+                      appearance: 'none',
+                      width: '100%',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      padding: theme.space[3],
+                      borderRadius: theme.radius.input,
+                      border: `1.5px solid ${isSel ? theme.color.ink : theme.color.border}`,
+                      background: isSel ? 'rgba(14, 20, 20, 0.03)' : theme.color.surface,
+                      color: theme.color.ink,
+                      fontFamily: 'inherit',
+                      transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: theme.type.size.base,
+                        fontWeight: isSel ? theme.type.weight.semibold : theme.type.weight.medium,
+                      }}
+                    >
+                      {opt.label}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: theme.type.size.sm,
+                        color: theme.color.inkMuted,
+                        fontWeight: theme.type.weight.regular,
+                      }}
+                    >
+                      {opt.sub}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-          {unsuitWillEndVisit ? (
+          {endReason === 'unsuitable' && unsuitEligibleItems.length > 0 ? (
+            <MultiSelectDropdown<string>
+              label="Products"
+              required
+              values={unsuitItemIds}
+              options={unsuitEligibleItems.map((it) => ({ value: it.id, label: it.name }))}
+              onChange={(next) => setUnsuitItemIds(next)}
+              placeholder="Pick from the basket"
+              totalNoun="products"
+            />
+          ) : null}
+
+          {sheetWillEndVisit ? (
             <div
               role="status"
               style={{
@@ -1412,8 +1516,8 @@ export function VisitDetail() {
             >
               <AlertTriangle size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
               <span>
-                All basket items are selected. Submitting will end the visit. The patient won’t be charged for
-                these lines and the visit drops off the in-clinic board.
+                Submitting will end the visit. The cart locks, the visit drops off the in-clinic board, and any
+                remaining lines soft-delete so Reverse can restore them later.
               </span>
             </div>
           ) : null}
@@ -1434,7 +1538,11 @@ export function VisitDetail() {
               value={unsuitNote}
               onChange={(e) => setUnsuitNote(e.target.value)}
               rows={5}
-              placeholder="Why is the patient unsuitable for these products? Be specific. This lands on the patient timeline."
+              placeholder={
+                endReason === 'unsuitable'
+                  ? 'Why is the patient unsuitable for these products? Be specific. This lands on the patient timeline.'
+                  : 'Why is the visit ending early? Be specific. This lands on the patient timeline.'
+              }
               style={{
                 width: '100%',
                 padding: theme.space[3],
@@ -1865,6 +1973,7 @@ function LifecycleStrip({
   visitStatus,
   unsuitableAt,
   unsuitableBy,
+  unsuitableEndReason,
 }: {
   arrivalType: 'walk_in' | 'scheduled';
   bookedAt: string | null;
@@ -1873,16 +1982,33 @@ function LifecycleStrip({
   arrivedAt: string;
   completedAt: string | null;
   visitStatus: VisitRow['status'];
-  // Latest unsuitability record. When status='unsuitable' we render
-  // a "Marked Unsuitable" line in place of "Completed" plus a "By
-  // [name]" sub-line so staff sees who terminated the visit.
+  // Latest end-of-visit details. Drive the "Marked Unsuitable" /
+  // "Visit Ended Early" line that replaces "Completed" when the
+  // visit terminates pre-payment.
   unsuitableAt: string | null;
   unsuitableBy: string | null;
+  unsuitableCategory: 'unsuitable' | 'ended_early' | null;
+  unsuitableEndReason: VisitEndReason | null;
 }) {
   const isScheduled = arrivalType === 'scheduled';
   const bookedLabel =
     bookingSource === 'calendly' ? 'Booked on Calendly' : 'Booked';
-  const isUnsuitable = visitStatus === 'unsuitable';
+  const isEnded = visitStatus === 'unsuitable' || visitStatus === 'ended_early';
+  const endLabel = (() => {
+    if (visitStatus === 'unsuitable') return 'Marked Unsuitable';
+    // ended_early — adapt label to the sub-reason
+    switch (unsuitableEndReason) {
+      case 'patient_declined':
+        return 'Visit Ended, Patient Declined';
+      case 'patient_walked_out':
+        return 'Visit Ended, Patient Walked Out';
+      case 'wrong_booking':
+        return 'Visit Ended, Wrong Booking';
+      case 'other':
+      default:
+        return 'Visit Ended Early';
+    }
+  })();
   return (
     <dl
       style={{
@@ -1900,9 +2026,9 @@ function LifecycleStrip({
         <LifecycleLine label="Scheduled" iso={scheduledAt} />
       ) : null}
       <LifecycleLine label="Arrived" iso={arrivedAt} />
-      {isUnsuitable && unsuitableAt ? (
+      {isEnded && unsuitableAt ? (
         <LifecycleLine
-          label="Marked Unsuitable"
+          label={endLabel}
           iso={unsuitableAt}
           subline={unsuitableBy ? `By ${unsuitableBy}` : null}
         />
@@ -2003,7 +2129,7 @@ function showableRef(value: string | null | undefined): value is string {
   return true;
 }
 
-function visitStatusIcon(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable') {
+function visitStatusIcon(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early') {
   switch (s) {
     case 'arrived':
       return <Circle size={12} />;
@@ -2012,6 +2138,7 @@ function visitStatusIcon(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable') 
     case 'complete':
       return <CheckCircle size={12} />;
     case 'unsuitable':
+    case 'ended_early':
       return <Ban size={12} />;
   }
 }
@@ -2030,7 +2157,7 @@ function cartStatusIcon(s: 'open' | 'paid' | 'voided') {
 // Visit-status helpers. The DB stores the raw enum (opened /
 // in_progress / complete / cancelled); the UI shows humanised copy
 // to match the other status pills in the app.
-function visitStatusLabel(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable'): string {
+function visitStatusLabel(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early'): string {
   switch (s) {
     case 'arrived':
       return 'Arrived';
@@ -2040,9 +2167,11 @@ function visitStatusLabel(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable')
       return 'Complete';
     case 'unsuitable':
       return 'Unsuitable';
+    case 'ended_early':
+      return 'Ended early';
   }
 }
-function visitStatusTone(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable') {
+function visitStatusTone(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early') {
   switch (s) {
     case 'arrived':
       return 'in_progress' as const;
@@ -2051,6 +2180,7 @@ function visitStatusTone(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable') 
     case 'complete':
       return 'complete' as const;
     case 'unsuitable':
+    case 'ended_early':
       return 'unsuitable' as const;
   }
 }
