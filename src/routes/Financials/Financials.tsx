@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   Card,
+  DateRangePicker,
   EmptyState,
   SegmentedControl,
 } from '../../components/index.ts';
@@ -11,17 +12,10 @@ import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
+import { type DateRange, defaultDateRange } from '../../lib/dateRange.ts';
 import { Receipt } from 'lucide-react';
-
-// Financials — the money-side surface. Visible only to staff with
-// can_view_financials (default false; super admin can grant via the
-// Staff editor). Cash reconciliation is gated additionally by
-// can_count_cash because performing a count is a higher-trust action
-// than viewing past counts.
-//
-// Same shape as Reports: a route shell with a SegmentedControl
-// switching between sub-pages. Each sub-page lands as its own file
-// across the follow-up PRs so this module stays readable.
+import { OverviewTab } from './OverviewTab.tsx';
+import { SalesTab } from './SalesTab.tsx';
 
 type Tab =
   | 'overview'
@@ -45,13 +39,10 @@ export function Financials() {
   const { account, loading: accountLoading } = useCurrentAccount();
   const isMobile = useIsMobile(640);
   const [tab, setTab] = useState<Tab>('overview');
+  const [range, setRange] = useState<DateRange>(() => defaultDateRange());
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
-  // Financials gate. The super admin always passes; everyone else
-  // needs can_view_financials = true on their lng_staff_members row.
-  // Belt-and-braces: the top-bar entry is also hidden when this gate
-  // would fail, so non-permitted staff don't see the door.
   if (!account || !account.can_view_financials) {
     return <Navigate to="/" replace />;
   }
@@ -71,31 +62,44 @@ export function Financials() {
       }}
     >
       <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
-        <h1
+        <div
           style={{
-            margin: 0,
-            fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: theme.space[3],
+            flexWrap: 'wrap',
             marginBottom: theme.space[2],
           }}
         >
-          Financials
-        </h1>
-        <p
-          style={{
-            margin: `0 0 ${theme.space[5]}px`,
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
-            maxWidth: 640,
-          }}
-        >
-          Money-side reports + cash reconciliation. Defaults to the super
-          admin only; granted to other staff via Admin → Staff. Cash
-          reconciliation requires an additional permission flag.
-        </p>
+          <div>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
+                fontWeight: theme.type.weight.semibold,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              Financials
+            </h1>
+            <p
+              style={{
+                margin: `${theme.space[2]}px 0 0`,
+                color: theme.color.inkMuted,
+                fontSize: theme.type.size.sm,
+                maxWidth: 640,
+              }}
+            >
+              Money-side reports + cash reconciliation. Defaults to the super
+              admin only; granted to other staff via Admin → Staff. Cash
+              reconciliation requires an additional permission flag.
+            </p>
+          </div>
+          <DateRangePicker value={range} onChange={setRange} />
+        </div>
 
-        <div style={{ marginBottom: theme.space[5], overflowX: 'auto' }}>
+        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5], overflowX: 'auto' }}>
           <SegmentedControl<Tab>
             value={tab}
             onChange={setTab}
@@ -105,9 +109,13 @@ export function Financials() {
           />
         </div>
 
-        <ComingSoon
-          section={TABS.find((t) => t.value === tab)?.label ?? 'Section'}
-        />
+        {tab === 'overview' ? (
+          <OverviewTab range={range} />
+        ) : tab === 'sales' ? (
+          <SalesTab range={range} />
+        ) : (
+          <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
+        )}
       </div>
     </main>
   );
