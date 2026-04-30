@@ -18,7 +18,15 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
+import {
+  listLoungeLocations,
+  listStripeLocations,
+  registerReader,
+  useTerminalReaders,
+  type LoungeLocation,
+  type StripeTerminalLocation,
+} from '../lib/queries/terminalReaders.ts';
+import { BottomSheet } from '../components/index.ts';
 import {
   useReceptionistSessions,
   useUnresolvedFailures,
@@ -653,22 +661,116 @@ function DevicesTab() {
   const readers = useTerminalReaders();
   const sessions = useReceptionistSessions();
 
+  // Register-reader sheet state. The form fetches Stripe locations
+  // + Lounge locations on open so dropdowns are populated by the
+  // time the receptionist starts typing the registration code.
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [regBusy, setRegBusy] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regCode, setRegCode] = useState('');
+  const [regLabel, setRegLabel] = useState('');
+  const [regStripeLocId, setRegStripeLocId] = useState<string>('');
+  const [regLoungeLocId, setRegLoungeLocId] = useState<string>('');
+  const [stripeLocs, setStripeLocs] = useState<StripeTerminalLocation[]>([]);
+  const [loungeLocs, setLoungeLocs] = useState<LoungeLocation[]>([]);
+  const [locsLoading, setLocsLoading] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const openRegister = async () => {
+    setRegError(null);
+    setRegCode('');
+    setRegLabel('');
+    setRegStripeLocId('');
+    setRegLoungeLocId('');
+    setRegisterOpen(true);
+    setLocsLoading(true);
+    try {
+      // Fetch both lists in parallel so the dropdowns are ready
+      // when the receptionist looks down to pick.
+      const [s, l] = await Promise.all([listStripeLocations(), listLoungeLocations()]);
+      setStripeLocs(s);
+      setLoungeLocs(l);
+      // Pre-pick a single-option list so the common single-clinic
+      // single-Stripe-location case doesn't need extra clicks.
+      if (s.length === 1) setRegStripeLocId(s[0]!.id);
+      if (l.length === 1) setRegLoungeLocId(l[0]!.id);
+    } catch (e) {
+      setRegError(e instanceof Error ? e.message : 'Could not load locations');
+    } finally {
+      setLocsLoading(false);
+    }
+  };
+
+  const submitRegister = async () => {
+    if (!regCode.trim()) {
+      setRegError('Enter the 3-word code shown on the reader.');
+      return;
+    }
+    if (!regLabel.trim()) {
+      setRegError('Give the reader a friendly name (e.g. "Front desk S700").');
+      return;
+    }
+    if (!regStripeLocId) {
+      setRegError('Pick a Stripe Terminal Location.');
+      return;
+    }
+    if (!regLoungeLocId) {
+      setRegError('Pick a Lounge clinic location.');
+      return;
+    }
+    setRegBusy(true);
+    setRegError(null);
+    try {
+      await registerReader({
+        registration_code: regCode.trim(),
+        friendly_name: regLabel.trim(),
+        stripe_location_id: regStripeLocId,
+        location_id: regLoungeLocId,
+      });
+      setRegisterOpen(false);
+      setToast({ tone: 'success', title: 'Reader paired.', description: `${regLabel.trim()} is registered.` });
+      readers.refresh();
+    } catch (e) {
+      setRegError(e instanceof Error ? e.message : 'Pairing failed');
+    } finally {
+      setRegBusy(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       <Card padding="lg">
-        <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-          Card readers
-        </h2>
-        <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-          Stripe Terminal readers visible to your location. Add via INSERT into lng_terminal_readers after registering in Stripe Dashboard.
-        </p>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+            marginBottom: theme.space[4],
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+              Card readers
+            </h2>
+            <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              Stripe Terminal readers visible to your location. Pair an S700 by entering its on-screen code below.
+            </p>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => openRegister()}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Plus size={16} /> Register reader
+            </span>
+          </Button>
+        </div>
         {readers.loading ? (
           <Skeleton height={64} />
         ) : readers.data.length === 0 ? (
           <EmptyState
             icon={<CreditCard size={20} />}
             title="No readers yet"
-            description="Activate Terminal in Stripe Dashboard, register a Simulated WisePOS E or your S700, then INSERT into lng_terminal_readers."
+            description="Click Register reader, enter the 3-word code shown on the S700's screen, pick a location, save."
           />
         ) : (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -748,6 +850,102 @@ function DevicesTab() {
           </ul>
         )}
       </Card>
+
+      {/* Register reader sheet. Pairs an S700 (or simulated WisePOS
+          E) by sending its 3-word screen code to Stripe via the
+          terminal-register-reader edge function. Stripe locations
+          come from the Dashboard; Lounge locations are the local
+          clinic sites. */}
+      <BottomSheet
+        open={registerOpen}
+        onClose={() => !regBusy && setRegisterOpen(false)}
+        dismissable={!regBusy}
+        title="Register card reader"
+        description="On the S700, go to Settings → Show registration code. Enter the 3 words below."
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button variant="secondary" onClick={() => setRegisterOpen(false)} disabled={regBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitRegister} loading={regBusy}>
+              Pair reader
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <Input
+            label="Registration code"
+            value={regCode}
+            onChange={(e) => setRegCode(e.target.value)}
+            placeholder="apple-grape-orange"
+            autoFocus
+          />
+          <Input
+            label="Friendly name"
+            value={regLabel}
+            onChange={(e) => setRegLabel(e.target.value)}
+            placeholder="Front desk S700"
+          />
+          {locsLoading ? (
+            <Skeleton height={56} radius={12} />
+          ) : (
+            <>
+              <DropdownSelect<string>
+                label="Stripe Terminal Location"
+                required
+                value={regStripeLocId}
+                options={stripeLocs.map((l) => ({
+                  value: l.id,
+                  label: l.address ? `${l.display_name} · ${l.address}` : l.display_name,
+                }))}
+                onChange={(v) => setRegStripeLocId(v)}
+                placeholder={stripeLocs.length === 0 ? 'Configure a Location in Stripe Dashboard first' : 'Pick a location'}
+                disabled={stripeLocs.length === 0}
+              />
+              <DropdownSelect<string>
+                label="Lounge clinic location"
+                required
+                value={regLoungeLocId}
+                options={loungeLocs.map((l) => ({
+                  value: l.id,
+                  label: l.name ?? '(unnamed)',
+                }))}
+                onChange={(v) => setRegLoungeLocId(v)}
+                placeholder="Pick a clinic"
+                disabled={loungeLocs.length === 0}
+              />
+            </>
+          )}
+          {regError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {regError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
     </div>
   );
 }
