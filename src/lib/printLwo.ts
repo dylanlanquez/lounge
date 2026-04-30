@@ -125,7 +125,13 @@ export function printLwo(input: PrintableLwoInput): void {
   const css =
     '*{box-sizing:border-box;margin:0;padding:0}' +
     '@page{size:4.13in 4.13in;margin:0}' +
-    'body{font-family:Arial,sans-serif;font-size:11px;color:#000;background:#fff;width:4.13in;height:4.13in;padding:10px;display:flex;flex-direction:column;overflow:hidden;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
+    // page-break-inside:avoid + max-height + overflow:hidden together
+    // guarantee the label renders on exactly one sheet. The flex
+    // layout below is what makes overflow rare: the barcode shrinks to
+    // fit before items/notes need clipping. These two are the safety
+    // net for the worst case (huge cart) where the flex squeeze still
+    // hits min-height — the rest is clipped instead of paginated.
+    'body{font-family:Arial,sans-serif;font-size:11px;color:#000;background:#fff;width:4.13in;height:4.13in;max-height:4.13in;padding:10px;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;break-inside:avoid-page;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
     '.hdr{display:flex;justify-content:space-between;align-items:center;border:1px solid #000;padding:8px 10px;margin-bottom:7px;flex-shrink:0}' +
     '.hdr-title{font-size:12px;font-weight:700;margin-top:2px}' +
     '.hdr-badge{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;margin-left:8px;letter-spacing:.04em}' +
@@ -155,10 +161,22 @@ export function printLwo(input: PrintableLwoInput): void {
     '.notes-box{border:1px dashed #000;padding:3px 6px;margin-top:2px;flex-shrink:0}' +
     '.notes-lbl{font-size:6px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:1px}' +
     '.notes-val{font-size:8px;line-height:1.3;word-break:break-word}' +
-    // Barcode bar — no top border (notes already has its dashed border).
-    // Centered purely via flex + text-align; no extra line artefacts.
-    '.bc-bar{flex-shrink:0;margin-top:auto;padding:8px 0 0;text-align:center;display:flex;flex-direction:column;align-items:center}' +
-    '.bc-bar svg{display:block;margin:0 auto}';
+    // Barcode bar — fills the remainder of the page so the bar always
+    // spans full width AND its height shrinks-to-fit when items / notes
+    // run long. flex:1 1 0 lets it grow into free space and shrink when
+    // content above demands more. min-height keeps the bar scannable on
+    // a packed label; max-height stops a sparse label rendering one
+    // giant barcode that dwarfs the meta. The 4.13in × 4.13in @page +
+    // body { height:4.13in; overflow:hidden } means anything that
+    // would have spilled to page 2 instead clips the bar at min-height.
+    '.bc-bar{flex:1 1 0;min-height:64px;max-height:130px;margin-top:auto;padding:6px 0 0;text-align:center;display:flex;flex-direction:column;align-items:center;overflow:hidden}' +
+    // SVG stretches to fill .bc-bar both ways. preserveAspectRatio:none
+    // (set in script below) keeps bar:space ratios (which is all CODE128
+    // cares about) while letting the bars get wider on shorter refs and
+    // shorter on tighter labels. Display:block to drop the inline-svg
+    // baseline gap; min-height:0 so the flex parent can squeeze it.
+    '.bc-bar svg{display:block;flex:1 1 0;width:100%;height:100%;min-height:0}' +
+    '.bc-ref{flex-shrink:0;font-family:Arial,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.18em;text-align:center;margin-top:2px;color:#000}';
 
   const logoUrl = window.location.origin + '/black-venneir-logo.png';
   const safeRef = escapeHtml(input.lapRef);
@@ -194,8 +212,17 @@ export function printLwo(input: PrintableLwoInput): void {
     // Notes
     (escapedNotes ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>' : '') +
     // Barcode
-    '<div class="bc-bar"><svg id="order-barcode"></svg><div id="bc-ref" style="font-family:Arial,sans-serif;font-size:13px;font-weight:900;letter-spacing:0.18em;text-align:center;margin-top:2px;color:#000"></div></div>' +
-    '<script>window.onload=function(){if(typeof JsBarcode==="undefined")return;JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});document.getElementById("bc-ref").textContent="' + safeRef + '";window.print()}<\/script>' +
+    '<div class="bc-bar"><svg id="order-barcode"></svg><div id="bc-ref" class="bc-ref"></div></div>' +
+    // After JsBarcode renders, strip the explicit width/height attributes
+    // it sets and swap them for a viewBox + preserveAspectRatio="none".
+    // That's what lets the CSS width:100% / height:100% actually stretch
+    // the bars in both axes — without the swap the SVG renders at its
+    // native pixel size and ignores the flex sizing. CODE128 readers
+    // tolerate non-uniform stretch fine because their decode is based
+    // on bar:space ratios, not absolute widths. Fall back to leaving the
+    // SVG alone if the script noscripts (we still get a barcode, just
+    // not a full-width one) — better than no print at all.
+    '<script>window.onload=function(){if(typeof JsBarcode==="undefined")return;JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:100,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});var svg=document.getElementById("order-barcode");var w=svg.getAttribute("width");var h=svg.getAttribute("height");if(w&&h){svg.setAttribute("viewBox","0 0 "+w+" "+h);svg.removeAttribute("width");svg.removeAttribute("height");svg.setAttribute("preserveAspectRatio","none")}document.getElementById("bc-ref").textContent="' + safeRef + '";window.print()}<\/script>' +
     '</body></html>';
 
   const win = window.open('', '_blank', 'width=500,height=650');
