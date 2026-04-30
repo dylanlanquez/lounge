@@ -3,6 +3,7 @@ import {
   bucketForVisit,
   formatWaitingTime,
   searchableTextForVisit,
+  slaStateForVisit,
   sortByWaitingDesc,
   waiverStatusForVisit,
   type EnrichedActiveVisit,
@@ -194,6 +195,37 @@ describe('formatWaitingTime', () => {
   });
 });
 
+describe('slaStateForVisit', () => {
+  it('returns none when no target is set', () => {
+    expect(slaStateForVisit(0, null)).toBe('none');
+    expect(slaStateForVisit(500, null)).toBe('none');
+  });
+
+  it('returns none for non-positive targets', () => {
+    expect(slaStateForVisit(10, 0)).toBe('none');
+    expect(slaStateForVisit(10, -5)).toBe('none');
+  });
+
+  it('returns green when well below target', () => {
+    expect(slaStateForVisit(0, 120)).toBe('green');
+    expect(slaStateForVisit(60, 120)).toBe('green');
+    // 95 / 120 = 79.16% — still green (boundary is 80%).
+    expect(slaStateForVisit(95, 120)).toBe('green');
+  });
+
+  it('returns amber from 80% up to target', () => {
+    // 96 / 120 = 80% — amber.
+    expect(slaStateForVisit(96, 120)).toBe('amber');
+    expect(slaStateForVisit(119, 120)).toBe('amber');
+    expect(slaStateForVisit(120, 120)).toBe('amber');
+  });
+
+  it('returns red once over target', () => {
+    expect(slaStateForVisit(121, 120)).toBe('red');
+    expect(slaStateForVisit(500, 120)).toBe('red');
+  });
+});
+
 // ──────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────
@@ -225,6 +257,7 @@ function makeVisit(overrides: Partial<EnrichedActiveVisit> = {}): EnrichedActive
     paid_status: 'no_charge',
     payment_done: true,
     waiver_status: 'not_required',
+    sla_target_minutes: null,
     ...overrides,
   };
 }
