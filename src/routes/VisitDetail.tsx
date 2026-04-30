@@ -207,16 +207,14 @@ export function VisitDetail() {
                     letterSpacing: theme.type.tracking.tight,
                   }}
                 >
-                  {/* Title reads as "Ewa Deb's Appointment" so staff
-                      glancing at the page know exactly what they're
-                      looking at. Falls back to plain "Appointment"
-                      when the patient row hasn't resolved or the name
-                      is blank — saves us rendering "'s Appointment"
-                      with nothing in front. */}
-                  {(() => {
-                    const name = patient ? patientFullName(patient) : '';
-                    return name ? `${name}'s Appointment` : 'Appointment';
-                  })()}
+                  {/* Title is the patient's name, full stop. The
+                      visit's identity (booked / scheduled / arrived /
+                      completed timestamps, refs, JB) lives in the
+                      lifecycle strip + meta pills below — much
+                      richer than packing the word "Appointment" into
+                      the heading. Falls back to plain "Patient" when
+                      the row hasn't resolved. */}
+                  {patient ? patientFullName(patient) : 'Patient'}
                 </h1>
                 {patient ? (
                   <Button
@@ -251,7 +249,15 @@ export function VisitDetail() {
                   </Button>
                 ) : null}
               </div>
-              <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+              <LifecycleStrip
+                arrivalType={visit.arrival_type}
+                bookedAt={appointment?.created_at ?? null}
+                bookingSource={appointment?.source ?? null}
+                scheduledAt={appointment?.start_at ?? null}
+                arrivedAt={visit.opened_at}
+                completedAt={visit.closed_at}
+              />
+              <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', marginTop: theme.space[4] }}>
                 {showableRef(patient?.internal_ref) ? (
                   <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
                     {patient!.internal_ref}
@@ -799,6 +805,104 @@ function WaiverBadge({ tone, icon }: { tone: WaiverBadgeTone; icon: React.ReactN
       {icon}
     </span>
   );
+}
+
+// LifecycleStrip — chronological breadcrumb of the appointment's
+// real-world milestones (when it was booked → scheduled to start →
+// patient arrived → all done). Lives directly under the patient h1
+// so the visit page reads top-down as a record of the appointment,
+// not just an EPOS surface.
+//
+// Lines render only when the underlying timestamp exists:
+//   • Booked / Scheduled — only for `arrival_type === 'scheduled'`.
+//     Walk-ins have no booking lifecycle; surfacing those rows
+//     would just point at the arrival timestamp twice.
+//   • Arrived — always (visit.opened_at is non-null by definition).
+//   • Completed — only when the visit is closed.
+//
+// Each line is label + datetime, dot-aligned via a fixed-width
+// label column. Reads cleanly in either order: scan labels on the
+// left or scan times on the right.
+function LifecycleStrip({
+  arrivalType,
+  bookedAt,
+  bookingSource,
+  scheduledAt,
+  arrivedAt,
+  completedAt,
+}: {
+  arrivalType: 'walk_in' | 'scheduled';
+  bookedAt: string | null;
+  bookingSource: string | null;
+  scheduledAt: string | null;
+  arrivedAt: string;
+  completedAt: string | null;
+}) {
+  const isScheduled = arrivalType === 'scheduled';
+  const bookedLabel =
+    bookingSource === 'calendly' ? 'Booked on Calendly' : 'Booked';
+  return (
+    <dl
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'max-content 1fr',
+        columnGap: theme.space[4],
+        rowGap: theme.space[1],
+        margin: 0,
+      }}
+    >
+      {isScheduled && bookedAt ? (
+        <LifecycleLine label={bookedLabel} iso={bookedAt} />
+      ) : null}
+      {isScheduled && scheduledAt ? (
+        <LifecycleLine label="Scheduled" iso={scheduledAt} />
+      ) : null}
+      <LifecycleLine label="Arrived" iso={arrivedAt} />
+      {completedAt ? <LifecycleLine label="Completed" iso={completedAt} /> : null}
+    </dl>
+  );
+}
+
+function LifecycleLine({ label, iso }: { label: string; iso: string }) {
+  return (
+    <>
+      <dt
+        style={{
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          alignSelf: 'baseline',
+          paddingTop: 2,
+        }}
+      >
+        {label}
+      </dt>
+      <dd
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.sm,
+          color: theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {formatLifecycle(iso)}
+      </dd>
+    </>
+  );
+}
+
+function formatLifecycle(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const date = d.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${date} at ${time}`;
 }
 
 // MetaPill — visit-header chip with a leading icon. Wraps StatusPill

@@ -335,6 +335,19 @@ export interface VisitAppointmentContext {
   intake: Array<{ question: string; answer: string }> | null;
   appointment_ref: string | null;
   jb_ref: string | null;
+  // When the appointment row was first inserted — i.e. when the
+  // booking was created (Calendly webhook delivery or manual
+  // booking by reception). Drives the "Booked" line on VisitDetail.
+  created_at: string;
+  // When the appointment is scheduled to begin. For walk-ins this
+  // is the marker row's start_at (set to the arrival moment), so
+  // the receptionist sees a sensible "Scheduled" entry only on
+  // truly-pre-booked rows — VisitDetail gates on arrival_type to
+  // decide whether to render this line.
+  start_at: string;
+  // Source of the booking ('calendly', 'manual', etc.). Used to
+  // tweak the "Booked" copy when shown.
+  source: string | null;
 }
 
 // Visits currently in progress at the receptionist's location. RLS scopes
@@ -483,7 +496,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, appointment_ref, jb_ref'
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, appointment_ref, jb_ref, created_at, start_at, source'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -497,12 +510,18 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               deposit_status: 'paid' | 'failed' | null;
               appointment_ref: string | null;
               jb_ref: string | null;
+              created_at: string;
+              start_at: string;
+              source: string | null;
             };
             setAppointment({
               event_type_label: a.event_type_label,
               intake: a.intake,
               appointment_ref: a.appointment_ref ?? null,
               jb_ref: a.jb_ref ?? null,
+              created_at: a.created_at,
+              start_at: a.start_at,
+              source: a.source,
             });
             if (
               a.deposit_pence != null &&
@@ -523,7 +542,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
         } else if (visitRow.walk_in_id) {
           const { data: wk, error: wkErr } = await supabase
             .from('lng_walk_ins')
-            .select('service_type, appointment_ref, jb_ref')
+            .select('service_type, appointment_ref, jb_ref, created_at')
             .eq('id', visitRow.walk_in_id)
             .maybeSingle();
           if (!cancelled && !wkErr && wk) {
@@ -531,12 +550,20 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               service_type: string | null;
               appointment_ref: string | null;
               jb_ref: string | null;
+              created_at: string;
             };
             setAppointment({
               event_type_label: w.service_type, // best-effort label for the catalogue picker
               intake: null,
               appointment_ref: w.appointment_ref ?? null,
               jb_ref: w.jb_ref ?? null,
+              // Walk-ins have no booking lifecycle, but VisitDetail
+              // expects these fields shaped the same as appointments
+              // — gating on arrival_type keeps Booked/Scheduled
+              // lines off the page for walk-ins.
+              created_at: w.created_at,
+              start_at: w.created_at,
+              source: 'walk_in',
             });
             setDeposit(null);
           } else {
