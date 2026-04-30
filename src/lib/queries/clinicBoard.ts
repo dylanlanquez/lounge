@@ -67,7 +67,7 @@ export type WaiverDisplayStatus = 'done' | 'pending' | 'not_required';
 export interface EnrichedActiveVisit {
   id: string;
   patient_id: string;
-  status: 'opened' | 'in_progress';
+  status: 'arrived' | 'in_chair';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
   // Patient identity
@@ -91,7 +91,7 @@ export interface EnrichedActiveVisit {
   // Pricing
   amount_due_pence: number | null;
   amount_paid_pence: number;
-  paid_status: 'no_charge' | 'paid' | 'partially_paid' | 'unpaid';
+  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
   payment_done: boolean;
   // Waiver
   waiver_status: WaiverDisplayStatus;
@@ -282,7 +282,7 @@ interface CartSlaJoin {
 interface VisitsRowFromDb {
   id: string;
   patient_id: string;
-  status: 'opened' | 'in_progress';
+  status: 'arrived' | 'in_chair';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
   patient: PatientJoin | PatientJoin[] | null;
@@ -295,7 +295,7 @@ interface PaidStatusRow {
   visit_id: string;
   amount_due_pence: number | null;
   amount_paid_pence: number;
-  paid_status: 'no_charge' | 'paid' | 'partially_paid' | 'unpaid';
+  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
 }
 
 interface SignatureRow {
@@ -341,7 +341,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
              )
            )`
         )
-        .in('status', ['opened', 'in_progress'])
+        .in('status', ['arrived', 'in_chair'])
         .order('opened_at', { ascending: true });
 
       if (cancelled) return;
@@ -505,10 +505,10 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           searchable: '',
           amount_due_pence: paid?.amount_due_pence ?? null,
           amount_paid_pence: paid?.amount_paid_pence ?? 0,
-          paid_status: paid?.paid_status ?? 'no_charge',
+          paid_status: paid?.paid_status ?? 'free_visit',
           payment_done:
-            (paid?.paid_status ?? 'no_charge') === 'paid' ||
-            (paid?.paid_status ?? 'no_charge') === 'no_charge',
+            (paid?.paid_status ?? 'free_visit') === 'paid' ||
+            (paid?.paid_status ?? 'free_visit') === 'free_visit',
           waiver_status: waiverStatus,
           sla_target_minutes: slaTarget,
         };
@@ -552,7 +552,7 @@ export function useActiveVisitCount(
       const { count: c, error } = await supabase
         .from('lng_visits')
         .select('id', { count: 'exact', head: true })
-        .in('status', ['opened', 'in_progress']);
+        .in('status', ['arrived', 'in_chair']);
       if (cancelled) return;
       if (error) {
         console.warn('[useActiveVisitCount]', error.message);

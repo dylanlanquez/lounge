@@ -371,7 +371,7 @@ function ActiveVisitCard({
             src={visit.patient_avatar_data}
             name={name}
             size="md"
-            badge={visit.status === 'in_progress' ? 'online' : null}
+            badge={visit.status === 'in_chair' ? 'online' : null}
           />
           <div style={{ minWidth: 0 }}>
             <p
@@ -557,12 +557,12 @@ function PaymentPill({
   done: boolean;
   status: EnrichedActiveVisit['paid_status'];
 }) {
-  if (status === 'no_charge') {
+  if (status === 'free_visit') {
     return (
       <StatusPill tone="pending" size="sm">
         <span style={pillInnerStyle}>
           <CreditCard size={12} aria-hidden />
-          No charge
+          Free visit
         </span>
       </StatusPill>
     );
