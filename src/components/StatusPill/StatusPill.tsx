@@ -11,7 +11,12 @@ export type StatusTone =
   // Subtle outlined pill used for "not yet done" affordances on the
   // In Clinic board (waiver pending, payment pending). Reads as quiet
   // background information, never alarming.
-  | 'pending';
+  | 'pending'
+  // Light, soft orange. Used for the "Unsuitable" status pill. No
+  // strikethrough — staff still need to read the label clearly. The
+  // colour communicates terminal but not destructive: the visit
+  // ended without success, but it's reversible by an admin.
+  | 'unsuitable';
 
 export interface StatusPillProps {
   tone: StatusTone;
@@ -56,6 +61,11 @@ const TONE_STYLES: Record<StatusTone, CSSProperties> = {
     background: 'transparent',
     color: theme.color.inkMuted,
     boxShadow: `inset 0 0 0 1px ${theme.color.border}`,
+  },
+  unsuitable: {
+    background: 'rgba(179, 104, 21, 0.10)',
+    color: theme.color.warn,
+    boxShadow: `inset 0 0 0 1px rgba(179, 104, 21, 0.25)`,
   },
 };
 
