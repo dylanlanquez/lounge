@@ -420,6 +420,11 @@ export interface PatientVisitRow {
   // present in this set must not be re-listed as 'unbooked' alongside the
   // visit they produced.
   appointment_id: string | null;
+  // Linkage back to lng_walk_ins when the visit was a walk-in. The
+  // marker row in lng_appointments now carries the same FK (see
+  // migration 20260430000005), so the profile timeline can dedup
+  // walk-in markers against their visit with a single equality check.
+  walk_in_id: string | null;
   // Booking-level reference (e.g. LAP-00001). Sourced from the
   // appointment for scheduled visits, or from the walk-in row for
   // walk-ins.
@@ -475,9 +480,9 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
         visitIds.length > 0
           ? supabase
               .from('lng_carts')
-              .select('visit_id, status, total_pence')
+              .select('id, visit_id, status, total_pence')
               .in('visit_id', visitIds)
-          : Promise.resolve({ data: [] as Array<{ visit_id: string; status: string; total_pence: number }>, error: null }),
+          : Promise.resolve({ data: [] as Array<{ id: string; visit_id: string; status: string; total_pence: number }>, error: null }),
         walkInIds.length > 0
           ? supabase
               .from('lng_walk_ins')
@@ -493,10 +498,39 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       ]);
       if (cancelled) return;
 
-      const cartByVisit = new Map<string, { status: string; total_pence: number }>();
-      for (const c of (cartsRes.data ?? []) as Array<{ visit_id: string; status: string; total_pence: number }>) {
-        cartByVisit.set(c.visit_id, { status: c.status, total_pence: c.total_pence });
+      const cartByVisit = new Map<string, { id: string; status: string; total_pence: number }>();
+      const cartIdToVisitId = new Map<string, string>();
+      for (const c of (cartsRes.data ?? []) as Array<{ id: string; visit_id: string; status: string; total_pence: number }>) {
+        cartByVisit.set(c.visit_id, { id: c.id, status: c.status, total_pence: c.total_pence });
+        cartIdToVisitId.set(c.id, c.visit_id);
       }
+
+      // Cart line names per visit. Used to derive the "Service" column
+      // from what was actually transacted: 1 distinct line → that
+      // line's name; 2+ distinct → "Multiple"; 0 → fall back to the
+      // walk-in / appointment label below. Distinct by `name` because
+      // ad-hoc rows have a null catalogue_id but always carry a name.
+      const cartIds = [...cartIdToVisitId.keys()];
+      const cartItemsRes = cartIds.length > 0
+        ? await supabase
+            .from('lng_cart_items')
+            .select('cart_id, name')
+            .in('cart_id', cartIds)
+        : { data: [] as Array<{ cart_id: string; name: string }>, error: null };
+      if (cancelled) return;
+
+      const namesByVisit = new Map<string, Set<string>>();
+      for (const it of (cartItemsRes.data ?? []) as Array<{ cart_id: string; name: string }>) {
+        const visitId = cartIdToVisitId.get(it.cart_id);
+        if (!visitId || !it.name) continue;
+        let names = namesByVisit.get(visitId);
+        if (!names) {
+          names = new Set<string>();
+          namesByVisit.set(visitId, names);
+        }
+        names.add(it.name);
+      }
+
       const walkInById = new Map<string, { appointment_ref: string | null; service_type: string | null }>();
       for (const w of (walkInsRes.data ?? []) as Array<{ id: string; appointment_ref: string | null; service_type: string | null }>) {
         walkInById.set(w.id, { appointment_ref: w.appointment_ref, service_type: w.service_type });
@@ -520,7 +554,23 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
         // Scheduled visit: prefer the appointment's LAP ref. Walk-in:
         // the walk-in row carries its own LAP ref (generated at intake).
         const lapRef = appt?.appointment_ref ?? wi?.appointment_ref ?? null;
+        // Service label, in priority order:
+        //   1. Cart contents — what the patient actually transacted.
+        //      Multiple distinct lines collapse to "Multiple" so the
+        //      column doesn't misrepresent a four-item visit as
+        //      "Click-in veneers" (the first line) alone.
+        //   2. Booking metadata (Calendly event label / walk-in
+        //      service type) — the gate-flow category, used when no
+        //      cart exists yet (e.g. an arrived visit not yet billed).
+        const cartNames = namesByVisit.get(v.id);
+        const cartLabel =
+          cartNames && cartNames.size > 0
+            ? cartNames.size === 1
+              ? [...cartNames][0]!
+              : 'Multiple'
+            : null;
         const serviceLabel =
+          cartLabel ??
           humaniseEventTypeLabel(appt?.event_type_label ?? null) ??
           humaniseServiceType(wi?.service_type ?? null);
         return {
@@ -529,6 +579,7 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
           arrival_type: v.arrival_type,
           status: v.status,
           appointment_id: v.appointment_id ?? null,
+          walk_in_id: v.walk_in_id ?? null,
           lap_ref: lapRef,
           service_label: serviceLabel,
           cart_status: (cart?.status as PatientVisitRow['cart_status']) ?? null,
@@ -607,6 +658,11 @@ export interface PatientScheduledAppointmentRow {
   event_type_label: string | null;
   appointment_ref: string | null;
   jb_ref: string | null;
+  // Set on rows that are calendar markers for a walk-in arrival —
+  // points to the lng_walk_ins row. The patient profile timeline uses
+  // it to dedup the marker against the visit it shadows. NULL for
+  // booked appointments (Calendly / native).
+  walk_in_id: string | null;
 }
 
 interface ScheduledAppointmentsResult {
@@ -631,10 +687,14 @@ export function usePatientScheduledAppointments(
     }
     let cancelled = false;
     (async () => {
-      // appointment_ref + jb_ref are post-migration columns; fall back to
-      // a slimmer select if the deploy doesn't have them yet (42703).
+      // appointment_ref, jb_ref, walk_in_id are post-migration columns;
+      // fall back to a slimmer select if the deploy doesn't have them
+      // yet (42703). walk_in_id was added in 20260430000005 — without
+      // it the timeline can't dedup walk-in markers against their
+      // visit, so the duplicate is a known degraded state on
+      // pre-migration deploys.
       const fullSel =
-        'id, start_at, end_at, status, source, event_type_label, appointment_ref, jb_ref';
+        'id, start_at, end_at, status, source, event_type_label, appointment_ref, jb_ref, walk_in_id';
       const slimSel = 'id, start_at, end_at, status, source, event_type_label';
       const first = await supabase
         .from('lng_appointments')
@@ -673,6 +733,7 @@ export function usePatientScheduledAppointments(
         event_type_label: (r.event_type_label as string | null) ?? null,
         appointment_ref: (r.appointment_ref as string | null) ?? null,
         jb_ref: (r.jb_ref as string | null) ?? null,
+        walk_in_id: (r.walk_in_id as string | null) ?? null,
       }));
       setData(mapped);
       setLoading(false);
