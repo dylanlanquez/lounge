@@ -288,10 +288,20 @@ export async function addCatalogueItemsToCart(
   // in the parent line's unit price.
   const upgrades = options.upgrades ?? [];
   const upgradePerInstancePence = upgrades.reduce((sum, u) => sum + u.price_pence, 0);
+  // Stamp the staff member who added the line so the timeline can
+  // surface "Added X by [name]". Best-effort: if the account
+  // resolver fails (kiosk session edge case) the column lands NULL
+  // rather than blocking the picker.
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+  const createdBy = (accountId as string | null) ?? null;
   const rows = [];
   for (let i = 0; i < qty; i++) {
     const baseForInstance = i === 0 ? baseUnitPence : extraPence;
-    rows.push({ ...baseSnapshot, unit_price_pence: baseForInstance + upgradePerInstancePence });
+    rows.push({
+      ...baseSnapshot,
+      unit_price_pence: baseForInstance + upgradePerInstancePence,
+      created_by: createdBy,
+    });
   }
   const { data, error } = await supabase.from('lng_cart_items').insert(rows).select('*');
   if (error) throw new Error(error.message);
