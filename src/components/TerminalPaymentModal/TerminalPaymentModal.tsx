@@ -52,7 +52,12 @@ export function TerminalPaymentModal({
     }
   }, [open, visitId]);
 
-  // Realtime subscription on the lng_terminal_payments row, keyed on payment_id.
+  // Realtime subscription on the lng_payments row, keyed on payment_id.
+  // Belt-and-braces: we ALSO poll terminal-payment-status on a 4s
+  // cadence below so a missing webhook (e.g. wrong endpoint configured
+  // in Stripe live vs test mode) can't leave the till stuck while the
+  // customer has actually paid. Either path lands on the same
+  // succeeded/failed/cancelled transitions.
   useEffect(() => {
     if (!paymentId) return;
     const channel = supabase
@@ -78,6 +83,60 @@ export function TerminalPaymentModal({
       supabase.removeChannel(channel);
     };
   }, [paymentId, onSucceeded]);
+
+  // Poll-based reconciler. While the modal is in 'waiting' (PI is at
+  // Stripe but we haven't seen a terminal status yet), every 4s we
+  // ask terminal-payment-status to GET the PI from Stripe and mirror
+  // its status into local state. This is a reliability backstop for
+  // the realtime/webhook path — if the Stripe webhook never lands
+  // (endpoint misconfigured for the active mode, network blip,
+  // function down) we still notice within ~4s of the customer's tap.
+  // The function is idempotent — repeated calls against the same PI
+  // produce no extra writes once local state matches Stripe.
+  useEffect(() => {
+    if (!paymentId) return;
+    if (state !== 'waiting' && state !== 'starting') return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) return;
+        const r = await fetch(
+          `https://${supabaseProjectRef()}.functions.supabase.co/terminal-payment-status`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_id: paymentId }),
+          },
+        );
+        if (!r.ok) return;
+        const body = (await r.json()) as { local_status?: string | null };
+        if (cancelled) return;
+        if (body.local_status === 'succeeded') {
+          setState('succeeded');
+          onSucceeded?.(paymentId);
+        } else if (body.local_status === 'failed') {
+          setState('failed');
+          // The realtime channel will hydrate the failure_reason via
+          // its UPDATE event; until then keep a generic message.
+          setError((prev) => prev ?? 'Payment failed');
+        } else if (body.local_status === 'cancelled') {
+          setState('cancelled');
+        }
+      } catch {
+        // Best-effort. Don't surface poll-side errors to staff —
+        // realtime may still come through, and the next tick retries.
+      }
+    };
+    const interval = setInterval(() => {
+      void tick();
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [paymentId, state, onSucceeded]);
 
   const start = async () => {
     setState('starting');
@@ -118,7 +177,7 @@ export function TerminalPaymentModal({
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) throw new Error('Not signed in');
-      await fetch(
+      const r = await fetch(
         `https://${supabaseProjectRef()}.functions.supabase.co/terminal-cancel-payment`,
         {
           method: 'POST',
@@ -126,6 +185,14 @@ export function TerminalPaymentModal({
           body: JSON.stringify({ payment_id: paymentId }),
         }
       );
+      // 409 = Stripe already captured this PI; the function reconciled
+      // local state to succeeded instead of cancelling. Flip the modal
+      // to the success path so staff doesn't re-take payment.
+      if (r.status === 409) {
+        setState('succeeded');
+        onSucceeded?.(paymentId);
+        return;
+      }
       setState('cancelled');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not cancel');
