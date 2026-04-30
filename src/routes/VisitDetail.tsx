@@ -35,7 +35,7 @@ import {
 import { Dialog } from '../components/Dialog/Dialog.tsx';
 import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
 import { supabase } from '../lib/supabase.ts';
-import { useVisitWaiverSignatures } from '../lib/queries/waiver.ts';
+import { useSignedWaivers } from '../lib/queries/waiver.ts';
 import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from '../lib/waiverDocument.ts';
 import { usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
@@ -88,12 +88,15 @@ export function VisitDetail() {
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
 
-  // Signed-waiver viewer. Reads visit's waiver signatures from
-  // lng_waiver_signatures via useVisitWaiverSignatures (filter
-  // visit_id=eq.<id>). The button is hidden when no signature
-  // exists — there's nothing to view yet.
+  // Signed-waiver viewer. Waivers are patient-scoped (a patient signs
+  // each section once at its current version, and the same signature
+  // is valid for every visit until the section's version bumps), so
+  // we read every signed row for the patient and pair them up to
+  // this visit's required sections inside the memo below. The
+  // dialog only shows up when at least one required section has a
+  // matching signed row.
   const [waiverViewerOpen, setWaiverViewerOpen] = useState(false);
-  const { rows: visitSignatures } = useVisitWaiverSignatures(visit?.id ?? null);
+  const { rows: patientSignedRows } = useSignedWaivers(patient?.id ?? null);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const isMobile = useIsMobile(640);
 
@@ -137,11 +140,34 @@ export function VisitDetail() {
   // Compose the WaiverDocInput from the loaded visit / patient /
   // appointment / items / signatures. Memoised so opening and
   // closing the dialog doesn't rebuild the document HTML on every
-  // render. Returns null until every dependency is loaded — the
-  // View Waiver button is gated on this not being null below.
+  // render. Returns null until every dependency is loaded and at
+  // least one of the visit's required sections has a matching
+  // signed row from this patient. The View Waiver button is gated
+  // on this not being null below.
   const waiverDoc = useMemo<WaiverDocInput | null>(() => {
-    if (!visit || !patient || visitSignatures.length === 0) return null;
+    if (!visit || !patient) return null;
     if (!appointment?.appointment_ref) return null;
+    if (requiredSections.length === 0) return null;
+
+    // Pair each required section to the patient's most recent
+    // signature for that section_key. Patients sign once per
+    // section (at the current version) and the signature stays
+    // valid until the section is re-versioned. A missing section
+    // is dropped from the doc rather than throwing — staff can
+    // still print/download a partial document for the sections
+    // that were signed, and the WaiverCard already drives them
+    // to sign anything outstanding.
+    const matchedRows = requiredSections
+      .map((section) => {
+        const candidates = patientSignedRows.filter((r) => r.section_key === section.key);
+        if (candidates.length === 0) return null;
+        return candidates.reduce(
+          (acc, r) => (r.signed_at > acc.signed_at ? r : acc),
+          candidates[0]!,
+        );
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    if (matchedRows.length === 0) return null;
 
     // Items: filter impression-appointment placeholders the same
     // way the LWO does — they're scheduling-only, not work to
@@ -171,12 +197,12 @@ export function VisitDetail() {
     // render time if any signature lacks its terms_snapshot
     // (legacy rows pre-snapshot column) so we never emit a
     // waiver document with empty terms.
-    const docSections: WaiverDocSection[] = visitSignatures.map((s) => {
+    const docSections: WaiverDocSection[] = matchedRows.map((s) => {
       if (!s.terms_snapshot || s.terms_snapshot.length === 0) {
         // Surface as a thrown render error rather than a silent
         // empty section — admin can fix the underlying row.
         throw new Error(
-          `Signed-waiver row ${s.id} has no terms_snapshot — re-sign the section to refresh the snapshot before printing.`,
+          `Signed-waiver row ${s.id} has no terms_snapshot. Re-sign the section to refresh the snapshot before printing.`,
         );
       }
       return {
@@ -191,10 +217,10 @@ export function VisitDetail() {
     // Use the latest signature's SVG path for the document's
     // signature box. The audit table on PatientProfile keeps the
     // per-section originals; the printed/emailed document just
-    // shows the most recent one. visitSignatures.length === 0 was
+    // shows the most recent one. matchedRows.length === 0 was
     // ruled out at the top of the memo, so [0] is non-nullable.
-    const seedSig = visitSignatures[0]!;
-    const latestSig = visitSignatures.reduce((acc, s) => (s.signed_at > acc.signed_at ? s : acc), seedSig);
+    const seedSig = matchedRows[0]!;
+    const latestSig = matchedRows.reduce((acc, s) => (s.signed_at > acc.signed_at ? s : acc), seedSig);
 
     return {
       lapRef: appointment.appointment_ref,
@@ -230,7 +256,7 @@ export function VisitDetail() {
           : null,
       logoUrl: window.location.origin + '/black-venneir-logo.png',
     };
-  }, [visit, patient, appointment, receptionistName, items, visitSignatures, cart]);
+  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -324,7 +350,7 @@ export function VisitDetail() {
   const handlePrintLwo = () => {
     setError(null);
     if (!visit || !patient) {
-      setError('Visit not loaded yet — try again in a moment.');
+      setError('Visit not loaded yet. Try again in a moment.');
       return;
     }
     if (!appointment?.appointment_ref) {
@@ -354,7 +380,7 @@ export function VisitDetail() {
       // is an impression-appointment placeholder — in both cases the
       // lab has nothing to act on and the LWO shouldn't print.
       setError(
-        'No printable work on this visit. Add at least one denture or appliance line — impression appointments alone do not go to the lab.',
+        'No printable work on this visit. Add at least one denture or appliance line. Impression appointments alone do not go to the lab.',
       );
       return;
     }
@@ -617,7 +643,7 @@ export function VisitDetail() {
                   title={
                     appointment?.appointment_ref
                       ? undefined
-                      : 'A LAP reference is stamped during arrival intake — open arrival before printing.'
+                      : 'A LAP reference is stamped during arrival intake. Open arrival before printing.'
                   }
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
@@ -722,7 +748,7 @@ export function VisitDetail() {
         open={noteOpen}
         onClose={() => !noteSaving && setNoteOpen(false)}
         title="Tech note for the lab"
-        description="Prints in the Notes box of the LWO. Same field that step 1 of the arrival form writes to."
+        description="This prints on the LWO."
         width={560}
         dismissable={!noteSaving}
         footer={
@@ -790,7 +816,7 @@ export function VisitDetail() {
               color: theme.color.inkMuted,
             }}
           >
-            <span>It's a small label — keep it short.</span>
+            <span>Keep it short. The label is small.</span>
             <span
               aria-live="polite"
               style={{

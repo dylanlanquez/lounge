@@ -131,7 +131,7 @@ export function WaiverViewerDialog({
   // never silently no-ops.
   const printDoc = () => {
     if (!html) {
-      setStatus({ kind: 'error', message: 'Document not ready — close the dialog and try again.' });
+      setStatus({ kind: 'error', message: 'Document not ready. Close the dialog and try again.' });
       return;
     }
     const win = window.open('', '_blank', 'width=900,height=1100');
@@ -155,7 +155,7 @@ export function WaiverViewerDialog({
 
   const downloadDoc = async () => {
     if (!html) {
-      setStatus({ kind: 'error', message: 'Document not ready — close the dialog and try again.' });
+      setStatus({ kind: 'error', message: 'Document not ready. Close the dialog and try again.' });
       return;
     }
     setStatus({ kind: 'busy', label: 'Building PDF…' });
@@ -166,18 +166,18 @@ export function WaiverViewerDialog({
     } catch (e) {
       setStatus({
         kind: 'error',
-        message: e instanceof Error ? e.message : 'Could not build the PDF — try again.',
+        message: e instanceof Error ? e.message : 'Could not build the PDF. Try again.',
       });
     }
   };
 
   const sendEmail = async () => {
     if (!html) {
-      setStatus({ kind: 'error', message: 'Document not ready — close the dialog and try again.' });
+      setStatus({ kind: 'error', message: 'Document not ready. Close the dialog and try again.' });
       return;
     }
     if (!visitId) {
-      setStatus({ kind: 'error', message: 'Visit context missing — re-open the dialog.' });
+      setStatus({ kind: 'error', message: 'Visit context missing. Close the dialog and re-open.' });
       return;
     }
     const trimmed = recipient.trim();
