@@ -649,51 +649,54 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
 export interface RecordUnsuitabilityInput {
   patient_id: string;
   visit_id: string;
-  catalogue_id: string;
+  catalogue_ids: string[];
   reason: string;
 }
 
-// Files an immutable unsuitability record, flips the visit to status
-// 'unsuitable' (so it terminates and drops off the in-clinic board),
-// and writes a patient_events row so the timeline carries the audit
-// trail. Reason must be non-empty — the schema also enforces this.
+// Files one immutable unsuitability record per chosen catalogue item,
+// all sharing the same reason, then flips the visit to status
+// 'unsuitable' (so it terminates and drops off the in-clinic board)
+// and writes a single patient_events row so the timeline carries the
+// audit trail without N rows of noise. Reason must be non-empty —
+// the schema also enforces this.
 export async function recordUnsuitability(input: RecordUnsuitabilityInput): Promise<void> {
   const reason = input.reason.trim();
   if (reason.length === 0) throw new Error('Reason is required');
+  if (input.catalogue_ids.length === 0) throw new Error('At least one product is required');
 
   const { data: accountId } = await supabase.rpc('auth_account_id');
 
-  // Insert the record first. If this fails (RLS, FK, length check) we
-  // bail without touching the visit or the timeline — failing closed
-  // is the right default for an audit-grade action.
-  const { error: recErr } = await supabase.from('lng_unsuitability_records').insert({
+  // Insert one row per chosen product in a single round-trip. If the
+  // batch fails (RLS, FK, length check) we bail without touching the
+  // visit or the timeline — failing closed is the right default for
+  // an audit-grade action.
+  const rows = input.catalogue_ids.map((catalogue_id) => ({
     patient_id: input.patient_id,
     visit_id: input.visit_id,
-    catalogue_id: input.catalogue_id,
+    catalogue_id,
     reason,
     recorded_by: (accountId as string | null) ?? null,
-  });
+  }));
+  const { error: recErr } = await supabase.from('lng_unsuitability_records').insert(rows);
   if (recErr) throw new Error(recErr.message);
 
-  // Flip the visit status. Multiple unsuitability records on one visit
-  // are allowed (more than one item could be unsuitable for the same
-  // patient on the same day) — flipping to 'unsuitable' on each is
-  // idempotent.
   const { error: visitErr } = await supabase
     .from('lng_visits')
     .update({ status: 'unsuitable', closed_at: new Date().toISOString() })
     .eq('id', input.visit_id);
   if (visitErr) throw new Error(visitErr.message);
 
-  // Timeline row. Best-effort: we don't roll back the record + status
-  // flip if this fails, since the audit trail in lng_unsuitability_records
-  // is the source of truth.
+  // Timeline row. One per submission — the payload carries every
+  // catalogue_id that was flagged so the timeline summary can render
+  // the full set without joining back to lng_unsuitability_records.
+  // Best-effort: we don't roll back the records + status flip if this
+  // fails, since the audit trail is the source of truth.
   await supabase.from('patient_events').insert({
     patient_id: input.patient_id,
     event_type: 'patient_unsuitable_recorded',
     payload: {
       visit_id: input.visit_id,
-      catalogue_id: input.catalogue_id,
+      catalogue_ids: input.catalogue_ids,
       reason,
       staff_account_id: (accountId as string | null) ?? null,
     },
