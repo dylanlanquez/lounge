@@ -310,7 +310,7 @@ function PatientRow({ patient, onPick }: { patient: PatientListRow; onPick: () =
         WebkitTapHighlightColor: 'transparent',
       }}
     >
-      <Avatar name={fullName} size="md" />
+      <Avatar name={fullName} src={patient.avatar_data} size="md" />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
         <p
           style={{

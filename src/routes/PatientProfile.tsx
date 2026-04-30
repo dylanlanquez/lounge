@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useStat
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { CalendarDays, Check, ChevronLeft, ChevronRight, Download, FileSignature, Files, Info, Layers, Pencil, Printer, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import {
+  Avatar,
   BeforeAfterGallery,
   Breadcrumb,
   Card,
@@ -367,7 +368,6 @@ function Hero({
   // identity. The cases list still drives the case-history section
   // below.
   const fullName = `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Unnamed patient';
-  const initials = `${(patient.first_name?.[0] ?? '').toUpperCase()}${(patient.last_name?.[0] ?? '').toUpperCase()}` || '?';
   const linkedToShopify = !!patient.shopify_customer_id;
 
   return (
@@ -381,24 +381,7 @@ function Hero({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], minWidth: 0 }}>
-          <div
-            aria-hidden
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: '50%',
-              background: theme.color.accent,
-              color: '#fff',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: theme.type.size.md,
-              fontWeight: theme.type.weight.semibold,
-              flexShrink: 0,
-            }}
-          >
-            {initials}
-          </div>
+          <Avatar name={fullName} src={patient.avatar_data} size="lg" />
           <div style={{ minWidth: 0 }}>
             <h1
               style={{
