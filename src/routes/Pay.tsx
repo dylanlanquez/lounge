@@ -4,7 +4,7 @@ import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { Breadcrumb, Button, Card, EmptyState, Input, StatusPill, Toast } from '../components/index.ts';
+import { Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
 import { theme } from '../theme/index.ts';
@@ -44,8 +44,8 @@ interface PayEntryState {
 export function Pay() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
-  const { visit, patient, deposit } = useVisitDetail(id);
-  const { cart, items } = useCart(id);
+  const { visit, patient, deposit, loading: visitLoading } = useVisitDetail(id);
+  const { cart, items, loading: cartLoading } = useCart(id);
   const navigate = useNavigate();
   const location = useLocation();
   // Hop back to the visit page with its original entry chain intact.
@@ -218,7 +218,15 @@ export function Pay() {
     }
   };
 
-  if (!visit || !cart || items.length === 0) {
+  // Wait for BOTH the visit and the cart to finish loading before
+  // deciding whether the page is empty. Otherwise the user sees the
+  // empty-state copy ("Nothing to pay for") flash while items are
+  // still in flight, then snap to the real page once they land. See
+  // memory: feedback_no_load_flicker. Skeleton renders during load
+  // so the page shape stays stable.
+  const isLoading = visitLoading || cartLoading;
+  const isEmpty = !isLoading && (!visit || !cart || items.length === 0);
+  if (isLoading || isEmpty) {
     return (
       <main
         style={{
@@ -232,11 +240,24 @@ export function Pay() {
         <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
           <PayBreadcrumbs visitId={id ?? null} entry={location.state as PayEntryState | null} />
           <Card padding="lg" style={{ marginTop: theme.space[5] }}>
-            <EmptyState
-              title="Nothing to pay for"
-              description="Cart has no line items. Add some, then come back."
-              action={<Button variant="primary" onClick={goBackToVisit}>Back to appointment</Button>}
-            />
+            {isLoading ? (
+              // Mirrors the resolved layout: heading band, totals
+              // strip, two payment-method tiles. Keeps the visual
+              // weight of the skeleton close to the real page so the
+              // hand-off lands without a layout shift.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }} aria-busy="true" aria-live="polite">
+                <Skeleton height={32} width="60%" radius={8} />
+                <Skeleton height={20} width="35%" radius={6} />
+                <Skeleton height={120} radius={12} />
+                <Skeleton height={120} radius={12} />
+              </div>
+            ) : (
+              <EmptyState
+                title="Nothing to pay for"
+                description="Cart has no line items. Add some, then come back."
+                action={<Button variant="primary" onClick={goBackToVisit}>Back to appointment</Button>}
+              />
+            )}
           </Card>
         </div>
       </main>
