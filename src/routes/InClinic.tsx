@@ -20,12 +20,13 @@ import { formatPence } from '../lib/queries/carts.ts';
 import {
   CLINIC_SECTION_LABELS,
   CLINIC_SECTION_ORDER,
-  LONG_WAIT_MINUTES,
   formatWaitingTime,
+  slaStateForVisit,
   sortByWaitingDesc,
   useActiveVisitsBoard,
   type ClinicSectionKey,
   type EnrichedActiveVisit,
+  type SlaState,
 } from '../lib/queries/clinicBoard.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -343,7 +344,7 @@ function ActiveVisitCard({
     0,
     Math.floor((now.getTime() - new Date(visit.opened_at).getTime()) / 60_000)
   );
-  const longWait = minutesHere >= LONG_WAIT_MINUTES;
+  const slaState = slaStateForVisit(minutesHere, visit.sla_target_minutes);
 
   return (
     <button
@@ -402,7 +403,11 @@ function ActiveVisitCard({
             </p>
           </div>
         </div>
-        <WaitChip minutes={minutesHere} alert={longWait} />
+        <WaitChip
+          minutes={minutesHere}
+          slaTargetMinutes={visit.sla_target_minutes}
+          slaState={slaState}
+        />
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3], marginTop: theme.space[5] }}>
@@ -425,17 +430,46 @@ function ActiveVisitCard({
   );
 }
 
-function WaitChip({ minutes, alert }: { minutes: number; alert: boolean }) {
+// Counter chip on each visit card. Colour is driven by the SLA state
+// when one applies; visits without an SLA target render neutral.
+//   green — within 80% of target
+//   amber — between 80% and 100%
+//   red   — over target (breach)
+//   none  — no SLA on the visit (legacy long-wait threshold removed
+//           per Dylan's call: SLA config is the single source of
+//           truth for urgency on the board)
+const SLA_CHIP_TONE: Record<SlaState, { bg: string; fg: string }> = {
+  none: { bg: theme.color.bg, fg: theme.color.inkMuted },
+  green: { bg: 'rgba(31, 77, 58, 0.10)', fg: theme.color.accent },
+  amber: { bg: 'rgba(179, 104, 21, 0.10)', fg: theme.color.warn },
+  red: { bg: 'rgba(184, 58, 42, 0.10)', fg: theme.color.alert },
+};
+
+function WaitChip({
+  minutes,
+  slaTargetMinutes,
+  slaState,
+}: {
+  minutes: number;
+  slaTargetMinutes: number | null;
+  slaState: SlaState;
+}) {
+  const tone = SLA_CHIP_TONE[slaState];
+  const titleParts: string[] = [`Here ${formatWaitingTime(minutes)}`];
+  if (slaTargetMinutes != null) {
+    titleParts.push(`SLA target ${formatWaitingTime(slaTargetMinutes)}`);
+  }
   return (
     <span
+      title={titleParts.join(' · ')}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
         gap: 4,
         padding: `2px ${theme.space[2]}px`,
         borderRadius: theme.radius.pill,
-        background: alert ? 'rgba(184, 58, 42, 0.08)' : theme.color.bg,
-        color: alert ? theme.color.alert : theme.color.inkMuted,
+        background: tone.bg,
+        color: tone.fg,
         fontSize: theme.type.size.xs,
         fontWeight: theme.type.weight.semibold,
         fontVariantNumeric: 'tabular-nums',
@@ -445,6 +479,9 @@ function WaitChip({ minutes, alert }: { minutes: number; alert: boolean }) {
     >
       <Clock size={12} />
       {formatWaitingTime(minutes)}
+      {slaTargetMinutes != null ? (
+        <span style={{ opacity: 0.7 }}> / {formatWaitingTime(slaTargetMinutes)}</span>
+      ) : null}
     </span>
   );
 }

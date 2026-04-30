@@ -95,6 +95,29 @@ export interface EnrichedActiveVisit {
   payment_done: boolean;
   // Waiver
   waiver_status: WaiverDisplayStatus;
+  // SLA target in minutes — max(catalogue.sla_target_minutes) across
+  // cart items where catalogue.sla_enabled=true. Null when no item on
+  // the visit has SLA enabled (the WaitChip then renders neutrally).
+  sla_target_minutes: number | null;
+}
+
+// SLA traffic-light state derived from elapsed minutes vs. target.
+// 'none' when no SLA applies to this visit; the chip should render
+// neutrally in that case.
+export type SlaState = 'none' | 'green' | 'amber' | 'red';
+
+// 80% of target → amber, > 100% → red. Mirrors industry defaults for
+// SLA traffic-lights and was confirmed with Dylan as the boundaries.
+export const SLA_AMBER_FRACTION = 0.8;
+
+export function slaStateForVisit(
+  elapsedMinutes: number,
+  slaTargetMinutes: number | null
+): SlaState {
+  if (slaTargetMinutes == null || slaTargetMinutes <= 0) return 'none';
+  if (elapsedMinutes > slaTargetMinutes) return 'red';
+  if (elapsedMinutes >= slaTargetMinutes * SLA_AMBER_FRACTION) return 'amber';
+  return 'green';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,10 +229,6 @@ export function formatWaitingTime(minutes: number): string {
   return `${hours}h ${rem}m`;
 }
 
-// Used by the card to highlight long waits in alert tone. 2h is the
-// brief's clinical urgency threshold (a patient sat over two hours is
-// always worth a glance).
-export const LONG_WAIT_MINUTES = 120;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hook
@@ -245,6 +264,18 @@ interface WalkInJoin {
   jb_ref: string | null;
 }
 
+// Nested cart join used purely for SLA roll-up. We pull only the SLA
+// fields off each item's catalogue row — never names, prices, etc. —
+// so the payload stays small even on visits with many lines.
+interface CartItemSlaJoin {
+  catalogue: { sla_enabled: boolean | null; sla_target_minutes: number | null }
+    | { sla_enabled: boolean | null; sla_target_minutes: number | null }[]
+    | null;
+}
+interface CartSlaJoin {
+  items: CartItemSlaJoin[] | null;
+}
+
 // PostgREST returns single-row FK joins as either the row itself or
 // a one-element array depending on cardinality and config; tolerate
 // both shapes with pickOne below.
@@ -257,6 +288,7 @@ interface VisitsRowFromDb {
   patient: PatientJoin | PatientJoin[] | null;
   appointment: AppointmentJoin | AppointmentJoin[] | null;
   walk_in: WalkInJoin | WalkInJoin[] | null;
+  cart: CartSlaJoin | CartSlaJoin[] | null;
 }
 
 interface PaidStatusRow {
@@ -285,7 +317,10 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
     setError(null);
 
     (async () => {
-      // Step A — visits with all related rows.
+      // Step A — visits with all related rows. The nested cart→items→
+      // catalogue join carries only the two SLA fields we need to
+      // compute the per-visit target; intentionally narrow to keep
+      // the payload small.
       const { data: rawVisits, error: vErr } = await supabase
         .from('lng_visits')
         .select(
@@ -299,6 +334,11 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
            ),
            walk_in:lng_walk_ins (
              service_type, appliance_type, appointment_ref, jb_ref
+           ),
+           cart:lng_carts (
+             items:lng_cart_items (
+               catalogue:lwo_catalogue ( sla_enabled, sla_target_minutes )
+             )
            )`
         )
         .in('status', ['opened', 'in_progress'])
@@ -427,6 +467,20 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           sigs
         );
 
+        // SLA roll-up: max(catalogue.sla_target_minutes) across cart
+        // items where catalogue.sla_enabled=true. Items with sla off,
+        // ad-hoc lines (no catalogue), and visits with no cart yet
+        // contribute nothing — null result means "no SLA on this
+        // visit".
+        const cart = pickOne(r.cart);
+        let slaTarget: number | null = null;
+        for (const it of cart?.items ?? []) {
+          const cat = pickOne(it.catalogue);
+          if (cat?.sla_enabled && cat.sla_target_minutes != null && cat.sla_target_minutes > 0) {
+            slaTarget = slaTarget == null ? cat.sla_target_minutes : Math.max(slaTarget, cat.sla_target_minutes);
+          }
+        }
+
         const enrichedVisit: EnrichedActiveVisit = {
           id: r.id,
           patient_id: r.patient_id,
@@ -456,6 +510,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
             (paid?.paid_status ?? 'no_charge') === 'paid' ||
             (paid?.paid_status ?? 'no_charge') === 'no_charge',
           waiver_status: waiverStatus,
+          sla_target_minutes: slaTarget,
         };
         enrichedVisit.searchable = searchableTextForVisit(enrichedVisit);
         return enrichedVisit;
