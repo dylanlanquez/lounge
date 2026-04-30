@@ -393,14 +393,32 @@ function ActiveVisitCard({
                 margin: `${theme.space[1]}px 0 0`,
                 fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
-                whiteSpace: 'nowrap',
+                // Wrap rather than ellipsis: the cards have plenty of
+                // vertical room and a truncated "Click-in veneers · Den…"
+                // gave staff no useful information. wordBreak handles
+                // very long single tokens (lab notes, etc.) without
+                // overflowing the card.
                 overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                wordBreak: 'break-word',
+                lineHeight: 1.35,
               }}
               title={visit.descriptor}
             >
               {visit.descriptor}
             </p>
+            {visit.secondary_buckets.length > 0 ? (
+              <p
+                style={{
+                  margin: `${theme.space[1]}px 0 0`,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkSubtle,
+                  fontWeight: theme.type.weight.medium,
+                  lineHeight: 1.35,
+                }}
+              >
+                Also: {visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}
+              </p>
+            ) : null}
           </div>
         </div>
         <WaitChip
