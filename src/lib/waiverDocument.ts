@@ -111,6 +111,13 @@ export interface WaiverDocInput {
   // on the signature attribution.
   witnessName: string | null;
   items: WaiverDocItem[];
+  // Sale-wide cart discount, applied via the manager-approved Apply
+  // Discount sheet on VisitDetail. Surfaces as a "Discount" line in
+  // the totals breakdown beneath Subtotal. 0 (or omitted) means none.
+  // Threaded as a top-level field rather than living on `payment` so
+  // the discount shows on the waiver even before the till takes
+  // payment (the waiver may be signed at arrival).
+  cartDiscountPence?: number;
   notes: string | null;
   sections: WaiverDocSection[];
   // Full SVG document string from lng_waiver_signatures.signature_svg
@@ -438,12 +445,23 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
       0,
     );
+    const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
     const depositPence = input.payment?.depositPence ?? 0;
     const depositProvider = input.payment?.depositProvider ?? null;
-    const tillPence = input.payment?.amountPence ?? Math.max(0, subtotalPence - depositPence);
+    const tillPence =
+      input.payment?.amountPence
+      ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence);
 
-    // Totals breakdown: Subtotal → Deposit (if any) → Total. Mirrors
-    // the same model the visit page Totals component uses.
+    // Totals breakdown: Subtotal → Discount (if any) → Deposit (if any)
+    // → Total. Mirrors the same model the visit page Totals component
+    // uses so the patient receipt matches what staff sees on screen.
+    const discountRow =
+      cartDiscountPence > 0
+        ? `<div class="row deposit">
+             <span class="label">Discount</span>
+             <span class="value">−${formatGbp(cartDiscountPence)}</span>
+           </div>`
+        : '';
     const depositRow =
       depositPence > 0
         ? `<div class="row deposit">
@@ -451,12 +469,19 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
              <span class="value">−${formatGbp(depositPence)}</span>
            </div>`
         : '';
+    const totalLabel =
+      depositPence > 0
+        ? 'Total paid'
+        : cartDiscountPence > 0
+          ? 'Total to pay'
+          : 'Total';
     totalsHtml =
       input.items.length > 0
         ? `<div class="totals">
              <div class="row"><span class="label">Subtotal</span><span class="value">${formatGbp(subtotalPence)}</span></div>
+             ${discountRow}
              ${depositRow}
-             <div class="row total"><span class="label">${depositPence > 0 ? 'Total paid' : 'Total'}</span><span class="value">${formatGbp(tillPence)}</span></div>
+             <div class="row total"><span class="label">${totalLabel}</span><span class="value">${formatGbp(tillPence)}</span></div>
            </div>`
         : '';
 
