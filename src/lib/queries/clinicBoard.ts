@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import {
   eventTypeCategory,
   filterCareIntake,
@@ -483,6 +484,7 @@ export function useActiveVisitCount(
   intervalMs: number = 30_000
 ): number | null {
   const [count, setCount] = useState<number | null>(null);
+  const fetchRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!enabled) {
@@ -505,7 +507,12 @@ export function useActiveVisitCount(
       setCount(c ?? 0);
     }
 
+    fetchRef.current = () => void fetchCount();
     void fetchCount();
+    // Polling stays as a backstop in case the Realtime channel drops
+    // (network blip, sleeping tablet) — but realtime makes the badge
+    // feel instant in the common case. The 30s tick reconciles
+    // whatever might have been missed while the socket was down.
     const timer = setInterval(() => {
       void fetchCount();
     }, intervalMs);
@@ -517,10 +524,19 @@ export function useActiveVisitCount(
 
     return () => {
       cancelled = true;
+      fetchRef.current = () => {};
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [enabled, intervalMs]);
+
+  // Push-based refresh on top of the polling. Status flips and new
+  // arrivals all change either lng_visits or lng_appointments, so any
+  // change to either nudges a refetch.
+  useRealtimeRefresh(
+    enabled ? [{ table: 'lng_visits' }, { table: 'lng_appointments' }] : [],
+    () => fetchRef.current(),
+  );
 
   return count;
 }

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { formatPence } from './carts.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useVisitTimeline — derives a sorted, deduplicated audit-trail event
@@ -218,6 +219,8 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!visitId) {
@@ -358,7 +361,28 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
     return () => {
       cancelled = true;
     };
-  }, [visitId]);
+  }, [visitId, tick]);
+
+  // Visit timeline aggregates from many sources. We don't try to be
+  // surgical here — any change to any source table refetches and
+  // re-merges. lng_visits covers JB lifecycle + close; lng_payments
+  // covers terminal events; lng_cart_items covers line edits; the
+  // patient_events table covers waiver/deposit/no-show events; and
+  // lng_appointments covers status flips that the timeline surfaces
+  // as "Booked" / "Rescheduled" entries.
+  useRealtimeRefresh(
+    visitId
+      ? [
+          { table: 'lng_visits', filter: `id=eq.${visitId}` },
+          { table: 'lng_payments' },
+          { table: 'lng_cart_items' },
+          { table: 'patient_events' },
+          { table: 'lng_appointments' },
+          { table: 'lng_waiver_signatures' },
+        ]
+      : [],
+    refresh,
+  );
 
   return { events, loading, error };
 }

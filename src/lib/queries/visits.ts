@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { PatientRow } from './patients.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
 export interface VisitRow {
   id: string;
@@ -432,6 +433,19 @@ export function useActiveVisits(): ActiveVisitsResult {
     };
   }, [tick]);
 
+  // The In-Clinic page and the BottomNav counter both consume this hook.
+  // Subscribing to lng_visits covers status flips (opened → in_progress
+  // → done) and new arrivals; lng_appointments covers the moment an
+  // appointment is marked arrived (which spawns the visit row that
+  // belongs in this list).
+  useRealtimeRefresh(
+    [
+      { table: 'lng_visits' },
+      { table: 'lng_appointments' },
+    ],
+    refresh,
+  );
+
   return { data, loading, error, refresh };
 }
 
@@ -581,6 +595,21 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
       cancelled = true;
     };
   }, [visitId, tick]);
+
+  // Visit detail refreshes when its visit row, the linked appointment
+  // (deposit status, JB ref, intake), or the underlying patient row
+  // changes — so opening the till or running the customers/update
+  // webhook is reflected on the page without a reload.
+  useRealtimeRefresh(
+    visitId
+      ? [
+          { table: 'lng_visits', filter: `id=eq.${visitId}` },
+          { table: 'lng_appointments' },
+          { table: 'patients' },
+        ]
+      : [],
+    refresh,
+  );
 
   return { visit, patient, deposit, appointment, loading, error, refresh };
 }

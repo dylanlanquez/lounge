@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { CatalogueRow } from './catalogue.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
 export interface CartRow {
   id: string;
@@ -178,6 +179,25 @@ export function useCart(visitId: string | undefined): UseCartResult {
     setCart(data as CartRow);
     return data as CartRow;
   }, [cart, visitId]);
+
+  // Realtime: cart row (status flip when paid), cart items (line
+  // edits from another tab / kiosk session), and cart_item_upgrades
+  // (upgrade snapshots attached to a line). Filter the cart channel
+  // by visit_id so a busy clinic doesn't fan out every cart change
+  // to every open VisitDetail tab. cart_items / cart_item_upgrades
+  // can't be filtered by cart_id from the start (we don't have one
+  // until ensureOpen runs), so listen unfiltered and let the next
+  // fetch re-window — volume is low.
+  useRealtimeRefresh(
+    visitId
+      ? [
+          { table: 'lng_carts', filter: `visit_id=eq.${visitId}` },
+          { table: 'lng_cart_items' },
+          { table: 'lng_cart_item_upgrades' },
+        ]
+      : [],
+    refresh,
+  );
 
   return { cart, items, loading, error, refresh, ensureOpen };
 }
