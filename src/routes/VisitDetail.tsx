@@ -803,7 +803,6 @@ export function VisitDetail() {
                 </Button>
                 <Button
                   variant="primary"
-                  size="lg"
                   showArrow
                   disabled={cartLocked}
                   onClick={() =>
