@@ -339,9 +339,18 @@ export function Arrival() {
     usePatientWaiverState(patient?.id);
   const requiredWaiverSections = useMemo<WaiverSection[]>(() => {
     if (waiverSections.length === 0) return [];
+    // Waivers must reflect EVERYTHING the patient is about to receive,
+    // not just what their Calendly event suggested they'd booked. If
+    // staff added a denture repair on top of an impression
+    // appointment, both waivers must surface on the consent step.
+    // Union: the Calendly-inferred type + every catalogue row's
+    // service_type that's currently staged.
     const inferred = inferServiceTypeFromEventLabel(eventTypeLabel);
-    return requiredSectionsForServiceTypes(inferred ? [inferred] : [], waiverSections);
-  }, [waiverSections, eventTypeLabel]);
+    const types = new Set<string>();
+    if (inferred) types.add(inferred);
+    for (const t of recognisedTypes) types.add(t);
+    return requiredSectionsForServiceTypes(Array.from(types), waiverSections);
+  }, [waiverSections, eventTypeLabel, recognisedTypes]);
   const waiverFlag: WaiverFlag | null = patient
     ? summariseWaiverFlag(requiredWaiverSections, patientSignatures)
     : null;
@@ -789,6 +798,8 @@ export function Arrival() {
             patient={patient}
             stagedItems={stagedItems}
             stagedTotalPence={stagedTotalPence}
+            depositPence={depositPence}
+            depositProvider={depositProvider}
             jbRef={jbRequired ? jbRef.trim() : null}
             consentSigned={consentReady}
           />
@@ -2056,15 +2067,20 @@ function StartStep({
   patient,
   stagedItems,
   stagedTotalPence,
+  depositPence,
+  depositProvider,
   jbRef,
   consentSigned,
 }: {
   patient: PatientLite;
   stagedItems: StagedItem[];
   stagedTotalPence: number;
+  depositPence: number;
+  depositProvider: 'paypal' | 'stripe' | null;
   jbRef: string | null;
   consentSigned: boolean;
 }) {
+  const totalPence = Math.max(0, stagedTotalPence - depositPence);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       <h1
@@ -2152,14 +2168,24 @@ function StartStep({
                 paddingTop: theme.space[3],
                 borderTop: `1px solid ${theme.color.border}`,
                 display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
+                flexDirection: 'column',
+                gap: theme.space[1],
               }}
             >
-              <span>Subtotal</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatPence(stagedTotalPence)}</span>
+              <TotalsRow
+                label="Subtotal"
+                valuePence={stagedTotalPence}
+                emphasis={depositPence === 0}
+              />
+              {depositPence > 0 ? (
+                <>
+                  <TotalsRow
+                    label={`Deposit (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`}
+                    valuePence={-depositPence}
+                  />
+                  <TotalsRow label="Total" valuePence={totalPence} emphasis />
+                </>
+              ) : null}
             </div>
           </div>
         ) : (
