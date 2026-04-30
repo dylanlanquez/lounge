@@ -467,15 +467,14 @@ async function fetchAppointmentEvents(
 }
 
 async function fetchWaiverEvents(visit: VisitRow): Promise<RawTimelineEvent[]> {
-  // Waiver signatures are scoped to patient + visit. Pull every signature
-  // for this patient since the visit opened (covers signatures captured
-  // during arrival even though visit_id might be null on the row at sign
-  // time — Lounge writes both patient_id and visit_id).
+  // Waiver signatures are visit-scoped via lng_waiver_signatures.visit_id
+  // (set by signWaiver). Filter on that exact id so signatures from a
+  // later or earlier visit by the same patient never leak into this
+  // timeline.
   const { data: sigs, error: sigErr } = await supabase
     .from('lng_waiver_signatures')
     .select('id, section_key, section_version, signed_at, witnessed_by')
-    .eq('patient_id', visit.patient_id)
-    .gte('signed_at', visit.opened_at)
+    .eq('visit_id', visit.id)
     .order('signed_at', { ascending: true });
   if (sigErr) throw new Error(sigErr.message);
   const sigRows = (sigs ?? []) as WaiverSignatureRow[];
@@ -614,28 +613,32 @@ async function fetchPaymentEvents(visitId: string): Promise<RawTimelineEvent[]> 
 }
 
 async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> {
-  // Catch-all stream of patient_events fired by other surfaces
-  // (deposit_paid, deposit_failed, walk_in_arrived, registrations).
-  // Filter to a 90-day buffer so a deposit recorded long before
-  // arrival still shows; older noise is cut off.
-  const buffer = new Date(visit.opened_at).getTime() - 1000 * 60 * 60 * 24 * 90;
-  const sinceISO = new Date(buffer).toISOString();
+  // Visit-scoped slice of patient_events. Every Lounge writer that
+  // emits a visit-level event puts the visit's id into payload.visit_id
+  // (cart_line_removed, visit_ended_early, patient_unsuitable_reversed,
+  // walk_in_arrived, visit_arrived). Filter to that exact visit so a
+  // patient with multiple visits doesn't see another visit's events
+  // bleed in here — that's a confidentiality breach as well as a
+  // visual bug.
+  //
+  // Patient-level events with no visit context (registration, no_show,
+  // virtual meeting, deposit failures) intentionally do NOT appear on
+  // a visit timeline; they belong on the patient profile instead.
   const { data, error: err } = await supabase
     .from('patient_events')
     .select('id, event_type, notes, payload, actor_account_id, created_at')
     .eq('patient_id', visit.patient_id)
-    .gte('created_at', sinceISO)
+    .eq('payload->>visit_id', visit.id)
     .order('created_at', { ascending: true });
   if (err) throw new Error(err.message);
   const rows = (data ?? []) as PatientEventRow[];
   // De-dup against the dedicated event types we already emit:
-  //   • deposit_paid    -> via lng_appointments.deposit_paid_at
-  //   • walk_in_arrived -> via lng_visits.opened_at + arrival_type
-  //   • visit_closed    -> via lng_visits.closed_at
+  //   • walk_in_arrived / visit_arrived -> via lng_visits.opened_at
+  //   • visit_closed                    -> via lng_visits.closed_at
   // The patient_events writes for these still happen (Meridian and
   // other off-app consumers depend on them); we just don't surface
   // them in the timeline twice.
-  const skip = new Set(['deposit_paid', 'walk_in_arrived', 'visit_closed']);
+  const skip = new Set(['walk_in_arrived', 'visit_arrived', 'visit_closed']);
   return rows
     .filter((r) => !skip.has(r.event_type))
     .map((r) => ({
