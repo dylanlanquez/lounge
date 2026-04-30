@@ -186,6 +186,8 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Unsuitable reversed';
     case 'cart_line_removed':
       return 'Cart line removed';
+    case 'visit_ended_early':
+      return 'Visit ended early';
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -655,6 +657,24 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     // payload still has the text.
     const reason = typeof payload.reason === 'string' ? payload.reason : row.notes ?? null;
     return reason && reason.trim().length > 0 ? reason : undefined;
+  }
+  if (row.event_type === 'visit_ended_early') {
+    // Surface the reason category as the headline detail. Note text
+    // (when present) follows.
+    const reason = typeof payload.reason === 'string' ? payload.reason : null;
+    const label =
+      reason === 'patient_declined'
+        ? 'Patient declined'
+        : reason === 'patient_walked_out'
+          ? 'Patient walked out'
+          : reason === 'wrong_booking'
+            ? 'Wrong booking'
+            : reason === 'other'
+              ? 'Other'
+              : null;
+    const note = typeof payload.note === 'string' && payload.note.trim().length > 0 ? payload.note : null;
+    if (label && note) return `${label}. ${note}`;
+    return label ?? note ?? undefined;
   }
   if (row.event_type === 'cart_line_removed') {
     // Surface the reason category and any free-text note so the
