@@ -447,17 +447,20 @@ const PreviewFrame = forwardRef<
         ref={wrapRef}
         style={{
           width: '100%',
+          // Hug the page width so the cream gutter is a tidy frame
+          // around the page rather than a wide mat with the page
+          // floating in the middle. justify-content:center on the
+          // dialog content keeps the wrapper itself centred in the
+          // dialog when there's room, so dialog white shows on
+          // either side instead of empty cream.
+          maxWidth: A4_WIDTH_PX + theme.space[6] * 2,
+          margin: '0 auto',
           maxHeight: visibleHeight,
           overflowY: 'auto',
           overflowX: 'hidden',
           borderRadius: theme.radius.card,
           background: theme.color.bg,
-          // Real gutter around the page so it reads as paper sitting
-          // on a desk rather than bleeding into the dialog chrome.
-          // theme.space[7] would be ideal but the token tops out at
-          // 6 (24px); the +6 below adds breathing room without
-          // diverging from the scale.
-          padding: `${theme.space[6] + 6}px ${theme.space[6]}px`,
+          padding: theme.space[6],
           display: 'flex',
           justifyContent: 'center',
         }}
