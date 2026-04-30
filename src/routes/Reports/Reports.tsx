@@ -18,6 +18,8 @@ import { OverviewTab } from './OverviewTab.tsx';
 import { BookingsVsWalkInsTab } from './BookingsVsWalkInsTab.tsx';
 import { DemographicsTab } from './DemographicsTab.tsx';
 import { MarketingTab } from './MarketingTab.tsx';
+import { ServiceMixTab } from './ServiceMixTab.tsx';
+import { LifetimeValueTab } from './LifetimeValueTab.tsx';
 
 // Reports — operational dashboards. Visible to anyone with
 // can_view_reports (default true for every Lounge staff member).
@@ -126,6 +128,10 @@ export function Reports() {
           <DemographicsTab range={range} />
         ) : tab === 'marketing' ? (
           <MarketingTab range={range} />
+        ) : tab === 'service_mix' ? (
+          <ServiceMixTab range={range} />
+        ) : tab === 'lifetime_value' ? (
+          <LifetimeValueTab range={range} />
         ) : (
           <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
         )}
