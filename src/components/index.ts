@@ -79,6 +79,9 @@ export type { StickyPageHeaderProps } from './StickyPageHeader/StickyPageHeader.
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
+
+export { AddressAutocompleteField } from './AddressAutocompleteField/AddressAutocompleteField.tsx';
+export type { AddressAutocompleteFieldProps } from './AddressAutocompleteField/AddressAutocompleteField.tsx';
 export type { CollapsibleCardProps } from './CollapsibleCard/CollapsibleCard.tsx';
 
 export { VisitTimeline } from './VisitTimeline/VisitTimeline.tsx';
