@@ -30,6 +30,7 @@ import {
   Card,
   EmptyState,
   MarketingGallery,
+  MultiSelectDropdown,
   Skeleton,
   StatusPill,
   Toast,
@@ -159,6 +160,18 @@ export function VisitDetail() {
   const [removeNote, setRemoveNote] = useState('');
   const [removeBusy, setRemoveBusy] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+
+  // Visible "Mark unsuitable" button on the action row. Opens a
+  // multi-pick sheet so staff can mark several lines unsuitable in
+  // one go with one shared reason. Submit loops through the ticked
+  // items and calls removeCartLineWithReason for each, so the audit
+  // trail and the soft-delete + Reverse semantics stay identical to
+  // the trash-icon path.
+  const [unsuitOpen, setUnsuitOpen] = useState(false);
+  const [unsuitItemIds, setUnsuitItemIds] = useState<string[]>([]);
+  const [unsuitNote, setUnsuitNote] = useState('');
+  const [unsuitBusy, setUnsuitBusy] = useState(false);
+  const [unsuitError, setUnsuitError] = useState<string | null>(null);
   const isMobile = useIsMobile(640);
   // Drives the unsuitable header line + reverse-flow toast wording.
   // Re-fetched whenever the visit refreshes.
@@ -483,6 +496,63 @@ export function VisitDetail() {
       setRemoveError(e instanceof Error ? e.message : 'Could not remove');
     } finally {
       setRemoveBusy(false);
+    }
+  };
+
+  // Items eligible for the multi-pick Mark-unsuitable flow: every
+  // active catalogue-backed line. Ad-hoc rows are excluded because
+  // lng_unsuitability_records requires a catalogue_id.
+  const unsuitEligibleItems = useMemo(
+    () =>
+      items.filter((it): it is typeof it & { catalogue_id: string } => !!it.catalogue_id),
+    [items]
+  );
+  const canMarkUnsuitable = !isUnsuitable && unsuitEligibleItems.length > 0;
+  const unsuitWillEndVisit =
+    unsuitEligibleItems.length > 0 && unsuitItemIds.length === unsuitEligibleItems.length;
+
+  const openMarkUnsuitable = () => {
+    setUnsuitError(null);
+    setUnsuitNote('');
+    setUnsuitItemIds([]);
+    setUnsuitOpen(true);
+  };
+
+  const submitMarkUnsuitable = async () => {
+    if (!visit || !patient) return;
+    if (unsuitItemIds.length === 0) {
+      setUnsuitError('Pick at least one product the patient was unsuitable for.');
+      return;
+    }
+    if (unsuitNote.trim().length === 0) {
+      setUnsuitError('A reason is required.');
+      return;
+    }
+    setUnsuitBusy(true);
+    setUnsuitError(null);
+    try {
+      // Loop through the picked items; share the same note across
+      // all of them. Soft-delete + lng_unsuitability_records writes
+      // happen per item; the orchestrator decides termination on the
+      // last call when it sees an empty active cart.
+      for (const itemId of unsuitItemIds) {
+        const it = unsuitEligibleItems.find((x) => x.id === itemId);
+        if (!it) continue;
+        await removeCartLineWithReason({
+          cart_item_id: it.id,
+          catalogue_id: it.catalogue_id,
+          visit_id: visit.id,
+          patient_id: patient.id,
+          reason: 'unsuitable',
+          note: unsuitNote,
+        });
+      }
+      setUnsuitOpen(false);
+      refresh();
+    } catch (e) {
+      setUnsuitError(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setUnsuitBusy(false);
     }
   };
 
@@ -820,15 +890,13 @@ export function VisitDetail() {
             </div>
 
             {items.length > 0 || isUnsuitable ? (
-              // Right-aligned row: tech note, Print LWO, Take
-              // payment. Unsuitable removals happen per-line via the
-              // trash icon (which opens the Remove sheet); there's
-              // no separate Mark-unsuitable affordance any more.
-              // When the visit is unsuitable, the secondaries dim
-              // individually so the primary Reverse button stays
-              // full opacity. Take payment carries no total — the
-              // Cart card shows it; putting it on the button
-              // duplicated the figure.
+              // Right-aligned row: Mark unsuitable, tech note, Print
+              // LWO, Take payment. Mark unsuitable is a visible CTA
+              // for the heavy "patient won't proceed" decision; the
+              // per-line trash icon stays for granular fixes (wrong
+              // product, patient changed mind on one item). When the
+              // visit is unsuitable, the secondaries dim and Take
+              // payment becomes Reverse.
               <div
                 style={{
                   marginTop: theme.space[6],
@@ -839,6 +907,14 @@ export function VisitDetail() {
                   flexWrap: 'wrap',
                 }}
               >
+                {canMarkUnsuitable ? (
+                  <Button variant="tertiary" onClick={openMarkUnsuitable}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <Ban size={16} aria-hidden />
+                      Mark unsuitable
+                    </span>
+                  </Button>
+                ) : null}
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
                   <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
@@ -1263,6 +1339,129 @@ export function VisitDetail() {
               }}
             >
               {removeError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      {/* Multi-pick Mark unsuitable sheet. Visible CTA on the action
+          row triggers this — staff who want to mark several products
+          unsuitable in one go pick them here with one shared reason.
+          Submit loops through removeCartLineWithReason so the audit
+          trail and the soft-delete + Reverse semantics stay
+          identical to the trash-icon path. */}
+      <BottomSheet
+        open={unsuitOpen}
+        onClose={() => !unsuitBusy && setUnsuitOpen(false)}
+        dismissable={!unsuitBusy}
+        title="Mark patient unsuitable"
+        description={
+          unsuitWillEndVisit
+            ? 'Every product on this visit will be marked unsuitable. The visit ends here. Only an admin can reverse it.'
+            : 'Records on the patient timeline that the patient was unsuitable for the picked products. The visit stays open for any product you don’t tick.'
+        }
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button variant="secondary" onClick={() => setUnsuitOpen(false)} disabled={unsuitBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Cancel
+              </span>
+            </Button>
+            <Button variant="primary" onClick={submitMarkUnsuitable} loading={unsuitBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Ban size={16} aria-hidden />
+                {unsuitWillEndVisit ? 'Mark unsuitable & end visit' : 'Mark unsuitable'}
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <MultiSelectDropdown<string>
+            label="Products"
+            required
+            values={unsuitItemIds}
+            options={unsuitEligibleItems.map((it) => ({ value: it.id, label: it.name }))}
+            onChange={(next) => setUnsuitItemIds(next)}
+            placeholder="Pick from the basket"
+            totalNoun="products"
+          />
+
+          {unsuitWillEndVisit ? (
+            <div
+              role="status"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'flex-start',
+                gap: theme.space[2],
+                padding: theme.space[3],
+                borderRadius: theme.radius.input,
+                background: 'rgba(179, 104, 21, 0.08)',
+                color: theme.color.warn,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              <AlertTriangle size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>
+                All basket items are selected. Submitting will end the visit. The patient won’t be charged for
+                these lines and the visit drops off the in-clinic board.
+              </span>
+            </div>
+          ) : null}
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Reason <span style={{ color: theme.color.alert }}>*</span>
+            </span>
+            <textarea
+              value={unsuitNote}
+              onChange={(e) => setUnsuitNote(e.target.value)}
+              rows={5}
+              placeholder="Why is the patient unsuitable for these products? Be specific. This lands on the patient timeline."
+              style={{
+                width: '100%',
+                padding: theme.space[3],
+                fontSize: theme.type.size.base,
+                fontFamily: 'inherit',
+                lineHeight: theme.type.leading.normal,
+                color: theme.color.ink,
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+                resize: 'vertical',
+                minHeight: 120,
+              }}
+            />
+          </label>
+
+          {unsuitError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {unsuitError}
             </p>
           ) : null}
         </div>
