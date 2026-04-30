@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  AddressAutocompleteField,
   Button,
   Card,
   Checkbox,
@@ -33,6 +34,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useKeyboardOpen } from '../lib/useKeyboardOpen.ts';
+import { type ParsedAddress } from '../lib/useAddressAutocomplete.ts';
 import { supabase } from '../lib/supabase.ts';
 import {
   type CatalogueRow,
@@ -175,6 +177,16 @@ const SEX_OPTIONS = ['Female', 'Male', 'Other', 'Prefer not to say'] as const;
 // appointments next (they always need a JB); click-in veneers after
 // (lab-coupled); same-day appliance after that; everything else falls
 // through to "other".
+// Address fields edited as one cluster — tapping any pencil
+// unlocks all four so the Places autocomplete on line 1 can fill
+// every cell from a single selection.
+const ADDRESS_GROUP_FIELDS: (keyof FormState)[] = [
+  'portal_ship_line1',
+  'portal_ship_line2',
+  'portal_ship_city',
+  'portal_ship_postcode',
+];
+
 const SERVICE_TYPE_PRIORITY = [
   'denture_repair',
   'impression_appointment',
@@ -257,6 +269,15 @@ export function Arrival() {
     setEditingFields((s) => {
       const next = new Set(s);
       next.add(key);
+      // Address fields are edited as a cluster: tapping any one of
+      // the four pencils unlocks all of them at once. The patient
+      // then types into Address line 1, picks a Places suggestion,
+      // and the full set (line 1 / line 2 / city / postcode)
+      // populates from the parsed result. Splitting the unlock
+      // would force four separate gestures for one logical action.
+      if (ADDRESS_GROUP_FIELDS.includes(key)) {
+        for (const grouped of ADDRESS_GROUP_FIELDS) next.add(grouped);
+      }
       return next;
     });
   };
@@ -1794,7 +1815,26 @@ function CustomerStep({
             onBeginEdit={() => onBeginEdit('date_of_birth')}
           />
           <SexRow current={snapshot.sex} value={form.sex} onChange={(v) => onUpdate('sex', v)} editing={isEditing('sex')} onBeginEdit={() => onBeginEdit('sex')} />
-          <FieldRow required label="Address line 1" current={snapshot.portal_ship_line1} value={form.portal_ship_line1} onChange={(v) => onUpdate('portal_ship_line1', v)} fullSpan editing={isEditing('portal_ship_line1')} onBeginEdit={() => onBeginEdit('portal_ship_line1')} />
+          {/* Address line 1 hosts the Google Places autocomplete
+              when the address cluster is being edited. Selecting a
+              suggestion fills line 1 / line 2 / city / postcode in
+              one shot via onSelectPlace. While the field is "on
+              file" (snapshot value present and not editing),
+              FieldRow renders the read-only OnFileCard pencil and
+              autocomplete is dormant. */}
+          <AddressLine1Row
+            snapshot={snapshot.portal_ship_line1}
+            value={form.portal_ship_line1}
+            editing={isEditing('portal_ship_line1')}
+            onChange={(v) => onUpdate('portal_ship_line1', v)}
+            onSelectPlace={(parsed) => {
+              onUpdate('portal_ship_line1', parsed.address1);
+              onUpdate('portal_ship_line2', parsed.address2);
+              onUpdate('portal_ship_city', parsed.city);
+              onUpdate('portal_ship_postcode', parsed.postcode);
+            }}
+            onBeginEdit={() => onBeginEdit('portal_ship_line1')}
+          />
           <FieldRow label="Address line 2" current={snapshot.portal_ship_line2} value={form.portal_ship_line2} onChange={(v) => onUpdate('portal_ship_line2', v)} fullSpan editing={isEditing('portal_ship_line2')} onBeginEdit={() => onBeginEdit('portal_ship_line2')} />
           <FieldRow required kind="name" label="City" current={snapshot.portal_ship_city} value={form.portal_ship_city} onChange={(v) => onUpdate('portal_ship_city', v)} editing={isEditing('portal_ship_city')} onBeginEdit={() => onBeginEdit('portal_ship_city')} />
           <FieldRow required kind="postcode" label="Postcode" current={snapshot.portal_ship_postcode} value={form.portal_ship_postcode} onChange={(v) => onUpdate('portal_ship_postcode', v)} editing={isEditing('portal_ship_postcode')} onBeginEdit={() => onBeginEdit('portal_ship_postcode')} />
@@ -2415,6 +2455,52 @@ function FieldRow({
         kind={kind}
         value={value}
         onChange={(v) => onChange(sanitizeForKind(kind, v))}
+      />
+    </div>
+  );
+}
+
+// Address line 1 row. Mirrors FieldRow's on-file/edit split but
+// swaps the EditableFieldCard for AddressAutocompleteField in the
+// edit branch so the patient gets a Places dropdown. Always full-
+// span in the FormGrid because the dropdown needs the row width.
+function AddressLine1Row({
+  snapshot,
+  value,
+  editing,
+  onChange,
+  onSelectPlace,
+  onBeginEdit,
+}: {
+  snapshot: string | null;
+  value: string;
+  editing: boolean;
+  onChange: (v: string) => void;
+  onSelectPlace: (parsed: ParsedAddress) => void;
+  onBeginEdit: () => void;
+}) {
+  const onFile = snapshot !== null && snapshot !== '' && !editing;
+  const wrapper: CSSProperties = { gridColumn: '1 / -1' };
+  if (onFile) {
+    return (
+      <div style={wrapper}>
+        <OnFileCard
+          label="Address line 1"
+          required
+          value={formatOnFileValue('Address line 1', snapshot!)}
+          onEdit={onBeginEdit}
+        />
+      </div>
+    );
+  }
+  return (
+    <div style={wrapper}>
+      <AddressAutocompleteField
+        label="Address line 1"
+        required
+        value={value}
+        onChange={onChange}
+        onSelectPlace={onSelectPlace}
       />
     </div>
   );
