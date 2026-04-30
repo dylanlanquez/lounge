@@ -218,7 +218,7 @@ export async function buildWaiverPdf(html: string): Promise<Blob> {
       pdfAny.setFontSize(8);
       pdfAny.setTextColor(120, 124, 124);
       const footerY = A4_HEIGHT_MM - 8;
-      pdfAny.text('Venneir Lounge · VAT GB406459983', 18, footerY);
+      pdfAny.text('Venneir · VAT GB406459983', 18, footerY);
       pdfAny.text(
         `Page ${pageIndex + 1} of ${totalPages}`,
         A4_WIDTH_MM - 18,

@@ -102,7 +102,7 @@ export function WaiverViewerDialog({
     setMode('preview');
     setStatus({ kind: 'idle' });
     setRecipient(patientEmail ?? '');
-    setSubject('Your Venneir Lounge waiver');
+    setSubject('Your Venneir waiver');
     setMessage('');
   }, [open, patientEmail]);
 

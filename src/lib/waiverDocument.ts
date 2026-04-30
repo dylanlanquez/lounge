@@ -99,7 +99,7 @@ export interface WaiverDocInput {
   // the renderer. accentColor controls every colour accent in the
   // document.
   brand: {
-    name: string;                     // e.g. "Venneir Lounge"
+    name: string;                     // e.g. "Venneir"
     contactEmail: string;
     vatNumber: string | null;
     logoUrl: string;                  // origin + asset path
@@ -110,18 +110,9 @@ export interface WaiverDocInput {
 
 const MUTED_DASH = '<span style="font-weight:400;color:#999">—</span>';
 
-// Lounge wordmark — inline SVG so the printer/PDF doesn't depend on
-// an external asset fetch (which html2canvas would skip on a strict
-// CORS policy). Sized at the call site; viewBox keeps the aspect
-// ratio fixed at 246.8 × 72.05.
-const LOUNGE_WORDMARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 246.8 72.05" aria-hidden="true">
-  <path d="M14.31,0c-.42,2.96-.57,5.86-.57,10.66v37.4c0,4.23.14,6.92.57,10.66H-.44C-.02,55.54.12,53.14.12,48.06V10.66C.12,5.65-.02,2.68-.44,0h14.75Z"/>
-  <path d="M14.94,37.12c0-14.11,9.03-23.08,23.29-23.08s23.29,8.96,23.29,22.94-9.32,23.36-23.36,23.36-23.22-9.03-23.22-23.22ZM28.42,37.05c0,7.83,3.67,12.56,9.81,12.56s9.67-4.59,9.67-12.42-3.6-12.56-9.6-12.56-9.88,4.66-9.88,12.42Z"/>
-  <path d="M106.69,15.67c-.42,3.32-.56,6.28-.56,10.59v21.81c0,4.87.14,7.76.56,10.59h-14.04v-3.03c0-.35,0-1.41.07-1.91-4.66,4.38-8.68,6.07-14.68,6.07-4.73,0-8.54-1.34-11.22-3.95-2.82-2.82-4.02-6.28-4.02-11.86v-17.71c0-4.09-.21-7.62-.56-10.59h14.68c-.42,3.39-.56,6.35-.56,10.59v14.47c0,2.89.28,4.16,1.13,5.29.99,1.27,2.54,1.98,4.59,1.98,3.88,0,7.83-2.75,10.59-7.27v-14.47c0-3.95-.14-6.92-.56-10.59h14.61Z"/>
-  <path d="M109.16,58.72c.42-3.32.56-6.28.56-10.66v-21.74c0-4.87-.14-7.83-.56-10.66h14.04v2.96c0,.42-.07,1.48-.07,1.98,4.45-4.23,8.75-6,14.54-6,4.87,0,8.75,1.34,11.36,3.95,2.82,2.82,4.02,6.28,4.02,11.86v17.71c0,4.09.21,7.62.56,10.59h-14.68c.42-3.39.56-6.35.56-10.66v-14.47c0-2.82-.28-4.02-1.13-5.22-.92-1.27-2.54-1.98-4.66-1.98-3.95,0-7.48,2.47-10.52,7.41v14.26c0,4.02.14,6.99.56,10.66h-14.61Z"/>
-  <path d="M165.48,57.52c2.47,3.18,6.07,4.8,10.73,4.8,3.88,0,6.92-1.06,8.61-3.11,1.48-1.69,2.12-3.81,2.26-7.55-3.6,3.25-7.41,4.66-12.84,4.66-12.28,0-20.04-8.04-20.04-20.89s7.97-20.82,20.04-20.82c5.22,0,9.03,1.2,12.84,4.09v-3.03h13.83c-.42,3.18-.56,5.65-.56,9.81v24.77c0,8.47-2.4,14.19-7.34,17.64-3.81,2.68-9.74,4.16-16.8,4.16-9.6,0-15.95-2.4-20.89-7.83l10.16-6.7ZM176.84,46.15c5.79,0,9.95-4.45,9.95-10.73s-4.16-10.8-9.88-10.8-9.32,4.3-9.32,10.87,3.67,10.66,9.24,10.66Z"/>
-  <path d="M214.6,41.14c.71,5.72,4.02,8.75,9.6,8.75,2.82,0,5.29-.92,7.13-2.61,1.06-.99,1.55-1.76,2.12-3.6l12.28,3.46c-1.62,3.67-2.68,5.29-4.66,7.27-4.02,3.95-9.67,6-16.66,6s-12.35-1.98-16.37-6c-4.16-4.23-6.42-10.23-6.42-17.22,0-13.97,8.96-23.22,22.44-23.22,11.01,0,18.7,6,21.17,16.51.56,2.26.85,5.22,1.06,9.25,0,.28,0,.71.07,1.41h-31.76ZM232.95,31.4c-.99-4.52-4.02-6.92-8.89-6.92s-8.05,2.26-9.25,6.92h18.14Z"/>
-</svg>`;
+// (No Lounge wordmark — the document is a Venneir-branded patient
+// receipt. The Venneir logo image alone carries the brand; "Lounge"
+// is an internal product surface, not customer-facing terminology.)
 
 function escapeHtml(s: string): string {
   return s
@@ -254,23 +245,21 @@ const A4_CSS = (accent: string): string => `
      a blank footer rather than a blank value (Chrome / Safari /
      Edge all support; Firefox supports counter(page)). */
   @page{
-    @bottom-left{content:"Venneir Lounge · VAT GB406459983";font-family:'Inter','SF Pro Text',sans-serif;font-size:8.5px;color:rgba(14,20,20,0.42);letter-spacing:.02em}
+    @bottom-left{content:"Venneir · VAT GB406459983";font-family:'Inter','SF Pro Text',sans-serif;font-size:8.5px;color:rgba(14,20,20,0.42);letter-spacing:.02em}
     @bottom-right{content:"Page " counter(page) " of " counter(pages);font-family:'Inter','SF Pro Text',sans-serif;font-size:8.5px;color:rgba(14,20,20,0.42);letter-spacing:.02em}
   }
 
   /* ── Letterhead ───────────────────────────────────────────────── */
+  /* Tight stack: Venneir logo → accent stripe → contact email.
+     gap:0 on the brand column so the children control their own
+     margins; pulls cs@venneir.com flush under the logo with
+     just a 4px breath. */
   .lh{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
-  .lh-brand{display:flex;flex-direction:column;gap:4px}
+  .lh-brand{display:flex;flex-direction:column}
   .lh-brand .mark{display:flex;align-items:center;gap:10px}
-  .lh-brand .brand-img{height:22px;display:block}
-  /* Lounge SVG sized to match the Venneir wordmark image. fill is
-     ink rather than stroke so it carries through to thermal /
-     greyscale prints cleanly. */
-  .lh-brand .wordmark-svg{display:inline-flex;align-items:center}
-  .lh-brand .wordmark-svg svg{height:22px;width:auto;display:block;fill:var(--ink)}
-  .lh-brand .wordmark{font-size:18px;font-weight:700;letter-spacing:-.01em;color:var(--ink)}
-  .lh-brand .accent-rule{width:36px;height:2px;background:var(--accent);margin-top:6px;border-radius:2px}
-  .lh-brand .meta-line{font-size:9.5px;color:var(--muted);margin-top:6px;letter-spacing:.01em}
+  .lh-brand .brand-img{height:24px;display:block}
+  .lh-brand .accent-rule{width:32px;height:2px;background:var(--accent);margin-top:5px;border-radius:2px}
+  .lh-brand .meta-line{font-size:9.5px;color:var(--muted);margin-top:4px;letter-spacing:.01em}
   .lh-ref{text-align:right}
   .lh-ref .label{font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--subtle);font-weight:600;margin-bottom:4px}
   .lh-ref .value{font-family:'SF Mono','Roboto Mono',Menlo,Consolas,monospace;font-size:15px;font-weight:700;letter-spacing:.06em;color:var(--accent)}
@@ -280,11 +269,12 @@ const A4_CSS = (accent: string): string => `
      it carry every cue needed. Removing the "Visit summary" title
      reclaims ~80px of vertical real estate. */
 
-  /* ── Section block ───────────────────────────────────────────── */
-  /* No "PATIENT DETAILS" eyebrows on the customer document — the
-     content is self-evident. Sections rely on whitespace + rules
-     to separate. .sec just gives a tight margin above. */
+  /* First section under the letterhead pulls in tight; the rest
+     keep the 14px breathing room. The compact top stack is what
+     the user kept asking for: the patient sees their name and
+     details immediately, no acres of letterhead whitespace. */
   .sec{margin-top:14px}
+  .sec.sec-first{margin-top:8px}
 
   /* ── Field grids ─────────────────────────────────────────────── */
   .grid-2{display:grid;grid-template-columns:1fr 1fr;column-gap:28px;row-gap:8px}
@@ -373,20 +363,19 @@ const A4_CSS = (accent: string): string => `
   ol.terms li::before{content:counter(term)".";position:absolute;left:-2px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
 
   /* ── Signature card ──────────────────────────────────────────── */
-  /* Scaled to ~75% of the previous version — same proportions,
-     less footprint. break-inside:avoid keeps it whole so the card
-     never splits across the page boundary, but no forced
-     page-break-before because that pushed it onto a third sheet
-     when the terms ended early on page 2. */
-  .sig-card{break-inside:avoid;margin-top:14px;padding:14px 16px;border:1px solid var(--rule);border-radius:11px;background:var(--surface);box-shadow:0 1px 0 rgba(14,20,20,0.02)}
-  .sig-card .sig-eyebrow{font-size:7.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin-bottom:5px}
-  .sig-card .sig-name{font-size:12px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:6px}
-  .sig-card .pad{display:block;width:100%;max-width:255px;height:72px;padding:3px 5px;border-bottom:1px solid var(--rule);position:relative}
+  /* Compact card — patient name, pad with the captured strokes,
+     signed-on / witnessed-by row beneath. No "Signature on file"
+     eyebrow; the pad's visual presence makes that label
+     redundant. break-inside:avoid keeps the card whole so the
+     pad never crosses a page boundary. */
+  .sig-card{break-inside:avoid;margin-top:12px;padding:12px 14px;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+  .sig-card .sig-name{font-size:11px;font-weight:600;letter-spacing:-.01em;color:var(--ink);margin-bottom:5px}
+  .sig-card .pad{display:block;width:100%;max-width:220px;height:60px;padding:2px 4px;border-bottom:1px solid var(--rule);position:relative}
   .sig-card .pad svg{display:block;width:100%;height:100%}
   .sig-card .pad-blank{display:flex;align-items:center;justify-content:center;color:var(--subtle);font-size:9px}
-  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:21px;row-gap:5px;margin-top:9px}
+  .sig-meta{display:grid;grid-template-columns:repeat(2,1fr);column-gap:18px;row-gap:4px;margin-top:8px}
   .sig-meta .label{font-size:7px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle);font-weight:600;margin-bottom:1px}
-  .sig-meta .value{font-size:9.5px;color:var(--ink);font-weight:500}
+  .sig-meta .value{font-size:9px;color:var(--ink);font-weight:500}
 `;
 
 export function buildWaiverDocument(input: WaiverDocInput): string {
@@ -481,7 +470,6 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       <div class="lh-brand">
         <div class="mark">
           ${brand.logoUrl ? `<img class="brand-img" src="${escapeHtml(brand.logoUrl)}" alt="Venneir" />` : ''}
-          <span class="wordmark-svg">${LOUNGE_WORDMARK_SVG}</span>
         </div>
         <div class="accent-rule"></div>
         <div class="meta-line">${escapeHtml([brand.addressLine, brand.contactEmail].filter(Boolean).join(' · '))}</div>
@@ -504,7 +492,7 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
 
     ${letterhead}
 
-    <div class="sec">
+    <div class="sec sec-first">
       <div class="grid-2">
         <div class="field"><div class="label">Full name</div><div class="value">${name}</div></div>
         <div class="field"><div class="label">Date of birth</div><div class="value">${input.patient.dateOfBirth ? fmtDate(input.patient.dateOfBirth) : MUTED_DASH}</div></div>
@@ -528,7 +516,6 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     ${termsBlocks}
 
     <div class="sig-card">
-      <div class="sig-eyebrow">Signature on file</div>
       <div class="sig-name">${name}</div>
       ${signatureHtml}
       <div class="sig-meta">
@@ -544,5 +531,5 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
 // in the name so a folder of saved waivers sorts naturally and the
 // recipient can match the attachment to the visit at a glance.
 export function waiverDocumentFileName(lapRef: string): string {
-  return `Lounge-waiver-${lapRef}.pdf`;
+  return `Venneir-waiver-${lapRef}.pdf`;
 }
