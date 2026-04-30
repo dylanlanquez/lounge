@@ -341,6 +341,11 @@ export function patientFullName(p: Pick<PatientRow, 'first_name' | 'last_name'>)
 export interface PatientListRow extends PatientRow {
   registered_at: string | null;
   last_visit_at: string | null;
+  // Meridian's avatar pointer (URL, data URL, or 'preset:…' /
+  // 'logo:…' selector). Surfaced so Lounge's patient list
+  // renders the patient's actual avatar instead of always
+  // falling back to initials.
+  avatar_data: string | null;
 }
 
 interface ListResult {
@@ -379,7 +384,7 @@ export function usePatientList(
         let q = supabase
           .from('patients')
           .select(
-            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id, registered_at'
+            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, lwo_ref, shopify_customer_id, registered_at, avatar_data'
           )
           .order('first_name', { ascending: true })
           .order('last_name', { ascending: true })
@@ -419,10 +424,17 @@ export function usePatientList(
               setLoading(false);
               return;
             }
-            const fb = (fallback ?? []) as Array<PatientRow>;
+            const fb = (fallback ?? []) as Array<PatientRow & { avatar_data?: string | null }>;
             setHasMore(fb.length > limit);
             setData(
-              fb.slice(0, limit).map((p) => ({ ...p, registered_at: null, last_visit_at: null }))
+              fb
+                .slice(0, limit)
+                .map((p) => ({
+                  ...p,
+                  registered_at: null,
+                  last_visit_at: null,
+                  avatar_data: p.avatar_data ?? null,
+                }))
             );
             setError(null);
             setLoading(false);
@@ -432,13 +444,16 @@ export function usePatientList(
           setLoading(false);
           return;
         }
-        const list = (rows ?? []) as Array<PatientRow & { registered_at: string | null }>;
+        const list = (rows ?? []) as Array<
+          PatientRow & { registered_at: string | null; avatar_data: string | null }
+        >;
         setHasMore(list.length > limit);
         setData(
           list.slice(0, limit).map((p) => ({
             ...p,
             registered_at: p.registered_at ?? null,
             last_visit_at: null,
+            avatar_data: p.avatar_data ?? null,
           }))
         );
         setError(null);
