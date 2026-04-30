@@ -763,6 +763,7 @@ export function VisitDetail() {
         visitId={visit?.id ?? null}
         sections={sectionsToSign}
         patientName={patient ? patientFullName(patient) : 'Patient'}
+        defaultWitnessName={receptionistName ?? ''}
         onAllSigned={refreshSignatures}
       />
 

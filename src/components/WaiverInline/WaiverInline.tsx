@@ -107,16 +107,20 @@ export const WaiverInline = forwardRef<WaiverInlineHandle, WaiverInlineProps>(
       setError(null);
       try {
         const svg = svgFromPath(path, PAD_WIDTH, PAD_HEIGHT);
+        const witnessName = witness.trim();
         // Write one signature row per section so each agreement keeps
         // its own version snapshot in the audit log. Sequential rather
         // than parallel: simpler error semantics, and the count of
-        // sections is small (1–3 in practice).
+        // sections is small (1–3 in practice). Witness name is the
+        // same for every section in this batch — they're all signed
+        // in the same sitting with the same staff member present.
         for (const section of sections) {
           await signWaiver({
             patient_id: patientId,
             visit_id: visitId,
             section,
             signature_svg: svg,
+            witness_name: witnessName,
           });
         }
         onAllSigned();

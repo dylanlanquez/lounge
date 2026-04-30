@@ -105,6 +105,11 @@ export function PatientProfile() {
             <WaiverStatus
               patientId={patient.id}
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
+              staffName={
+                (user.user_metadata?.name as string | undefined) ??
+                user.email ??
+                'Staff'
+              }
             />
             <BeforeAfterGallery
               patient={patient}
@@ -719,7 +724,19 @@ function formatDate(iso: string | null): string | null {
 // whether the patient is paperwork-clear before bringing them through.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function WaiverStatus({ patientId, patientName }: { patientId: string; patientName: string }) {
+function WaiverStatus({
+  patientId,
+  patientName,
+  staffName,
+}: {
+  patientId: string;
+  patientName: string;
+  // Pre-fill for the WaiverSheet's "Witnessed by" field — the
+  // signed-in receptionist viewing the profile. Threaded from the
+  // route-level useAuth() instead of re-resolving here so a future
+  // kiosk-mode parent can override it.
+  staffName: string;
+}) {
   const { sections, loading: sectionsLoading } = useWaiverSections();
   const { latest, loading: latestLoading, refresh } = usePatientWaiverState(patientId);
 
@@ -799,6 +816,7 @@ function WaiverStatus({ patientId, patientName }: { patientId: string; patientNa
         visitId={null}
         sections={signingSection ? [signingSection] : []}
         patientName={patientName}
+        defaultWitnessName={staffName}
         onAllSigned={() => {
           setSigningSection(null);
           refresh();
