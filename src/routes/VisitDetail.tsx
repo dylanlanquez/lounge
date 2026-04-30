@@ -27,9 +27,9 @@ import {
   Breadcrumb,
   Button,
   Card,
-  Checkbox,
   EmptyState,
   MarketingGallery,
+  MultiSelectDropdown,
   Skeleton,
   StatusPill,
   Toast,
@@ -393,12 +393,6 @@ export function VisitDetail() {
     // chance of submitting against the wrong line through inertia.
     setUnsuitableCatalogueIds([]);
     setUnsuitableOpen(true);
-  };
-
-  const toggleUnsuitableCatalogueId = (id: string, checked: boolean) => {
-    setUnsuitableCatalogueIds((cur) =>
-      checked ? [...new Set([...cur, id])] : cur.filter((x) => x !== id)
-    );
   };
 
   // True when every catalogue-backed line on the visit has been
@@ -1021,7 +1015,7 @@ export function VisitDetail() {
         title="Mark patient unsuitable"
         description={
           unsuitableEndsVisit
-            ? 'Every product on this visit will be marked unsuitable. The visit ends here — only an admin can reverse it.'
+            ? 'Every product on this visit will be marked unsuitable. The visit ends here. Only an admin can reverse it.'
             : 'Captured for the patient timeline. The visit stays open for the products you don’t tick, so the rest can still be paid for.'
         }
         footer={
@@ -1049,67 +1043,44 @@ export function VisitDetail() {
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          {/* Multi-select list of basket items. Staff tick every
-              product the patient is unsuitable for; the same reason
-              applies to all of them (one submit = one record per
-              ticked product). Vertical list works better than a
-              dropdown here — cart items are few and the staff need
-              to see all of them at once to choose accurately. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <span
-              style={{
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-              }}
-            >
-              Products <span style={{ color: theme.color.alert }}>*</span>
-            </span>
+          {/* Multi-select dropdown for the basket items the patient is
+              unsuitable for. Same reason applies to every ticked
+              product (one submit = one record per ticked product). */}
+          <MultiSelectDropdown<string>
+            label="Products"
+            required
+            values={unsuitableCatalogueIds}
+            options={unsuitableEligibleItems.map((it) => ({
+              value: it.catalogue_id,
+              label: it.name,
+            }))}
+            onChange={(next) => setUnsuitableCatalogueIds(next)}
+            placeholder="Pick from the basket"
+            totalNoun="products"
+          />
+
+          {unsuitableEndsVisit ? (
             <div
+              role="status"
               style={{
-                display: 'flex',
-                flexDirection: 'column',
+                display: 'inline-flex',
+                alignItems: 'flex-start',
                 gap: theme.space[2],
                 padding: theme.space[3],
-                background: theme.color.surface,
-                border: `1px solid ${theme.color.border}`,
                 borderRadius: theme.radius.input,
+                background: 'rgba(179, 104, 21, 0.08)',
+                color: theme.color.warn,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
               }}
             >
-              {unsuitableEligibleItems.map((it) => (
-                <Checkbox
-                  key={it.id}
-                  checked={unsuitableCatalogueIds.includes(it.catalogue_id)}
-                  onChange={(v) => toggleUnsuitableCatalogueId(it.catalogue_id, v)}
-                  label={it.name}
-                />
-              ))}
+              <AlertTriangle size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>
+                All basket items are selected. Submitting will end the visit. The patient won’t be charged for
+                these lines and the visit drops off the in-clinic board.
+              </span>
             </div>
-            {unsuitableEndsVisit ? (
-              <div
-                role="status"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'flex-start',
-                  gap: theme.space[2],
-                  padding: theme.space[3],
-                  borderRadius: theme.radius.input,
-                  background: 'rgba(179, 104, 21, 0.08)',
-                  color: theme.color.warn,
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                }}
-              >
-                <AlertTriangle size={16} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
-                <span>
-                  All basket items selected — submitting will end the visit. The patient won’t be charged for these
-                  lines and the visit drops off the in-clinic board.
-                </span>
-              </div>
-            ) : null}
-          </div>
+          ) : null}
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             <span
@@ -1127,7 +1098,7 @@ export function VisitDetail() {
               value={unsuitableReason}
               onChange={(e) => setUnsuitableReason(e.target.value)}
               rows={5}
-              placeholder="Why is the patient unsuitable for this product? Be specific — this lands on the patient timeline."
+              placeholder="Why is the patient unsuitable for these products? Be specific. This lands on the patient timeline."
               style={{
                 width: '100%',
                 padding: theme.space[3],
