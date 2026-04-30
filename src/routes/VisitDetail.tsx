@@ -773,56 +773,65 @@ export function VisitDetail() {
             </Card>
 
             {items.length > 0 ? (
-              <div style={{ marginTop: theme.space[6], display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+              // Two rows: Mark unsuitable lives on its own line on the
+              // left so the destructive action visually distances
+              // itself from the productive cluster (tech note + LWO +
+              // payment) on the right. Productive cluster wraps if
+              // needed; the destructive button is always alone.
+              <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
                 {canMarkUnsuitable ? (
-                  <Button variant="tertiary" onClick={openUnsuitable}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                    <Button variant="tertiary" onClick={openUnsuitable}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                        <Ban size={16} aria-hidden />
+                        Mark unsuitable
+                      </span>
+                    </Button>
+                  </div>
+                ) : null}
+                <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button variant="secondary" onClick={openNoteEditor}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <Ban size={16} aria-hidden />
-                      Mark unsuitable
+                      <StickyNote size={16} aria-hidden />
+                      {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
                     </span>
                   </Button>
-                ) : null}
-                <Button variant="secondary" onClick={openNoteEditor}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <StickyNote size={16} aria-hidden />
-                    {visit.notes && visit.notes.trim() ? 'Edit tech note' : 'Add tech note'}
-                  </span>
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={handlePrintLwo}
-                  disabled={!appointment?.appointment_ref}
-                  title={
-                    appointment?.appointment_ref
-                      ? undefined
-                      : 'A LAP reference is stamped during arrival intake. Open arrival before printing.'
-                  }
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <Printer size={16} aria-hidden />
-                    Print LWO
-                  </span>
-                </Button>
-                <Button
-                  variant="primary"
-                  showArrow
-                  disabled={cartLocked}
-                  onClick={() =>
-                    navigate(`/visit/${visit.id}/pay`, {
-                      state: {
-                        from: 'visit',
-                        visitId: visit.id,
-                        visitOpenedAt: visit.opened_at,
-                        // Pass the visit's own entry through so Pay's
-                        // breadcrumb can render the full chain and the
-                        // visit-link can pop back with the right state.
-                        visitEntry: location.state,
-                      },
-                    })
-                  }
-                >
-                  Take payment {formatPence(total)}
-                </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={handlePrintLwo}
+                    disabled={!appointment?.appointment_ref}
+                    title={
+                      appointment?.appointment_ref
+                        ? undefined
+                        : 'A LAP reference is stamped during arrival intake. Open arrival before printing.'
+                    }
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <Printer size={16} aria-hidden />
+                      Print LWO
+                    </span>
+                  </Button>
+                  <Button
+                    variant="primary"
+                    showArrow
+                    disabled={cartLocked}
+                    onClick={() =>
+                      navigate(`/visit/${visit.id}/pay`, {
+                        state: {
+                          from: 'visit',
+                          visitId: visit.id,
+                          visitOpenedAt: visit.opened_at,
+                          // Pass the visit's own entry through so Pay's
+                          // breadcrumb can render the full chain and the
+                          // visit-link can pop back with the right state.
+                          visitEntry: location.state,
+                        },
+                      })
+                    }
+                  >
+                    Take payment {formatPence(total)}
+                  </Button>
+                </div>
               </div>
             ) : null}
 
