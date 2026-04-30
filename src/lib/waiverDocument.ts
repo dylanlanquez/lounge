@@ -66,7 +66,32 @@ export interface WaiverDocPaymentSummary {
 }
 
 export interface WaiverDocInput {
-  lapRef: string;                     // e.g. LAP-00003
+  // 'visit' (default) renders the full visit summary: patient grid,
+  // items table, totals, payment row, terms, signature. Used by the
+  // VisitDetail "View signed waiver" flow.
+  //
+  // 'waiver' is the leaner patient-level signed-waiver document.
+  // There is no appointment, no cart, no payment — just the patient
+  // identity, the agreed terms, and the signature. The items table,
+  // totals breakdown and payment row are omitted entirely (not just
+  // hidden when empty — they have no semantic meaning here). The
+  // right-side header shows the signed date rather than a LAP ref.
+  kind?: 'visit' | 'waiver';
+  // Reference value shown in the right-side header (mono accent
+  // type). For visit mode this is the LAP ref (e.g. LAP-00003);
+  // for waiver mode it's a short signed date (e.g. "30 APR 2026").
+  // The name is kept as `lapRef` for backwards compatibility with
+  // existing call sites — callers who pass a non-LAP value should
+  // also pass `referenceLabel` to retitle the column.
+  lapRef: string;
+  // Label above the lapRef value. Defaults to "Visit reference".
+  // Waiver mode uses "Signed" or similar.
+  referenceLabel?: string;
+  // Optional override for the downloaded PDF's filename slug. When
+  // omitted the filename helper falls back to `lapRef`. Used by
+  // waiver mode where lapRef may be a date string that doesn't
+  // round-trip cleanly through a filename.
+  documentSlug?: string;
   visitType: string | null;           // human label, e.g. "In-person impression appointment"
   patient: {
     fullName: string;
@@ -398,45 +423,56 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     .filter(Boolean)
     .join(', ');
 
-  const itemsTable = renderItemsTable(input.items);
-  const subtotalPence = input.items.reduce(
-    (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
-    0,
-  );
-  const depositPence = input.payment?.depositPence ?? 0;
-  const depositProvider = input.payment?.depositProvider ?? null;
-  const tillPence = input.payment?.amountPence ?? Math.max(0, subtotalPence - depositPence);
+  const isWaiverOnly = input.kind === 'waiver';
 
-  // Totals breakdown: Subtotal → Deposit (if any) → Total. Mirrors
-  // the same model the visit page Totals component uses.
-  const depositRow =
-    depositPence > 0
-      ? `<div class="row deposit">
-           <span class="label">Deposit${depositProvider ? ' (' + (depositProvider === 'stripe' ? 'Stripe' : 'PayPal') + ' via Calendly)' : ''}</span>
-           <span class="value">−${formatGbp(depositPence)}</span>
-         </div>`
-      : '';
-  const totalsHtml =
-    input.items.length > 0
-      ? `<div class="totals">
-           <div class="row"><span class="label">Subtotal</span><span class="value">${formatGbp(subtotalPence)}</span></div>
-           ${depositRow}
-           <div class="row total"><span class="label">${depositPence > 0 ? 'Total paid' : 'Total'}</span><span class="value">${formatGbp(tillPence)}</span></div>
-         </div>`
-      : '';
+  // Visit-mode-only blocks: items table, totals breakdown, and the
+  // payment status row. None of these have meaning for a patient-
+  // profile waiver document, so we don't synthesise empty placeholders
+  // for them — they're omitted from the markup entirely.
+  let itemsTable = '';
+  let totalsHtml = '';
+  let paymentStatusHtml = '';
+  if (!isWaiverOnly) {
+    itemsTable = renderItemsTable(input.items);
+    const subtotalPence = input.items.reduce(
+      (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
+      0,
+    );
+    const depositPence = input.payment?.depositPence ?? 0;
+    const depositProvider = input.payment?.depositProvider ?? null;
+    const tillPence = input.payment?.amountPence ?? Math.max(0, subtotalPence - depositPence);
 
-  // Status row beneath the totals: pill + method · date. When the
-  // till hasn't taken payment yet, the row reads as a friendly
-  // "settle at the till before leaving".
-  const paymentStatusHtml = input.payment
-    ? `<div class="pay-row">
-         <span class="pill ${input.payment.status === 'paid' ? 'pill-paid' : 'pill-failed'}">${input.payment.status === 'paid' ? 'Paid in full' : 'Payment failed'}</span>
-         <span class="meta"><strong>${escapeHtml(properCase(input.payment.method))}</strong> · ${fmtDate(input.payment.takenAt)}</span>
-       </div>`
-    : `<div class="pay-row">
-         <span class="pill pill-pending">Awaiting payment</span>
-         <span class="meta">Settle the balance at the till before leaving the clinic.</span>
-       </div>`;
+    // Totals breakdown: Subtotal → Deposit (if any) → Total. Mirrors
+    // the same model the visit page Totals component uses.
+    const depositRow =
+      depositPence > 0
+        ? `<div class="row deposit">
+             <span class="label">Deposit${depositProvider ? ' (' + (depositProvider === 'stripe' ? 'Stripe' : 'PayPal') + ' via Calendly)' : ''}</span>
+             <span class="value">−${formatGbp(depositPence)}</span>
+           </div>`
+        : '';
+    totalsHtml =
+      input.items.length > 0
+        ? `<div class="totals">
+             <div class="row"><span class="label">Subtotal</span><span class="value">${formatGbp(subtotalPence)}</span></div>
+             ${depositRow}
+             <div class="row total"><span class="label">${depositPence > 0 ? 'Total paid' : 'Total'}</span><span class="value">${formatGbp(tillPence)}</span></div>
+           </div>`
+        : '';
+
+    // Status row beneath the totals: pill + method · date. When the
+    // till hasn't taken payment yet, the row reads as a friendly
+    // "settle at the till before leaving".
+    paymentStatusHtml = input.payment
+      ? `<div class="pay-row">
+           <span class="pill ${input.payment.status === 'paid' ? 'pill-paid' : 'pill-failed'}">${input.payment.status === 'paid' ? 'Paid in full' : 'Payment failed'}</span>
+           <span class="meta"><strong>${escapeHtml(properCase(input.payment.method))}</strong> · ${fmtDate(input.payment.takenAt)}</span>
+         </div>`
+      : `<div class="pay-row">
+           <span class="pill pill-pending">Awaiting payment</span>
+           <span class="meta">Settle the balance at the till before leaving the clinic.</span>
+         </div>`;
+  }
 
   // visit.notes is the lab-facing tech note (printed on the LWO).
   // It's not customer-facing — patients don't need to see the
@@ -467,6 +503,7 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
 
   const brand = input.brand;
 
+  const referenceLabel = escapeHtml(input.referenceLabel ?? 'Visit reference');
   const letterhead = `
     <div class="lh">
       <div class="lh-brand">
@@ -477,7 +514,7 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
         <div class="meta-line">${escapeHtml([brand.addressLine, brand.contactEmail].filter(Boolean).join(' · '))}</div>
       </div>
       <div class="lh-ref">
-        <div class="label">Visit reference</div>
+        <div class="label">${referenceLabel}</div>
         <div class="value">${ref}</div>
         <div class="sub">${visitDateLabel}</div>
       </div>
@@ -504,14 +541,18 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       </div>
     </div>
 
-    <div class="sec">
+    ${
+      isWaiverOnly
+        ? ''
+        : `<div class="sec">
       ${itemsTable}
       ${totalsHtml}
     </div>
 
     <div class="sec">
       ${paymentStatusHtml}
-    </div>
+    </div>`
+    }
 
     <div class="terms-h">Terms you agreed to</div>
     <p class="terms-deck">By signing, ${name} confirmed they understood every clause below and accepted the work and warranty terms as described. Continued overleaf.</p>
@@ -529,9 +570,11 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
   </body></html>`;
 }
 
-// Filename used by the Download and Email actions. Keep the LAP ref
-// in the name so a folder of saved waivers sorts naturally and the
-// recipient can match the attachment to the visit at a glance.
-export function waiverDocumentFileName(lapRef: string): string {
-  return `Venneir-waiver-${lapRef}.pdf`;
+// Filename used by the Download and Email actions. Defaults to the
+// LAP ref so a folder of saved visit waivers sorts naturally; waiver-
+// only documents can override the slug via input.documentSlug since a
+// LAP ref isn't meaningful (or even available) for them.
+export function waiverDocumentFileName(input: Pick<WaiverDocInput, 'lapRef' | 'documentSlug'>): string {
+  const slug = input.documentSlug?.trim() || input.lapRef;
+  return `Venneir-waiver-${slug}.pdf`;
 }
