@@ -135,7 +135,6 @@ export function Pay() {
 
   const sendReceipt = async () => {
     if (!paymentId || receiptChannel === 'none') {
-      await closeVisit();
       goBackToVisit();
       return;
     }
@@ -168,53 +167,19 @@ export function Pay() {
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body?.ok) {
-        // Show a soft warning toast but proceed: the visit still closes.
         const reason = body?.error ?? `HTTP ${r.status}`;
         setError(`Receipt queued but not delivered: ${reason}. You can resend from the appointment later.`);
       }
 
-      await closeVisit();
+      // Visit completion is now an explicit step on VisitDetail
+      // (Complete visit button + fulfilment sheet). Pay only handles
+      // payment + receipt; staff hits Complete back on the visit
+      // page and answers the in-person-vs-shipping question there.
       goBackToVisit();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setBusy(false);
-    }
-  };
-
-  const closeVisit = async () => {
-    if (!visit) return;
-    await supabase
-      .from('lng_visits')
-      .update({ status: 'complete', closed_at: new Date().toISOString() })
-      .eq('id', visit.id);
-
-    // Free the job box. The source rows (appointment / walk-in)
-    // hold the "currently assigned" JB; nulling them once the
-    // visit completes lets the box be reassigned to a new
-    // appointment. The visit's own jb_ref column was captured at
-    // insert time (trigger lng_visits_capture_jb_ref_trg) and is
-    // immutable, so the historical record survives on the
-    // VisitDetail timeline.
-    if (visit.appointment_id) {
-      await supabase
-        .from('lng_appointments')
-        .update({ jb_ref: null })
-        .eq('id', visit.appointment_id);
-    }
-    if (visit.walk_in_id) {
-      await supabase
-        .from('lng_walk_ins')
-        .update({ jb_ref: null })
-        .eq('id', visit.walk_in_id);
-    }
-
-    if (patient) {
-      await supabase.from('patient_events').insert({
-        patient_id: patient.id,
-        event_type: 'visit_closed',
-        payload: { visit_id: visit.id, total_pence: total, receipt_channel: receiptChannel },
-      });
     }
   };
 
