@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Patient profile queries — the read-side surface for /patient/:id.
@@ -232,6 +233,14 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
     };
   }, [patientId, tick]);
 
+  // patient_files is in Meridian's realtime publication already, so
+  // any new upload (via Meridian admin or a future Lounge upload UI)
+  // shows up on the receptionist's PatientProfile without a reload.
+  useRealtimeRefresh(
+    patientId ? [{ table: 'patient_files', filter: `patient_id=eq.${patientId}` }] : [],
+    refresh,
+  );
+
   return { data, loading, error, refresh };
 }
 
@@ -430,6 +439,8 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
   const [data, setData] = useState<PatientVisitRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!patientId) {
@@ -530,7 +541,24 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, tick]);
+
+  // Visit list refreshes when any of its source tables changes for
+  // this patient. lng_visits filtered by patient_id; cart totals come
+  // from lng_carts/lng_cart_items so visits with shifting totals
+  // reflect immediately. lng_walk_ins changes are rare but cheap to
+  // listen to.
+  useRealtimeRefresh(
+    patientId
+      ? [
+          { table: 'lng_visits', filter: `patient_id=eq.${patientId}` },
+          { table: 'lng_carts' },
+          { table: 'lng_cart_items' },
+          { table: 'lng_walk_ins', filter: `patient_id=eq.${patientId}` },
+        ]
+      : [],
+    refresh,
+  );
 
   return { data, loading, error };
 }
@@ -593,6 +621,8 @@ export function usePatientScheduledAppointments(
   const [data, setData] = useState<PatientScheduledAppointmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!patientId) {
@@ -650,7 +680,15 @@ export function usePatientScheduledAppointments(
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, tick]);
+
+  // New Calendly bookings, cancellations, and reschedules all flow
+  // through lng_appointments. Filter by patient_id so a busy clinic
+  // doesn't fire one refresh per appointment everywhere.
+  useRealtimeRefresh(
+    patientId ? [{ table: 'lng_appointments', filter: `patient_id=eq.${patientId}` }] : [],
+    refresh,
+  );
 
   return { data, loading, error };
 }

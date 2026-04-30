@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
 // One row in lng_waiver_sections. Admin-editable.
 export interface WaiverSection {
@@ -128,6 +129,14 @@ export function usePatientWaiverState(patientId: string | null | undefined): Pat
     };
   }, [patientId, tick]);
 
+  // Auto-refresh on any new signature for this patient — used by the
+  // pencil-shortcut signing flow and any future cross-device kiosk
+  // session signing the same waiver elsewhere.
+  useRealtimeRefresh(
+    patientId ? [{ table: 'lng_waiver_signatures', filter: `patient_id=eq.${patientId}` }] : [],
+    refresh,
+  );
+
   return { latest, loading, error, refresh };
 }
 
@@ -226,6 +235,14 @@ export function useSignedWaivers(patientId: string | null | undefined): SignedWa
       cancelled = true;
     };
   }, [patientId, tick]);
+
+  // History list refreshes whenever a new signature lands for this
+  // patient — keeps the audit table on PatientProfile current without
+  // a manual reload.
+  useRealtimeRefresh(
+    patientId ? [{ table: 'lng_waiver_signatures', filter: `patient_id=eq.${patientId}` }] : [],
+    refresh,
+  );
 
   return { rows, loading, error, refresh };
 }

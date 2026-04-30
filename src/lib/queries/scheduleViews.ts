@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { AppointmentRow } from './appointments.ts';
 import { formatDateIso } from '../calendarMonth.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
 interface DayResult {
   data: AppointmentRow[];
@@ -157,6 +158,21 @@ export function useDayAppointments(dateIso: string): DayResult {
     setRefreshTick((t) => t + 1);
   }, []);
 
+  // Auto-refresh whenever any appointment for this day changes upstream.
+  // We don't filter by start_at on the server (Realtime filters are
+  // exact-match only, not ranges), so we just listen to all appointment
+  // changes and let the next fetch re-window. Volume is fine — Schedule
+  // is open at most one tab at a time per receptionist. Visit status
+  // changes (booked → arrived → done) also affect the schedule row's
+  // pill so subscribe to lng_visits too.
+  useRealtimeRefresh(
+    [
+      { table: 'lng_appointments' },
+      { table: 'lng_visits' },
+    ],
+    refresh,
+  );
+
   return { data, loading, hasLoaded, error, refresh };
 }
 
@@ -221,6 +237,11 @@ export function useDateRangeCounts(
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);
   }, []);
+
+  // Week-strip dots refresh on any appointment change. The strip is
+  // visible while the receptionist works through the day so a fresh
+  // booking landing via Calendly should pop a new dot immediately.
+  useRealtimeRefresh([{ table: 'lng_appointments' }], refresh);
 
   return { counts, loading, error, refresh };
 }
