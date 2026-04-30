@@ -268,7 +268,11 @@ export function VisitDetail() {
       // to a useLocationForBrand() hook without touching the renderer.
       brand: {
         name: 'Venneir Lounge',
-        contactEmail: 'hello@venneir.com',
+        // Customer service email — what the patient writes to with
+        // questions about their visit. accounts@venneir.com is for
+        // finance / invoicing only and is not the right contact
+        // line for a customer-facing document.
+        contactEmail: 'cs@venneir.com',
         vatNumber: 'GB406459983',
         logoUrl: window.location.origin + '/black-venneir-logo.png',
         addressLine: null,
