@@ -64,6 +64,7 @@ import {
 } from '../lib/queries/visits.ts';
 import type { VisitEndReason, VisitRow } from '../lib/queries/visits.ts';
 import {
+  amendCartDiscount,
   applyCartDiscount,
   listManagers,
   removeCartDiscount,
@@ -204,7 +205,7 @@ export function VisitDetail() {
   // shape — picker for the manager, password for the manager,
   // reason text. Manager re-auths via approveAsManager (parallel
   // Supabase client; doesn't disturb the cashier's session).
-  const [discountSheet, setDiscountSheet] = useState<'apply' | 'remove' | null>(null);
+  const [discountSheet, setDiscountSheet] = useState<'apply' | 'amend' | 'remove' | null>(null);
   const [discountAmountText, setDiscountAmountText] = useState('');
   const [discountReason, setDiscountReason] = useState('');
   const [discountManagerId, setDiscountManagerId] = useState<string>('');
@@ -541,10 +542,18 @@ export function VisitDetail() {
     }
   };
 
-  const openDiscountSheet = async (mode: 'apply' | 'remove') => {
+  const openDiscountSheet = async (mode: 'apply' | 'amend' | 'remove') => {
     setDiscountError(null);
-    setDiscountAmountText('');
-    setDiscountReason('');
+    // Pre-fill amount + reason from the active discount when amending
+    // so staff sees what they're changing from. Apply / Remove start
+    // blank.
+    if (mode === 'amend' && activeDiscount) {
+      setDiscountAmountText((activeDiscount.amount_pence / 100).toFixed(2));
+      setDiscountReason(activeDiscount.reason);
+    } else {
+      setDiscountAmountText('');
+      setDiscountReason('');
+    }
     setDiscountManagerId('');
     setDiscountManagerPassword('');
     setDiscountSheet(mode);
@@ -603,6 +612,34 @@ export function VisitDetail() {
       refreshDiscount();
     } catch (e) {
       setDiscountError(e instanceof Error ? e.message : 'Could not remove');
+    } finally {
+      setDiscountBusy(false);
+    }
+  };
+
+  const submitAmendDiscount = async () => {
+    if (!cart) return;
+    const float = Number(discountAmountText.replace(/[^\d.]/g, ''));
+    const pence = Math.round(float * 100);
+    if (!Number.isFinite(pence) || pence <= 0) {
+      setDiscountError('Enter a positive amount.');
+      return;
+    }
+    setDiscountBusy(true);
+    setDiscountError(null);
+    try {
+      await amendCartDiscount({
+        cart_id: cart.id,
+        amount_pence: pence,
+        reason: discountReason,
+        approver_id: discountManagerId,
+        approver_password: discountManagerPassword,
+      });
+      setDiscountSheet(null);
+      refresh();
+      refreshDiscount();
+    } catch (e) {
+      setDiscountError(e instanceof Error ? e.message : 'Could not amend');
     } finally {
       setDiscountBusy(false);
     }
@@ -1106,9 +1143,14 @@ export function VisitDetail() {
                           Approved by {activeDiscount.approver_name ?? 'manager'}
                           {activeDiscount.reason ? ` · ${activeDiscount.reason}` : ''}
                         </span>
-                        <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('remove')}>
-                          Remove discount
-                        </Button>
+                        <div style={{ display: 'flex', gap: theme.space[2] }}>
+                          <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('amend')}>
+                            Amend
+                          </Button>
+                          <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('remove')}>
+                            Remove
+                          </Button>
+                        </div>
                       </div>
                     </>
                   ) : (
@@ -1905,21 +1947,32 @@ export function VisitDetail() {
         </div>
       </BottomSheet>
 
-      {/* Apply / Remove discount sheet. Same shape for both modes:
-          manager dropdown + manager password (re-auth) + reason +
-          (apply only) amount. Submitting calls the right mutation
-          which keeps lng_carts.discount_pence in sync with the
-          audit table; total_pence is generated so the cart card +
-          Pay screen pick up the new total without extra plumbing. */}
+      {/* Apply / Amend / Remove discount sheet. All three modes share
+          the same chrome — manager dropdown + manager password
+          (re-auth) + reason + (apply / amend only) amount. Submitting
+          calls the right mutation; lng_carts.discount_pence stays in
+          sync with the audit table, and total_pence is generated so
+          the cart card + Pay screen + waiver pick up the new total
+          without extra plumbing. Amend retires the previous audit row
+          and inserts a fresh one in the same call so the trail reads
+          as a clean pair. */}
       <BottomSheet
         open={discountSheet !== null}
         onClose={() => !discountBusy && setDiscountSheet(null)}
         dismissable={!discountBusy}
-        title={discountSheet === 'remove' ? 'Remove discount' : 'Apply discount'}
+        title={
+          discountSheet === 'remove'
+            ? 'Remove discount'
+            : discountSheet === 'amend'
+              ? 'Amend discount'
+              : 'Apply discount'
+        }
         description={
           discountSheet === 'remove'
             ? 'Removing the discount restores the full bill. Manager re-enters their password to authorise — this lands on the audit row alongside the original approver.'
-            : 'Sale-wide discount on this visit. Manager re-enters their password to authorise; both your name and theirs land on the audit row.'
+            : discountSheet === 'amend'
+              ? 'Change the amount or reason. The existing audit row is retired and a fresh one is inserted, both attributed to the approving manager. Patient sees the new total immediately.'
+              : 'Sale-wide discount on this visit. Manager re-enters their password to authorise; both your name and theirs land on the audit row.'
         }
         footer={
           <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1928,16 +1981,26 @@ export function VisitDetail() {
             </Button>
             <Button
               variant="primary"
-              onClick={discountSheet === 'remove' ? submitRemoveDiscount : submitApplyDiscount}
+              onClick={
+                discountSheet === 'remove'
+                  ? submitRemoveDiscount
+                  : discountSheet === 'amend'
+                    ? submitAmendDiscount
+                    : submitApplyDiscount
+              }
               loading={discountBusy}
             >
-              {discountSheet === 'remove' ? 'Remove discount' : 'Apply discount'}
+              {discountSheet === 'remove'
+                ? 'Remove discount'
+                : discountSheet === 'amend'
+                  ? 'Save amendment'
+                  : 'Apply discount'}
             </Button>
           </div>
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          {discountSheet === 'apply' ? (
+          {discountSheet === 'apply' || discountSheet === 'amend' ? (
             <Input
               label="Discount amount (£)"
               inputMode="decimal"
@@ -1954,7 +2017,9 @@ export function VisitDetail() {
             placeholder={
               discountSheet === 'remove'
                 ? 'Why is the discount being removed?'
-                : 'Why is the discount being given? (e.g. compensation, repeat-patient courtesy)'
+                : discountSheet === 'amend'
+                  ? 'Why is the discount being amended? (e.g. miscalculation, additional courtesy)'
+                  : 'Why is the discount being given? (e.g. compensation, repeat-patient courtesy)'
             }
           />
           <div
