@@ -233,10 +233,13 @@ const A4_CSS = (accent: string): string => `
      stationery rather than full-bleed cramping. */
   @page{size:A4;margin:18mm 18mm 16mm}
 
-  /* @page now owns the gutter, so body has no padding of its own.
-     Side-effect: the @page margin boxes below have somewhere to
-     render the per-page footer with the live page counter. */
-  body{font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10.5px;line-height:1.55;font-feature-settings:'ss01','cv11';-webkit-font-smoothing:antialiased;orphans:3;widows:3}
+  /* @page rules only fire when the browser is in print mode. The
+     preview iframe and any non-print rendering pipeline ignore them
+     entirely, so body needs its own padding to give the document a
+     gutter on screen. @media print strips it back to zero so the
+     printer's @page margin takes over without doubling up. */
+  body{font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10.5px;line-height:1.55;font-feature-settings:'ss01','cv11';-webkit-font-smoothing:antialiased;orphans:3;widows:3;padding:18mm 18mm 16mm}
+  @media print{body{padding:0}}
 
   /* Per-page footer: legal line on the left, "Page N of M" on the
      right. counter(page)/counter(pages) is automatic, every page
@@ -338,10 +341,9 @@ const A4_CSS = (accent: string): string => `
   .notes .value{font-size:10.5px;color:var(--ink);line-height:1.5;white-space:pre-wrap}
 
   /* No inline .pg-footer — the @page @bottom-* margin boxes
-     above own the per-page footer. The PDF generator
-     (waiverPdf.ts) re-creates the same row programmatically
-     after each page is added, since html2canvas captures
-     screen and doesn't respect @page rules. */
+     above own the per-page footer in native browser print, and
+     waiverPdf.ts paints the same row directly into each PDF
+     page using its own vector text primitives. */
 
   /* ── Terms (single column, flows naturally across pages) ─────── */
   /* Single column (not two) so the clauses spill from the bottom

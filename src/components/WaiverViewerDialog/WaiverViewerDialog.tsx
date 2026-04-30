@@ -28,10 +28,13 @@ import { emailWaiver } from '../../lib/queries/emailWaiver.ts';
 //                "Save as PDF" from there too, so we don't fight
 //                a shadow PDF flow for the simple "I want a hard
 //                copy now" case.
-//   • Download — builds the PDF client-side via html2canvas + jsPDF
-//                and triggers a browser download. Always offered
-//                — works on desktop and tablet, where it routes to
-//                the OS's Files / Downloads target.
+//   • Download — builds a real vector PDF client-side via jsPDF text
+//                primitives (no html2canvas rasterisation, so the
+//                output is selectable, searchable text rather than
+//                a series of JPEG pages) and triggers a browser
+//                download. Always offered — works on desktop and
+//                tablet, where it routes to the OS's Files /
+//                Downloads target.
 //   • Email    — flips the dialog body into a recipient composer
 //                (default to patient.email), generates the same
 //                PDF, sends to the email-waiver edge function with
@@ -175,13 +178,13 @@ export function WaiverViewerDialog({
   };
 
   const downloadDoc = async () => {
-    if (!html) {
+    if (!doc) {
       setStatus({ kind: 'error', message: 'Document not ready. Close the dialog and try again.' });
       return;
     }
     setStatus({ kind: 'busy', label: 'Building PDF…' });
     try {
-      const blob = await buildWaiverPdf(html);
+      const blob = await buildWaiverPdf(doc);
       downloadBlob(blob, fileName);
       setStatus({ kind: 'success', message: `Downloaded ${fileName}.` });
     } catch (e) {
@@ -193,7 +196,7 @@ export function WaiverViewerDialog({
   };
 
   const sendEmail = async () => {
-    if (!html) {
+    if (!doc) {
       setStatus({ kind: 'error', message: 'Document not ready. Close the dialog and try again.' });
       return;
     }
@@ -212,7 +215,7 @@ export function WaiverViewerDialog({
     }
     setStatus({ kind: 'busy', label: 'Sending…' });
     try {
-      const blob = await buildWaiverPdf(html);
+      const blob = await buildWaiverPdf(doc);
       const pdfBase64 = await blobToBase64(blob);
       await emailWaiver({
         visitId,
