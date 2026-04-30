@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
+  DropdownSelect,
   EmptyState,
   Input,
   SegmentedControl,
@@ -46,9 +47,12 @@ import {
   type ArchMatch,
 } from '../lib/queries/catalogue.ts';
 import {
+  setCatalogueWaiverRequirements,
   suggestNextVersion,
   upsertWaiverSection,
   useAdminWaiverSections,
+  useCatalogueWaiverRequirements,
+  useWaiverSections,
   type WaiverSection,
   type WaiverSectionDraft,
 } from '../lib/queries/waiver.ts';
@@ -60,6 +64,7 @@ import {
   useUpgradeLinksForCatalogue,
   useUpgradesActive,
   useUpgradesAll,
+  type UpgradeDisplayPosition,
   type UpgradeRow,
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
@@ -877,9 +882,14 @@ function CatalogueTab() {
 
   const grouped = groupByCategory(rows);
 
-  const onSave = async (draft: CatalogueDraft) => {
+  const onSave = async (draft: CatalogueDraft, waiverSectionKeys: string[]) => {
     try {
-      await upsertCatalogueRow({
+      // SLA target only persists when sla_enabled. Toggling SLA off
+      // wipes the target so we don't leave dormant numbers in the row.
+      const slaTargetMinutes = draft.sla_enabled
+        ? parseInt(draft.sla_target_minutes, 10) || null
+        : null;
+      const saved = await upsertCatalogueRow({
         id: draft.id,
         code: draft.code.trim(),
         category: draft.category.trim(),
@@ -899,9 +909,16 @@ function CatalogueTab() {
         arch_match: draft.arch_match,
         is_service: draft.is_service,
         quantity_enabled: draft.quantity_enabled,
+        sla_enabled: draft.sla_enabled,
+        sla_target_minutes: slaTargetMinutes,
+        include_on_lwo: draft.include_on_lwo,
+        allocate_job_box: draft.allocate_job_box,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
+      // Persist waiver requirements after the row exists (new rows
+      // don't have an id until upsert returns).
+      await setCatalogueWaiverRequirements(saved.id, waiverSectionKeys);
       setEditingId(null);
       setAdding(false);
       refresh();
@@ -1053,6 +1070,11 @@ interface CatalogueDraft {
   arch_match: ArchMatch;
   is_service: boolean;
   quantity_enabled: boolean;
+  sla_enabled: boolean;
+  // Edited as text so the user can clear the field; parseInt on save.
+  sla_target_minutes: string;
+  include_on_lwo: boolean;
+  allocate_job_box: boolean;
   sort_order: string;
   active: boolean;
 }
@@ -1074,6 +1096,10 @@ function emptyDraft(): CatalogueDraft {
     arch_match: 'any',
     is_service: false,
     quantity_enabled: true,
+    sla_enabled: false,
+    sla_target_minutes: '',
+    include_on_lwo: true,
+    allocate_job_box: true,
     sort_order: '0',
     active: true,
   };
@@ -1097,6 +1123,10 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     arch_match: row.arch_match,
     is_service: row.is_service,
     quantity_enabled: row.quantity_enabled,
+    sla_enabled: row.sla_enabled,
+    sla_target_minutes: row.sla_target_minutes != null ? String(row.sla_target_minutes) : '',
+    include_on_lwo: row.include_on_lwo,
+    allocate_job_box: row.allocate_job_box,
     sort_order: String(row.sort_order),
     active: row.active,
   };
@@ -1185,7 +1215,7 @@ function CatalogueRowEditor({
   onCancel,
 }: {
   initial: CatalogueDraft;
-  onSave: (draft: CatalogueDraft) => Promise<void>;
+  onSave: (draft: CatalogueDraft, waiverSectionKeys: string[]) => Promise<void>;
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<CatalogueDraft>(initial);
@@ -1195,11 +1225,37 @@ function CatalogueRowEditor({
   const set = <K extends keyof CatalogueDraft>(k: K, v: CatalogueDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
+  // Waiver requirements (per-item explicit links). When the editor opens
+  // on an existing row the hook returns the current set; we mirror it
+  // into local state so the user can toggle without persisting until
+  // Save fires. New rows start with an empty set.
+  const { sections: waiverSections, loading: waiverSectionsLoading } = useWaiverSections();
+  const { sectionKeys: existingWaiverKeys, loading: existingWaiverLoading } =
+    useCatalogueWaiverRequirements(initial.id ?? null);
+  const [waiverKeys, setWaiverKeys] = useState<string[]>([]);
+  const [waiverSeeded, setWaiverSeeded] = useState(false);
+  // Seed local state once the hook has finished loading. Without this
+  // gate a fast Save → reopen sequence could see a stale empty array.
+  useEffect(() => {
+    if (waiverSeeded) return;
+    if (!initial.id) {
+      setWaiverSeeded(true);
+      return;
+    }
+    if (existingWaiverLoading) return;
+    setWaiverKeys(existingWaiverKeys);
+    setWaiverSeeded(true);
+  }, [initial.id, existingWaiverLoading, existingWaiverKeys, waiverSeeded]);
+
+  const toggleWaiver = (key: string, checked: boolean) => {
+    setWaiverKeys((cur) => (checked ? [...new Set([...cur, key])] : cur.filter((k) => k !== key)));
+  };
+
   const submit = async () => {
     if (!draft.code.trim() || !draft.name.trim() || !draft.category.trim()) return;
     setBusy(true);
     try {
-      await onSave(draft);
+      await onSave(draft, waiverKeys);
     } finally {
       setBusy(false);
     }
@@ -1442,6 +1498,112 @@ function CatalogueRowEditor({
           label="Quantity selector (uncheck for one-shot services like in-clinic appointments)"
         />
       </div>
+
+      {/* Lounge-only operational settings: LWO inclusion, JB allocation, SLA. */}
+      <div
+        style={{
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: 12,
+          padding: theme.space[3],
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+          background: 'rgba(14, 20, 20, 0.02)',
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.medium,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+          }}
+        >
+          Operations
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+          <Checkbox
+            checked={draft.include_on_lwo}
+            onChange={(v) => set('include_on_lwo', v)}
+            label="Print on Lab Work Order"
+          />
+          <Checkbox
+            checked={draft.allocate_job_box}
+            onChange={(v) => set('allocate_job_box', v)}
+            label="Requires a job box at arrival"
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+          <Checkbox
+            checked={draft.sla_enabled}
+            onChange={(v) => set('sla_enabled', v)}
+            label="SLA enabled (arrived → appointment complete)"
+          />
+          {draft.sla_enabled ? (
+            <Input
+              label="SLA target (minutes)"
+              inputMode="numeric"
+              value={draft.sla_target_minutes}
+              onChange={(e) => set('sla_target_minutes', e.target.value)}
+              placeholder="e.g. 120"
+              style={{ maxWidth: 180 }}
+            />
+          ) : null}
+        </div>
+      </div>
+
+      {/* Per-item waiver requirements. Empty selection = fall back to
+          applies_to_service_type inference. Any selection = those
+          sections become the required set for this item. */}
+      <div
+        style={{
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: 12,
+          padding: theme.space[3],
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+          background: 'rgba(14, 20, 20, 0.02)',
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.medium,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+          }}
+        >
+          Required waivers
+        </p>
+        <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+          Tick every section the patient must sign for this item. Leave all unchecked to fall back to the
+          service-type rule on the waiver section itself.
+        </p>
+        {waiverSectionsLoading || existingWaiverLoading ? (
+          <Skeleton height={80} radius={8} />
+        ) : waiverSections.length === 0 ? (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            No active waiver sections. Add some on the Waivers tab.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            {waiverSections.map((sec) => (
+              <Checkbox
+                key={sec.key}
+                checked={waiverKeys.includes(sec.key)}
+                onChange={(v) => toggleWaiver(sec.key, v)}
+                label={`${sec.title}  ·  v${sec.version}`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
       {draft.id ? (
         <UpgradeLinksEditor
           catalogueId={draft.id}
@@ -1711,6 +1873,7 @@ function UpgradesTab() {
         code: draft.code.trim(),
         name: draft.name.trim(),
         description: draft.description.trim() || null,
+        display_position: draft.display_position,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
@@ -1812,12 +1975,13 @@ interface UpgradeDraft {
   code: string;
   name: string;
   description: string;
+  display_position: UpgradeDisplayPosition;
   sort_order: string;
   active: boolean;
 }
 
 function emptyUpgradeDraft(): UpgradeDraft {
-  return { code: '', name: '', description: '', sort_order: '0', active: true };
+  return { code: '', name: '', description: '', display_position: 'after_device', sort_order: '0', active: true };
 }
 
 function draftFromUpgrade(row: UpgradeRow): UpgradeDraft {
@@ -1826,10 +1990,17 @@ function draftFromUpgrade(row: UpgradeRow): UpgradeDraft {
     code: row.code,
     name: row.name,
     description: row.description ?? '',
+    display_position: row.display_position,
     sort_order: String(row.sort_order),
     active: row.active,
   };
 }
+
+const UPGRADE_DISPLAY_POSITION_OPTIONS: ReadonlyArray<{ value: UpgradeDisplayPosition; label: string }> = [
+  { value: 'before_device', label: 'Before device name (e.g. "Scalloped Denture")' },
+  { value: 'after_device', label: 'After device name (e.g. "Denture, scalloped")' },
+  { value: 'own_line', label: 'On its own line' },
+];
 
 function UpgradeDisplayRow({
   row,
@@ -1931,6 +2102,12 @@ function UpgradeEditor({
         value={draft.description}
         onChange={(e) => set('description', e.target.value)}
         placeholder="optional, shown to staff in the picker"
+      />
+      <DropdownSelect<UpgradeDisplayPosition>
+        label="Display position"
+        value={draft.display_position}
+        options={UPGRADE_DISPLAY_POSITION_OPTIONS}
+        onChange={(v) => set('display_position', v)}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
         <Input

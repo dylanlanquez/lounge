@@ -490,3 +490,191 @@ export async function signWaiver(input: SignWaiverInput): Promise<void> {
   });
   if (error) throw new Error(error.message);
 }
+
+// ---------- Per-catalogue-item waiver requirements ----------
+//
+// Source of truth: lng_catalogue_waiver_requirements (catalogue_id,
+// section_key). When an item has any rows here, the resolver below
+// uses those and bypasses the legacy applies_to_service_type rule for
+// that item. Items without rows fall back to the inference, so legacy
+// data keeps working without backfill.
+
+interface AllRequirementsResult {
+  // catalogue_id → list of section_keys explicitly required for it
+  byCatalogueId: Map<string, string[]>;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+// Loads every (catalogue_id, section_key) row in one query. Cheap: the
+// table is bounded by catalogue rows × waiver sections (a few hundred
+// rows max in any realistic clinic).
+export function useAllCatalogueWaiverRequirements(): AllRequirementsResult {
+  const [byCatalogueId, setByCatalogueId] = useState<Map<string, string[]>>(new Map());
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading('cat-waiver-reqs');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error: err } = await supabase
+        .from('lng_catalogue_waiver_requirements')
+        .select('catalogue_id, section_key');
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setByCatalogueId(new Map());
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        settle();
+        return;
+      }
+      const map = new Map<string, string[]>();
+      for (const r of (data ?? []) as Array<{ catalogue_id: string; section_key: string }>) {
+        const list = map.get(r.catalogue_id) ?? [];
+        list.push(r.section_key);
+        map.set(r.catalogue_id, list);
+      }
+      setByCatalogueId(map);
+      settle();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick, settle]);
+
+  return { byCatalogueId, loading, error, refresh };
+}
+
+interface RequirementsForCatalogueResult {
+  sectionKeys: string[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+// Loads requirements for a single catalogue row — for the admin
+// editor where we render one item at a time.
+export function useCatalogueWaiverRequirements(catalogueId: string | null): RequirementsForCatalogueResult {
+  const [sectionKeys, setSectionKeys] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(catalogueId);
+
+  useEffect(() => {
+    if (!catalogueId) {
+      setSectionKeys([]);
+      settle();
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error: err } = await supabase
+        .from('lng_catalogue_waiver_requirements')
+        .select('section_key')
+        .eq('catalogue_id', catalogueId);
+      if (cancelled) return;
+      if (err) {
+        if (err.code === 'PGRST200' || err.code === '42P01') {
+          setSectionKeys([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        settle();
+        return;
+      }
+      setSectionKeys(((data ?? []) as Array<{ section_key: string }>).map((r) => r.section_key));
+      settle();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogueId, tick, settle]);
+
+  return { sectionKeys, loading, error, refresh };
+}
+
+// Replace the full set of explicit waiver requirements for a catalogue
+// item in one shot. Diff-based: only affected rows are touched, so the
+// created_at on stable rows is preserved (useful for audit).
+export async function setCatalogueWaiverRequirements(
+  catalogueId: string,
+  sectionKeys: string[]
+): Promise<void> {
+  const { data: existing, error: readErr } = await supabase
+    .from('lng_catalogue_waiver_requirements')
+    .select('section_key')
+    .eq('catalogue_id', catalogueId);
+  if (readErr) throw new Error(readErr.message);
+  const current = new Set(((existing ?? []) as Array<{ section_key: string }>).map((r) => r.section_key));
+  const desired = new Set(sectionKeys);
+
+  const toInsert = [...desired].filter((k) => !current.has(k));
+  const toDelete = [...current].filter((k) => !desired.has(k));
+
+  if (toInsert.length > 0) {
+    const { error } = await supabase
+      .from('lng_catalogue_waiver_requirements')
+      .insert(toInsert.map((section_key) => ({ catalogue_id: catalogueId, section_key })));
+    if (error) throw new Error(error.message);
+  }
+  if (toDelete.length > 0) {
+    const { error } = await supabase
+      .from('lng_catalogue_waiver_requirements')
+      .delete()
+      .eq('catalogue_id', catalogueId)
+      .in('section_key', toDelete);
+    if (error) throw new Error(error.message);
+  }
+}
+
+// Per-cart waiver resolution. For each item: if it has any explicit
+// requirements, those win (service_type is ignored for that item).
+// Items without explicit requirements fall back to the
+// applies_to_service_type rule. Plus every always-on section
+// (applies_to_service_type=null), regardless of cart contents.
+//
+// Result is deduplicated by section.key and sorted by sort_order so
+// the consent sheet renders in a stable order.
+export function requiredSectionsForCart(
+  items: Array<{ catalogue_id: string | null; service_type: string | null | undefined }>,
+  sections: WaiverSection[],
+  explicitByCatalogueId: Map<string, string[]>
+): WaiverSection[] {
+  const sectionByKey = new Map(sections.filter((s) => s.active).map((s) => [s.key, s]));
+  const required = new Map<string, WaiverSection>();
+
+  // Always-on sections (applies_to_service_type IS NULL).
+  for (const sec of sections) {
+    if (sec.active && sec.applies_to_service_type === null) {
+      required.set(sec.key, sec);
+    }
+  }
+
+  // Per-item resolution.
+  for (const item of items) {
+    const explicit = item.catalogue_id ? explicitByCatalogueId.get(item.catalogue_id) : undefined;
+    if (explicit && explicit.length > 0) {
+      for (const key of explicit) {
+        const sec = sectionByKey.get(key);
+        if (sec) required.set(sec.key, sec);
+      }
+      continue;
+    }
+    if (!item.service_type) continue;
+    for (const sec of sections) {
+      if (sec.active && sec.applies_to_service_type === item.service_type) {
+        required.set(sec.key, sec);
+      }
+    }
+  }
+
+  return [...required.values()].sort((a, b) => a.sort_order - b.sort_order);
+}

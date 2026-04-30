@@ -7,11 +7,63 @@ import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 // so a single upgrade can cost different amounts depending on which
 // product it's applied to (Dylan's "Option 2" — fully flexible).
 
+// Where the upgrade renders next to the device name in LWO / product
+// tables / cart copy. before_device prefixes ("Scalloped Denture"),
+// after_device suffixes ("Denture, scalloped" — the default), own_line
+// renders as a separate row in surfaces that allow it.
+export type UpgradeDisplayPosition = 'before_device' | 'after_device' | 'own_line';
+
+// Compose a line's display label given the device name and the
+// upgrades attached to it. Result splits into:
+//
+//   title       — prefixed with any before_device upgrades, suffixed
+//                 with any after_device upgrades joined by commas.
+//   ownLines    — names of upgrades whose position is own_line; each
+//                 one wants its own visual row in surfaces that
+//                 support it (cart subtitle bullets, LWO extra rows).
+//   afterParts  — same after_device names returned separately so a
+//                 caller that prefers them in a subtitle (rather than
+//                 the title) can pull them out without re-parsing.
+//
+// Unknown upgrades (no row in the registry) fall back to after_device.
+// Display_position lookup is by upgrade_id (cart_item_upgrades carry
+// the id snapshot) — when an upgrade has been deleted from the
+// registry, the row's upgrade_id is null and we treat it as after.
+export interface ComposedUpgradeLabel {
+  title: string;
+  afterParts: string[];
+  ownLines: string[];
+}
+
+export function composeUpgradeLabel(
+  deviceName: string,
+  upgrades: Array<{ upgrade_id: string | null; upgrade_name: string }>,
+  positionByUpgradeId: Map<string, UpgradeDisplayPosition>
+): ComposedUpgradeLabel {
+  const before: string[] = [];
+  const after: string[] = [];
+  const ownLines: string[] = [];
+  for (const u of upgrades) {
+    const pos = u.upgrade_id ? positionByUpgradeId.get(u.upgrade_id) ?? 'after_device' : 'after_device';
+    if (pos === 'before_device') before.push(u.upgrade_name);
+    else if (pos === 'own_line') ownLines.push(u.upgrade_name);
+    else after.push(u.upgrade_name);
+  }
+  const prefix = before.length > 0 ? before.join(' ') + ' ' : '';
+  const suffix = after.length > 0 ? ', ' + after.join(', ') : '';
+  return {
+    title: prefix + deviceName + suffix,
+    afterParts: after,
+    ownLines,
+  };
+}
+
 export interface UpgradeRow {
   id: string;
   code: string;
   name: string;
   description: string | null;
+  display_position: UpgradeDisplayPosition;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -57,7 +109,7 @@ function useUpgradesQuery({ activeOnly }: { activeOnly: boolean }): UpgradesResu
     (async () => {
       let q = supabase
         .from('lng_catalogue_upgrades')
-        .select('id, code, name, description, sort_order, active, created_at, updated_at')
+        .select('id, code, name, description, display_position, sort_order, active, created_at, updated_at')
         .order('sort_order', { ascending: true });
       if (activeOnly) q = q.eq('active', true);
       const { data, error: err } = await q;
@@ -92,6 +144,7 @@ export async function upsertUpgrade(
     code: draft.code,
     name: draft.name,
     description: draft.description,
+    display_position: draft.display_position,
     sort_order: draft.sort_order,
     active: draft.active,
   };
