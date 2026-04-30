@@ -161,11 +161,11 @@ async function maybeFlipCartPaid(
 ) {
   const { data: cart } = await supabase
     .from('lng_carts')
-    .select('total_pence, status')
+    .select('total_pence, status, visit_id')
     .eq('id', cartId)
     .maybeSingle();
   if (!cart) return;
-  const c = cart as { total_pence: number | null; status: string };
+  const c = cart as { total_pence: number | null; status: string; visit_id: string };
   if (c.status === 'paid' || c.status === 'voided') return;
   if (c.total_pence == null || c.total_pence <= 0) return;
 
@@ -178,7 +178,30 @@ async function maybeFlipCartPaid(
     (s, r) => s + r.amount_pence,
     0,
   );
-  if (succeeded < c.total_pence) return;
+
+  // Add the appointment deposit (when paid) to the comparison so a
+  // partial till payment topping up over the deposit still flips the
+  // cart.
+  let depositPaid = 0;
+  const { data: visit } = await supabase
+    .from('lng_visits')
+    .select('appointment_id')
+    .eq('id', c.visit_id)
+    .maybeSingle();
+  const v = visit as { appointment_id: string | null } | null;
+  if (v?.appointment_id) {
+    const { data: appt } = await supabase
+      .from('lng_appointments')
+      .select('deposit_pence, deposit_status')
+      .eq('id', v.appointment_id)
+      .maybeSingle();
+    const a = appt as { deposit_pence: number | null; deposit_status: string | null } | null;
+    if (a?.deposit_status === 'paid' && typeof a.deposit_pence === 'number') {
+      depositPaid = a.deposit_pence;
+    }
+  }
+
+  if (succeeded + depositPaid < c.total_pence) return;
 
   await supabase
     .from('lng_carts')

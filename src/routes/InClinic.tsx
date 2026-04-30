@@ -456,7 +456,13 @@ function ActiveVisitCard({
             fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {formatCost(visit.amount_due_pence)}
+          {/* Show the outstanding balance (bill - deposit - what's
+              already been paid), not the bare bill. The view already
+              factors deposits and discounts into amount_paid_pence /
+              amount_due_pence respectively, so this is a simple
+              subtraction. Floors at 0 so an over-deposit doesn't
+              produce a negative; final paid carts read as "Paid". */}
+          {formatOutstanding(visit.amount_due_pence, visit.amount_paid_pence, visit.payment_done)}
         </span>
       </div>
     </button>
@@ -633,9 +639,24 @@ function displayName(v: EnrichedActiveVisit): string {
   return `${first} ${last}`.trim();
 }
 
-function formatCost(pence: number | null): string {
-  if (pence == null || pence === 0) return '—';
-  return formatPence(pence);
+// Outstanding = amount_due - amount_paid, floored at 0. amount_paid
+// in lng_visit_paid_status already counts the appointment deposit
+// AND any cash/card/BNPL collected at the till, so the subtraction
+// is correct without re-aggregating client-side.
+//   • paid carts read as "Paid" rather than a £0 figure (free of
+//     ambiguity with free visits, which read as "—").
+//   • free visits (cart total = 0) keep the dash.
+//   • partial / unpaid carts show the outstanding amount.
+function formatOutstanding(
+  amountDuePence: number | null,
+  amountPaidPence: number,
+  paymentDone: boolean,
+): string {
+  if (amountDuePence == null) return '—';
+  if (amountDuePence === 0) return '—';
+  if (paymentDone) return 'Paid';
+  const outstanding = Math.max(0, amountDuePence - amountPaidPence);
+  return formatPence(outstanding);
 }
 
 const cardStyle: CSSProperties = {
