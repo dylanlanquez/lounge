@@ -82,6 +82,9 @@ export type { StickyPageHeaderProps } from './StickyPageHeader/StickyPageHeader.
 export { DateRangePicker } from './DateRangePicker/DateRangePicker.tsx';
 export type { DateRangePickerProps } from './DateRangePicker/DateRangePicker.tsx';
 
+export { StatCard } from './StatCard/StatCard.tsx';
+export type { StatCardProps, StatCardTone } from './StatCard/StatCard.tsx';
+
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
