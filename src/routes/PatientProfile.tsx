@@ -1549,7 +1549,7 @@ function VisitStatusPill({ visit }: { visit: PatientVisitRow }) {
   const tone =
     visit.status === 'complete'
       ? 'complete'
-      : visit.status === 'cancelled'
+      : visit.status === 'cancelled' || visit.status === 'unsuitable'
         ? 'cancelled'
         : visit.status === 'in_progress'
           ? 'in_progress'
@@ -1593,6 +1593,8 @@ function humaniseVisitStatus(s: PatientVisitRow['status']): string {
       return 'Complete';
     case 'cancelled':
       return 'Cancelled';
+    case 'unsuitable':
+      return 'Unsuitable';
   }
 }
 
