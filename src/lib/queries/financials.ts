@@ -462,7 +462,7 @@ export function useFinancialsDiscounts(range: DateRange): DiscountsResult {
              approver:accounts!approved_by ( first_name, last_name, name ),
              applier:accounts!applied_by ( first_name, last_name, name ),
              cart:lng_carts (
-               visit:lng_visits ( id, patient:patients ( first_name, last_name, name ) )
+               visit:lng_visits ( id, patient:patients ( first_name, last_name ) )
              )`,
           )
           .gte('applied_at', fromIso)
@@ -609,7 +609,7 @@ export function useFinancialsVoids(
             `id, cart_id, amount_pence, method, failure_reason, succeeded_at, cancelled_at,
              taken_by:accounts!taken_by ( first_name, last_name, name ),
              cart:lng_carts (
-               visit:lng_visits ( id, patient:patients ( first_name, last_name, name ) )
+               visit:lng_visits ( id, patient:patients ( first_name, last_name ) )
              )`,
           )
           .eq('status', 'cancelled')
@@ -689,7 +689,7 @@ export function useFinancialsSales(range: DateRange, filters: SalesFilters): Sal
           .from('lng_visits')
           .select(
             `id, opened_at, arrival_type,
-             patient:patients ( first_name, last_name, name ),
+             patient:patients ( first_name, last_name ),
              appointment:lng_appointments ( appointment_ref ),
              walk_in:lng_walk_ins ( appointment_ref ),
              cart:lng_carts (
