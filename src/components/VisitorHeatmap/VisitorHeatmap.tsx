@@ -65,6 +65,12 @@ interface HoverState {
 export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<GMarker[]>([]);
+  // Tracks the geocode set we last auto-fit the camera to. Filter
+  // changes don't refit — only a new dataset (different outwards)
+  // does. Stops the camera jerking around when the user is just
+  // narrowing within the same data, and avoids the tile-interpolation
+  // flash that comes with rapid zoom changes.
+  const lastFitGeoKeyRef = useRef<string>('');
   // The map is held in state — not a ref — so the marker-drawing
   // effect re-runs once the map finishes loading. With a ref, a fast
   // cache return for geocodes would let the effect fire before the
@@ -199,11 +205,6 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
         if (resolvedPoints.length === 0) return;
 
         const max = Math.max(...resolvedPoints.map((p) => p.count));
-        let north = -Infinity;
-        let south = Infinity;
-        let east = -Infinity;
-        let west = Infinity;
-        let drew = 0;
         for (const point of resolvedPoints) {
           const geo = geoIndex.get(point.outward);
           if (!geo) continue;
@@ -245,14 +246,33 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           });
           marker.addListener('mouseout', () => setHover(null));
           markersRef.current.push(marker);
-          if (geo.lat > north) north = geo.lat;
-          if (geo.lat < south) south = geo.lat;
-          if (geo.lng > east) east = geo.lng;
-          if (geo.lng < west) west = geo.lng;
-          drew += 1;
         }
-        if (drew > 0) {
-          map.fitBounds({ north, south, east, west }, 64);
+
+        // Fit bounds only when the *dataset* changes, not on every
+        // filter tweak. Bounds are computed across ALL geocoded
+        // outwards (not the current filter) so the initial framing
+        // shows the whole catchment regardless of which sub the
+        // user has selected.
+        const geoKey = Array.from(geoIndex.keys()).sort().join(',');
+        if (geoKey && geoKey !== lastFitGeoKeyRef.current) {
+          let north = -Infinity;
+          let south = Infinity;
+          let east = -Infinity;
+          let west = Infinity;
+          let any = false;
+          for (const point of data.points) {
+            const g = geoIndex.get(point.outward);
+            if (!g) continue;
+            if (g.lat > north) north = g.lat;
+            if (g.lat < south) south = g.lat;
+            if (g.lng > east) east = g.lng;
+            if (g.lng < west) west = g.lng;
+            any = true;
+          }
+          if (any) {
+            map.fitBounds({ north, south, east, west }, 64);
+            lastFitGeoKeyRef.current = geoKey;
+          }
         }
       } catch (e) {
         if (cancelled) return;
@@ -269,7 +289,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
     return () => {
       cancelled = true;
     };
-  }, [map, resolvedPoints, geoIndex]);
+  }, [map, resolvedPoints, geoIndex, data.points]);
 
   if (unavailable) {
     return (
