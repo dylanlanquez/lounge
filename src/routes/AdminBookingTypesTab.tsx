@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Clock, Plus, Settings2, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react';
 import {
   Button,
   Card,
@@ -25,6 +25,18 @@ import {
   useBookingTypeConfigs,
 } from '../lib/queries/bookingTypes.ts';
 import { supabase } from '../lib/supabase.ts';
+
+// Service-family palette. Matches the Visitor Heatmap markers
+// (src/lib/visitorMapStyling.ts) so a service's identity reads
+// the same on every Lounge surface — the dot on the booking-types
+// row is the same colour as the dot for that service on the map.
+const SERVICE_DOT_COLOUR: Record<BookingServiceType, string> = {
+  denture_repair: '#4F6F89',
+  click_in_veneers: '#2D3539',
+  same_day_appliance: theme.color.accent,
+  impression_appointment: '#B36815',
+  other: '#6B7378',
+};
 
 // AdminBookingTypesTab — manages the per-booking-type scheduling config
 // that drives the reschedule slot picker, conflict checker, and (later)
@@ -99,19 +111,21 @@ export function AdminBookingTypesTab() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-      <Card padding="lg">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      <header>
         <h2
           style={{
             margin: 0,
-            fontSize: theme.type.size.lg,
+            fontSize: theme.type.size.xl,
             fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
             display: 'flex',
             alignItems: 'center',
             gap: theme.space[2],
           }}
         >
-          <Clock size={18} aria-hidden /> Booking types
+          <Clock size={20} aria-hidden style={{ color: theme.color.inkMuted }} /> Booking types
         </h2>
         <p
           style={{
@@ -119,32 +133,29 @@ export function AdminBookingTypesTab() {
             fontSize: theme.type.size.sm,
             color: theme.color.inkMuted,
             lineHeight: 1.5,
+            maxWidth: 640,
           }}
         >
-          Working hours and duration per service. Each service has a parent default.
-          Add per-variant / per-product / per-arch overrides only when a specific
-          booking type needs to deviate — anything you leave empty inherits from the
-          parent.
+          Working hours and durations per service. Add overrides only for the
+          specific variants, products, or arches that need to differ from the parent.
         </p>
-      </Card>
+      </header>
 
-      <Card padding="lg">
+      <Card padding="none">
         <ul
           style={{
             listStyle: 'none',
             margin: 0,
             padding: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[3],
           }}
         >
-          {BOOKING_SERVICE_TYPES.map((s) => {
+          {BOOKING_SERVICE_TYPES.map((s, i) => {
             const group = grouped.get(s.value);
             if (!group) return null;
             return (
               <ServiceNode
                 key={s.value}
+                isFirst={i === 0}
                 serviceLabel={s.label}
                 serviceType={s.value}
                 parent={group.parent}
@@ -237,7 +248,12 @@ function serviceOfTarget(t: EditTarget): BookingServiceType {
 // One service block — parent row + collapsible children.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Service row — one entry in the booking-types tree. Two-line
+// content (name + summary) on the left, override count + cog button
+// on the right, hairline separator above (except first). Click the
+// row to expand the children, click the cog to open the editor.
 function ServiceNode({
+  isFirst,
   serviceLabel,
   serviceType,
   parent,
@@ -247,6 +263,7 @@ function ServiceNode({
   onAddChild,
   onRemoveChild,
 }: {
+  isFirst: boolean;
   serviceLabel: string;
   serviceType: BookingServiceType;
   parent: BookingTypeConfigRow;
@@ -285,56 +302,63 @@ function ServiceNode({
     };
   }, [serviceType, children]);
 
+  const dot = SERVICE_DOT_COLOUR[serviceType];
+
   return (
     <li
       style={{
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        overflow: 'hidden',
+        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      <div
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-label={`${serviceLabel} — ${expanded ? 'collapse' : 'expand'}`}
         style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          textAlign: 'left',
+          width: '100%',
+          padding: `${theme.space[4]}px ${theme.space[5]}px`,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
           gap: theme.space[3],
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          fontFamily: 'inherit',
+          WebkitTapHighlightColor: 'transparent',
         }}
       >
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
+        <span
+          aria-hidden
           style={{
-            appearance: 'none',
-            border: 'none',
-            background: 'transparent',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            padding: 0,
-            textAlign: 'left',
-            flex: 1,
-            minWidth: 0,
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            background: dot,
+            flexShrink: 0,
+            marginTop: 2,
           }}
-        >
-          {expanded ? (
-            <ChevronDown size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
-          ) : (
-            <ChevronRight size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
-          )}
+        />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span
             style={{
               fontSize: theme.type.size.md,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[1],
             }}
           >
             {serviceLabel}
+            {expanded ? (
+              <ChevronDown size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
+            ) : (
+              <ChevronRight size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
+            )}
           </span>
           <span
             style={{
@@ -344,49 +368,49 @@ function ServiceNode({
             }}
           >
             {summariseHours(parent.working_hours)} · {summariseDuration(parent)}
-            {children.length > 0 ? ` · ${children.length} override${children.length === 1 ? '' : 's'}` : ''}
           </span>
-        </button>
-        <Button variant="tertiary" size="sm" onClick={onEditParent}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <Settings2 size={14} aria-hidden /> Configure
-          </span>
-        </Button>
-      </div>
+        </div>
+        <OverrideCountPill count={children.length} />
+        <IconAction
+          ariaLabel={`Configure ${serviceLabel}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onEditParent();
+          }}
+          icon={<Settings2 size={16} aria-hidden />}
+        />
+      </button>
 
       {expanded ? (
         <div
           style={{
-            borderTop: `1px solid ${theme.color.border}`,
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
             background: theme.color.bg,
+            padding: `${theme.space[3]}px ${theme.space[5]}px ${theme.space[4]}px ${theme.space[8]}px`,
+            borderTop: `1px solid ${theme.color.border}`,
           }}
         >
           {children.length === 0 ? (
-            <p
-              style={{
-                margin: `0 0 ${theme.space[3]}px`,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontStyle: 'italic',
-              }}
-            >
-              No overrides yet — every {serviceLabel.toLowerCase()} booking uses the parent defaults above.
-            </p>
+            <EmptyOverrides
+              serviceLabel={serviceLabel}
+              canAdd={available.length > 0}
+            />
           ) : (
             <ul
               style={{
                 listStyle: 'none',
                 margin: 0,
                 padding: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: theme.space[2],
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+                background: theme.color.surface,
+                overflow: 'hidden',
               }}
             >
-              {children.map((c) => (
+              {children.map((c, i) => (
                 <ChildRow
                   key={c.id}
+                  isFirst={i === 0}
+                  dot={dot}
                   row={c}
                   onEdit={() => onEditChild(c)}
                   onRemove={() => onRemoveChild(c)}
@@ -397,6 +421,7 @@ function ServiceNode({
 
           {available.length > 0 ? (
             <AddOverrideRow
+              parentLabel={childKindLabel(serviceType)}
               available={available}
               onAdd={(picked) =>
                 onAddChild({
@@ -408,28 +433,172 @@ function ServiceNode({
                 })
               }
             />
-          ) : (
+          ) : children.length > 0 ? (
             <p
               style={{
                 margin: `${theme.space[3]}px 0 0`,
                 fontSize: theme.type.size.xs,
                 color: theme.color.inkSubtle,
+                fontStyle: 'italic',
               }}
             >
-              Every available {childKindLabel(serviceType)} already has an override — or this service has no child dimension.
+              Every {childKindLabel(serviceType)} already has an override.
             </p>
-          )}
+          ) : null}
         </div>
       ) : null}
     </li>
   );
 }
 
+// Right-edge pill showing override count for a service. "—" when zero
+// so the column has a stable visual rhythm down the list.
+function OverrideCountPill({ count }: { count: number }) {
+  const has = count > 0;
+  return (
+    <span
+      aria-label={
+        has ? `${count} override${count === 1 ? '' : 's'}` : 'No overrides'
+      }
+      style={{
+        flexShrink: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: `2px ${theme.space[2]}px`,
+        borderRadius: theme.radius.pill,
+        border: `1px solid ${theme.color.border}`,
+        background: has ? theme.color.surface : 'transparent',
+        color: has ? theme.color.ink : theme.color.inkSubtle,
+        fontSize: 11,
+        fontWeight: theme.type.weight.medium,
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      {has ? `${count} override${count === 1 ? '' : 's'}` : '— overrides'}
+    </span>
+  );
+}
+
+// Subtle icon button. Used for the cog and the overflow trash actions
+// — distinct from a pill button visually so a row's visual weight
+// stays balanced.
+function IconAction({
+  ariaLabel,
+  onClick,
+  icon,
+  tone = 'default',
+}: {
+  ariaLabel: string;
+  onClick: (e: React.MouseEvent) => void;
+  icon: React.ReactNode;
+  tone?: 'default' | 'danger';
+}) {
+  const colour = tone === 'danger' ? theme.color.alert : theme.color.inkMuted;
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        padding: theme.space[2],
+        margin: -theme.space[1],
+        borderRadius: theme.radius.input,
+        color: colour,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        WebkitTapHighlightColor: 'transparent',
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {icon}
+    </button>
+  );
+}
+
+// Empty state when a service has no overrides yet. Quiet card with
+// icon + copy + (no inline action — the AddOverrideRow below handles
+// adding so we don't double up the affordance).
+function EmptyOverrides({
+  serviceLabel,
+  canAdd,
+}: {
+  serviceLabel: string;
+  canAdd: boolean;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px dashed ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: '50%',
+          background: theme.color.bg,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: theme.color.inkMuted,
+          flexShrink: 0,
+        }}
+      >
+        <Sparkles size={16} aria-hidden />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.ink,
+          }}
+        >
+          No overrides yet
+        </p>
+        <p
+          style={{
+            margin: `2px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: 1.5,
+          }}
+        >
+          Every {serviceLabel.toLowerCase()} booking uses the parent defaults.
+          {canAdd ? ' Add the first override below to deviate for a specific case.' : ''}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Child row inside an expanded service. Sits in a contained
+// rectangle (border + radius on the parent ul); rows separated by
+// hairlines, no per-row borders.
 function ChildRow({
+  isFirst,
+  dot,
   row,
   onEdit,
   onRemove,
 }: {
+  isFirst: boolean;
+  dot: string;
   row: BookingTypeConfigRow;
   onEdit: () => void;
   onRemove: () => void;
@@ -442,16 +611,30 @@ function ChildRow({
       style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
         gap: theme.space[3],
-        padding: `${theme.space[2]}px ${theme.space[3]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold }}>
+      <span
+        aria-hidden
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          background: dot,
+          flexShrink: 0,
+          opacity: 0.5,
+        }}
+      />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
           {bookingTypeRowLabel(row)}
         </span>
         <span
@@ -461,26 +644,39 @@ function ChildRow({
             display: 'flex',
             gap: theme.space[2],
             flexWrap: 'wrap',
+            alignItems: 'center',
           }}
         >
-          <InheritChip inherits={inheritsHours} label="Hours" override={summariseHours(row.working_hours)} />
-          <InheritChip inherits={inheritsDuration} label="Duration" override={summariseDuration(row)} />
+          <InheritChip
+            inherits={inheritsHours}
+            label="Hours"
+            override={summariseHours(row.working_hours)}
+          />
+          <InheritChip
+            inherits={inheritsDuration}
+            label="Duration"
+            override={summariseDuration(row)}
+          />
         </span>
       </div>
-      <div style={{ display: 'flex', gap: theme.space[2], flexShrink: 0 }}>
-        <Button variant="tertiary" size="sm" onClick={onEdit}>
-          Configure
-        </Button>
-        <Button variant="tertiary" size="sm" onClick={onRemove}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
-            <Trash2 size={12} aria-hidden /> Remove
-          </span>
-        </Button>
-      </div>
+      <IconAction
+        ariaLabel={`Configure ${bookingTypeRowLabel(row)}`}
+        onClick={onEdit}
+        icon={<Settings2 size={16} aria-hidden />}
+      />
+      <IconAction
+        ariaLabel={`Remove override for ${bookingTypeRowLabel(row)}`}
+        onClick={onRemove}
+        icon={<Trash2 size={16} aria-hidden />}
+        tone="danger"
+      />
     </li>
   );
 }
 
+// Inline chip showing per-section status: "inherits" (muted) or
+// the section's actual value (regular). Sits in the child row's
+// summary line.
 function InheritChip({
   inherits,
   label,
@@ -496,60 +692,105 @@ function InheritChip({
         display: 'inline-flex',
         alignItems: 'center',
         gap: 4,
-        padding: '2px 6px',
-        borderRadius: theme.radius.pill,
-        border: `1px solid ${theme.color.border}`,
-        background: inherits ? theme.color.bg : theme.color.surface,
-        color: inherits ? theme.color.inkMuted : theme.color.ink,
         fontSize: 11,
         fontWeight: theme.type.weight.medium,
+        color: inherits ? theme.color.inkSubtle : theme.color.ink,
       }}
     >
-      <span style={{ color: theme.color.inkSubtle }}>{label}:</span>
+      <span style={{ color: theme.color.inkSubtle, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide, fontSize: 10 }}>
+        {label}
+      </span>
       <span>{inherits ? 'inherits' : override}</span>
     </span>
   );
 }
 
+// "+ Add override" affordance. Single-step interaction: click the
+// pill → reveals the picker → choosing a value creates the override
+// immediately and closes the picker. No separate Add button.
 function AddOverrideRow({
+  parentLabel,
   available,
   onAdd,
 }: {
+  parentLabel: string;
   available: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[];
   onAdd: (picked: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }) => void;
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [picked, setPicked] = useState<string>('');
+
+  // When the picker opens and a value is selected, fire onAdd
+  // immediately on change. We track the selection separately from
+  // the dropdown's controlled value so the onChange handler can
+  // commit and reset in one go.
+  const handlePick = (next: string) => {
+    setPicked(next);
+    const found = available.find((a) => `${a.kind}:${a.key}` === next);
+    if (found) {
+      onAdd(found);
+      setPickerOpen(false);
+      setPicked('');
+    }
+  };
+
+  if (!pickerOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setPickerOpen(true)}
+        style={{
+          appearance: 'none',
+          border: `1px dashed ${theme.color.border}`,
+          background: 'transparent',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkMuted,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          borderRadius: theme.radius.input,
+          marginTop: theme.space[3],
+          width: '100%',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: theme.space[2],
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <Plus size={14} aria-hidden /> Add an override for a specific {parentLabel}
+      </button>
+    );
+  }
+
   return (
     <div
       style={{
-        display: 'flex',
-        gap: theme.space[2],
         marginTop: theme.space[3],
+        display: 'flex',
         alignItems: 'center',
+        gap: theme.space[2],
       }}
     >
-      <DropdownSelect<string>
-        ariaLabel="Pick a child to override"
-        value={picked}
-        options={available.map((a) => ({ value: `${a.kind}:${a.key}`, label: a.label }))}
-        placeholder="Add an override…"
-        onChange={(v) => setPicked(v)}
-      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <DropdownSelect<string>
+          ariaLabel={`Pick a ${parentLabel} to override`}
+          value={picked}
+          options={available.map((a) => ({ value: `${a.kind}:${a.key}`, label: a.label }))}
+          placeholder={`Choose a ${parentLabel}…`}
+          onChange={handlePick}
+        />
+      </div>
       <Button
-        variant="primary"
+        variant="tertiary"
         size="sm"
-        disabled={!picked}
         onClick={() => {
-          const found = available.find((a) => `${a.kind}:${a.key}` === picked);
-          if (found) {
-            onAdd(found);
-            setPicked('');
-          }
+          setPickerOpen(false);
+          setPicked('');
         }}
       >
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-          <Plus size={14} aria-hidden /> Add
-        </span>
+        Cancel
       </Button>
     </div>
   );
@@ -707,12 +948,28 @@ function BookingTypeEditorDialog({
           : 'Flip Override on for the sections that should differ from the parent. Sections left off read from the parent automatically.'
       }
       footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: theme.space[2],
+            // Hairline separator anchors the footer as a footer the
+            // way Stripe / Linear modals do — content above scrolls,
+            // actions stay pinned visually.
+            borderTop: `1px solid ${theme.color.border}`,
+            marginInline: -theme.space[5],
+            marginBottom: -theme.space[5],
+            paddingInline: theme.space[5],
+            paddingBlock: theme.space[4],
+            background: theme.color.bg,
+          }}
+        >
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button variant="primary" onClick={save} loading={busy}>
-            Save
+            {busy ? 'Saving…' : 'Save'}
           </Button>
         </div>
       }
@@ -755,12 +1012,26 @@ function BookingTypeEditorDialog({
           ) : null}
         </SectionWithInherit>
 
-        <Input
-          label="Notes (admin only)"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Optional. Anything internal staff should know."
-        />
+        <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <header style={{ display: 'flex', alignItems: 'center' }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.semibold,
+              }}
+            >
+              Notes
+            </span>
+          </header>
+          <Input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Optional. Anything internal staff should know."
+          />
+        </section>
       </div>
     </Dialog>
   );
