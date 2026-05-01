@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
-import { Hash, Map as MapIcon, Sparkles, UserPlus, Users } from 'lucide-react';
+import { Hash, Lock, Map as MapIcon, Sparkles, UserPlus, Users } from 'lucide-react';
 import {
   BarChart,
   Card,
   EmptyState,
   Skeleton,
   StatCard,
+  VisitorAddressMap,
   VisitorHeatmap,
 } from '../../components/index.ts';
 import { theme } from '../../theme/index.ts';
@@ -13,9 +14,12 @@ import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
 import {
   type PatientReports,
   useReportsPatients,
+  useReportsVisitorAddressMap,
   useReportsVisitorMap,
 } from '../../lib/queries/reports.ts';
 import { usePostcodeGeocodes } from '../../lib/queries/postcodeGeocodes.ts';
+import { useAddressGeocodes } from '../../lib/queries/addressGeocodes.ts';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {
@@ -65,7 +69,33 @@ export function DemographicsTab({ range }: Props) {
   );
 }
 
+// Demographics map — switches between two resolutions based on the
+// caller's role:
+//
+//   • Admin / super admin    → address-resolution map. One pin per
+//                              unique patient address with hover
+//                              showing LAP refs and items per visit.
+//                              Personal data, gated to leadership.
+//
+//   • Other staff            → outward-postcode heatmap. Coarser,
+//                              privacy-safer; no individual addresses
+//                              ever surface client-side.
+//
+// The split happens at this card level rather than inside the map
+// component so each variant owns its own data-fetching path. The
+// admin variant queries patient line1; the non-admin variant never
+// touches that column.
 function VisitorMapCard({ range }: { range: DateRange }) {
+  const { account } = useCurrentAccount();
+  const isAdmin = account?.is_admin === true || account?.is_super_admin === true;
+  return isAdmin ? (
+    <AdminAddressMap range={range} />
+  ) : (
+    <OutwardHeatmap range={range} />
+  );
+}
+
+function OutwardHeatmap({ range }: { range: DateRange }) {
   const map = useReportsVisitorMap(range);
   const outwards = useMemo(() => map.data?.points.map((p) => p.outward) ?? [], [map.data]);
   const geocodes = usePostcodeGeocodes(outwards);
@@ -111,6 +141,86 @@ function VisitorMapCard({ range }: { range: DateRange }) {
           {map.data.unknown_outward > 0 ? (
             <p style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
               {formatNumber(map.data.unknown_outward)} additional patient{map.data.unknown_outward === 1 ? '' : 's'} with no postcode on file (not shown).
+            </p>
+          ) : null}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function AdminAddressMap({ range }: { range: DateRange }) {
+  const map = useReportsVisitorAddressMap(range);
+  // De-duplicated address inputs to feed the geocode hook. Two visits
+  // at the same address resolve to one entry — the hook batches
+  // and caches at this level so we never hit Google twice for one
+  // address.
+  const addresses = useMemo(
+    () =>
+      map.data?.points.map((p) => ({
+        line1: p.line1,
+        postcode: p.postcode,
+      })) ?? [],
+    [map.data],
+  );
+  const geocodes = useAddressGeocodes(addresses);
+
+  return (
+    <Card padding="lg">
+      <h3
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+        }}
+      >
+        <MapIcon size={16} aria-hidden /> Visitor heatmap
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[1],
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.medium,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.pill,
+            padding: `2px ${theme.space[2]}px`,
+          }}
+        >
+          <Lock size={11} aria-hidden /> Admin
+        </span>
+      </h3>
+      <p
+        style={{
+          margin: `${theme.space[1]}px 0 ${theme.space[4]}px`,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+        }}
+      >
+        One pin per unique patient address. Hover a pin for visit dates, LAP refs, and what was booked. Visible to admins only.
+      </p>
+      {map.error || geocodes.error ? (
+        <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          {map.error ?? geocodes.error}
+        </p>
+      ) : map.loading || !map.data || geocodes.loading ? (
+        <Skeleton height={480} />
+      ) : map.data.points.length === 0 ? (
+        <EmptyState
+          icon={<MapIcon size={20} />}
+          title="No mappable visitors"
+          description="No patients with a usable address on file in this period."
+        />
+      ) : (
+        <>
+          <VisitorAddressMap data={map.data} geocodes={geocodes.data} />
+          {map.data.unmappable_visits > 0 ? (
+            <p style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+              {formatNumber(map.data.unmappable_visits)} visit{map.data.unmappable_visits === 1 ? '' : 's'} with an incomplete address (no street line or invalid postcode) not shown.
             </p>
           ) : null}
         </>

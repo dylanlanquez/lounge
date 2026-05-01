@@ -79,6 +79,7 @@ The addendum (or fresh DPIA) covers Lounge specifically and replaces / supplemen
 | DP10 | A staff member who has left Venneir retains app access. | Medium | High | Off-boarding checklist: deactivate `accounts.status`, revoke all `lng_receptionist_sessions`, rotate any shared PINs. Quarterly access review. |
 | DP11 | A consent form is "signed" by the receptionist on the patient's behalf. | Low | High | Signature capture component requires a stylus or finger on glass; logged with timestamp + tablet device id. Periodic spot audit of signatures (visual review by admin). |
 | DP12 | Patient asks for their data to be deleted (right to erasure). | Medium | Medium | DSAR / erasure runbook documented in `02-data-protection.md §8`. Stripe payments retained for 7 years per HMRC, with the personal data fields nulled. |
+| DP13 | Reports → Demographics admin address heatmap exposes precise residential addresses on a screen visible to clinical leadership. | Low (admin-only access) | Medium (PII surfaced in a new context) | **Lawful basis:** Article 6(1)(f) legitimate interest — operational catchment analysis for service-area planning. **Necessity:** outward-postcode resolution is the default for all other staff (DP-safer); precise resolution is restricted to admins because higher resolution is materially more useful for capacity / service-mix decisions and the additional intrusion is minimal given the data was already lawfully collected for shipping. **Mitigations:** RLS on `lng_address_geocodes` gates SELECT to `auth_is_lng_admin() OR auth_is_super_admin()`; the `geocode-address` edge function repeats the same admin check before any cache write or Google call; cache holds only the normalised `(line1, postcode)` and lat/lng, no patient identifiers; access is on the same managed tablet/device with the same auto-lock and revocation controls (§3); the map description text is explicit that it is "Admin only". **Processor disclosure:** when an address is not in cache, `line1 + postcode + country=GB` is sent to Google Geocoding API — Google is a sub-processor; the processor list in the Lounge privacy notice must reflect this. |
 
 ### 2.4 Residual risk
 
@@ -161,6 +162,8 @@ Every column added to `lng_*` tables has a documented purpose. The design rule:
 | `lng_event_log` | `account_id` | Operational audit | 13 months |
 | `lng_system_failures` | Stack traces only | Incident investigation | 12 months |
 | `lng_calendly_bookings` | Patient name, email in raw payload | Ingestion idempotency, replay | 6 years (inherits patient retention) |
+| `lng_postcode_geocodes` | No (outward postcode aggregations only) | Reports visitor-heatmap cache, all-staff visible | While outward is referenced; effectively permanent |
+| `lng_address_geocodes` | Yes — normalised `line1` + `postcode` + lat/lng | Admin-only address heatmap cache for catchment analysis (DP13) | While source patient address remains valid; cleared on patient erasure (§8 runbook) |
 
 **[legal review required: confirm these retention periods against current ICO guidance and any GDC requirements for dental records — typically 11 years for adult records and longer for under-25s, per RDC retention guidance.]**
 
@@ -322,10 +325,11 @@ Erasure is **not absolute** — we must retain financial records for HMRC (7 yea
    - HMRC retention (7 years from the end of the financial year for accounts records).
    - GDC retention (typically 11 years for adult records; longer for under-25s — **[legal review required]**).
 3. Execute a **partial erasure**:
-   - Personal identifiers nulled or pseudonymised on `patients`: `first_name → 'Erased'`, `last_name → '<UUID>'`, `email → null`, `phone → null`, etc.
+   - Personal identifiers nulled or pseudonymised on `patients`: `first_name → 'Erased'`, `last_name → '<UUID>'`, `email → null`, `phone → null`, `portal_ship_line1 → null`, `portal_ship_line2 → null`, `portal_ship_postcode → null`, etc.
    - Free-text fields cleared.
    - `patient_files` cleared (storage objects deleted; rows updated to `status = 'erased'`).
    - `lng_payments`, `lng_terminal_payments`, `lng_receipts.recipient` retained but personal identifiers stripped where possible.
+   - `lng_address_geocodes` row matching the patient's normalised `(line1, postcode)` is deleted if no other patient record references the same address. The cache is keyed only on the address, so after the patient's `portal_ship_*` fields are nulled the cache row is orphaned; the runbook removes it to honour the erasure end-to-end. (`lng_postcode_geocodes` is kept — outward postcodes aren't personal data.)
    - A `patient_events` row records the erasure for our own audit.
 4. Inform the patient in writing within **1 calendar month** detailing what was erased and what was retained (and why).
 

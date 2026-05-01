@@ -1131,6 +1131,371 @@ export function useReportsVisitorMap(range: DateRange): VisitorMapResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Visitor address map (admin-only)
+//
+// Sibling of the outward-postcode visitor map but at full-address
+// resolution. Each unique patient address (line1 + postcode) becomes
+// one point. Each point carries the list of visits that happened from
+// that address — visit date, LAP appointment ref, and the items
+// purchased — so the hover card on the map can surface real
+// operational detail to clinical leadership.
+//
+// Privacy: precise residential addresses are personal data. This hook
+// queries the lng_visits join with patient address fields and is
+// intended for admin/super-admin only — DemographicsTab gates on
+// account.is_admin / account.is_super_admin before instantiating this
+// hook. The same gate is enforced again in geocode-address (the edge
+// function that turns these into lat/lng); RLS on lng_address_geocodes
+// is defence-in-depth.
+//
+// The aggregator de-duplicates by *address*, not by patient — two
+// patients at the same household share one map point. Within a
+// point, every visit is listed individually so the hover doesn't
+// hide that two people came from the same address.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface VisitorAddressVisitItem {
+  // Display label as it should appear in the hover (e.g. "Cracked
+  // denture" / "Click-in veneers"). Built once during aggregation so
+  // the hover card stays purely presentational.
+  label: string;
+  service: VisitorMapService;
+}
+
+export interface VisitorAddressVisit {
+  visit_id: string;
+  visit_date: string; // ISO timestamp from lng_visits.opened_at
+  appointment_ref: string | null; // LAP-xxxxx, from appointment or walk-in
+  items: VisitorAddressVisitItem[];
+  // Dominant service across the visit's items, used to colour the
+  // marker when the point covers a single visit. When there are
+  // multiple visits, the point's own dominant_service wins.
+  dominant_service: VisitorMapService;
+}
+
+export interface VisitorAddressPoint {
+  // Display form (preserves user-entered casing/spacing for the hover).
+  line1: string;
+  postcode: string;
+  // Normalised form — must match the geocode hook's normalisation
+  // (trimmed-collapsed-lowercased line1, no-space-uppercased postcode).
+  line1_norm: string;
+  postcode_norm: string;
+  total_visits: number;
+  // Distinct patient_ids that booked from this address — surfaced in
+  // the hover so household-shared bookings are visible.
+  patient_count: number;
+  visits: VisitorAddressVisit[];
+  dominant_service: VisitorMapService;
+}
+
+export interface VisitorAddressMapData {
+  points: VisitorAddressPoint[];
+  total_visits: number;
+  // Patients in the period whose record is missing a line1 OR a
+  // valid UK postcode shape. Surfaced as a "(N visits with no usable
+  // address) not shown" footnote.
+  unmappable_visits: number;
+}
+
+interface VisitorAddressMapVisit {
+  id: string;
+  opened_at: string;
+  patient_id: string;
+  patient:
+    | {
+        portal_ship_line1: string | null;
+        portal_ship_postcode: string | null;
+      }
+    | {
+        portal_ship_line1: string | null;
+        portal_ship_postcode: string | null;
+      }[]
+    | null;
+  appointment:
+    | { appointment_ref: string | null }
+    | { appointment_ref: string | null }[]
+    | null;
+  walk_in:
+    | { appointment_ref: string | null }
+    | { appointment_ref: string | null }[]
+    | null;
+  cart:
+    | {
+        items:
+          | {
+              arch: string | null;
+              catalogue:
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }[]
+                | null;
+            }[]
+          | null;
+      }
+    | {
+        items:
+          | {
+              arch: string | null;
+              catalogue:
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }[]
+                | null;
+            }[]
+          | null;
+      }[]
+    | null;
+}
+
+export function aggregateVisitorAddressMap(
+  visits: VisitorAddressMapVisit[],
+): VisitorAddressMapData {
+  interface MutablePoint {
+    line1: string;
+    postcode: string;
+    line1_norm: string;
+    postcode_norm: string;
+    visits: VisitorAddressVisit[];
+    patient_ids: Set<string>;
+    serviceCounts: Map<VisitorMapService, number>;
+  }
+  const byKey = new Map<string, MutablePoint>();
+  let unmappable_visits = 0;
+  let total_visits = 0;
+
+  for (const v of visits) {
+    const p = pickOne(v.patient);
+    const line1Raw = p?.portal_ship_line1 ?? '';
+    const postcodeRaw = p?.portal_ship_postcode ?? '';
+    const line1_norm = line1Raw.trim().replace(/\s+/g, ' ').toLowerCase();
+    const postcode_norm = postcodeRaw.replace(/\s+/g, '').toUpperCase();
+    // Mirror the edge function's gate: missing line1 OR malformed UK
+    // postcode means we can't pin this visit. The full UK postcode
+    // shape (outward + inward) is required for address-level lookup.
+    const validPostcode = /^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(postcode_norm);
+    total_visits += 1;
+    if (!line1_norm || !validPostcode) {
+      unmappable_visits += 1;
+      continue;
+    }
+
+    const key = `${line1_norm}|${postcode_norm}`;
+    let bucket = byKey.get(key);
+    if (!bucket) {
+      bucket = {
+        line1: line1Raw.trim(),
+        postcode: postcodeRaw.trim(),
+        line1_norm,
+        postcode_norm,
+        visits: [],
+        patient_ids: new Set(),
+        serviceCounts: new Map(),
+      };
+      byKey.set(key, bucket);
+    }
+
+    const dominant = dominantClassification(v);
+    const items = buildAddressItems(v, dominant.service);
+    const appt = pickOne(v.appointment);
+    const walkIn = pickOne(v.walk_in);
+    bucket.visits.push({
+      visit_id: v.id,
+      visit_date: v.opened_at,
+      appointment_ref: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
+      items,
+      dominant_service: dominant.service,
+    });
+    bucket.patient_ids.add(v.patient_id);
+    bucket.serviceCounts.set(
+      dominant.service,
+      (bucket.serviceCounts.get(dominant.service) ?? 0) + 1,
+    );
+  }
+
+  const points: VisitorAddressPoint[] = Array.from(byKey.values())
+    .map((b) => {
+      // Pick the most-booked service at this address as its colour.
+      let dominant: VisitorMapService = 'other';
+      let max = -1;
+      for (const [svc, c] of b.serviceCounts.entries()) {
+        if (c > max) {
+          dominant = svc;
+          max = c;
+        }
+      }
+      return {
+        line1: b.line1,
+        postcode: b.postcode,
+        line1_norm: b.line1_norm,
+        postcode_norm: b.postcode_norm,
+        total_visits: b.visits.length,
+        patient_count: b.patient_ids.size,
+        // Newest visit first so the hover-card list reads chronologically
+        // backwards — most relevant booking on top.
+        visits: b.visits.sort((a, x) => x.visit_date.localeCompare(a.visit_date)),
+        dominant_service: dominant,
+      };
+    })
+    .sort((a, b) => b.total_visits - a.total_visits);
+
+  return { points, total_visits, unmappable_visits };
+}
+
+// Build the per-visit item list for the hover card. Reuses the
+// existing dominant-classification helpers but expands every cart
+// item (not only the dominant one) so the hover surfaces the full
+// basket. Items collapse to a per-service summary — three "Cracked
+// denture" items become "Cracked denture × 3" rather than three
+// duplicated lines.
+function buildAddressItems(
+  v: VisitorAddressMapVisit,
+  fallbackService: VisitorMapService,
+): VisitorAddressVisitItem[] {
+  const cart = pickOne(v.cart);
+  const items = cart?.items ?? [];
+  if (items.length === 0) {
+    return [{ label: 'No items recorded', service: fallbackService }];
+  }
+  const counts = new Map<string, { label: string; service: VisitorMapService; count: number }>();
+  for (const it of items) {
+    const cat = pickOne(it.catalogue);
+    const rawService = (cat?.service_type as string | null) ?? null;
+    const service: VisitorMapService = isVisitorMapService(rawService) ? rawService : 'other';
+    const label = humaniseSub(service, classificationKeyFor(service, cat, it.arch));
+    const k = `${service}|${label}`;
+    const existing = counts.get(k);
+    if (existing) existing.count += 1;
+    else counts.set(k, { label, service, count: 1 });
+  }
+  return Array.from(counts.values())
+    .sort((a, b) => b.count - a.count)
+    .map((e) => ({
+      label: e.count > 1 ? `${e.label} × ${e.count}` : e.label,
+      service: e.service,
+    }));
+}
+
+function isVisitorMapService(s: string | null): s is VisitorMapService {
+  return (
+    s === 'denture_repair' ||
+    s === 'click_in_veneers' ||
+    s === 'same_day_appliance' ||
+    s === 'impression_appointment' ||
+    s === 'other'
+  );
+}
+
+// Reproduces the sub-key extraction logic from dominantClassification
+// but at the per-item level, so the hover card distinguishes a
+// "Cracked denture" repair from an "Add a new tooth" repair on the
+// same visit.
+function classificationKeyFor(
+  service: VisitorMapService,
+  cat: { service_type: string | null; repair_variant: string | null; product_key: string | null } | null,
+  arch: string | null,
+): string {
+  if (!cat) return service;
+  switch (service) {
+    case 'denture_repair':
+      return cat.repair_variant ?? 'denture_repair';
+    case 'same_day_appliance':
+      return cat.product_key ?? 'same_day_appliance';
+    case 'click_in_veneers':
+    case 'impression_appointment':
+      return arch ?? service;
+    default:
+      return service;
+  }
+}
+
+interface VisitorAddressMapResult {
+  data: VisitorAddressMapData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+// useReportsVisitorAddressMap — admin-only.
+//
+// The select pulls patient line1 + postcode along with the cart and
+// appointment-ref relations. Non-admins won't be able to read these
+// rows due to RLS on lng_visits / patients (admin-scoped by location);
+// for the heatmap context the parent component (DemographicsTab)
+// already gates instantiation on the account flag. This hook does
+// NOT additionally check account state — it's the caller's
+// responsibility.
+export function useReportsVisitorAddressMap(range: DateRange): VisitorAddressMapResult {
+  const [data, setData] = useState<VisitorAddressMapData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const res = await supabase
+          .from('lng_visits')
+          .select(
+            `id,
+             opened_at,
+             patient_id,
+             patient:patients!inner ( portal_ship_line1, portal_ship_postcode ),
+             appointment:lng_appointments ( appointment_ref ),
+             walk_in:lng_walk_ins ( appointment_ref ),
+             cart:lng_carts (
+               items:lng_cart_items (
+                 arch,
+                 catalogue:lwo_catalogue ( service_type, repair_variant, product_key )
+               )
+             )`,
+          )
+          .gte('opened_at', fromIso)
+          .lte('opened_at', toIso);
+        if (cancelled) return;
+        if (res.error) throw new Error(`visitor_address_map: ${res.error.message}`);
+        const out = aggregateVisitorAddressMap((res.data ?? []) as VisitorAddressMapVisit[]);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load visitor address map';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.visitor_address_map',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Service mix
 //
 // Slices catalogue line items by category + service_type and surfaces
