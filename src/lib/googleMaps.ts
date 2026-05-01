@@ -152,6 +152,13 @@ export type GMarker = any;
 // surface. Hard-coding it is the convention Google's own samples use.
 export const SYMBOL_PATH_CIRCLE = 0;
 
+// MapsLib is a *composed* surface: Map comes from the 'maps' library,
+// Marker comes from the 'marker' library. In Google's modular API
+// each importLibrary() call returns only the constructors that
+// belong to that library — there's no single "everything" import.
+// We assemble the subset the heatmap needs into one object so
+// callers don't have to know which Google library each constructor
+// lives in.
 export interface MapsLib {
   Map: new (el: HTMLElement, options: Record<string, unknown>) => GMap;
   Marker: new (options: Record<string, unknown>) => GMarker;
@@ -159,7 +166,7 @@ export interface MapsLib {
 
 let mapsLibPromise: Promise<MapsLib | null> | null = null;
 
-// Resolve the core Maps library. Pattern mirrors loadPlacesLib —
+// Resolve the composed Maps surface. Pattern mirrors loadPlacesLib —
 // shared bootstrap, lazy first-use, null when no key is configured.
 export function loadMapsLib(): Promise<MapsLib | null> {
   if (!env.GOOGLE_MAPS_API_KEY) return Promise.resolve(null);
@@ -173,13 +180,24 @@ export function loadMapsLib(): Promise<MapsLib | null> {
       console.warn('[lng-maps] importLibrary not installed; bootstrap may have been blocked.');
       return null;
     }
-    const lib = (await importLibrary('maps')) as MapsLib | undefined;
-    if (!lib?.Map || !lib?.Marker) {
+    // Two parallel imports — Google deduplicates the underlying
+    // script load, and these are independent libraries with no
+    // ordering dependency.
+    const [mapsLib, markerLib] = (await Promise.all([
+      importLibrary('maps'),
+      importLibrary('marker'),
+    ])) as [Partial<MapsLib> | undefined, Partial<MapsLib> | undefined];
+    if (!mapsLib?.Map) {
       // eslint-disable-next-line no-console
-      console.warn('[lng-maps] Maps library missing — enable "Maps JavaScript API" in the GCP project.');
+      console.warn('[lng-maps] Maps library missing Map — enable "Maps JavaScript API" in the GCP project.');
       return null;
     }
-    return lib;
+    if (!markerLib?.Marker) {
+      // eslint-disable-next-line no-console
+      console.warn('[lng-maps] Marker library missing Marker — enable "Maps JavaScript API" (marker is bundled with it).');
+      return null;
+    }
+    return { Map: mapsLib.Map, Marker: markerLib.Marker };
   })();
   return mapsLibPromise;
 }
