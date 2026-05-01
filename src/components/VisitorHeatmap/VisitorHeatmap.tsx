@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
-import { type GMap, type GMarker, SYMBOL_PATH_CIRCLE, loadMapsLib } from '../../lib/googleMaps.ts';
+import { type GMap, type GMarker, loadMapsLib } from '../../lib/googleMaps.ts';
 import {
   type VisitorMapData,
   type VisitorMapPoint,
@@ -32,30 +32,72 @@ export interface VisitorHeatmapProps {
   geocodes: PostcodeGeocode[];
 }
 
+// Heatmap markers live on a dark basemap, so we use a separate
+// (brighter) palette than the rest of the app — the muted theme
+// colours that look right on cream wash out against #0F1518.
+// The dark green core remains the brand accent, just at a lifted
+// luminance that keeps it legible.
+const MARKER_COLOUR: Record<VisitorMapService, string> = {
+  denture_repair: '#FF6B6B',
+  click_in_veneers: '#E6ECEF',
+  same_day_appliance: '#4FE39A',
+  impression_appointment: '#FFB661',
+  other: '#A8B5BB',
+};
+
 function colourFor(service: VisitorMapService): string {
-  switch (service) {
-    case 'denture_repair':
-      return theme.color.alert;
-    case 'click_in_veneers':
-      return theme.color.ink;
-    case 'same_day_appliance':
-      return theme.color.accent;
-    case 'impression_appointment':
-      return theme.color.warn;
-    case 'other':
-      return theme.color.inkSubtle;
-  }
+  return MARKER_COLOUR[service];
 }
 
+// Dark basemap style. The aesthetic is Linear/Vercel-dashboard:
+// near-black water + slightly lifted land, sparse muted labels,
+// no roads/POIs/transit clutter. Data overlays do the talking.
 const MAP_STYLE = [
-  { featureType: 'all', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#d0d4d4' }] },
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#f0eee9' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#e6e8ea' }] },
-  { featureType: 'road', elementType: 'all', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', elementType: 'all', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', elementType: 'all', stylers: [{ visibility: 'off' }] },
+  { elementType: 'geometry', stylers: [{ color: '#0F1518' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0F1518' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#5F6B72' }] },
+
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#16201F' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#16201F' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0A1316' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3E4A50' }] },
+
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#2A3539' }, { weight: 1 }] },
+  { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#9AA5AB' }] },
+  { featureType: 'administrative.province', elementType: 'labels.text.fill', stylers: [{ color: '#7A8589' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#5F6B72' }] },
+
+  // Strip everything that adds noise without orienting value.
+  { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
+  { featureType: 'administrative.neighborhood', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
 ];
+
+// Build a layered SVG marker — outer glow, mid halo, inner core
+// with white stroke. The triple-layer fade gives a luminous look
+// against the dark basemap without the overhead of CSS animations
+// on a hundred markers. `scaleCore` is the inner-dot radius in
+// pixels; the halo expands proportionally.
+function haloMarkerIcon(colour: string, scaleCore: number): {
+  url: string;
+  scaledSize: { width: number; height: number };
+  anchor: { x: number; y: number };
+} {
+  const outer = scaleCore * 3.2;
+  const mid = scaleCore * 2.0;
+  const inner = scaleCore;
+  const size = Math.ceil(outer * 2);
+  const c = size / 2;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${c}" cy="${c}" r="${outer}" fill="${colour}" opacity="0.14"/><circle cx="${c}" cy="${c}" r="${mid}" fill="${colour}" opacity="0.32"/><circle cx="${c}" cy="${c}" r="${inner}" fill="${colour}" stroke="#FFFFFF" stroke-width="1.5" opacity="0.95"/></svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: size, height: size },
+    anchor: { x: c, y: c },
+  };
+}
 
 interface ResolvedPoint {
   outward: string;
@@ -145,8 +187,10 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
+          zoomControl: true,
+          clickableIcons: false,
           styles: MAP_STYLE,
-          backgroundColor: theme.color.bg,
+          backgroundColor: '#0F1518',
           gestureHandling: 'greedy',
         });
         setMap(instance);
@@ -204,25 +248,20 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
         for (const point of resolvedPoints) {
           const geo = geoIndex.get(point.outward);
           if (!geo) continue;
-          // Pixel scale for the dot. min 8 (one visit at this outward),
-          // max 22 (the busiest outward in the cohort). Linear by
-          // count is fine for the 1–dozens-of-visits range we expect;
-          // sqrt-scaling becomes worthwhile in the hundreds.
-          const scale = max > 0 ? 8 + (point.count / max) * 14 : 8;
+          // Inner-core radius in pixels. min 6 (one visit at this
+          // outward), max 14 (the busiest in the cohort). The halo
+          // is layered on top in the SVG icon and extends to ~3.2x
+          // this radius — so the visible footprint is ~40px at the
+          // top of the range, large enough to dominate the basemap
+          // without occluding nearby outwards.
+          const coreRadius = max > 0 ? 6 + (point.count / max) * 8 : 6;
           const marker = new lib.Marker({
             map,
             position: { lat: geo.lat, lng: geo.lng },
             title: `${point.outward}: ${point.count} visit${point.count === 1 ? '' : 's'}`,
-            icon: {
-              path: SYMBOL_PATH_CIRCLE,
-              scale,
-              fillColor: point.colour,
-              fillOpacity: 0.85,
-              strokeColor: '#FFFFFF',
-              strokeWeight: 2,
-            },
-            // Stack larger dots above smaller ones so a giant Glasgow
-            // marker doesn't bury a smaller adjacent outward.
+            icon: haloMarkerIcon(point.colour, coreRadius),
+            // Stack larger markers above smaller ones so a busy
+            // outward doesn't bury an adjacent quieter one.
             zIndex: Math.round(point.count * 100),
           });
           markersRef.current.push(marker);
@@ -282,9 +321,13 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           width: '100%',
           minHeight: 480,
           borderRadius: theme.radius.input,
-          background: theme.color.bg,
+          // Dark backdrop matches the basemap so there's no cream
+          // flash while Maps JS loads, and the rounded card sits
+          // visibly above the page surface.
+          background: '#0F1518',
           border: `1px solid ${theme.color.border}`,
           overflow: 'hidden',
+          boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.04)',
         }}
       />
       <KpiBadges visitors={totalsForBadges.visitors} areas={totalsForBadges.areas} />
