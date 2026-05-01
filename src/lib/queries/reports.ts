@@ -1166,6 +1166,12 @@ export interface VisitorAddressVisit {
   visit_id: string;
   visit_date: string; // ISO timestamp from lng_visits.opened_at
   appointment_ref: string | null; // LAP-xxxxx, from appointment or walk-in
+  // Display name of the patient who booked this visit (Title Case).
+  // Null when the patient row is missing identifying fields.
+  patient_name: string | null;
+  // Cart total at the time of aggregation, in pence. Falls back to 0
+  // when the visit has no cart row yet (booked but not paid).
+  spent_pence: number;
   items: VisitorAddressVisitItem[];
   // Dominant service across the visit's items, used to colour the
   // marker when the point covers a single visit. When there are
@@ -1182,9 +1188,13 @@ export interface VisitorAddressPoint {
   line1_norm: string;
   postcode_norm: string;
   total_visits: number;
-  // Distinct patient_ids that booked from this address — surfaced in
-  // the hover so household-shared bookings are visible.
-  patient_count: number;
+  // Distinct patient names at this address (Title Case, deduped,
+  // sorted by first appearance). Surfaced in the hover so household-
+  // shared bookings are visible by *who*, not just by count.
+  patient_names: string[];
+  // Sum of cart totals across every visit at this address. Used to
+  // surface "10 orders · £790 spent" in the hover summary.
+  total_spent_pence: number;
   visits: VisitorAddressVisit[];
   dominant_service: VisitorMapService;
 }
@@ -1198,20 +1208,39 @@ export interface VisitorAddressMapData {
   unmappable_visits: number;
 }
 
+interface VisitorAddressMapPatient {
+  first_name: string | null;
+  last_name: string | null;
+  portal_ship_line1: string | null;
+  portal_ship_postcode: string | null;
+}
+
+interface VisitorAddressMapCart {
+  total_pence: number | null;
+  items:
+    | {
+        arch: string | null;
+        catalogue:
+          | {
+              service_type: string | null;
+              repair_variant: string | null;
+              product_key: string | null;
+            }
+          | {
+              service_type: string | null;
+              repair_variant: string | null;
+              product_key: string | null;
+            }[]
+          | null;
+      }[]
+    | null;
+}
+
 interface VisitorAddressMapVisit {
   id: string;
   opened_at: string;
   patient_id: string;
-  patient:
-    | {
-        portal_ship_line1: string | null;
-        portal_ship_postcode: string | null;
-      }
-    | {
-        portal_ship_line1: string | null;
-        portal_ship_postcode: string | null;
-      }[]
-    | null;
+  patient: VisitorAddressMapPatient | VisitorAddressMapPatient[] | null;
   appointment:
     | { appointment_ref: string | null }
     | { appointment_ref: string | null }[]
@@ -1220,46 +1249,7 @@ interface VisitorAddressMapVisit {
     | { appointment_ref: string | null }
     | { appointment_ref: string | null }[]
     | null;
-  cart:
-    | {
-        items:
-          | {
-              arch: string | null;
-              catalogue:
-                | {
-                    service_type: string | null;
-                    repair_variant: string | null;
-                    product_key: string | null;
-                  }
-                | {
-                    service_type: string | null;
-                    repair_variant: string | null;
-                    product_key: string | null;
-                  }[]
-                | null;
-            }[]
-          | null;
-      }
-    | {
-        items:
-          | {
-              arch: string | null;
-              catalogue:
-                | {
-                    service_type: string | null;
-                    repair_variant: string | null;
-                    product_key: string | null;
-                  }
-                | {
-                    service_type: string | null;
-                    repair_variant: string | null;
-                    product_key: string | null;
-                  }[]
-                | null;
-            }[]
-          | null;
-      }[]
-    | null;
+  cart: VisitorAddressMapCart | VisitorAddressMapCart[] | null;
 }
 
 export function aggregateVisitorAddressMap(
@@ -1271,8 +1261,10 @@ export function aggregateVisitorAddressMap(
     line1_norm: string;
     postcode_norm: string;
     visits: VisitorAddressVisit[];
-    patient_ids: Set<string>;
+    patient_names: string[];
+    seen_patient_ids: Set<string>;
     serviceCounts: Map<VisitorMapService, number>;
+    total_spent_pence: number;
   }
   const byKey = new Map<string, MutablePoint>();
   let unmappable_visits = 0;
@@ -1303,8 +1295,10 @@ export function aggregateVisitorAddressMap(
         line1_norm,
         postcode_norm,
         visits: [],
-        patient_ids: new Set(),
+        patient_names: [],
+        seen_patient_ids: new Set(),
         serviceCounts: new Map(),
+        total_spent_pence: 0,
       };
       byKey.set(key, bucket);
     }
@@ -1313,14 +1307,24 @@ export function aggregateVisitorAddressMap(
     const items = buildAddressItems(v, dominant.service);
     const appt = pickOne(v.appointment);
     const walkIn = pickOne(v.walk_in);
+    const cart = pickOne(v.cart);
+    const spent_pence = cart?.total_pence ?? 0;
+    const patient_name = composePatientName(p?.first_name ?? null, p?.last_name ?? null);
+
+    if (patient_name && !bucket.seen_patient_ids.has(v.patient_id)) {
+      bucket.patient_names.push(patient_name);
+    }
+    bucket.seen_patient_ids.add(v.patient_id);
     bucket.visits.push({
       visit_id: v.id,
       visit_date: v.opened_at,
       appointment_ref: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
+      patient_name,
+      spent_pence,
       items,
       dominant_service: dominant.service,
     });
-    bucket.patient_ids.add(v.patient_id);
+    bucket.total_spent_pence += spent_pence;
     bucket.serviceCounts.set(
       dominant.service,
       (bucket.serviceCounts.get(dominant.service) ?? 0) + 1,
@@ -1344,7 +1348,8 @@ export function aggregateVisitorAddressMap(
         line1_norm: b.line1_norm,
         postcode_norm: b.postcode_norm,
         total_visits: b.visits.length,
-        patient_count: b.patient_ids.size,
+        patient_names: b.patient_names,
+        total_spent_pence: b.total_spent_pence,
         // Newest visit first so the hover-card list reads chronologically
         // backwards — most relevant booking on top.
         visits: b.visits.sort((a, x) => x.visit_date.localeCompare(a.visit_date)),
@@ -1356,12 +1361,29 @@ export function aggregateVisitorAddressMap(
   return { points, total_visits, unmappable_visits };
 }
 
-// Build the per-visit item list for the hover card. Reuses the
-// existing dominant-classification helpers but expands every cart
-// item (not only the dominant one) so the hover surfaces the full
-// basket. Items collapse to a per-service summary — three "Cracked
-// denture" items become "Cracked denture × 3" rather than three
-// duplicated lines.
+// Title-case patient name, mirroring what financials.ts and
+// cashCounts.ts use elsewhere — keeps the hover card consistent with
+// every other surface that prints a patient's name.
+function composePatientName(first: string | null, last: string | null): string | null {
+  const f = first?.trim();
+  const l = last?.trim();
+  if (!f && !l) return null;
+  const titleFirst = f ? properCase(f) : '';
+  const titleLast = l ? properCase(l) : '';
+  return [titleFirst, titleLast].filter(Boolean).join(' ');
+}
+
+// Build the per-visit item list for the hover card. Generates a
+// human-friendly label for every cart item — never the raw service
+// slug. Items with the same label are folded into "label × N" so
+// three "Cracked denture" repairs read as one row.
+//
+// Why this doesn't reuse the legend's classificationKeyFor +
+// humaniseSub pipeline: that pipeline falls back to the service slug
+// when a sub-key isn't recorded (e.g. an impression visit with no
+// arch). On the hover card that surfaces directly to clinical
+// leadership, "impression_appointment" reads as a backend leak. Here
+// we resolve to the service's display label instead.
 function buildAddressItems(
   v: VisitorAddressMapVisit,
   fallbackService: VisitorMapService,
@@ -1376,7 +1398,7 @@ function buildAddressItems(
     const cat = pickOne(it.catalogue);
     const rawService = (cat?.service_type as string | null) ?? null;
     const service: VisitorMapService = isVisitorMapService(rawService) ? rawService : 'other';
-    const label = humaniseSub(service, classificationKeyFor(service, cat, it.arch));
+    const label = prettyItemLabel(service, cat, it.arch);
     const k = `${service}|${label}`;
     const existing = counts.get(k);
     if (existing) existing.count += 1;
@@ -1400,26 +1422,59 @@ function isVisitorMapService(s: string | null): s is VisitorMapService {
   );
 }
 
-// Reproduces the sub-key extraction logic from dominantClassification
-// but at the per-item level, so the hover card distinguishes a
-// "Cracked denture" repair from an "Add a new tooth" repair on the
-// same visit.
-function classificationKeyFor(
+// Display label for a single cart item.
+//
+//   • denture_repair    → catalogue.repair_variant if set ("Cracked
+//                          denture"), else "Denture repair"
+//   • same_day_appliance → humanised catalogue.product_key
+//                          ("Night guard"), else "Same-day appliance"
+//   • click_in_veneers  → arch label ("Lower arch"), else
+//                          "Click-in veneers"
+//   • impression_appointment → arch label, else "Impression"
+//   • other / unknown   → "Other service"
+//
+// Never returns a raw backend slug. If we can't resolve a meaningful
+// sub, we surface the service's display name from VISITOR_MAP_SERVICES.
+function prettyItemLabel(
   service: VisitorMapService,
   cat: { service_type: string | null; repair_variant: string | null; product_key: string | null } | null,
   arch: string | null,
 ): string {
-  if (!cat) return service;
+  const serviceDisplay =
+    VISITOR_MAP_SERVICES.find((s) => s.id === service)?.label ?? 'Other service';
   switch (service) {
     case 'denture_repair':
-      return cat.repair_variant ?? 'denture_repair';
+      return cat?.repair_variant?.trim() || serviceDisplay;
     case 'same_day_appliance':
-      return cat.product_key ?? 'same_day_appliance';
+      return humaniseProductKey(cat?.product_key) || serviceDisplay;
     case 'click_in_veneers':
     case 'impression_appointment':
-      return arch ?? service;
+      return archLabel(arch) || serviceDisplay;
     default:
-      return service;
+      return serviceDisplay;
+  }
+}
+
+function humaniseProductKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .split('_')
+    .map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(' ');
+}
+
+function archLabel(arch: string | null | undefined): string | null {
+  switch (arch) {
+    case 'upper':
+      return 'Upper arch';
+    case 'lower':
+      return 'Lower arch';
+    case 'both':
+      return 'Both arches';
+    default:
+      return null;
   }
 }
 
@@ -1456,10 +1511,11 @@ export function useReportsVisitorAddressMap(range: DateRange): VisitorAddressMap
             `id,
              opened_at,
              patient_id,
-             patient:patients!inner ( portal_ship_line1, portal_ship_postcode ),
+             patient:patients!inner ( first_name, last_name, portal_ship_line1, portal_ship_postcode ),
              appointment:lng_appointments ( appointment_ref ),
              walk_in:lng_walk_ins ( appointment_ref ),
              cart:lng_carts (
+               total_pence,
                items:lng_cart_items (
                  arch,
                  catalogue:lwo_catalogue ( service_type, repair_variant, product_key )
