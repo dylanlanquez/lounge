@@ -36,6 +36,11 @@ export interface ArrivalIntakePatientInput {
   allergies?: string | null;
   emergency_contact_name?: string | null;
   emergency_contact_phone?: string | null;
+  // Marketing attribution — "How did you hear about us?". Captured
+  // once on first arrival; the fill-blanks rule below means a
+  // returning patient's existing answer is never overwritten.
+  // Feeds Reports → Marketing (patients.referred_by aggregations).
+  referred_by?: string | null;
 }
 
 export interface ArrivalIntakeSnapshot {
@@ -53,10 +58,11 @@ export interface ArrivalIntakeSnapshot {
   allergies: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
+  referred_by: string | null;
 }
 
 const INTAKE_PATIENT_COLUMNS =
-  'first_name, last_name, date_of_birth, sex, email, phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, allergies, emergency_contact_name, emergency_contact_phone';
+  'first_name, last_name, date_of_birth, sex, email, phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, allergies, emergency_contact_name, emergency_contact_phone, referred_by';
 
 // Reads the patient columns the intake sheet needs. Tolerates a missing
 // emergency_contact_* column (pre-migration deploys) by retrying with
@@ -92,6 +98,7 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
         allergies: row.allergies ?? null,
         emergency_contact_name: null,
         emergency_contact_phone: null,
+        referred_by: null,
       };
     }
     throw new Error(error.message);
@@ -112,6 +119,7 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
     allergies: row.allergies ?? null,
     emergency_contact_name: row.emergency_contact_name ?? null,
     emergency_contact_phone: row.emergency_contact_phone ?? null,
+    referred_by: row.referred_by ?? null,
   };
 }
 
@@ -177,6 +185,7 @@ export async function submitArrivalIntake(
   stage('allergies', input.patient.allergies);
   stage('emergency_contact_name', input.patient.emergency_contact_name);
   stage('emergency_contact_phone', input.patient.emergency_contact_phone);
+  stage('referred_by', input.patient.referred_by);
 
   if (Object.keys(writes).length > 0) {
     const { error: patientErr } = await supabase
