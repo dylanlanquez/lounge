@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
-import { type GMap, type GCircle, loadMapsLib } from '../../lib/googleMaps.ts';
+import { type GMap, type GMarker, SYMBOL_PATH_CIRCLE, loadMapsLib } from '../../lib/googleMaps.ts';
 import {
   type VisitorMapData,
   type VisitorMapPoint,
@@ -65,8 +65,8 @@ interface ResolvedPoint {
 
 export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const circlesRef = useRef<GCircle[]>([]);
-  // The map is held in state — not a ref — so the circle-drawing
+  const markersRef = useRef<GMarker[]>([]);
+  // The map is held in state — not a ref — so the marker-drawing
   // effect re-runs once the map finishes loading. With a ref, a fast
   // cache return for geocodes would let the effect fire before the
   // map exists, return early, and never re-fire.
@@ -167,19 +167,23 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
     };
   }, []);
 
-  // Redraw circles whenever the map, resolved points, or geocodes
+  // Redraw markers whenever the map, resolved points, or geocodes
   // change. The map dep is what makes this correct under fast caches:
   // if geocodes resolve before the map mounts, this still re-runs on
-  // setMap and the circles render.
+  // setMap and the markers render.
+  //
+  // Markers (not Circle) are used because Circle radius is in METERS
+  // — at country zoom 25 km is a faint dot, at street zoom it covers
+  // a whole region. Markers are pixel-sized and stay legible across
+  // zooms, which is what graduated-symbol maps need.
   //
   // We compute the bounding rect manually as a LatLngBoundsLiteral
   // ({ north, south, east, west }) rather than instantiating
   // google.maps.LatLngBounds. In the modular Maps API
   // (importLibrary), LatLngBounds lives in the 'core' library, not
   // 'maps' — `lib.LatLngBounds` is therefore undefined on the
-  // 'maps' import and `new lib.LatLngBounds()` throws. Avoiding that
-  // surface means one less library to load and one less Google API
-  // contract to track.
+  // 'maps' import. Passing a literal sidesteps the issue and one
+  // fewer Google API surface to track.
   useEffect(() => {
     if (!map) return;
     let cancelled = false;
@@ -187,8 +191,8 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
       try {
         const lib = await loadMapsLib();
         if (cancelled || !lib) return;
-        for (const c of circlesRef.current) c.setMap(null);
-        circlesRef.current = [];
+        for (const m of markersRef.current) m.setMap(null);
+        markersRef.current = [];
         if (resolvedPoints.length === 0) return;
 
         const max = Math.max(...resolvedPoints.map((p) => p.count));
@@ -200,19 +204,28 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
         for (const point of resolvedPoints) {
           const geo = geoIndex.get(point.outward);
           if (!geo) continue;
-          const radiusMeters = 4000 + (max > 0 ? (point.count / max) * 21000 : 0);
-          const circle = new lib.Circle({
+          // Pixel scale for the dot. min 8 (one visit at this outward),
+          // max 22 (the busiest outward in the cohort). Linear by
+          // count is fine for the 1–dozens-of-visits range we expect;
+          // sqrt-scaling becomes worthwhile in the hundreds.
+          const scale = max > 0 ? 8 + (point.count / max) * 14 : 8;
+          const marker = new lib.Marker({
             map,
-            center: { lat: geo.lat, lng: geo.lng },
-            radius: radiusMeters,
-            strokeColor: point.colour,
-            strokeOpacity: 0.55,
-            strokeWeight: 1,
-            fillColor: point.colour,
-            fillOpacity: 0.35,
-            clickable: false,
+            position: { lat: geo.lat, lng: geo.lng },
+            title: `${point.outward}: ${point.count} visit${point.count === 1 ? '' : 's'}`,
+            icon: {
+              path: SYMBOL_PATH_CIRCLE,
+              scale,
+              fillColor: point.colour,
+              fillOpacity: 0.85,
+              strokeColor: '#FFFFFF',
+              strokeWeight: 2,
+            },
+            // Stack larger dots above smaller ones so a giant Glasgow
+            // marker doesn't bury a smaller adjacent outward.
+            zIndex: Math.round(point.count * 100),
           });
-          circlesRef.current.push(circle);
+          markersRef.current.push(marker);
           if (geo.lat > north) north = geo.lat;
           if (geo.lat < south) south = geo.lat;
           if (geo.lng > east) east = geo.lng;
@@ -230,7 +243,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           source: 'reports.visitor_heatmap',
           severity: 'error',
           message,
-          context: { stage: 'circle_render', point_count: resolvedPoints.length },
+          context: { stage: 'marker_render', point_count: resolvedPoints.length },
         });
       }
     })();
