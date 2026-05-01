@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { type GMap, type GMarker, loadMapsLib } from '../../lib/googleMaps.ts';
 import {
@@ -304,6 +305,29 @@ function Badge({ label, value, suffix }: { label: string; value: number; suffix?
   );
 }
 
+// Service filter — collapsed by default to a compact chip in the
+// bottom-left corner of the map. Click expands into the full panel
+// of service rows; the panel's header carries a retract chevron
+// that brings it back to the chip.
+//
+// The expand/collapse animation morphs the chip *into* the panel
+// rather than fading them as separate elements: the same wrapper
+// transitions its width and height, anchored to bottom-left so the
+// growth feels like it unfolds from the chip's corner. Both
+// content layers are rendered at all times and cross-faded by
+// opacity so the dimensions transition has something coherent
+// behind the curtain — no content jump, no layout flash.
+//
+// Sizing: a fixed open height is needed for a CSS dimension
+// transition to work (auto-height can't be transitioned). Open
+// dimensions are sized for the six legend rows + header padding;
+// closed dimensions are tuned for the longest active label
+// ("Same-day appliance") with safe overflow margin.
+const FILTER_OPEN_HEIGHT = 308;
+const FILTER_OPEN_WIDTH = 224;
+const FILTER_CLOSED_HEIGHT = 38;
+const FILTER_CLOSED_WIDTH = 188;
+
 function ServiceFilter({
   value,
   onChange,
@@ -311,6 +335,13 @@ function ServiceFilter({
   value: VisitorMapService | 'all';
   onChange: (next: VisitorMapService | 'all') => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const activeLabel =
+    value === 'all'
+      ? 'All visits'
+      : VISITOR_MAP_SERVICES.find((s) => s.id === value)?.label ?? 'Service';
+  const activeColour = value === 'all' ? theme.color.inkSubtle : MARKER_COLOUR[value];
+
   return (
     <div
       style={{
@@ -319,41 +350,147 @@ function ServiceFilter({
         left: theme.space[3],
         background: theme.color.surface,
         borderRadius: theme.radius.input,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
         boxShadow: theme.shadow.card,
         border: `1px solid ${theme.color.border}`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-        minWidth: 220,
+        overflow: 'hidden',
+        // Bottom-left transform origin so the morph reads as
+        // "growing out of the chip's corner".
+        transformOrigin: 'bottom left',
+        width: expanded ? FILTER_OPEN_WIDTH : FILTER_CLOSED_WIDTH,
+        height: expanded ? FILTER_OPEN_HEIGHT : FILTER_CLOSED_HEIGHT,
+        transition: `width ${theme.motion.duration.base}ms ${theme.motion.easing.spring}, height ${theme.motion.duration.base}ms ${theme.motion.easing.spring}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
-      <span
+      {/* Compact chip — rendered always, faded out when expanded.
+          pointer-events disabled when invisible so its click target
+          doesn't shadow the panel underneath. */}
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        aria-expanded={expanded}
+        aria-label="Open service filter"
         style={{
-          fontSize: theme.type.size.xs,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          color: theme.color.inkMuted,
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          width: '100%',
+          height: FILTER_CLOSED_HEIGHT,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          padding: `0 ${theme.space[3]}px`,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
           fontWeight: theme.type.weight.medium,
+          color: theme.color.ink,
+          textAlign: 'left',
+          opacity: expanded ? 0 : 1,
+          pointerEvents: expanded ? 'none' : 'auto',
+          transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          WebkitTapHighlightColor: 'transparent',
         }}
       >
-        Service
-      </span>
-      <FilterRow
-        active={value === 'all'}
-        colour={theme.color.inkSubtle}
-        label="All visits"
-        onClick={() => onChange('all')}
-      />
-      {VISITOR_MAP_SERVICES.map((s) => (
-        <FilterRow
-          key={s.id}
-          active={value === s.id}
-          colour={MARKER_COLOUR[s.id]}
-          label={s.label}
-          onClick={() => onChange(s.id)}
+        <span
+          aria-hidden
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            background: activeColour,
+            flexShrink: 0,
+          }}
         />
-      ))}
+        <span
+          style={{
+            flex: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {activeLabel}
+        </span>
+        <ChevronUp size={14} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+      </button>
+
+      {/* Full panel — rendered always, faded in when expanded.
+          Pointer events disabled in the closed state so the chip's
+          click target wins. */}
+      <div
+        aria-hidden={!expanded}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          padding: `${theme.space[3]}px ${theme.space[3]}px`,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[1],
+          opacity: expanded ? 1 : 0,
+          pointerEvents: expanded ? 'auto' : 'none',
+          // Slight delay on the panel fade-in so the morph reads as
+          // "size first, content second". On collapse the chip
+          // fades in last for the same reason.
+          transition: `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingBottom: theme.space[1],
+          }}
+        >
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+            }}
+          >
+            Service
+          </span>
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            aria-label="Close service filter"
+            style={{
+              appearance: 'none',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: theme.space[1],
+              margin: -theme.space[1],
+              borderRadius: theme.radius.input,
+              color: theme.color.inkMuted,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              WebkitTapHighlightColor: 'transparent',
+            }}
+          >
+            <ChevronDown size={14} aria-hidden />
+          </button>
+        </div>
+        <FilterRow
+          active={value === 'all'}
+          colour={theme.color.inkSubtle}
+          label="All visits"
+          onClick={() => onChange('all')}
+        />
+        {VISITOR_MAP_SERVICES.map((s) => (
+          <FilterRow
+            key={s.id}
+            active={value === s.id}
+            colour={MARKER_COLOUR[s.id]}
+            label={s.label}
+            onClick={() => onChange(s.id)}
+          />
+        ))}
+      </div>
     </div>
   );
 }
