@@ -171,38 +171,67 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
   // change. The map dep is what makes this correct under fast caches:
   // if geocodes resolve before the map mounts, this still re-runs on
   // setMap and the circles render.
+  //
+  // We compute the bounding rect manually as a LatLngBoundsLiteral
+  // ({ north, south, east, west }) rather than instantiating
+  // google.maps.LatLngBounds. In the modular Maps API
+  // (importLibrary), LatLngBounds lives in the 'core' library, not
+  // 'maps' — `lib.LatLngBounds` is therefore undefined on the
+  // 'maps' import and `new lib.LatLngBounds()` throws. Avoiding that
+  // surface means one less library to load and one less Google API
+  // contract to track.
   useEffect(() => {
     if (!map) return;
     let cancelled = false;
     void (async () => {
-      const lib = await loadMapsLib();
-      if (cancelled || !lib) return;
-      for (const c of circlesRef.current) c.setMap(null);
-      circlesRef.current = [];
-      if (resolvedPoints.length === 0) return;
+      try {
+        const lib = await loadMapsLib();
+        if (cancelled || !lib) return;
+        for (const c of circlesRef.current) c.setMap(null);
+        circlesRef.current = [];
+        if (resolvedPoints.length === 0) return;
 
-      const max = Math.max(...resolvedPoints.map((p) => p.count));
-      const bounds = new lib.LatLngBounds();
-      for (const point of resolvedPoints) {
-        const geo = geoIndex.get(point.outward);
-        if (!geo) continue;
-        const radiusMeters = 4000 + (max > 0 ? (point.count / max) * 21000 : 0);
-        const circle = new lib.Circle({
-          map,
-          center: { lat: geo.lat, lng: geo.lng },
-          radius: radiusMeters,
-          strokeColor: point.colour,
-          strokeOpacity: 0.55,
-          strokeWeight: 1,
-          fillColor: point.colour,
-          fillOpacity: 0.35,
-          clickable: false,
+        const max = Math.max(...resolvedPoints.map((p) => p.count));
+        let north = -Infinity;
+        let south = Infinity;
+        let east = -Infinity;
+        let west = Infinity;
+        let drew = 0;
+        for (const point of resolvedPoints) {
+          const geo = geoIndex.get(point.outward);
+          if (!geo) continue;
+          const radiusMeters = 4000 + (max > 0 ? (point.count / max) * 21000 : 0);
+          const circle = new lib.Circle({
+            map,
+            center: { lat: geo.lat, lng: geo.lng },
+            radius: radiusMeters,
+            strokeColor: point.colour,
+            strokeOpacity: 0.55,
+            strokeWeight: 1,
+            fillColor: point.colour,
+            fillOpacity: 0.35,
+            clickable: false,
+          });
+          circlesRef.current.push(circle);
+          if (geo.lat > north) north = geo.lat;
+          if (geo.lat < south) south = geo.lat;
+          if (geo.lng > east) east = geo.lng;
+          if (geo.lng < west) west = geo.lng;
+          drew += 1;
+        }
+        if (drew > 0) {
+          map.fitBounds({ north, south, east, west }, 64);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Heatmap render failed';
+        setError(message);
+        await logFailure({
+          source: 'reports.visitor_heatmap',
+          severity: 'error',
+          message,
+          context: { stage: 'circle_render', point_count: resolvedPoints.length },
         });
-        circlesRef.current.push(circle);
-        bounds.extend({ lat: geo.lat, lng: geo.lng });
-      }
-      if (!bounds.isEmpty()) {
-        map.fitBounds(bounds, 64);
       }
     })();
     return () => {
