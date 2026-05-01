@@ -16,7 +16,7 @@ import {
   type SalesRow,
   useFinancialsSales,
 } from '../../lib/queries/financials.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
 
 interface Props {
@@ -134,7 +134,7 @@ export function SalesTab({ range }: Props) {
               gap: theme.space[3],
             }}
           >
-            <StatCard label="Rows" value={data.rows.length.toLocaleString('en-GB')} delta="matching the filters" />
+            <StatCard label="Rows" value={formatNumber(data.rows.length)} delta="matching the filters" />
             <StatCard label="Subtotal" value={formatPence(data.total_subtotal_pence)} />
             <StatCard label="Discount" value={`−${formatPence(data.total_discount_pence)}`} tone={data.total_discount_pence > 0 ? 'warn' : 'normal'} />
             <StatCard label="Collected" value={formatPence(data.total_collected_pence)} tone="accent" />

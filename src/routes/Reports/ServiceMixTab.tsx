@@ -11,7 +11,7 @@ import {
   type ServiceMixData,
   useReportsServices,
 } from '../../lib/queries/reports.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {
   range: DateRange;
@@ -69,7 +69,7 @@ function Kpis({ data }: { data: ServiceMixData }) {
     >
       <StatCard
         label="Items sold"
-        value={data.total_items.toLocaleString('en-GB')}
+        value={formatNumber(data.total_items)}
         delta={`across ${data.category_distribution.length} categor${
           data.category_distribution.length === 1 ? 'y' : 'ies'
         }`}
@@ -166,7 +166,7 @@ function CategoryDistributionCard({ data }: { data: ServiceMixData }) {
                   color: theme.color.inkMuted,
                 }}
               >
-                {c.count.toLocaleString('en-GB')} item{c.count === 1 ? '' : 's'}
+                {formatNumber(c.count)} item{c.count === 1 ? '' : 's'}
               </p>
             </li>
           );
@@ -211,7 +211,7 @@ function TopLinesCard({ data }: { data: ServiceMixData }) {
           <RowFragment key={`${line.catalogue_id ?? 'ad-hoc'}:${line.name}:${i}`} index={i + 1}>
             <span style={cellStyle}>{line.name}</span>
             <span style={{ ...cellStyle, textAlign: 'right' }}>
-              {line.count.toLocaleString('en-GB')}
+              {formatNumber(line.count)}
             </span>
             <span style={{ ...cellStyle, textAlign: 'right' }}>
               {formatPence(line.avg_price_pence)}

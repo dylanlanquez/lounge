@@ -14,7 +14,7 @@ import {
   type AnomalyKind,
   useAnomalies,
 } from '../../lib/queries/cashCounts.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {
   range: DateRange;
@@ -76,21 +76,21 @@ function Counts({ data }: { data: AnomalyData }) {
     >
       <StatCard
         label="Discount % flags"
-        value={data.counts.discount_above_threshold.toLocaleString('en-GB')}
+        value={formatNumber(data.counts.discount_above_threshold)}
         delta={`Above ${data.thresholds.discount_pct}% of subtotal`}
         tone={data.counts.discount_above_threshold > 0 ? 'warn' : 'normal'}
         icon={<ScrollText size={14} />}
       />
       <StatCard
         label="Void window flags"
-        value={data.counts.void_in_window.toLocaleString('en-GB')}
+        value={formatNumber(data.counts.void_in_window)}
         delta={`Voided in ≤${data.thresholds.void_window_minutes}m of capture`}
         tone={data.counts.void_in_window > 0 ? 'alert' : 'normal'}
         icon={<Ban size={14} />}
       />
       <StatCard
         label="Cash count flags"
-        value={data.counts.cash_count_overdue.toLocaleString('en-GB')}
+        value={formatNumber(data.counts.cash_count_overdue)}
         delta={`Threshold ${data.thresholds.cash_count_overdue_days} days`}
         tone={data.counts.cash_count_overdue > 0 ? 'warn' : 'normal'}
         icon={<Banknote size={14} />}

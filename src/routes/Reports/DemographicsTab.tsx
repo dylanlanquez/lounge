@@ -16,7 +16,7 @@ import {
   useReportsVisitorMap,
 } from '../../lib/queries/reports.ts';
 import { usePostcodeGeocodes } from '../../lib/queries/postcodeGeocodes.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {
   range: DateRange;
@@ -110,7 +110,7 @@ function VisitorMapCard({ range }: { range: DateRange }) {
           <VisitorHeatmap data={map.data} geocodes={geocodes.data} />
           {map.data.unknown_outward > 0 ? (
             <p style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-              {map.data.unknown_outward.toLocaleString('en-GB')} additional patient{map.data.unknown_outward === 1 ? '' : 's'} with no postcode on file (not shown).
+              {formatNumber(map.data.unknown_outward)} additional patient{map.data.unknown_outward === 1 ? '' : 's'} with no postcode on file (not shown).
             </p>
           ) : null}
         </>
@@ -130,13 +130,13 @@ function Kpis({ data }: { data: PatientReports }) {
     >
       <StatCard
         label="Unique patients"
-        value={data.total_unique_patients.toLocaleString('en-GB')}
-        delta={`${data.visits_in_period.toLocaleString('en-GB')} visits across them`}
+        value={formatNumber(data.total_unique_patients)}
+        delta={`${formatNumber(data.visits_in_period)} visits across them`}
         icon={<Users size={14} />}
       />
       <StatCard
         label="New patients"
-        value={data.new_patients.toLocaleString('en-GB')}
+        value={formatNumber(data.new_patients)}
         delta={
           data.total_unique_patients === 0
             ? '—'
@@ -147,7 +147,7 @@ function Kpis({ data }: { data: PatientReports }) {
       />
       <StatCard
         label="Returning"
-        value={data.returning_patients.toLocaleString('en-GB')}
+        value={formatNumber(data.returning_patients)}
         delta="seen before this period"
         icon={<Sparkles size={14} />}
       />
@@ -225,7 +225,7 @@ function SexBreakdownCard({ data }: { data: PatientReports }) {
                   {entry.label}
                 </span>
                 <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
-                  {entry.count.toLocaleString('en-GB')} · {pct.toFixed(0)}%
+                  {formatNumber(entry.count)} · {pct.toFixed(0)}%
                 </span>
               </div>
               <div
@@ -308,7 +308,7 @@ function PostcodeCard({ data }: { data: PatientReports }) {
                   {p.outward}
                 </span>
                 <span style={{ fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-                  {p.count.toLocaleString('en-GB')} patients · {formatPence(p.revenue_pence)}
+                  {formatNumber(p.count)} patients · {formatPence(p.revenue_pence)}
                 </span>
               </div>
               <div
@@ -346,7 +346,7 @@ function PostcodeCard({ data }: { data: PatientReports }) {
           >
             <span>Everywhere else</span>
             <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {data.postcode_other.count.toLocaleString('en-GB')} patients · {formatPence(data.postcode_other.revenue_pence)}
+              {formatNumber(data.postcode_other.count)} patients · {formatPence(data.postcode_other.revenue_pence)}
             </span>
           </li>
         ) : null}

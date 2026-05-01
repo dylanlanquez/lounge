@@ -18,7 +18,7 @@ import {
   type FinancialsOverviewData,
   useFinancialsOverview,
 } from '../../lib/queries/financials.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence, formatPounds } from '../../lib/queries/carts.ts';
 
 interface Props {
   range: DateRange;
@@ -77,7 +77,7 @@ function Kpis({ data }: { data: FinancialsOverviewData }) {
       <StatCard
         label="Revenue"
         value={formatPence(data.total_revenue_pence)}
-        delta={`${data.payments_count.toLocaleString('en-GB')} payment${data.payments_count === 1 ? '' : 's'}`}
+        delta={`${formatNumber(data.payments_count)} payment${data.payments_count === 1 ? '' : 's'}`}
         tone="accent"
         icon={<Coins size={14} />}
       />
@@ -93,14 +93,14 @@ function Kpis({ data }: { data: FinancialsOverviewData }) {
       />
       <StatCard
         label="Voids"
-        value={data.voided_count.toLocaleString('en-GB')}
+        value={formatNumber(data.voided_count)}
         delta={data.voided_count === 0 ? 'No voids' : `worth ${formatPence(data.voided_pence)}`}
         tone={data.voided_count > 0 ? 'warn' : 'normal'}
         icon={<Ban size={14} />}
       />
       <StatCard
         label="Failed payments"
-        value={data.failed_count.toLocaleString('en-GB')}
+        value={formatNumber(data.failed_count)}
         delta="surface in the Sales log"
         tone={data.failed_count > 0 ? 'alert' : 'normal'}
         icon={<Layers size={14} />}
@@ -114,16 +114,21 @@ function DailyRevenueCard({ data }: { data: FinancialsOverviewData }) {
     <Card padding="lg">
       <LineChart
         title="Daily revenue"
-        subtitle="Sum of succeeded payments per calendar day."
+        subtitle="Sum of succeeded payments per calendar day. Legend shows the period total."
         xLabels={data.daily.map((d) => formatShort(d.date))}
         series={[
           {
             id: 'revenue',
-            label: 'Revenue (£)',
+            label: 'Revenue',
             colour: theme.color.accent,
             values: data.daily.map((d) => d.pence / 100),
+            // Currency formatter — y-axis ticks AND the legend total
+            // both render as "£525.00" because every series shares
+            // the same formatValue reference.
+            formatValue: formatPounds,
           },
         ]}
+        legendMode="total"
         ariaSummary={`Daily revenue from ${data.daily[0]?.date ?? ''} to ${data.daily[data.daily.length - 1]?.date ?? ''}.`}
       />
     </Card>
@@ -193,7 +198,7 @@ function MethodMixCard({ data }: { data: FinancialsOverviewData }) {
                 />
               </div>
               <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                {m.count.toLocaleString('en-GB')} payment{m.count === 1 ? '' : 's'}
+                {formatNumber(m.count)} payment{m.count === 1 ? '' : 's'}
               </p>
             </li>
           );

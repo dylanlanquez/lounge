@@ -3,6 +3,7 @@ import { supabase } from '../supabase.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
 import { addDaysIso } from '../calendarMonth.ts';
 import { logFailure } from '../failureLog.ts';
+import { properCase } from './appointments.ts';
 
 // Financials — money-side hooks. Mirrors the shape of lib/queries/
 // reports.ts: pure aggregators + thin IO hooks, every error path
@@ -646,10 +647,14 @@ function composePersonName(
   p: { first_name: string | null; last_name: string | null; name: string | null } | null,
 ): string {
   if (!p) return '—';
-  const fn = p.first_name?.trim();
-  const ln = p.last_name?.trim();
+  // Names land in reports + statements + CSV exports — Title Case
+  // them so the UI never reflects whatever casing happened to land
+  // in the patients / accounts row at insert time. properCase is
+  // honorific- and apostrophe-aware ("Mrs Smith", "O'Brien").
+  const fn = properCase(p.first_name);
+  const ln = properCase(p.last_name);
   if (fn && ln) return `${fn} ${ln}`;
-  return fn ?? ln ?? p.name?.trim() ?? '—';
+  return fn || ln || properCase(p.name) || '—';
 }
 
 function humaniseMethod(method: string): string {

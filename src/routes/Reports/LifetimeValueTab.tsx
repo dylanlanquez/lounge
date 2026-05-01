@@ -12,7 +12,7 @@ import {
   type LifetimeValueData,
   useReportsLifetimeValue,
 } from '../../lib/queries/reports.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {
   range: DateRange;
@@ -75,7 +75,7 @@ function Kpis({ data }: { data: LifetimeValueData }) {
     >
       <StatCard
         label="Cohort size"
-        value={data.cohort_size.toLocaleString('en-GB')}
+        value={formatNumber(data.cohort_size)}
         delta="patients seen in period"
         icon={<Users size={14} />}
       />
@@ -235,7 +235,7 @@ function TopSpendersCard({ data }: { data: LifetimeValueData }) {
                   fontVariantNumeric: 'tabular-nums',
                 }}
               >
-                {p.visits.toLocaleString('en-GB')} visit{p.visits === 1 ? '' : 's'}
+                {formatNumber(p.visits)} visit{p.visits === 1 ? '' : 's'}
                 {p.first_visit && p.last_visit
                   ? ` · ${formatVisitDate(p.first_visit)} → ${formatVisitDate(p.last_visit)}`
                   : ''}

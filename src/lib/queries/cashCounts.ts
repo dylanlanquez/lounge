@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
 import { logFailure } from '../failureLog.ts';
+import { properCase } from './appointments.ts';
 
 // Cash reconciliation reads — past counts list, per-count statement,
 // and the live "what should be in the safe right now" computation.
@@ -74,10 +75,12 @@ function composePersonName(
   p: { first_name: string | null; last_name: string | null; name: string | null } | null,
 ): string {
   if (!p) return '—';
-  const fn = p.first_name?.trim();
-  const ln = p.last_name?.trim();
+  // Title Case so reports + cash count statements never echo
+  // whatever casing happened to land in the source row.
+  const fn = properCase(p.first_name);
+  const ln = properCase(p.last_name);
   if (fn && ln) return `${fn} ${ln}`;
-  return fn ?? ln ?? p.name?.trim() ?? '—';
+  return fn || ln || properCase(p.name) || '—';
 }
 
 interface CashCountsResult {

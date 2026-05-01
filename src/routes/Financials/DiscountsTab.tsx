@@ -14,7 +14,7 @@ import {
   type DiscountsData,
   useFinancialsDiscounts,
 } from '../../lib/queries/financials.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
 
 interface Props {
@@ -88,22 +88,22 @@ function Kpis({ data }: { data: DiscountsData }) {
       <StatCard
         label="Total discounted"
         value={formatPence(data.total_amount_pence)}
-        delta={`${data.rows.length.toLocaleString('en-GB')} discount${data.rows.length === 1 ? '' : 's'}`}
+        delta={`${formatNumber(data.rows.length)} discount${data.rows.length === 1 ? '' : 's'}`}
         tone="warn"
       />
       <StatCard
         label="Active"
-        value={data.active_count.toLocaleString('en-GB')}
+        value={formatNumber(data.active_count)}
         delta="not removed"
       />
       <StatCard
         label="Removed"
-        value={data.removed_count.toLocaleString('en-GB')}
+        value={formatNumber(data.removed_count)}
         delta="reverted before payment"
       />
       <StatCard
         label="Approvers"
-        value={data.approver_leaderboard.length.toLocaleString('en-GB')}
+        value={formatNumber(data.approver_leaderboard.length)}
         delta="distinct managers signed off"
         icon={<Crown size={14} />}
       />
@@ -154,7 +154,7 @@ function ApproverLeaderboard({ data }: { data: DiscountsData }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: theme.space[3], marginBottom: theme.space[2] }}>
                 <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold }}>{entry.name}</span>
                 <span style={{ fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
-                  {entry.count.toLocaleString('en-GB')} signed · {formatPence(entry.total_pence)}
+                  {formatNumber(entry.count)} signed · {formatPence(entry.total_pence)}
                 </span>
               </div>
               <div
