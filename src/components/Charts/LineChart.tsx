@@ -38,9 +38,6 @@ export interface LineChartProps {
   title?: ReactNode;
   // Optional sub-line under the title (date range, sample size, etc.).
   subtitle?: ReactNode;
-  // Visual height of the SVG plot area. Defaults to a comfortable
-  // 220px which shows trends without dominating the page.
-  height?: number;
   // Which figure to surface in the legend per series:
   //   • 'total' — sum across the period (default; what a manager
   //     usually wants for time-series — e.g. "9 bookings this period")
@@ -66,7 +63,6 @@ export function LineChart({
   ariaSummary,
   title,
   subtitle,
-  height = 220,
   legendMode = 'total',
 }: LineChartProps) {
   if (xLabels.length === 0) {
@@ -123,12 +119,16 @@ export function LineChart({
 
   return (
     <ChartFrame title={title} subtitle={subtitle}>
-      <div style={{ position: 'relative', width: '100%', height }}>
+      {/* aspectRatio matches the viewBox so the SVG scales uniformly
+          across viewports — no horizontal stretch / vertical squash
+          warping the digits. The default preserveAspectRatio
+          (xMidYMid meet) is then a no-op because container and
+          viewBox aspects are identical. */}
+      <div style={{ position: 'relative', width: '100%', aspectRatio: `${W} / ${H}` }}>
         <svg
           role="img"
           aria-label={ariaSummary}
           viewBox={`0 0 ${W} ${H}`}
-          preserveAspectRatio="none"
           style={{ width: '100%', height: '100%', display: 'block' }}
         >
           {/* Gridlines */}
