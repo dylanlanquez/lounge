@@ -71,7 +71,7 @@ export function BarChart({
   const H = 360;
   const padL = 40;
   const padR = 16;
-  const padT = 24; // value labels live above bars
+  const padT = 30; // value labels live above bars; extra room for the bigger label
   const padB = 40;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
@@ -112,7 +112,7 @@ export function BarChart({
                 x={padL - 8}
                 y={yFor(t) + 4}
                 textAnchor="end"
-                fontSize={12}
+                fontSize={13}
                 fill={theme.color.inkSubtle}
                 fontFamily="inherit"
               >
@@ -143,9 +143,9 @@ export function BarChart({
                 {showValueLabels && b.value > 0 ? (
                   <text
                     x={x + barWidth / 2}
-                    y={y - 6}
+                    y={y - 8}
                     textAnchor="middle"
-                    fontSize={12}
+                    fontSize={14}
                     fill={theme.color.ink}
                     fontFamily="inherit"
                     fontWeight={theme.type.weight.semibold}
@@ -157,7 +157,7 @@ export function BarChart({
                   x={x + barWidth / 2}
                   y={H - padB / 2 + 6}
                   textAnchor="middle"
-                  fontSize={12}
+                  fontSize={13}
                   fill={theme.color.inkSubtle}
                   fontFamily="inherit"
                 >

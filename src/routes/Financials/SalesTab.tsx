@@ -221,20 +221,25 @@ const th = {
   color: theme.color.inkMuted,
   textTransform: 'uppercase' as const,
   letterSpacing: theme.type.tracking.wide,
-  padding: `${theme.space[2]}px ${theme.space[3]}px`,
+  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+  whiteSpace: 'nowrap' as const,
 };
 
 const td = {
-  padding: `${theme.space[3]}px`,
+  padding: `${theme.space[3]}px ${theme.space[4]}px`,
   fontSize: theme.type.size.sm,
   color: theme.color.ink,
   verticalAlign: 'top' as const,
+  lineHeight: 1.5,
 };
 
 const tdRight = {
   ...td,
   textAlign: 'right' as const,
   fontVariantNumeric: 'tabular-nums' as const,
+  // Numeric columns never wrap — keeps "£1,248.00" on one line and
+  // tabular-nums lines decimals up vertically across rows.
+  whiteSpace: 'nowrap' as const,
 };
 
 function CartStatusPill({ status }: { status: string }) {

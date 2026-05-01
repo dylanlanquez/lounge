@@ -147,7 +147,7 @@ export function LineChart({
                 x={padL - 8}
                 y={yForNice(t) + 4}
                 textAnchor="end"
-                fontSize={12}
+                fontSize={13}
                 fill={theme.color.inkSubtle}
                 fontFamily="inherit"
               >
@@ -200,7 +200,7 @@ export function LineChart({
                 x={xFor(i)}
                 y={H - padB / 2 + 6}
                 textAnchor="middle"
-                fontSize={12}
+                fontSize={13}
                 fill={theme.color.inkSubtle}
                 fontFamily="inherit"
               >
