@@ -112,6 +112,20 @@ interface ResolvedPoint {
   outward: string;
   count: number;
   colour: string;
+  // The full point reference is kept so the hover tooltip can show
+  // a per-service breakdown when the filter is at the 'all' level.
+  point: VisitorMapPoint;
+}
+
+interface HoverState {
+  outward: string;
+  count: number;
+  colour: string;
+  point: VisitorMapPoint;
+  // Position within the heatmap container. Pre-translated from the
+  // mouse domEvent so the tooltip can render with simple top/left.
+  x: number;
+  y: number;
 }
 
 export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
@@ -125,6 +139,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [filter, setFilter] = useState<VisitorMapFilter>({ level: 'all' });
+  const [hover, setHover] = useState<HoverState | null>(null);
 
   const geoIndex = useMemo(() => {
     const m = new Map<string, { lat: number; lng: number }>();
@@ -141,6 +156,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
         outward: p.outward,
         count: p.total,
         colour: dominantServiceColour(p),
+        point: p,
       }));
     }
     if (filter.level === 'service') {
@@ -149,7 +165,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
       for (const p of data.points) {
         const svc = p.services.find((s) => s.service === filter.service);
         if (!svc || svc.count === 0) continue;
-        out.push({ outward: p.outward, count: svc.count, colour });
+        out.push({ outward: p.outward, count: svc.count, colour, point: p });
       }
       return out;
     }
@@ -161,7 +177,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
       if (!svc) continue;
       const sub = svc.subs.find((s) => s.key === filter.subKey);
       if (!sub || sub.count === 0) continue;
-      out.push({ outward: p.outward, count: sub.count, colour });
+      out.push({ outward: p.outward, count: sub.count, colour, point: p });
     }
     return out;
   }, [data.points, filter]);
@@ -267,12 +283,33 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           const marker = new lib.Marker({
             map,
             position: { lat: geo.lat, lng: geo.lng },
-            title: `${point.outward}: ${point.count} visit${point.count === 1 ? '' : 's'}`,
+            // No `title` — the system tooltip is replaced by the
+            // styled HoverCard below. Setting title would race with
+            // the React tooltip and show two overlapping labels.
             icon: haloMarkerIcon(point.colour, coreRadius),
             // Stack larger markers above smaller ones so a busy
             // outward doesn't bury an adjacent quieter one.
             zIndex: Math.round(point.count * 100),
           });
+          // Marker mouseover/mouseout drive the React tooltip. The
+          // domEvent on the Maps event is the underlying MouseEvent;
+          // we offset by the container's bounding rect so the
+          // tooltip can position relative to the heatmap card, not
+          // the viewport.
+          marker.addListener('mouseover', (event: { domEvent?: MouseEvent }) => {
+            const rect = containerRef.current?.getBoundingClientRect();
+            const dom = event.domEvent;
+            if (!rect || !dom) return;
+            setHover({
+              outward: point.outward,
+              count: point.count,
+              colour: point.colour,
+              point: point.point,
+              x: dom.clientX - rect.left,
+              y: dom.clientY - rect.top,
+            });
+          });
+          marker.addListener('mouseout', () => setHover(null));
           markersRef.current.push(marker);
           if (geo.lat > north) north = geo.lat;
           if (geo.lat < south) south = geo.lat;
@@ -339,6 +376,128 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
       />
       <KpiBadges visitors={totalsForBadges.visitors} areas={totalsForBadges.areas} />
       <Legend data={data} filter={filter} onChange={setFilter} />
+      {hover ? <HoverCard hover={hover} filter={filter} /> : null}
+    </div>
+  );
+}
+
+// Styled hover card. Floats above the marker the user is hovering,
+// composed entirely from theme tokens so it sits inside the wider
+// Lounge UI dialect. Pointer-events disabled because the card is
+// purely informational — clicking through it onto the map is the
+// expected behaviour.
+function HoverCard({ hover, filter }: { hover: HoverState; filter: VisitorMapFilter }) {
+  const breakdown = useMemo(() => {
+    if (filter.level === 'sub') {
+      const svc = hover.point.services.find((s) => s.service === filter.service);
+      const sub = svc?.subs.find((s) => s.key === filter.subKey);
+      return sub ? sub.label : null;
+    }
+    if (filter.level === 'service') {
+      const label = VISITOR_MAP_SERVICES.find((s) => s.id === filter.service)?.label;
+      return label ?? null;
+    }
+    // 'all' — show top services for this outward, up to two.
+    const top = [...hover.point.services]
+      .filter((s) => s.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 2);
+    if (top.length === 0) return null;
+    return top
+      .map((s) => {
+        const label = VISITOR_MAP_SERVICES.find((x) => x.id === s.service)?.label ?? s.service;
+        return `${label} (${s.count})`;
+      })
+      .join(', ');
+  }, [hover, filter]);
+
+  return (
+    <div
+      role="tooltip"
+      style={{
+        position: 'absolute',
+        // 14px gap above the cursor lifts the tooltip clear of the
+        // marker halo so it doesn't sit *on* the dot.
+        left: hover.x,
+        top: hover.y - 14,
+        transform: 'translate(-50%, -100%)',
+        background: theme.color.surface,
+        color: theme.color.ink,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        boxShadow: theme.shadow.raised,
+        border: `1px solid ${theme.color.border}`,
+        minWidth: 160,
+        maxWidth: 240,
+        pointerEvents: 'none',
+        zIndex: 10,
+        fontFamily: 'inherit',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          marginBottom: theme.space[1],
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            background: hover.colour,
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: theme.type.tracking.wide,
+          }}
+        >
+          {hover.outward}
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: theme.type.size.lg,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+          lineHeight: 1.1,
+        }}
+      >
+        {hover.count.toLocaleString('en-GB')}
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkMuted,
+            marginLeft: theme.space[1],
+          }}
+        >
+          visit{hover.count === 1 ? '' : 's'}
+        </span>
+      </div>
+      {breakdown ? (
+        <div
+          style={{
+            marginTop: theme.space[2],
+            paddingTop: theme.space[2],
+            borderTop: `1px solid ${theme.color.border}`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: 1.4,
+          }}
+        >
+          {breakdown}
+        </div>
+      ) : null}
     </div>
   );
 }
