@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { Hash, Map as MapIcon, Sparkles, UserPlus, Users } from 'lucide-react';
 import {
   BarChart,
@@ -5,13 +6,17 @@ import {
   EmptyState,
   Skeleton,
   StatCard,
+  VisitorHeatmap,
 } from '../../components/index.ts';
 import { theme } from '../../theme/index.ts';
 import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
 import {
   type PatientReports,
+  type VisitorMapService,
   useReportsPatients,
+  useReportsVisitorMap,
 } from '../../lib/queries/reports.ts';
+import { usePostcodeGeocodes } from '../../lib/queries/postcodeGeocodes.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {
@@ -53,10 +58,72 @@ export function DemographicsTab({ range }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       <Kpis data={data} />
+      <VisitorMapCard range={range} />
       <AgeBarsCard data={data} />
       <SexBreakdownCard data={data} />
       <PostcodeCard data={data} />
     </div>
+  );
+}
+
+function VisitorMapCard({ range }: { range: DateRange }) {
+  const map = useReportsVisitorMap(range);
+  const [service, setService] = useState<VisitorMapService | null>(null);
+  const outwards = useMemo(() => map.data?.points.map((p) => p.outward) ?? [], [map.data]);
+  const geocodes = usePostcodeGeocodes(outwards);
+
+  return (
+    <Card padding="lg">
+      <h3
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+        }}
+      >
+        <MapIcon size={16} aria-hidden /> Visitor heatmap
+      </h3>
+      <p
+        style={{
+          margin: `${theme.space[1]}px 0 ${theme.space[4]}px`,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+        }}
+      >
+        Where customers are coming from. Click a service in the legend to filter.
+        Outward postcodes only — no individual addresses on this map.
+      </p>
+      {map.error || geocodes.error ? (
+        <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          {map.error ?? geocodes.error}
+        </p>
+      ) : map.loading || !map.data || geocodes.loading ? (
+        <Skeleton height={480} />
+      ) : map.data.points.length === 0 ? (
+        <EmptyState
+          icon={<MapIcon size={20} />}
+          title="No mappable visitors"
+          description="No patients with a postcode on file in this period."
+        />
+      ) : (
+        <>
+          <VisitorHeatmap
+            data={map.data}
+            geocodes={geocodes.data}
+            selectedService={service}
+            onSelectService={setService}
+          />
+          {map.data.unknown_outward > 0 ? (
+            <p style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+              {map.data.unknown_outward.toLocaleString('en-GB')} additional patient{map.data.unknown_outward === 1 ? '' : 's'} with no postcode on file (not shown).
+            </p>
+          ) : null}
+        </>
+      )}
+    </Card>
   );
 }
 

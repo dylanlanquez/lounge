@@ -131,6 +131,56 @@ export interface AddressComponent {
   shortText?: string;
 }
 
+// Subset of the core Maps library we use for the visitor heatmap.
+// Typed loosely — Google's full Maps types come from
+// @googlemaps/types but we're avoiding the dependency, so we declare
+// just the surface area the heatmap needs.
+//
+// (Defined as `any` aliases under interfaces because Google's runtime
+// objects mutate in ways TS can't usefully model without their full
+// type packs. The map / circle handlers stay strongly typed at the
+// call site through a thin wrapper inside the component.)
+//
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type GMap = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type GCircle = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type GLatLngBounds = any;
+
+export interface MapsLib {
+  Map: new (el: HTMLElement, options: Record<string, unknown>) => GMap;
+  Circle: new (options: Record<string, unknown>) => GCircle;
+  LatLngBounds: new () => GLatLngBounds;
+}
+
+let mapsLibPromise: Promise<MapsLib | null> | null = null;
+
+// Resolve the core Maps library. Pattern mirrors loadPlacesLib —
+// shared bootstrap, lazy first-use, null when no key is configured.
+export function loadMapsLib(): Promise<MapsLib | null> {
+  if (!env.GOOGLE_MAPS_API_KEY) return Promise.resolve(null);
+  if (mapsLibPromise) return mapsLibPromise;
+  mapsLibPromise = (async () => {
+    installBootstrap(env.GOOGLE_MAPS_API_KEY!);
+    const win = window as Window;
+    const importLibrary = win.google?.maps?.importLibrary;
+    if (!importLibrary) {
+      // eslint-disable-next-line no-console
+      console.warn('[lng-maps] importLibrary not installed; bootstrap may have been blocked.');
+      return null;
+    }
+    const lib = (await importLibrary('maps')) as MapsLib | undefined;
+    if (!lib?.Map || !lib?.Circle) {
+      // eslint-disable-next-line no-console
+      console.warn('[lng-maps] Maps library missing — enable "Maps JavaScript API" in the GCP project.');
+      return null;
+    }
+    return lib;
+  })();
+  return mapsLibPromise;
+}
+
 // Resolve the Places library once Google has loaded. Returns null
 // when no API key is configured — callers fall back to a plain
 // input. Throwing would force every caller into a try/catch and

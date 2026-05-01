@@ -6,6 +6,7 @@ import {
   aggregateOverview,
   aggregatePatientReports,
   aggregateServiceMix,
+  aggregateVisitorMap,
   outwardPostcode,
   type BookingsAppointment,
   type BookingsVisit,
@@ -981,5 +982,86 @@ describe('aggregateLifetimeValue', () => {
     );
     expect(r.top_spenders).toHaveLength(1);
     expect(r.top_spenders[0]?.patient_id).toBe('p2');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// aggregateVisitorMap
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('aggregateVisitorMap', () => {
+  const visit = (over: {
+    patient_id?: string;
+    postcode?: string | null;
+    services?: (string | null)[];
+  } = {}) => ({
+    patient_id: over.patient_id ?? 'p1',
+    // ?? would fold an explicit null back to the default; check the
+    // key's presence so a test can explicitly pass null without it
+    // being silently rewritten.
+    patient: {
+      portal_ship_postcode:
+        'postcode' in over ? over.postcode ?? null : 'SW1A 1AA',
+    },
+    cart: {
+      items: (over.services ?? ['denture_repair']).map((s) => ({ catalogue: { service_type: s } })),
+    },
+  });
+
+  it('returns empty shape on empty input', () => {
+    const r = aggregateVisitorMap([]);
+    expect(r.points).toEqual([]);
+    expect(r.total_visitors).toBe(0);
+    expect(r.unknown_outward).toBe(0);
+  });
+
+  it('groups by outward postcode and counts unique patients', () => {
+    const r = aggregateVisitorMap([
+      visit({ patient_id: 'p1', postcode: 'SW1A 1AA' }),
+      visit({ patient_id: 'p1', postcode: 'SW1A 1AA' }), // dup patient → counted once
+      visit({ patient_id: 'p2', postcode: 'M1 1AE' }),
+    ]);
+    expect(r.points).toHaveLength(2);
+    expect(r.points.find((p) => p.outward === 'SW1A')?.total).toBe(1);
+    expect(r.points.find((p) => p.outward === 'M1')?.total).toBe(1);
+    expect(r.total_visitors).toBe(2);
+  });
+
+  it('separates unknown postcodes into unknown_outward', () => {
+    const r = aggregateVisitorMap([
+      visit({ patient_id: 'p1', postcode: null }),
+      visit({ patient_id: 'p2', postcode: 'BS1 1AA' }),
+    ]);
+    expect(r.points).toHaveLength(1);
+    expect(r.unknown_outward).toBe(1);
+  });
+
+  it('classifies dominant service per cart', () => {
+    const r = aggregateVisitorMap([
+      visit({
+        patient_id: 'p1',
+        postcode: 'SW1A 1AA',
+        services: ['click_in_veneers', 'click_in_veneers', 'denture_repair'],
+      }),
+    ]);
+    expect(r.points[0]?.by_service.click_in_veneers).toBe(1);
+    expect(r.points[0]?.by_service.denture_repair).toBe(0);
+  });
+
+  it("maps unknown service_types to 'other'", () => {
+    const r = aggregateVisitorMap([
+      visit({ patient_id: 'p1', postcode: 'SW1A 1AA', services: ['some_random_string', null] }),
+    ]);
+    expect(r.points[0]?.by_service.other).toBe(1);
+  });
+
+  it('sorts points by total descending', () => {
+    const r = aggregateVisitorMap([
+      visit({ patient_id: 'a', postcode: 'M1 1AA' }),
+      visit({ patient_id: 'b', postcode: 'M1 1AA' }),
+      visit({ patient_id: 'c', postcode: 'SW1A 1AA' }),
+    ]);
+    expect(r.points[0]?.outward).toBe('M1');
+    expect(r.points[1]?.outward).toBe('SW1A');
   });
 });
