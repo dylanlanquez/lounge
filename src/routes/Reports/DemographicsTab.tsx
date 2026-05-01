@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Hash, Map as MapIcon, Sparkles, UserPlus, Users } from 'lucide-react';
 import {
   BarChart,
@@ -12,7 +12,6 @@ import { theme } from '../../theme/index.ts';
 import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
 import {
   type PatientReports,
-  type VisitorMapService,
   useReportsPatients,
   useReportsVisitorMap,
 } from '../../lib/queries/reports.ts';
@@ -68,7 +67,6 @@ export function DemographicsTab({ range }: Props) {
 
 function VisitorMapCard({ range }: { range: DateRange }) {
   const map = useReportsVisitorMap(range);
-  const [service, setService] = useState<VisitorMapService | null>(null);
   const outwards = useMemo(() => map.data?.points.map((p) => p.outward) ?? [], [map.data]);
   const geocodes = usePostcodeGeocodes(outwards);
 
@@ -93,8 +91,7 @@ function VisitorMapCard({ range }: { range: DateRange }) {
           color: theme.color.inkMuted,
         }}
       >
-        Where customers are coming from. Click a service in the legend to filter.
-        Outward postcodes only — no individual addresses on this map.
+        Where customers are coming from. Click a service in the legend to drill into repair variants, appliance types, or arches. Outward postcodes only — no individual addresses on this map.
       </p>
       {map.error || geocodes.error ? (
         <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
@@ -110,12 +107,7 @@ function VisitorMapCard({ range }: { range: DateRange }) {
         />
       ) : (
         <>
-          <VisitorHeatmap
-            data={map.data}
-            geocodes={geocodes.data}
-            selectedService={service}
-            onSelectService={setService}
-          />
+          <VisitorHeatmap data={map.data} geocodes={geocodes.data} />
           {map.data.unknown_outward > 0 ? (
             <p style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
               {map.data.unknown_outward.toLocaleString('en-GB')} additional patient{map.data.unknown_outward === 1 ? '' : 's'} with no postcode on file (not shown).

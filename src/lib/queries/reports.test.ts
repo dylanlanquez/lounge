@@ -993,18 +993,22 @@ describe('aggregateVisitorMap', () => {
   const visit = (over: {
     patient_id?: string;
     postcode?: string | null;
-    services?: (string | null)[];
+    items?: { service_type: string | null; repair_variant?: string | null; product_key?: string | null; arch?: string | null }[];
   } = {}) => ({
     patient_id: over.patient_id ?? 'p1',
-    // ?? would fold an explicit null back to the default; check the
-    // key's presence so a test can explicitly pass null without it
-    // being silently rewritten.
     patient: {
       portal_ship_postcode:
         'postcode' in over ? over.postcode ?? null : 'SW1A 1AA',
     },
     cart: {
-      items: (over.services ?? ['denture_repair']).map((s) => ({ catalogue: { service_type: s } })),
+      items: (over.items ?? [{ service_type: 'denture_repair' }]).map((it) => ({
+        arch: it.arch ?? null,
+        catalogue: {
+          service_type: it.service_type,
+          repair_variant: it.repair_variant ?? null,
+          product_key: it.product_key ?? null,
+        },
+      })),
     },
   });
 
@@ -1041,18 +1045,23 @@ describe('aggregateVisitorMap', () => {
       visit({
         patient_id: 'p1',
         postcode: 'SW1A 1AA',
-        services: ['click_in_veneers', 'click_in_veneers', 'denture_repair'],
+        items: [
+          { service_type: 'click_in_veneers' },
+          { service_type: 'click_in_veneers' },
+          { service_type: 'denture_repair' },
+        ],
       }),
     ]);
-    expect(r.points[0]?.by_service.click_in_veneers).toBe(1);
-    expect(r.points[0]?.by_service.denture_repair).toBe(0);
+    const services = r.points[0]?.services ?? [];
+    expect(services.find((s) => s.service === 'click_in_veneers')?.count).toBe(1);
+    expect(services.find((s) => s.service === 'denture_repair')).toBeUndefined();
   });
 
   it("maps unknown service_types to 'other'", () => {
     const r = aggregateVisitorMap([
-      visit({ patient_id: 'p1', postcode: 'SW1A 1AA', services: ['some_random_string', null] }),
+      visit({ patient_id: 'p1', postcode: 'SW1A 1AA', items: [{ service_type: 'some_random_string' }] }),
     ]);
-    expect(r.points[0]?.by_service.other).toBe(1);
+    expect(r.points[0]?.services.find((s) => s.service === 'other')?.count).toBe(1);
   });
 
   it('sorts points by total descending', () => {
@@ -1063,5 +1072,83 @@ describe('aggregateVisitorMap', () => {
     ]);
     expect(r.points[0]?.outward).toBe('M1');
     expect(r.points[1]?.outward).toBe('SW1A');
+  });
+
+  it('drills down denture_repair into repair_variant', () => {
+    const r = aggregateVisitorMap([
+      visit({
+        patient_id: 'p1',
+        postcode: 'SW1A 1AA',
+        items: [
+          { service_type: 'denture_repair', repair_variant: 'Snapped denture' },
+          { service_type: 'denture_repair', repair_variant: 'Snapped denture' },
+        ],
+      }),
+      visit({
+        patient_id: 'p2',
+        postcode: 'SW1A 1AA',
+        items: [
+          { service_type: 'denture_repair', repair_variant: 'Cracked denture' },
+        ],
+      }),
+    ]);
+    const dr = r.points[0]?.services.find((s) => s.service === 'denture_repair');
+    expect(dr?.count).toBe(2);
+    expect(dr?.subs.find((s) => s.key === 'Snapped denture')?.count).toBe(1);
+    expect(dr?.subs.find((s) => s.key === 'Cracked denture')?.count).toBe(1);
+  });
+
+  it('drills down same_day_appliance into product_key with humanised label', () => {
+    const r = aggregateVisitorMap([
+      visit({
+        patient_id: 'p1',
+        postcode: 'SW1A 1AA',
+        items: [{ service_type: 'same_day_appliance', product_key: 'whitening_tray' }],
+      }),
+    ]);
+    const app = r.points[0]?.services.find((s) => s.service === 'same_day_appliance');
+    const sub = app?.subs.find((s) => s.key === 'whitening_tray');
+    expect(sub?.count).toBe(1);
+    expect(sub?.label).toBe('Whitening tray');
+  });
+
+  it('drills down click_in_veneers / impressions into arch', () => {
+    const r = aggregateVisitorMap([
+      visit({
+        patient_id: 'p1',
+        postcode: 'SW1A 1AA',
+        items: [{ service_type: 'click_in_veneers', arch: 'upper' }],
+      }),
+      visit({
+        patient_id: 'p2',
+        postcode: 'SW1A 1AA',
+        items: [{ service_type: 'impression_appointment', arch: 'both' }],
+      }),
+    ]);
+    const veneers = r.points[0]?.services.find((s) => s.service === 'click_in_veneers');
+    expect(veneers?.subs.find((s) => s.key === 'upper')?.label).toBe('Upper arch');
+    const imp = r.points[0]?.services.find((s) => s.service === 'impression_appointment');
+    expect(imp?.subs.find((s) => s.key === 'both')?.label).toBe('Both arches');
+  });
+
+  it('omits sub from the list when the relevant field is blank', () => {
+    const r = aggregateVisitorMap([
+      visit({
+        patient_id: 'p1',
+        postcode: 'SW1A 1AA',
+        items: [{ service_type: 'denture_repair' /* no repair_variant */ }],
+      }),
+    ]);
+    const dr = r.points[0]?.services.find((s) => s.service === 'denture_repair');
+    expect(dr?.count).toBe(1);
+    expect(dr?.subs).toEqual([]);
+  });
+
+  it("'other' service has no sub-list", () => {
+    const r = aggregateVisitorMap([
+      visit({ patient_id: 'p1', postcode: 'SW1A 1AA', items: [{ service_type: null }] }),
+    ]);
+    const other = r.points[0]?.services.find((s) => s.service === 'other');
+    expect(other?.subs).toEqual([]);
   });
 });

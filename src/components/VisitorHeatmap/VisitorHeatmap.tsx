@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { type GMap, type GCircle, loadMapsLib } from '../../lib/googleMaps.ts';
 import {
@@ -10,19 +11,27 @@ import {
 import type { PostcodeGeocode } from '../../lib/queries/postcodeGeocodes.ts';
 import { logFailure } from '../../lib/failureLog.ts';
 
+// Hierarchical filter state. Three levels:
+//   • 'all'     → every visitor regardless of service
+//   • 'service' → restrict to a single service across the cohort
+//   • 'sub'     → drill into a sub-category of that service
+//                 (repair_variant for denture_repair, product_key for
+//                 same_day_appliance, arch for click_in_veneers /
+//                 impression_appointment)
+//
+// The heatmap component owns the state internally so a parent only
+// needs to feed it data + geocodes. Callers that want external
+// observation can pass `onFilterChange` later if needed.
+export type VisitorMapFilter =
+  | { level: 'all' }
+  | { level: 'service'; service: VisitorMapService }
+  | { level: 'sub'; service: VisitorMapService; subKey: string };
+
 export interface VisitorHeatmapProps {
   data: VisitorMapData;
   geocodes: PostcodeGeocode[];
-  // Selected service from the legend, or null for "all".
-  selectedService: VisitorMapService | null;
-  onSelectService: (service: VisitorMapService | null) => void;
 }
 
-// Hand-tuned palette for the five service kinds. Pulled from the
-// theme rather than hardcoded — denture_repair = alert tone,
-// click_in_veneers = ink, same_day_appliance = accent, impression
-// = warn, other = inkSubtle. Matches the rest of Lounge's reports
-// so the legend reads as part of the same visual language.
 function colourFor(service: VisitorMapService): string {
   switch (service) {
     case 'denture_repair':
@@ -38,10 +47,6 @@ function colourFor(service: VisitorMapService): string {
   }
 }
 
-// Light, low-contrast Google Maps style. Keeps the UK background as
-// a quiet canvas so the patient-density circles are the foreground
-// element. Built once and passed to every Map instance — Google
-// caches by reference.
 const MAP_STYLE = [
   { featureType: 'all', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
   { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#d0d4d4' }] },
@@ -52,42 +57,71 @@ const MAP_STYLE = [
   { featureType: 'poi', elementType: 'all', stylers: [{ visibility: 'off' }] },
 ];
 
-export function VisitorHeatmap({
-  data,
-  geocodes,
-  selectedService,
-  onSelectService,
-}: VisitorHeatmapProps) {
+interface ResolvedPoint {
+  outward: string;
+  count: number;
+  colour: string;
+}
+
+export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GMap | null>(null);
   const circlesRef = useRef<GCircle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [filter, setFilter] = useState<VisitorMapFilter>({ level: 'all' });
 
-  // outward → lat/lng for fast O(1) lookup during render.
   const geoIndex = useMemo(() => {
     const m = new Map<string, { lat: number; lng: number }>();
     for (const g of geocodes) m.set(g.outward, { lat: g.lat, lng: g.lng });
     return m;
   }, [geocodes]);
 
-  // Filtered points reflect the legend selection — when "all" is
-  // selected we render every point; when a service is selected we
-  // render points whose by_service[service] > 0, sized by that
-  // count instead of the total.
-  const filteredPoints = useMemo(() => {
-    if (!selectedService) return data.points;
-    return data.points
-      .map((p) => ({ ...p, total: p.by_service[selectedService] }))
-      .filter((p) => p.total > 0);
-  }, [data.points, selectedService]);
+  // Resolve points + colour according to the active filter level. The
+  // filter is the source of truth for both what to render and what
+  // colour to use for it; downstream code stays declarative.
+  const resolvedPoints: ResolvedPoint[] = useMemo(() => {
+    if (filter.level === 'all') {
+      return data.points.map((p) => ({
+        outward: p.outward,
+        count: p.total,
+        colour: dominantServiceColour(p),
+      }));
+    }
+    if (filter.level === 'service') {
+      const colour = colourFor(filter.service);
+      const out: ResolvedPoint[] = [];
+      for (const p of data.points) {
+        const svc = p.services.find((s) => s.service === filter.service);
+        if (!svc || svc.count === 0) continue;
+        out.push({ outward: p.outward, count: svc.count, colour });
+      }
+      return out;
+    }
+    // 'sub'
+    const colour = colourFor(filter.service);
+    const out: ResolvedPoint[] = [];
+    for (const p of data.points) {
+      const svc = p.services.find((s) => s.service === filter.service);
+      if (!svc) continue;
+      const sub = svc.subs.find((s) => s.key === filter.subKey);
+      if (!sub || sub.count === 0) continue;
+      out.push({ outward: p.outward, count: sub.count, colour });
+    }
+    return out;
+  }, [data.points, filter]);
 
-  // Mount + style the map once, then redraw circles on every data
-  // change. Mounting is async because we lazy-load the Maps library.
+  const totalsForBadges = useMemo(
+    () => ({
+      visitors: resolvedPoints.reduce((s, p) => s + p.count, 0),
+      areas: resolvedPoints.length,
+    }),
+    [resolvedPoints],
+  );
+
   useEffect(() => {
     if (!containerRef.current) return;
     let cancelled = false;
-
     void (async () => {
       try {
         const lib = await loadMapsLib();
@@ -97,8 +131,6 @@ export function VisitorHeatmap({
           return;
         }
         if (!containerRef.current) return;
-        // UK-centric initial view. Bounds ranged over Lands' End to
-        // John o'Groats so every UK outward sits within the frame.
         const map = new lib.Map(containerRef.current, {
           center: { lat: 54.0, lng: -2.5 },
           zoom: 6,
@@ -123,13 +155,12 @@ export function VisitorHeatmap({
         });
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Redraw whenever the data, filter, or geocode set changes.
+  // Redraw whenever the resolved points change.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -137,32 +168,24 @@ export function VisitorHeatmap({
     void (async () => {
       const lib = await loadMapsLib();
       if (cancelled || !lib) return;
-      // Tear down prior circles. Google's circles aren't auto-cleaned
-      // on data changes; explicit setMap(null) detaches them.
-      for (const c of circlesRef.current) {
-        c.setMap(null);
-      }
+      for (const c of circlesRef.current) c.setMap(null);
       circlesRef.current = [];
-      if (filteredPoints.length === 0) return;
+      if (resolvedPoints.length === 0) return;
 
-      const max = Math.max(...filteredPoints.map((p) => p.total));
+      const max = Math.max(...resolvedPoints.map((p) => p.count));
       const bounds = new lib.LatLngBounds();
-      for (const point of filteredPoints) {
+      for (const point of resolvedPoints) {
         const geo = geoIndex.get(point.outward);
         if (!geo) continue;
-        const colour = pickPointColour(point, selectedService);
-        // Radius scales between 4km (smallest) and 25km (largest)
-        // based on relative count so even one-visit outwards are
-        // visible without smothering the map at high counts.
-        const radiusMeters = 4000 + (max > 0 ? (point.total / max) * 21000 : 0);
+        const radiusMeters = 4000 + (max > 0 ? (point.count / max) * 21000 : 0);
         const circle = new lib.Circle({
           map,
           center: { lat: geo.lat, lng: geo.lng },
           radius: radiusMeters,
-          strokeColor: colour,
+          strokeColor: point.colour,
           strokeOpacity: 0.55,
           strokeWeight: 1,
-          fillColor: colour,
+          fillColor: point.colour,
           fillOpacity: 0.35,
           clickable: false,
         });
@@ -176,7 +199,7 @@ export function VisitorHeatmap({
     return () => {
       cancelled = true;
     };
-  }, [filteredPoints, geoIndex, selectedService]);
+  }, [resolvedPoints, geoIndex]);
 
   if (unavailable) {
     return (
@@ -203,7 +226,7 @@ export function VisitorHeatmap({
       <div
         ref={containerRef}
         role="img"
-        aria-label={`Map of where customers come from. ${filteredPoints.length} outward postcode${filteredPoints.length === 1 ? '' : 's'} shown.`}
+        aria-label={`Map of where customers come from. ${resolvedPoints.length} outward postcode${resolvedPoints.length === 1 ? '' : 's'} shown.`}
         style={{
           width: '100%',
           minHeight: 480,
@@ -213,14 +236,8 @@ export function VisitorHeatmap({
           overflow: 'hidden',
         }}
       />
-      <KpiBadges
-        visitors={filteredPoints.reduce((s, p) => s + p.total, 0)}
-        areas={filteredPoints.length}
-      />
-      <Legend
-        selected={selectedService}
-        onSelect={onSelectService}
-      />
+      <KpiBadges visitors={totalsForBadges.visitors} areas={totalsForBadges.areas} />
+      <Legend data={data} filter={filter} onChange={setFilter} />
     </div>
   );
 }
@@ -277,13 +294,101 @@ function Badge({ label, value }: { label: string; value: number }) {
   );
 }
 
+// Legend renders one of three views depending on the filter level:
+//   • 'all'     — service rows, click drills into 'service'
+//   • 'service' — back button + sub-category rows, click drills into 'sub'
+//   • 'sub'     — same shape as 'service' with the active sub highlighted
+// The "All visitors" row is always at the top of the 'all' view.
 function Legend({
-  selected,
-  onSelect,
+  data,
+  filter,
+  onChange,
 }: {
-  selected: VisitorMapService | null;
-  onSelect: (s: VisitorMapService | null) => void;
+  data: VisitorMapData;
+  filter: VisitorMapFilter;
+  onChange: (next: VisitorMapFilter) => void;
 }) {
+  // Aggregate service totals across every outward so the top-level
+  // legend can show visitor counts per service. (The map itself
+  // doesn't need this — but the legend item label benefits from
+  // surfacing the headline count next to each service name.)
+  const serviceTotals = useMemo(() => {
+    const totals = new Map<VisitorMapService, number>();
+    for (const p of data.points) {
+      for (const s of p.services) {
+        totals.set(s.service, (totals.get(s.service) ?? 0) + s.count);
+      }
+    }
+    return totals;
+  }, [data.points]);
+
+  if (filter.level === 'all') {
+    return (
+      <LegendShell title="Service">
+        <LegendRow
+          active={false}
+          colour={theme.color.inkSubtle}
+          label="All visitors"
+          count={data.total_visitors}
+          onClick={() => undefined}
+          highlighted
+        />
+        {VISITOR_MAP_SERVICES.map((s) => (
+          <LegendRow
+            key={s.id}
+            active={false}
+            colour={colourFor(s.id)}
+            label={s.label}
+            count={serviceTotals.get(s.id) ?? 0}
+            chevron
+            onClick={() => onChange({ level: 'service', service: s.id })}
+          />
+        ))}
+      </LegendShell>
+    );
+  }
+
+  // Drill into a service. Compose sub-totals across outwards.
+  const service = filter.service;
+  const serviceLabel = VISITOR_MAP_SERVICES.find((s) => s.id === service)?.label ?? service;
+  const subTotals = aggregateSubTotals(data, service);
+
+  return (
+    <LegendShell title={serviceLabel}>
+      <BackRow onClick={() => onChange({ level: 'all' })} />
+      <LegendRow
+        active={filter.level === 'service'}
+        colour={colourFor(service)}
+        label={`All ${serviceLabel.toLowerCase()}`}
+        count={serviceTotals.get(service) ?? 0}
+        onClick={() => onChange({ level: 'service', service })}
+      />
+      {subTotals.length === 0 ? (
+        <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+          No further breakdown — items in this service have no recorded sub-category.
+        </p>
+      ) : (
+        subTotals.map((s) => {
+          const isActive = filter.level === 'sub' && filter.subKey === s.key;
+          return (
+            <LegendRow
+              key={s.key}
+              active={isActive}
+              colour={colourFor(service)}
+              label={s.label}
+              count={s.count}
+              onClick={() =>
+                onChange({ level: 'sub', service, subKey: s.key })
+              }
+            />
+          );
+        })
+      )}
+    </LegendShell>
+  );
+}
+
+function LegendShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div
       style={{
@@ -298,7 +403,8 @@ function Legend({
         display: 'flex',
         flexDirection: 'column',
         gap: theme.space[2],
-        minWidth: 180,
+        minWidth: 220,
+        maxWidth: 280,
       }}
     >
       <span
@@ -310,76 +416,145 @@ function Legend({
           fontWeight: theme.type.weight.medium,
         }}
       >
-        Service
+        {title}
       </span>
-      <button
-        type="button"
-        onClick={() => onSelect(null)}
-        style={legendItemStyle(selected === null)}
-      >
-        <span style={legendDotStyle(theme.color.inkSubtle)} aria-hidden />
-        <span style={{ flex: 1, textAlign: 'left' }}>All visitors</span>
-      </button>
-      {VISITOR_MAP_SERVICES.map((s) => {
-        const active = selected === s.id;
-        return (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => onSelect(active ? null : s.id)}
-            style={legendItemStyle(active)}
-          >
-            <span style={legendDotStyle(colourFor(s.id))} aria-hidden />
-            <span style={{ flex: 1, textAlign: 'left' }}>{s.label}</span>
-          </button>
-        );
-      })}
+      {children}
     </div>
   );
 }
 
-function legendItemStyle(active: boolean) {
-  return {
-    appearance: 'none' as const,
-    border: 'none' as const,
-    background: active ? theme.color.bg : 'transparent',
-    color: active ? theme.color.ink : theme.color.inkMuted,
-    cursor: 'pointer' as const,
-    display: 'flex' as const,
-    alignItems: 'center' as const,
-    gap: theme.space[2],
-    padding: `${theme.space[2]}px ${theme.space[3]}px`,
-    borderRadius: theme.radius.input,
-    fontFamily: 'inherit',
-    fontSize: theme.type.size.sm,
-    fontWeight: active ? theme.type.weight.semibold : theme.type.weight.medium,
-    width: '100%',
-    textAlign: 'left' as const,
-    WebkitTapHighlightColor: 'transparent' as const,
-  };
+function LegendRow({
+  active,
+  highlighted,
+  colour,
+  label,
+  count,
+  chevron,
+  onClick,
+}: {
+  active: boolean;
+  highlighted?: boolean;
+  colour: string;
+  label: string;
+  count: number;
+  chevron?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: active ? `1px solid ${theme.color.ink}` : '1px solid transparent',
+        background: active || highlighted ? theme.color.bg : 'transparent',
+        color: active ? theme.color.ink : theme.color.inkMuted,
+        cursor: 'pointer',
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr auto auto',
+        alignItems: 'center',
+        gap: theme.space[2],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: active || highlighted ? theme.type.weight.semibold : theme.type.weight.medium,
+        width: '100%',
+        textAlign: 'left',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          background: colour,
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontVariantNumeric: 'tabular-nums',
+          color: theme.color.inkSubtle,
+          fontSize: theme.type.size.xs,
+        }}
+      >
+        {count.toLocaleString('en-GB')}
+      </span>
+      {chevron ? (
+        <span aria-hidden style={{ color: theme.color.inkSubtle, lineHeight: 0 }}>
+          ›
+        </span>
+      ) : (
+        <span aria-hidden />
+      )}
+    </button>
+  );
 }
 
-function legendDotStyle(colour: string) {
-  return {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    background: colour,
-    flexShrink: 0,
-  };
+function BackRow({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        color: theme.color.inkMuted,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        padding: `${theme.space[1]}px ${theme.space[2]}px`,
+        marginLeft: -theme.space[2],
+        marginBottom: theme.space[1],
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      <ArrowLeft size={12} aria-hidden />
+      All services
+    </button>
+  );
 }
 
-function pickPointColour(point: VisitorMapPoint, selectedService: VisitorMapService | null): string {
-  if (selectedService) return colourFor(selectedService);
-  // No selection: pick the dominant service's colour for the
-  // outward. Ties broken by the service order in VISITOR_MAP_SERVICES.
+function aggregateSubTotals(
+  data: VisitorMapData,
+  service: VisitorMapService,
+): { key: string; label: string; count: number }[] {
+  const totals = new Map<string, { label: string; count: number }>();
+  for (const p of data.points) {
+    const s = p.services.find((x) => x.service === service);
+    if (!s) continue;
+    for (const sub of s.subs) {
+      const prior = totals.get(sub.key);
+      if (prior) {
+        prior.count += sub.count;
+      } else {
+        totals.set(sub.key, { label: sub.label, count: sub.count });
+      }
+    }
+  }
+  return Array.from(totals.entries())
+    .map(([key, v]) => ({ key, label: v.label, count: v.count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function dominantServiceColour(point: VisitorMapPoint): string {
   let best: VisitorMapService = 'other';
   let bestCount = -1;
-  for (const s of VISITOR_MAP_SERVICES) {
-    const c = point.by_service[s.id];
-    if (c > bestCount) {
-      best = s.id;
-      bestCount = c;
+  for (const s of point.services) {
+    if (s.count > bestCount) {
+      best = s.service;
+      bestCount = s.count;
     }
   }
   return colourFor(best);
