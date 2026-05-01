@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   List,
+  Mail,
   Monitor,
   ShieldCheck,
   Video,
@@ -76,6 +77,7 @@ import {
   NO_SHOW_REASONS,
   reverseNoShow,
 } from '../lib/queries/visits.ts';
+import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
 
 type Layout = 'calendar' | 'list';
 const LAYOUT_KEY = 'lounge.scheduleLayout';
@@ -106,6 +108,14 @@ export function Schedule() {
   // RescheduleSheet renders on top of the existing detail sheet
   // (BottomSheet stacking is handled by their respective z-indices).
   const [reschedulingRow, setReschedulingRow] = useState<AppointmentRow | null>(null);
+  // "Resend confirmation" toast state — separate from the generic
+  // error toast so a success ("Sent to patient@example.com") and a
+  // failure ("Email delivery not configured") can render with the
+  // right tone without us reusing the error rail for both.
+  const [confirmationToast, setConfirmationToast] = useState<
+    { tone: 'success' | 'error' | 'info'; title: string; description?: string } | null
+  >(null);
+  const [resendingConfirmationId, setResendingConfirmationId] = useState<string | null>(null);
 
   const day = useDayAppointments(selectedDate);
   // Week-of-selected counts power the dots under each day pill.
@@ -505,6 +515,55 @@ export function Schedule() {
                       </span>
                     </Button>
                   ) : null}
+                  {/* Resend confirmation — native-booking only (Calendly
+                      sends its own). Disabled while in flight; toast
+                      reports the outcome including the no-email and
+                      not-configured cases. */}
+                  {selected.status === 'booked' &&
+                  selected.source !== 'calendly' &&
+                  selected.patient_email ? (
+                    <Button
+                      variant="tertiary"
+                      disabled={resendingConfirmationId === selected.id}
+                      onClick={async () => {
+                        const target = selected;
+                        setResendingConfirmationId(target.id);
+                        const result = await sendAppointmentConfirmation({
+                          appointmentId: target.id,
+                        });
+                        setResendingConfirmationId(null);
+                        if (result.ok) {
+                          setConfirmationToast({
+                            tone: 'success',
+                            title: 'Confirmation sent',
+                            description: result.recipient,
+                          });
+                        } else if (result.reason === 'no_email_on_patient') {
+                          setConfirmationToast({
+                            tone: 'info',
+                            title: 'No email on file for this patient',
+                          });
+                        } else if (result.reason === 'delivery_not_configured') {
+                          setConfirmationToast({
+                            tone: 'error',
+                            title: 'Email delivery not configured',
+                            description: 'Set RESEND_API_KEY on the edge function.',
+                          });
+                        } else {
+                          setConfirmationToast({
+                            tone: 'error',
+                            title: 'Could not send',
+                            description: result.error,
+                          });
+                        }
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                        <Mail size={14} aria-hidden />{' '}
+                        {resendingConfirmationId === selected.id ? 'Sending…' : 'Resend confirmation'}
+                      </span>
+                    </Button>
+                  ) : null}
                   {selected.status === 'booked' && selected.source === 'calendly' ? (
                     <span
                       style={{
@@ -888,6 +947,17 @@ export function Schedule() {
       {error ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
           <Toast tone="error" title="Could not update" description={error} onDismiss={() => setError(null)} />
+        </div>
+      ) : null}
+
+      {confirmationToast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast
+            tone={confirmationToast.tone}
+            title={confirmationToast.title}
+            description={confirmationToast.description}
+            onDismiss={() => setConfirmationToast(null)}
+          />
         </div>
       ) : null}
     </main>
