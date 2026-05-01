@@ -144,11 +144,17 @@ export interface AddressComponent {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type GMap = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type GCircle = any;
+export type GMarker = any;
+
+// SymbolPath.CIRCLE = 0 in google.maps.SymbolPath. Using the literal
+// keeps us off the global google.maps namespace (modular API) — the
+// constant lives on the global namespace, not the imported library
+// surface. Hard-coding it is the convention Google's own samples use.
+export const SYMBOL_PATH_CIRCLE = 0;
 
 export interface MapsLib {
   Map: new (el: HTMLElement, options: Record<string, unknown>) => GMap;
-  Circle: new (options: Record<string, unknown>) => GCircle;
+  Marker: new (options: Record<string, unknown>) => GMarker;
 }
 
 let mapsLibPromise: Promise<MapsLib | null> | null = null;
@@ -168,7 +174,7 @@ export function loadMapsLib(): Promise<MapsLib | null> {
       return null;
     }
     const lib = (await importLibrary('maps')) as MapsLib | undefined;
-    if (!lib?.Map || !lib?.Circle) {
+    if (!lib?.Map || !lib?.Marker) {
       // eslint-disable-next-line no-console
       console.warn('[lng-maps] Maps library missing — enable "Maps JavaScript API" in the GCP project.');
       return null;
