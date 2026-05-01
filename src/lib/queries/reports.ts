@@ -783,6 +783,203 @@ export function useReportsPatients(range: DateRange): PatientReportsResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Visitor heatmap data — per-outward visitor counts + dominant
+// service. Backs the Demographics tab's "Where customers are coming
+// from" map. Reuses the patient + cart joins that the rest of the
+// reports module already understands.
+//
+// Service classification matches the In Clinic board: catalogue
+// service_type wins; the dominant service per cart is the most
+// frequent service_type across the cart's items, with ties broken
+// by the first match. A cart with no recognisable service falls
+// into 'other'.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type VisitorMapService = 'denture_repair' | 'click_in_veneers' | 'same_day_appliance' | 'impression_appointment' | 'other';
+
+export const VISITOR_MAP_SERVICES: { id: VisitorMapService; label: string }[] = [
+  { id: 'denture_repair', label: 'Denture repair' },
+  { id: 'click_in_veneers', label: 'Click-in veneers' },
+  { id: 'same_day_appliance', label: 'Same-day appliance' },
+  { id: 'impression_appointment', label: 'Impression' },
+  { id: 'other', label: 'Other' },
+];
+
+export interface VisitorMapPoint {
+  outward: string; // e.g. 'SW1A'; never 'Unknown' here — those are filtered out
+  total: number;
+  by_service: Record<VisitorMapService, number>;
+}
+
+export interface VisitorMapData {
+  points: VisitorMapPoint[];
+  total_visitors: number;
+  unknown_outward: number;
+}
+
+interface VisitorMapVisit {
+  patient_id: string;
+  patient:
+    | { portal_ship_postcode: string | null }
+    | { portal_ship_postcode: string | null }[]
+    | null;
+  cart:
+    | {
+        items:
+          | { catalogue: { service_type: string | null } | { service_type: string | null }[] | null }[]
+          | null;
+      }
+    | {
+        items:
+          | { catalogue: { service_type: string | null } | { service_type: string | null }[] | null }[]
+          | null;
+      }[]
+    | null;
+}
+
+export function aggregateVisitorMap(visits: VisitorMapVisit[]): VisitorMapData {
+  // De-dup on patient_id — visitors are unique people in the period,
+  // not sums of visits. (Otherwise a frequent denture-repair patient
+  // would dominate their outward purely by visit volume.)
+  const perPatient = new Map<string, { outward: string; service: VisitorMapService }>();
+  let unknown_outward = 0;
+  for (const v of visits) {
+    const p = pickOne(v.patient);
+    const outward = p ? outwardPostcode(p.portal_ship_postcode) : 'Unknown';
+    if (outward === 'Unknown') {
+      // Counted separately so the page can still report a total.
+      if (!perPatient.has(v.patient_id)) {
+        perPatient.set(v.patient_id, { outward: 'Unknown', service: dominantService(v) });
+        unknown_outward += 1;
+      }
+      continue;
+    }
+    const existing = perPatient.get(v.patient_id);
+    if (existing) continue; // first visit's outward + service wins
+    perPatient.set(v.patient_id, { outward, service: dominantService(v) });
+  }
+
+  const aggByOutward = new Map<string, VisitorMapPoint>();
+  for (const p of perPatient.values()) {
+    if (p.outward === 'Unknown') continue;
+    let entry = aggByOutward.get(p.outward);
+    if (!entry) {
+      entry = {
+        outward: p.outward,
+        total: 0,
+        by_service: emptyServiceBreakdown(),
+      };
+      aggByOutward.set(p.outward, entry);
+    }
+    entry.total += 1;
+    entry.by_service[p.service] += 1;
+  }
+
+  const points = Array.from(aggByOutward.values()).sort((a, b) => b.total - a.total);
+  const total_visitors = points.reduce((s, p) => s + p.total, 0);
+  return { points, total_visitors, unknown_outward };
+}
+
+function dominantService(v: VisitorMapVisit): VisitorMapService {
+  const cart = pickOne(v.cart);
+  const items = cart?.items ?? [];
+  if (items.length === 0) return 'other';
+  const counts: Record<VisitorMapService, number> = emptyServiceBreakdown();
+  for (const it of items) {
+    const cat = pickOne(it.catalogue);
+    const st = normaliseServiceType(cat?.service_type ?? null);
+    counts[st] += 1;
+  }
+  let bestKind: VisitorMapService = 'other';
+  let bestCount = -1;
+  for (const k of Object.keys(counts) as VisitorMapService[]) {
+    if (counts[k] > bestCount) {
+      bestCount = counts[k];
+      bestKind = k;
+    }
+  }
+  return bestKind;
+}
+
+function emptyServiceBreakdown(): Record<VisitorMapService, number> {
+  return {
+    denture_repair: 0,
+    click_in_veneers: 0,
+    same_day_appliance: 0,
+    impression_appointment: 0,
+    other: 0,
+  };
+}
+
+function normaliseServiceType(raw: string | null): VisitorMapService {
+  switch (raw) {
+    case 'denture_repair':
+    case 'click_in_veneers':
+    case 'same_day_appliance':
+    case 'impression_appointment':
+      return raw;
+    default:
+      return 'other';
+  }
+}
+
+interface VisitorMapResult {
+  data: VisitorMapData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useReportsVisitorMap(range: DateRange): VisitorMapResult {
+  const [data, setData] = useState<VisitorMapData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const res = await supabase
+          .from('lng_visits')
+          .select(
+            `patient_id,
+             patient:patients!inner ( portal_ship_postcode ),
+             cart:lng_carts (
+               items:lng_cart_items ( catalogue:lwo_catalogue ( service_type ) )
+             )`,
+          )
+          .gte('opened_at', fromIso)
+          .lte('opened_at', toIso);
+        if (cancelled) return;
+        if (res.error) throw new Error(`visitor_map: ${res.error.message}`);
+        const out = aggregateVisitorMap((res.data ?? []) as VisitorMapVisit[]);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load visitor map';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.visitor_map',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Service mix
 //
 // Slices catalogue line items by category + service_type and surfaces

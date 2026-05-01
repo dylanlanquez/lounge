@@ -92,6 +92,9 @@ export type { BarChartProps, BarChartBar } from './Charts/BarChart.tsx';
 export { Funnel } from './Charts/Funnel.tsx';
 export type { FunnelProps, FunnelStage } from './Charts/Funnel.tsx';
 
+export { VisitorHeatmap } from './VisitorHeatmap/VisitorHeatmap.tsx';
+export type { VisitorHeatmapProps } from './VisitorHeatmap/VisitorHeatmap.tsx';
+
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
