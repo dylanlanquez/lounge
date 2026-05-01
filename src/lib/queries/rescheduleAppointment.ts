@@ -3,6 +3,7 @@ import {
   type BookingServiceType,
   resolveBookingTypeConfig,
 } from './bookingTypes.ts';
+import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 
 // Reschedule helper for native Lounge bookings.
 //
@@ -198,6 +199,21 @@ export async function rescheduleAppointment(input: {
       new_end_at: newEnd.toISOString(),
       reason: input.reason?.trim() ?? null,
     },
+  });
+
+  // ── 8. Email confirmation (best-effort) ────────────────────────
+  // Sends a "your appointment has moved" email with a fresh REQUEST
+  // .ics for the new slot AND a CANCEL .ics for the old slot, so
+  // the patient's calendar updates instead of accumulating
+  // duplicates. Failure here is logged inside the edge function
+  // (lng_system_failures) — we don't unwind the reschedule because
+  // the DB state is already correct; the operator can manually
+  // resend from the Schedule sheet.
+  void sendAppointmentConfirmation({
+    appointmentId: newAppointmentId,
+    oldAppointmentIdToCancel: existing.id,
+  }).catch(() => {
+    // already logged server-side; nothing to do here
   });
 
   return { newAppointmentId };
