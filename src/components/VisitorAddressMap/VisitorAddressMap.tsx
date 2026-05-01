@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { type GMap, type GMarker, loadMapsLib } from '../../lib/googleMaps.ts';
 import {
@@ -17,6 +17,18 @@ import {
   MARKER_COLOUR,
   haloMarkerIcon,
 } from '../../lib/visitorMapStyling.ts';
+
+// Hierarchical filter — same shape as VisitorHeatmap. Three levels:
+//   • 'all'     → every visit regardless of service
+//   • 'service' → only points booking that service
+//   • 'sub'     → only points booking that service's specific sub
+//                 (e.g. a denture_repair point with a "Cracked
+//                 denture" item, or a click_in_veneers point with
+//                 'lower' arch).
+type AddressMapFilter =
+  | { level: 'all' }
+  | { level: 'service'; service: VisitorMapService }
+  | { level: 'sub'; service: VisitorMapService; subKey: string };
 
 // VisitorAddressMap — admin-only address-resolution heatmap.
 //
@@ -52,10 +64,10 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [hover, setHover] = useState<HoverState | null>(null);
-  // Service filter — top-level only. Address-level subs are already
-  // visible in the hover card, so a sub-drilldown legend would be
-  // redundant.
-  const [serviceFilter, setServiceFilter] = useState<VisitorMapService | 'all'>('all');
+  // Hierarchical filter (all / service / sub) — same vocabulary as
+  // VisitorHeatmap so admins moving between the two views aren't
+  // re-learning controls.
+  const [filter, setFilter] = useState<AddressMapFilter>({ level: 'all' });
 
   const geoIndex = useMemo(() => {
     const m = new Map<string, { lat: number; lng: number }>();
@@ -65,12 +77,35 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
     return m;
   }, [geocodes]);
 
+  // Visible points for the current filter level. The 'service' and
+  // 'sub' levels narrow the set; 'all' returns the full set
+  // unchanged. Marker colour later in the marker effect adapts to
+  // the filter so a service drill-down repaints every dot in that
+  // service's brand colour.
   const visiblePoints = useMemo(() => {
-    if (serviceFilter === 'all') return data.points;
+    if (filter.level === 'all') return data.points;
+    if (filter.level === 'service') {
+      return data.points.filter((p) =>
+        p.services.some((s) => s.service === filter.service && s.count > 0),
+      );
+    }
+    // 'sub'
     return data.points.filter((p) =>
-      p.visits.some((v) => v.dominant_service === serviceFilter),
+      p.services.some(
+        (s) =>
+          s.service === filter.service &&
+          s.subs.some((k) => k.key === filter.subKey && k.count > 0),
+      ),
     );
-  }, [data.points, serviceFilter]);
+  }, [data.points, filter]);
+
+  // Marker colour adapts to the filter so a service drill-down
+  // recolours every dot to that service. At the 'all' level we keep
+  // each point's own dominant-service colour.
+  const colourFor = (point: VisitorAddressPoint): string => {
+    if (filter.level === 'all') return MARKER_COLOUR[point.dominant_service];
+    return MARKER_COLOUR[filter.service];
+  };
 
   const totals = useMemo(() => {
     let visits = 0;
@@ -149,7 +184,7 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
           const geo = geoIndex.get(`${point.line1_norm}|${point.postcode_norm}`);
           if (!geo) continue;
           const coreRadius = max > 0 ? 6 + (point.total_visits / max) * 8 : 6;
-          const colour = MARKER_COLOUR[point.dominant_service];
+          const colour = colourFor(point);
           const marker = new lib.Marker({
             map,
             position: { lat: geo.lat, lng: geo.lng },
@@ -231,7 +266,7 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
         }}
       />
       <KpiBadges placed={totals.placed} total={totals.total} visits={totals.visits} />
-      <ServiceFilter value={serviceFilter} onChange={setServiceFilter} />
+      <ServiceFilter data={data} filter={filter} onChange={setFilter} />
       {hover ? <HoverCard hover={hover} /> : null}
     </div>
   );
@@ -306,41 +341,76 @@ function Badge({ label, value, suffix }: { label: string; value: number; suffix?
 }
 
 // Service filter — collapsed by default to a compact chip in the
-// bottom-left corner of the map. Click expands into the full panel
-// of service rows; the panel's header carries a retract chevron
-// that brings it back to the chip.
+// bottom-left corner of the map. Click expands into a hierarchical
+// panel: top-level services drill into sub-categories (repair
+// variants, appliance product keys, arches). The same wrapper
+// element morphs between chip and panel — width and height
+// transition with `transformOrigin: bottom left` so the growth
+// reads as "unfolding from the chip's corner".
 //
-// The expand/collapse animation morphs the chip *into* the panel
-// rather than fading them as separate elements: the same wrapper
-// transitions its width and height, anchored to bottom-left so the
-// growth feels like it unfolds from the chip's corner. Both
-// content layers are rendered at all times and cross-faded by
-// opacity so the dimensions transition has something coherent
-// behind the curtain — no content jump, no layout flash.
+// Why dynamic open height:
 //
-// Sizing: a fixed open height is needed for a CSS dimension
-// transition to work (auto-height can't be transitioned). Open
-// dimensions are sized for the six legend rows + header padding;
-// closed dimensions are tuned for the longest active label
-// ("Same-day appliance") with safe overflow margin.
-const FILTER_OPEN_HEIGHT = 308;
-const FILTER_OPEN_WIDTH = 224;
+//   The panel content varies — top level shows All + 5 services,
+//   service level shows back + N sub-rows (3-6 typical), sub level
+//   the same with one row highlighted. Hard-coding an open height
+//   would either crop the largest variant or leave dead space at
+//   the smallest. We measure the inner content with a ref and
+//   `useLayoutEffect` after each render, then set the wrapper
+//   height to that value — so the height transition still works,
+//   but the target adapts to whatever the panel currently holds.
+//
+//   useLayoutEffect (not useEffect) so the height is committed
+//   before the browser paints — no flash of "wrong size" between
+//   render and effect.
 const FILTER_CLOSED_HEIGHT = 38;
 const FILTER_CLOSED_WIDTH = 188;
+const FILTER_OPEN_WIDTH = 240;
 
 function ServiceFilter({
-  value,
+  data,
+  filter,
   onChange,
 }: {
-  value: VisitorMapService | 'all';
-  onChange: (next: VisitorMapService | 'all') => void;
+  data: VisitorAddressMapData;
+  filter: AddressMapFilter;
+  onChange: (next: AddressMapFilter) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const activeLabel =
-    value === 'all'
-      ? 'All visits'
-      : VISITOR_MAP_SERVICES.find((s) => s.id === value)?.label ?? 'Service';
-  const activeColour = value === 'all' ? theme.color.inkSubtle : MARKER_COLOUR[value];
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // The measured content height when the panel is expanded — used
+  // as the wrapper's `height` so it sizes to whatever drill-down
+  // level is currently rendered. Recomputed on every relevant
+  // change.
+  const [measuredHeight, setMeasuredHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    if (!expanded) return;
+    const el = contentRef.current;
+    if (!el) return;
+    setMeasuredHeight(el.scrollHeight);
+  }, [expanded, filter, data.points]);
+
+  // Aggregate top-level service totals across the dataset so the
+  // top-level rows can show counts to the right of each service
+  // name — same affordance the outward heatmap uses.
+  const serviceTotals = useMemo(() => {
+    const totals = new Map<VisitorMapService, number>();
+    for (const p of data.points) {
+      for (const s of p.services) {
+        totals.set(s.service, (totals.get(s.service) ?? 0) + s.count);
+      }
+    }
+    return totals;
+  }, [data.points]);
+
+  const totalAll = useMemo(
+    () => data.points.reduce((acc, p) => acc + p.total_visits, 0),
+    [data.points],
+  );
+
+  const activeLabel = labelForFilter(filter);
+  const activeColour =
+    filter.level === 'all' ? theme.color.inkSubtle : MARKER_COLOUR[filter.service];
 
   return (
     <div
@@ -353,17 +423,13 @@ function ServiceFilter({
         boxShadow: theme.shadow.card,
         border: `1px solid ${theme.color.border}`,
         overflow: 'hidden',
-        // Bottom-left transform origin so the morph reads as
-        // "growing out of the chip's corner".
         transformOrigin: 'bottom left',
         width: expanded ? FILTER_OPEN_WIDTH : FILTER_CLOSED_WIDTH,
-        height: expanded ? FILTER_OPEN_HEIGHT : FILTER_CLOSED_HEIGHT,
+        height: expanded ? measuredHeight || FILTER_CLOSED_HEIGHT : FILTER_CLOSED_HEIGHT,
         transition: `width ${theme.motion.duration.base}ms ${theme.motion.easing.spring}, height ${theme.motion.duration.base}ms ${theme.motion.easing.spring}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
-      {/* Compact chip — rendered always, faded out when expanded.
-          pointer-events disabled when invisible so its click target
-          doesn't shadow the panel underneath. */}
+      {/* Compact chip — visible when collapsed. */}
       <button
         type="button"
         onClick={() => setExpanded(true)}
@@ -414,96 +480,248 @@ function ServiceFilter({
         <ChevronUp size={14} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
       </button>
 
-      {/* Full panel — rendered always, faded in when expanded.
-          Pointer events disabled in the closed state so the chip's
-          click target wins. */}
+      {/* Full panel — visible when expanded. Always rendered so the
+          ref-based height measurement works even before the morph. */}
       <div
+        ref={contentRef}
         aria-hidden={!expanded}
         style={{
           position: 'absolute',
           inset: 0,
-          padding: `${theme.space[3]}px ${theme.space[3]}px`,
+          padding: theme.space[3],
           display: 'flex',
           flexDirection: 'column',
           gap: theme.space[1],
           opacity: expanded ? 1 : 0,
           pointerEvents: expanded ? 'auto' : 'none',
-          // Slight delay on the panel fade-in so the morph reads as
-          // "size first, content second". On collapse the chip
-          // fades in last for the same reason.
           transition: `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingBottom: theme.space[1],
-          }}
-        >
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
-              color: theme.color.inkMuted,
-              fontWeight: theme.type.weight.medium,
-            }}
-          >
-            Service
-          </span>
-          <button
-            type="button"
-            onClick={() => setExpanded(false)}
-            aria-label="Close service filter"
-            style={{
-              appearance: 'none',
-              border: 'none',
-              background: 'transparent',
-              cursor: 'pointer',
-              padding: theme.space[1],
-              margin: -theme.space[1],
-              borderRadius: theme.radius.input,
-              color: theme.color.inkMuted,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              WebkitTapHighlightColor: 'transparent',
-            }}
-          >
-            <ChevronDown size={14} aria-hidden />
-          </button>
-        </div>
-        <FilterRow
-          active={value === 'all'}
-          colour={theme.color.inkSubtle}
-          label="All visits"
-          onClick={() => onChange('all')}
+        <PanelHeader
+          title={filter.level === 'all' ? 'Service' : labelForServiceTitle(filter)}
+          onClose={() => setExpanded(false)}
         />
-        {VISITOR_MAP_SERVICES.map((s) => (
-          <FilterRow
-            key={s.id}
-            active={value === s.id}
-            colour={MARKER_COLOUR[s.id]}
-            label={s.label}
-            onClick={() => onChange(s.id)}
-          />
-        ))}
+        {filter.level === 'all' ? (
+          <>
+            <FilterRow
+              active={false}
+              highlighted
+              colour={theme.color.inkSubtle}
+              label="All visits"
+              count={totalAll}
+              onClick={() => onChange({ level: 'all' })}
+            />
+            {VISITOR_MAP_SERVICES.map((s) => (
+              <FilterRow
+                key={s.id}
+                active={false}
+                colour={MARKER_COLOUR[s.id]}
+                label={s.label}
+                count={serviceTotals.get(s.id) ?? 0}
+                chevron
+                onClick={() => onChange({ level: 'service', service: s.id })}
+              />
+            ))}
+          </>
+        ) : (
+          <ServiceDrilldown data={data} filter={filter} onChange={onChange} />
+        )}
       </div>
     </div>
   );
 }
 
+function PanelHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingBottom: theme.space[1],
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          color: theme.color.inkMuted,
+          fontWeight: theme.type.weight.medium,
+          // Allow the title to truncate gracefully on long service
+          // labels so the close button always stays at the edge.
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {title}
+      </span>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close service filter"
+        style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          padding: theme.space[1],
+          margin: -theme.space[1],
+          borderRadius: theme.radius.input,
+          color: theme.color.inkMuted,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <ChevronDown size={14} aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+// Drill-down rows for a service-level or sub-level filter. Mirrors
+// the same structure the outward heatmap uses: back row + a "All
+// {service}" row + per-sub rows.
+function ServiceDrilldown({
+  data,
+  filter,
+  onChange,
+}: {
+  data: VisitorAddressMapData;
+  filter: Extract<AddressMapFilter, { level: 'service' | 'sub' }>;
+  onChange: (next: AddressMapFilter) => void;
+}) {
+  const service = filter.service;
+  const serviceLabel = VISITOR_MAP_SERVICES.find((s) => s.id === service)?.label ?? service;
+  const subTotals = useMemo(() => aggregateAddressSubs(data, service), [data, service]);
+  const serviceTotal = useMemo(() => {
+    let n = 0;
+    for (const p of data.points) {
+      const s = p.services.find((x) => x.service === service);
+      if (s) n += s.count;
+    }
+    return n;
+  }, [data, service]);
+  return (
+    <>
+      <BackRow onClick={() => onChange({ level: 'all' })} />
+      <FilterRow
+        active={filter.level === 'service'}
+        colour={MARKER_COLOUR[service]}
+        label={`All ${serviceLabel.toLowerCase()}`}
+        count={serviceTotal}
+        onClick={() => onChange({ level: 'service', service })}
+      />
+      {subTotals.length === 0 ? (
+        <span
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            paddingLeft: theme.space[3],
+          }}
+        >
+          No further breakdown for this service.
+        </span>
+      ) : (
+        subTotals.map((s) => {
+          const isActive = filter.level === 'sub' && filter.subKey === s.key;
+          return (
+            <FilterRow
+              key={s.key}
+              active={isActive}
+              colour={MARKER_COLOUR[service]}
+              label={s.label}
+              count={s.count}
+              onClick={() =>
+                onChange({ level: 'sub', service, subKey: s.key })
+              }
+            />
+          );
+        })
+      )}
+    </>
+  );
+}
+
+function BackRow({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        color: theme.color.inkMuted,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        padding: `${theme.space[1]}px ${theme.space[2]}px`,
+        marginLeft: -theme.space[2],
+        marginBottom: theme.space[1],
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      <ArrowLeft size={12} aria-hidden />
+      All services
+    </button>
+  );
+}
+
+function aggregateAddressSubs(
+  data: VisitorAddressMapData,
+  service: VisitorMapService,
+): { key: string; label: string; count: number }[] {
+  const totals = new Map<string, { label: string; count: number }>();
+  for (const p of data.points) {
+    const s = p.services.find((x) => x.service === service);
+    if (!s) continue;
+    for (const sub of s.subs) {
+      const prior = totals.get(sub.key);
+      if (prior) prior.count += sub.count;
+      else totals.set(sub.key, { label: sub.label, count: sub.count });
+    }
+  }
+  return Array.from(totals.entries())
+    .map(([key, v]) => ({ key, label: v.label, count: v.count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function labelForFilter(filter: AddressMapFilter): string {
+  if (filter.level === 'all') return 'All visits';
+  const serviceLabel =
+    VISITOR_MAP_SERVICES.find((s) => s.id === filter.service)?.label ?? filter.service;
+  return serviceLabel;
+}
+
+function labelForServiceTitle(filter: Extract<AddressMapFilter, { level: 'service' | 'sub' }>): string {
+  return VISITOR_MAP_SERVICES.find((s) => s.id === filter.service)?.label ?? filter.service;
+}
+
 function FilterRow({
   active,
+  highlighted,
   colour,
   label,
+  count,
+  chevron,
   onClick,
 }: {
   active: boolean;
+  highlighted?: boolean;
   colour: string;
   label: string;
+  count: number;
+  chevron?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -513,17 +731,18 @@ function FilterRow({
       style={{
         appearance: 'none',
         border: active ? `1px solid ${theme.color.ink}` : '1px solid transparent',
-        background: active ? theme.color.bg : 'transparent',
+        background: active || highlighted ? theme.color.bg : 'transparent',
         color: active ? theme.color.ink : theme.color.inkMuted,
         cursor: 'pointer',
-        display: 'inline-flex',
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr auto auto',
         alignItems: 'center',
         gap: theme.space[2],
         padding: `${theme.space[2]}px ${theme.space[3]}px`,
         borderRadius: theme.radius.input,
         fontFamily: 'inherit',
         fontSize: theme.type.size.sm,
-        fontWeight: active ? theme.type.weight.semibold : theme.type.weight.medium,
+        fontWeight: active || highlighted ? theme.type.weight.semibold : theme.type.weight.medium,
         textAlign: 'left',
         WebkitTapHighlightColor: 'transparent',
       }}
@@ -538,7 +757,23 @@ function FilterRow({
           flexShrink: 0,
         }}
       />
-      <span>{label}</span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span
+        style={{
+          fontVariantNumeric: 'tabular-nums',
+          color: theme.color.inkSubtle,
+          fontSize: theme.type.size.xs,
+        }}
+      >
+        {count.toLocaleString('en-GB')}
+      </span>
+      {chevron ? (
+        <span aria-hidden style={{ color: theme.color.inkSubtle, lineHeight: 0 }}>
+          ›
+        </span>
+      ) : (
+        <span aria-hidden />
+      )}
     </button>
   );
 }
