@@ -70,9 +70,34 @@ export interface BookingTypeConfigRow {
   duration_min: number | null;
   duration_max: number | null;
   duration_default: number | null;
+  // Optional per-booking-type cap on simultaneous bookings of this
+  // exact type. Independent of resource-pool capacity (both rules
+  // apply at conflict-check time). Null = inherit from parent.
+  max_concurrent: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Named resource (chair, lab bench, consult room) with bounded
+// capacity. A booking consumes 1 unit of every pool its service
+// type maps to, for the duration of the booking; capacity governs
+// concurrent claims.
+export interface ResourcePoolRow {
+  id: string;
+  display_name: string;
+  capacity: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Service-pool junction row. Children of a service inherit the
+// parent's pool list wholesale (per-child overrides are out of
+// scope for v1).
+export interface ServicePoolRow {
+  service_type: BookingServiceType;
+  pool_id: string;
 }
 
 // Effective config for a specific booking type, with parent-fallback
@@ -89,6 +114,12 @@ export interface ResolvedBookingTypeConfig {
   duration_min: number;
   duration_max: number;
   duration_default: number;
+  // Per-booking-type concurrent cap (resolved from child or parent).
+  // Null when neither sets it.
+  max_concurrent: number | null;
+  // Pool ids this booking type consumes (service-level only in v1;
+  // children inherit the parent's pool list).
+  pool_ids: string[];
   notes: string | null;
   // 'child' when the row's own values were used; 'parent' when the
   // resolver fell back. Useful for the admin UI's "inherits from"
@@ -165,9 +196,155 @@ export async function resolveBookingTypeConfig(args: {
     duration_min: row.duration_min as number,
     duration_max: row.duration_max as number,
     duration_default: row.duration_default as number,
+    max_concurrent: (row.max_concurrent as number | null) ?? null,
+    pool_ids: Array.isArray(row.pool_ids) ? (row.pool_ids as string[]) : [],
     notes: row.notes ?? null,
     source: row.source as 'child' | 'parent',
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resource pools + service-pool consumption.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function useResourcePools(): {
+  data: ResourcePoolRow[];
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+} {
+  const [data, setData] = useState<ResourcePoolRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('lng_booking_resource_pools')
+        .select('*')
+        .order('display_name', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      setData((rows ?? []) as ResourcePoolRow[]);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  return { data, loading, error, reload: () => setTick((n) => n + 1) };
+}
+
+export function useServicePools(): {
+  data: ServicePoolRow[];
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+} {
+  const [data, setData] = useState<ServicePoolRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('lng_booking_service_pools')
+        .select('service_type, pool_id');
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      setData((rows ?? []) as ServicePoolRow[]);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  return { data, loading, error, reload: () => setTick((n) => n + 1) };
+}
+
+// Slug for a pool id. Lowercase, digits, hyphens. Used both at insert
+// time (validating user input before round-tripping to the DB check
+// constraint) and when generating an id from a display name.
+export function poolIdFromDisplayName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function isValidPoolId(id: string): boolean {
+  return /^[a-z][a-z0-9-]+$/.test(id);
+}
+
+export async function upsertResourcePool(input: {
+  id: string;
+  display_name: string;
+  capacity: number;
+  notes?: string | null;
+}): Promise<void> {
+  if (!isValidPoolId(input.id)) {
+    throw new Error('Pool id must be lowercase letters, digits, and hyphens.');
+  }
+  const { error } = await supabase
+    .from('lng_booking_resource_pools')
+    .upsert(
+      {
+        id: input.id,
+        display_name: input.display_name,
+        capacity: input.capacity,
+        notes: input.notes ?? null,
+      },
+      { onConflict: 'id' },
+    );
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteResourcePool(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('lng_booking_resource_pools')
+    .delete()
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// Replace the pool list for a service type. Atomic: deletes existing
+// rows, inserts the new set. Used when an admin edits the pools a
+// service consumes.
+export async function setServicePools(
+  service: BookingServiceType,
+  poolIds: string[],
+): Promise<void> {
+  // Delete first, then insert. Idempotent — running twice with the
+  // same poolIds is a no-op.
+  const { error: delErr } = await supabase
+    .from('lng_booking_service_pools')
+    .delete()
+    .eq('service_type', service);
+  if (delErr) throw new Error(delErr.message);
+  if (poolIds.length === 0) return;
+  const { error: insErr } = await supabase
+    .from('lng_booking_service_pools')
+    .insert(poolIds.map((pool_id) => ({ service_type: service, pool_id })));
+  if (insErr) throw new Error(insErr.message);
 }
 
 // Admin write — upsert a full config row. The unique key for an
@@ -186,6 +363,7 @@ export async function upsertBookingTypeConfig(input: {
   duration_min?: number | null;
   duration_max?: number | null;
   duration_default?: number | null;
+  max_concurrent?: number | null;
   notes?: string | null;
 }): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -200,6 +378,7 @@ export async function upsertBookingTypeConfig(input: {
   if (input.duration_min !== undefined) payload.duration_min = input.duration_min;
   if (input.duration_max !== undefined) payload.duration_max = input.duration_max;
   if (input.duration_default !== undefined) payload.duration_default = input.duration_default;
+  if (input.max_concurrent !== undefined) payload.max_concurrent = input.max_concurrent;
   if (input.notes !== undefined) payload.notes = input.notes;
 
   const { error } = await supabase
