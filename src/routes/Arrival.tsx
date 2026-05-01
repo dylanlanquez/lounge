@@ -24,6 +24,7 @@ import {
   DateOfBirthRow,
   Dialog,
   DropdownSelect,
+  Input,
   Skeleton,
   Toast,
 } from '../components/index.ts';
@@ -151,6 +152,9 @@ interface FormState {
   allergies: string;
   emergency_contact_name: string;
   emergency_contact_phone: string;
+  // "How did you hear about us?" — captured once on first arrival
+  // and never again. Drives Reports → Marketing attribution.
+  referred_by: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -168,6 +172,7 @@ const EMPTY_FORM: FormState = {
   allergies: '',
   emergency_contact_name: '',
   emergency_contact_phone: '',
+  referred_by: '',
 };
 
 const SEX_OPTIONS = ['Female', 'Male', 'Other', 'Prefer not to say'] as const;
@@ -619,6 +624,7 @@ export function Arrival() {
           allergies: form.allergies,
           emergency_contact_name: form.emergency_contact_name,
           emergency_contact_phone: form.emergency_contact_phone,
+          referred_by: form.referred_by,
         },
         jbRef: jbRequired ? jbRef.trim() || null : null,
         editedKeys,
@@ -991,6 +997,7 @@ function hydrateForm(snap: ArrivalIntakeSnapshot, setForm: (f: FormState) => voi
     allergies: snap.allergies ?? '',
     emergency_contact_name: snap.emergency_contact_name ?? '',
     emergency_contact_phone: snap.emergency_contact_phone ?? '',
+    referred_by: snap.referred_by ?? '',
   });
 }
 
@@ -1947,6 +1954,19 @@ function CustomerStep({
         </FormGrid>
       </section>
 
+      {/* "How did you hear about us?" — first-time only. The
+          fill-blanks rule in submitArrivalIntake protects existing
+          answers, but we also hide the question entirely when the
+          patient already has one on file so returning patients
+          never see it. Optional field, no required-field gate. */}
+      {!snapshot.referred_by ? (
+        <ReferralSourceSection
+          value={form.referred_by}
+          onChange={(v) => onUpdate('referred_by', v)}
+          isMobile={isMobile}
+        />
+      ) : null}
+
       <ConfirmationBanner
         title="What's being worked on today"
         body={
@@ -2039,6 +2059,108 @@ function CustomerStep({
         required
       />
     </div>
+  );
+}
+
+// Marketing channels for the "How did you hear about us?" question
+// on step 2 (Customer details). Stored as Title Case strings on
+// patients.referred_by — the value normaliser in reports.ts groups
+// them for the Marketing tab. "Other" reveals a free-text input so
+// niche channels (a specific influencer, a local poster, etc.) can
+// still be captured without polluting the predefined set.
+const REFERRAL_CHANNELS: { value: string; label: string }[] = [
+  { value: 'Google', label: 'Google search' },
+  { value: 'Instagram', label: 'Instagram' },
+  { value: 'Facebook', label: 'Facebook' },
+  { value: 'TikTok', label: 'TikTok' },
+  { value: 'Friend or family', label: 'Friend or family' },
+  { value: 'Saw the sign', label: 'Saw the sign / walked past' },
+  { value: 'Returning customer', label: 'I have been before' },
+  { value: 'Other', label: 'Other' },
+];
+
+const REFERRAL_PRESET_VALUES = new Set(
+  REFERRAL_CHANNELS.filter((c) => c.value !== 'Other').map((c) => c.value),
+);
+
+function ReferralSourceSection({
+  value,
+  onChange,
+  isMobile,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  isMobile: boolean;
+}) {
+  // The dropdown's "selected" option and the saved value are
+  // related but distinct. If the saved value matches a preset, the
+  // dropdown shows that preset and there's no free-text box. If
+  // the saved value is anything else, the dropdown shows "Other"
+  // and a free-text box appears pre-filled with the value.
+  const isOther = value !== '' && !REFERRAL_PRESET_VALUES.has(value);
+  const dropdownValue = value === '' ? '' : isOther ? 'Other' : value;
+  const otherText = isOther ? value : '';
+
+  const handleChannel = (next: string) => {
+    if (next === 'Other') {
+      // Clear so the input renders empty; user types their own.
+      onChange('');
+    } else {
+      onChange(next);
+    }
+  };
+
+  return (
+    <section
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: isMobile ? theme.space[4] : theme.space[5],
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
+      }}
+    >
+      <div>
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          How did you hear about us?
+        </h2>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: 1.5,
+          }}
+        >
+          Helps us figure out which channels are working. Optional, only asked once.
+        </p>
+      </div>
+      <DropdownSelect<string>
+        label="Channel"
+        value={dropdownValue}
+        options={REFERRAL_CHANNELS}
+        placeholder="Pick the closest one"
+        onChange={handleChannel}
+      />
+      {dropdownValue === 'Other' ? (
+        <Input
+          label="Tell us a bit more"
+          value={otherText}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="e.g. influencer name, magazine, local poster"
+        />
+      ) : null}
+    </section>
   );
 }
 
