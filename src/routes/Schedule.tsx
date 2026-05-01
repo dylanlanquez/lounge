@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  CalendarClock,
   CalendarDays,
   CalendarOff,
   Check,
@@ -18,6 +19,7 @@ import {
   Button,
   Card,
   EmptyState,
+  RescheduleSheet,
   SegmentedControl,
   Skeleton,
   StatusPill,
@@ -100,6 +102,10 @@ export function Schedule() {
   // True when staff has tapped "No-show" inside the BottomSheet and we're
   // waiting for them to pick a reason. Cleared on cancel or successful submit.
   const [pickingNoShowReason, setPickingNoShowReason] = useState(false);
+  // The appointment currently being rescheduled. When non-null the
+  // RescheduleSheet renders on top of the existing detail sheet
+  // (BottomSheet stacking is handled by their respective z-indices).
+  const [reschedulingRow, setReschedulingRow] = useState<AppointmentRow | null>(null);
 
   const day = useDayAppointments(selectedDate);
   // Week-of-selected counts power the dots under each day pill.
@@ -474,19 +480,43 @@ export function Schedule() {
           footer={
             pickingNoShowReason ? null : !selected ? null : (
               <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                <Button
-                  variant="tertiary"
-                  onClick={() => {
-                    if (!selected) return;
-                    navigate(`/patient/${selected.patient_id}`, {
-                      state: { patientName: patientDisplayName(selected) },
-                    });
-                  }}
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                    Patient profile <ChevronRight size={16} />
-                  </span>
-                </Button>
+                <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button
+                    variant="tertiary"
+                    onClick={() => {
+                      if (!selected) return;
+                      navigate(`/patient/${selected.patient_id}`, {
+                        state: { patientName: patientDisplayName(selected) },
+                      });
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                      Patient profile <ChevronRight size={16} />
+                    </span>
+                  </Button>
+                  {/* Reschedule — only for native bookings in 'booked'
+                      state. Calendly-sourced rows reschedule on
+                      Calendly itself per the working agreement; we
+                      surface that as a hint instead of an action. */}
+                  {selected.status === 'booked' && selected.source !== 'calendly' ? (
+                    <Button variant="tertiary" onClick={() => setReschedulingRow(selected)}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                        <CalendarClock size={14} aria-hidden /> Reschedule
+                      </span>
+                    </Button>
+                  ) : null}
+                  {selected.status === 'booked' && selected.source === 'calendly' ? (
+                    <span
+                      style={{
+                        fontSize: theme.type.size.xs,
+                        color: theme.color.inkSubtle,
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      Reschedule on Calendly
+                    </span>
+                  ) : null}
+                </div>
                 {(() => {
                   const isVirtual = !!selected.join_url;
                   const status = selected.status;
@@ -816,6 +846,43 @@ export function Schedule() {
             </div>
           ) : null}
         </BottomSheet>
+      ) : null}
+
+      {reschedulingRow ? (
+        <RescheduleSheet
+          open
+          appointment={{
+            id: reschedulingRow.id,
+            patient_id: reschedulingRow.patient_id,
+            location_id: reschedulingRow.location_id,
+            // service_type was added to lng_appointments in
+            // 20260501000005 but the AppointmentRow shape predates
+            // it — we narrow + best-effort-cast here. New native
+            // bookings written by this very flow will set it; legacy
+            // Calendly imports were backfilled to 'other' if no
+            // pattern matched.
+            service_type:
+              ((reschedulingRow as unknown as { service_type?: string | null }).service_type ?? null) as
+                | 'denture_repair'
+                | 'click_in_veneers'
+                | 'same_day_appliance'
+                | 'impression_appointment'
+                | 'other'
+                | null,
+            source: reschedulingRow.source,
+            start_at: reschedulingRow.start_at,
+            end_at: reschedulingRow.end_at,
+            patient_first_name: reschedulingRow.patient_first_name,
+            patient_last_name: reschedulingRow.patient_last_name,
+          }}
+          onClose={() => setReschedulingRow(null)}
+          onRescheduled={() => {
+            setReschedulingRow(null);
+            setSelected(null);
+            day.refresh();
+            weekCounts.refresh();
+          }}
+        />
       ) : null}
 
       {error ? (
