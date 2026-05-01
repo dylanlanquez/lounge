@@ -18,8 +18,6 @@ export interface BarChartProps {
   ariaSummary: string;
   title?: ReactNode;
   subtitle?: ReactNode;
-  // Visual height of the SVG.
-  height?: number;
   // Render number labels on top of each bar. Default true — most
   // Reports surfaces want the exact count visible alongside the
   // visual ranking.
@@ -40,7 +38,6 @@ export function BarChart({
   ariaSummary,
   title,
   subtitle,
-  height = 220,
   showValueLabels = true,
   formatValue,
 }: BarChartProps) {
@@ -87,12 +84,16 @@ export function BarChart({
 
   return (
     <ChartFrame title={title} subtitle={subtitle}>
-      <div style={{ position: 'relative', width: '100%', height }}>
+      {/* aspectRatio matches the viewBox so the SVG scales uniformly
+          across viewports — no horizontal stretch / vertical squash
+          warping the digits. The default preserveAspectRatio
+          (xMidYMid meet) is then a no-op because container and
+          viewBox aspects are identical. */}
+      <div style={{ position: 'relative', width: '100%', aspectRatio: `${W} / ${H}` }}>
         <svg
           role="img"
           aria-label={ariaSummary}
           viewBox={`0 0 ${W} ${H}`}
-          preserveAspectRatio="none"
           style={{ width: '100%', height: '100%', display: 'block' }}
         >
           {/* Gridlines + y-tick labels — share the chart's formatter
