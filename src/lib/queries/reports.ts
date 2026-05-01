@@ -805,10 +805,32 @@ export const VISITOR_MAP_SERVICES: { id: VisitorMapService; label: string }[] = 
   { id: 'other', label: 'Other' },
 ];
 
+// One drill-down level beneath VisitorMapService. Each parent service
+// has its own sub-vocabulary:
+//   • denture_repair    → catalogue.repair_variant
+//   • same_day_appliance → catalogue.product_key
+//   • click_in_veneers  → cart_items.arch
+//   • impression_appointment → cart_items.arch
+//   • other             → none (no drill)
+//
+// The aggregator computes the dominant sub per (patient, service) so
+// the same de-dup rules as the parent service flow through.
+export interface VisitorSubcategory {
+  key: string; // raw value from the schema (e.g. 'Snapped denture', 'whitening_tray', 'upper')
+  label: string; // human-friendly
+  count: number;
+}
+
+export interface VisitorMapPointService {
+  service: VisitorMapService;
+  count: number;
+  subs: VisitorSubcategory[];
+}
+
 export interface VisitorMapPoint {
   outward: string; // e.g. 'SW1A'; never 'Unknown' here — those are filtered out
   total: number;
-  by_service: Record<VisitorMapService, number>;
+  services: VisitorMapPointService[];
 }
 
 export interface VisitorMapData {
@@ -826,12 +848,40 @@ interface VisitorMapVisit {
   cart:
     | {
         items:
-          | { catalogue: { service_type: string | null } | { service_type: string | null }[] | null }[]
+          | {
+              arch: string | null;
+              catalogue:
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }[]
+                | null;
+            }[]
           | null;
       }
     | {
         items:
-          | { catalogue: { service_type: string | null } | { service_type: string | null }[] | null }[]
+          | {
+              arch: string | null;
+              catalogue:
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }
+                | {
+                    service_type: string | null;
+                    repair_variant: string | null;
+                    product_key: string | null;
+                  }[]
+                | null;
+            }[]
           | null;
       }[]
     | null;
@@ -841,74 +891,171 @@ export function aggregateVisitorMap(visits: VisitorMapVisit[]): VisitorMapData {
   // De-dup on patient_id — visitors are unique people in the period,
   // not sums of visits. (Otherwise a frequent denture-repair patient
   // would dominate their outward purely by visit volume.)
-  const perPatient = new Map<string, { outward: string; service: VisitorMapService }>();
+  interface PatientFingerprint {
+    outward: string;
+    service: VisitorMapService;
+    subKey: string | null;
+  }
+  const perPatient = new Map<string, PatientFingerprint>();
   let unknown_outward = 0;
   for (const v of visits) {
+    if (perPatient.has(v.patient_id)) continue; // first visit wins
+
     const p = pickOne(v.patient);
     const outward = p ? outwardPostcode(p.portal_ship_postcode) : 'Unknown';
+    const dominant = dominantClassification(v);
+
     if (outward === 'Unknown') {
-      // Counted separately so the page can still report a total.
-      if (!perPatient.has(v.patient_id)) {
-        perPatient.set(v.patient_id, { outward: 'Unknown', service: dominantService(v) });
-        unknown_outward += 1;
-      }
+      perPatient.set(v.patient_id, { outward: 'Unknown', service: dominant.service, subKey: dominant.subKey });
+      unknown_outward += 1;
       continue;
     }
-    const existing = perPatient.get(v.patient_id);
-    if (existing) continue; // first visit's outward + service wins
-    perPatient.set(v.patient_id, { outward, service: dominantService(v) });
+    perPatient.set(v.patient_id, { outward, service: dominant.service, subKey: dominant.subKey });
   }
 
-  const aggByOutward = new Map<string, VisitorMapPoint>();
+  // Group by outward, then by service within outward.
+  interface MutableServiceEntry {
+    service: VisitorMapService;
+    count: number;
+    subs: Map<string, number>;
+  }
+  const aggByOutward = new Map<string, { total: number; services: Map<VisitorMapService, MutableServiceEntry> }>();
+
   for (const p of perPatient.values()) {
     if (p.outward === 'Unknown') continue;
-    let entry = aggByOutward.get(p.outward);
-    if (!entry) {
-      entry = {
-        outward: p.outward,
-        total: 0,
-        by_service: emptyServiceBreakdown(),
-      };
-      aggByOutward.set(p.outward, entry);
+    let outward = aggByOutward.get(p.outward);
+    if (!outward) {
+      outward = { total: 0, services: new Map() };
+      aggByOutward.set(p.outward, outward);
     }
-    entry.total += 1;
-    entry.by_service[p.service] += 1;
+    outward.total += 1;
+    let svc = outward.services.get(p.service);
+    if (!svc) {
+      svc = { service: p.service, count: 0, subs: new Map() };
+      outward.services.set(p.service, svc);
+    }
+    svc.count += 1;
+    if (p.subKey) {
+      svc.subs.set(p.subKey, (svc.subs.get(p.subKey) ?? 0) + 1);
+    }
   }
 
-  const points = Array.from(aggByOutward.values()).sort((a, b) => b.total - a.total);
+  const points: VisitorMapPoint[] = Array.from(aggByOutward.entries())
+    .map(([outward, agg]) => ({
+      outward,
+      total: agg.total,
+      services: Array.from(agg.services.values())
+        .map((s) => ({
+          service: s.service,
+          count: s.count,
+          subs: Array.from(s.subs.entries())
+            .map(([key, count]) => ({ key, label: humaniseSub(s.service, key), count }))
+            .sort((a, b) => b.count - a.count),
+        }))
+        .sort((a, b) => b.count - a.count),
+    }))
+    .sort((a, b) => b.total - a.total);
+
   const total_visitors = points.reduce((s, p) => s + p.total, 0);
   return { points, total_visitors, unknown_outward };
 }
 
-function dominantService(v: VisitorMapVisit): VisitorMapService {
-  const cart = pickOne(v.cart);
-  const items = cart?.items ?? [];
-  if (items.length === 0) return 'other';
-  const counts: Record<VisitorMapService, number> = emptyServiceBreakdown();
-  for (const it of items) {
-    const cat = pickOne(it.catalogue);
-    const st = normaliseServiceType(cat?.service_type ?? null);
-    counts[st] += 1;
-  }
-  let bestKind: VisitorMapService = 'other';
-  let bestCount = -1;
-  for (const k of Object.keys(counts) as VisitorMapService[]) {
-    if (counts[k] > bestCount) {
-      bestCount = counts[k];
-      bestKind = k;
-    }
-  }
-  return bestKind;
+interface DominantClassification {
+  service: VisitorMapService;
+  subKey: string | null;
 }
 
-function emptyServiceBreakdown(): Record<VisitorMapService, number> {
-  return {
+function dominantClassification(v: VisitorMapVisit): DominantClassification {
+  const cart = pickOne(v.cart);
+  const items = cart?.items ?? [];
+  if (items.length === 0) return { service: 'other', subKey: null };
+
+  // Step 1 — pick the dominant service across all items.
+  const serviceCounts: Record<VisitorMapService, number> = {
     denture_repair: 0,
     click_in_veneers: 0,
     same_day_appliance: 0,
     impression_appointment: 0,
     other: 0,
   };
+  for (const it of items) {
+    const cat = pickOne(it.catalogue);
+    const st = normaliseServiceType(cat?.service_type ?? null);
+    serviceCounts[st] += 1;
+  }
+  let dominant: VisitorMapService = 'other';
+  let dominantCount = -1;
+  for (const k of Object.keys(serviceCounts) as VisitorMapService[]) {
+    if (serviceCounts[k] > dominantCount) {
+      dominantCount = serviceCounts[k];
+      dominant = k;
+    }
+  }
+
+  // Step 2 — pick the dominant sub-key inside that service. 'other'
+  // has no sub-vocabulary, so return null.
+  if (dominant === 'other') return { service: 'other', subKey: null };
+  const subCounts = new Map<string, number>();
+  for (const it of items) {
+    const cat = pickOne(it.catalogue);
+    if (normaliseServiceType(cat?.service_type ?? null) !== dominant) continue;
+    const subKey = subKeyFor(dominant, it.arch, cat?.repair_variant ?? null, cat?.product_key ?? null);
+    if (subKey) subCounts.set(subKey, (subCounts.get(subKey) ?? 0) + 1);
+  }
+  if (subCounts.size === 0) return { service: dominant, subKey: null };
+  let bestSub: string | null = null;
+  let bestSubCount = -1;
+  for (const [k, c] of subCounts) {
+    if (c > bestSubCount) {
+      bestSub = k;
+      bestSubCount = c;
+    }
+  }
+  return { service: dominant, subKey: bestSub };
+}
+
+// Per-service sub-key extraction. Each service uses a different
+// schema field for its drill-down. Returns null when the relevant
+// field is empty so the patient still contributes to the parent
+// service's count without polluting the sub-list with "Unknown"
+// rows.
+function subKeyFor(
+  service: VisitorMapService,
+  arch: string | null,
+  repairVariant: string | null,
+  productKey: string | null,
+): string | null {
+  switch (service) {
+    case 'denture_repair':
+      return repairVariant?.trim() || null;
+    case 'same_day_appliance':
+      return productKey?.trim() || null;
+    case 'click_in_veneers':
+    case 'impression_appointment':
+      // Arch is the natural drill-down for veneers + impressions.
+      return arch?.trim() || null;
+    case 'other':
+      return null;
+  }
+}
+
+function humaniseSub(service: VisitorMapService, key: string): string {
+  if (service === 'click_in_veneers' || service === 'impression_appointment') {
+    if (key === 'upper') return 'Upper arch';
+    if (key === 'lower') return 'Lower arch';
+    if (key === 'both') return 'Both arches';
+    return key;
+  }
+  if (service === 'same_day_appliance') {
+    // Catalogue product_keys are snake_case identifiers — humanise.
+    return key
+      .split('_')
+      .map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+      .join(' ');
+  }
+  // Denture repair already comes through with a human label
+  // ('Snapped denture', 'Add a new tooth') in the catalogue.
+  return key;
 }
 
 function normaliseServiceType(raw: string | null): VisitorMapService {
@@ -947,7 +1094,10 @@ export function useReportsVisitorMap(range: DateRange): VisitorMapResult {
             `patient_id,
              patient:patients!inner ( portal_ship_postcode ),
              cart:lng_carts (
-               items:lng_cart_items ( catalogue:lwo_catalogue ( service_type ) )
+               items:lng_cart_items (
+                 arch,
+                 catalogue:lwo_catalogue ( service_type, repair_variant, product_key )
+               )
              )`,
           )
           .gte('opened_at', fromIso)
