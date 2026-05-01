@@ -145,13 +145,10 @@ export interface AddressComponent {
 export type GMap = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type GCircle = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type GLatLngBounds = any;
 
 export interface MapsLib {
   Map: new (el: HTMLElement, options: Record<string, unknown>) => GMap;
   Circle: new (options: Record<string, unknown>) => GCircle;
-  LatLngBounds: new () => GLatLngBounds;
 }
 
 let mapsLibPromise: Promise<MapsLib | null> | null = null;
