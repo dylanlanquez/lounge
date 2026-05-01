@@ -524,7 +524,12 @@ function HoverCard({ hover }: { hover: HoverState }) {
         </div>
       </Section>
 
-      {/* 4. Recent orders */}
+      {/* 4. Recent orders. Each row after the first has a subtle
+            hairline above it — softer than the full-strength section
+            dividers (0.05 vs 0.08 opacity) so the eye reads the row
+            split as "within the section" rather than "between
+            sections". The line sits within the section's horizontal
+            padding so it's already inset from the card edges. */}
       <Section>
         <SectionLabel>Recent orders</SectionLabel>
         <ul
@@ -534,11 +539,20 @@ function HoverCard({ hover }: { hover: HoverState }) {
             padding: 0,
             display: 'flex',
             flexDirection: 'column',
-            gap: theme.space[2],
           }}
         >
-          {recent.map((v) => (
-            <li key={v.visit_id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {recent.map((v, i) => (
+            <li
+              key={v.visit_id}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                paddingTop: i === 0 ? 0 : theme.space[2],
+                marginTop: i === 0 ? 0 : theme.space[2],
+                borderTop: i === 0 ? 'none' : '1px solid rgba(14, 20, 20, 0.05)',
+              }}
+            >
               <div
                 style={{
                   display: 'flex',
