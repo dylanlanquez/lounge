@@ -8,6 +8,7 @@ import {
   VISITOR_MAP_SERVICES,
 } from '../../lib/queries/reports.ts';
 import type { AddressGeocode } from '../../lib/queries/addressGeocodes.ts';
+import { formatPence } from '../../lib/queries/carts.ts';
 import { logFailure } from '../../lib/failureLog.ts';
 import {
   MAP_STYLE,
@@ -405,15 +406,31 @@ function FilterRow({
   );
 }
 
-// HoverCard — surfaces full-address detail. The point.line1 and
-// point.postcode are presented in their original (non-normalised)
-// form so the address reads as the patient typed it. Up to 6 visits
-// are listed; if there are more, a "+N more" footer makes it clear
-// the list is truncated.
+// HoverCard — full-address detail with five clearly-divided sections,
+// joined by hairline rules:
+//
+//   1. Address line + postcode (with the dominant-service colour dot
+//      so it's visually keyed to the marker).
+//   2. Patient name(s) at the address. One name → that name; two →
+//      both, comma-separated; three or more → first two + "+N more".
+//   3. Aggregate metrics: total orders + total spent, side by side.
+//   4. The three most recent orders. Date · LAP-xxxxx on top line,
+//      items underneath. Tabular-nums on the figures keeps columns
+//      aligned vertically across rows.
+//   5. "+N earlier orders" footer when the list is truncated.
+//
+// Tighter vertical rhythm than the previous design — ~space[2]
+// between sections, line-height 1.3 on the body. Hairline separators
+// (1px borderTop on each section) carry the structure rather than
+// padding.
+const RECENT_LIMIT = 3;
+
 function HoverCard({ hover }: { hover: HoverState }) {
-  const visibleVisits = hover.point.visits.slice(0, 6);
-  const overflow = hover.point.visits.length - visibleVisits.length;
-  const displayPostcode = formatPostcodeForDisplay(hover.point.postcode);
+  const point = hover.point;
+  const recent = point.visits.slice(0, RECENT_LIMIT);
+  const overflow = point.visits.length - recent.length;
+  const displayPostcode = formatPostcodeForDisplay(point.postcode);
+  const namesLabel = composeNames(point.patient_names);
   return (
     <div
       role="tooltip"
@@ -425,144 +442,224 @@ function HoverCard({ hover }: { hover: HoverState }) {
         background: theme.color.surface,
         color: theme.color.ink,
         borderRadius: theme.radius.input,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
         boxShadow: theme.shadow.raised,
         border: `1px solid ${theme.color.border}`,
-        minWidth: 240,
-        maxWidth: 360,
+        minWidth: 260,
+        maxWidth: 320,
         pointerEvents: 'none',
         zIndex: 10,
         fontFamily: 'inherit',
+        // Sections handle their own padding via the row component
+        // below, so the outer card has none — keeps separators flush.
+        padding: 0,
+        overflow: 'hidden',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          marginBottom: theme.space[1],
-        }}
-      >
-        <span
-          aria-hidden
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: '50%',
-            background: MARKER_COLOUR[hover.point.dominant_service],
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-          }}
-        >
-          {hover.point.line1}
-        </span>
-      </div>
-      <div
-        style={{
-          fontSize: theme.type.size.xs,
-          color: theme.color.inkMuted,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: theme.type.tracking.wide,
-          marginBottom: theme.space[2],
-        }}
-      >
-        {displayPostcode}
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: theme.space[2],
-          marginBottom: theme.space[2],
-        }}
-      >
-        <span
-          style={{
-            fontSize: theme.type.size.lg,
-            fontWeight: theme.type.weight.semibold,
-            fontVariantNumeric: 'tabular-nums',
-            lineHeight: 1.1,
-          }}
-        >
-          {hover.point.total_visits.toLocaleString('en-GB')}
-        </span>
-        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-          visit{hover.point.total_visits === 1 ? '' : 's'}
-          {hover.point.patient_count > 1
-            ? ` · ${hover.point.patient_count} patients`
-            : ''}
-        </span>
-      </div>
-      <ul
-        style={{
-          listStyle: 'none',
-          margin: 0,
-          padding: `${theme.space[2]}px 0 0`,
-          borderTop: `1px solid ${theme.color.border}`,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: theme.space[2],
-        }}
-      >
-        {visibleVisits.map((v) => (
-          <li
-            key={v.visit_id}
+      {/* 1. Address */}
+      <Section first>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+          <span
+            aria-hidden
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: theme.space[1],
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: MARKER_COLOUR[point.dominant_service],
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              lineHeight: 1.25,
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-                gap: theme.space[2],
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-              }}
-            >
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {formatVisitDate(v.visit_date)}
-              </span>
-              {v.appointment_ref ? (
-                <span
-                  style={{
-                    fontVariantNumeric: 'tabular-nums',
-                    fontWeight: theme.type.weight.semibold,
-                    color: theme.color.ink,
-                  }}
-                >
-                  {v.appointment_ref}
-                </span>
-              ) : null}
-            </div>
-            <div style={{ fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.4 }}>
-              {v.items.map((it) => it.label).join(', ')}
-            </div>
-          </li>
-        ))}
-        {overflow > 0 ? (
-          <li
+            {point.line1}
+          </span>
+        </div>
+        <div
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: theme.type.tracking.wide,
+            // Sit just under the address with no extra section padding.
+            marginTop: 2,
+            paddingLeft: theme.space[2] + 8 /* match dot + gap inset */,
+          }}
+        >
+          {displayPostcode}
+        </div>
+      </Section>
+
+      {/* 2. Patient name(s) */}
+      {namesLabel ? (
+        <Section>
+          <div
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.ink,
+              lineHeight: 1.3,
+            }}
+          >
+            {namesLabel}
+          </div>
+        </Section>
+      ) : null}
+
+      {/* 3. Metrics row */}
+      <Section>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+          }}
+        >
+          <Metric value={point.total_visits} label={point.total_visits === 1 ? 'order' : 'orders'} />
+          <Metric value={formatPence(point.total_spent_pence)} label="spent" align="right" />
+        </div>
+      </Section>
+
+      {/* 4. Recent orders */}
+      <Section>
+        <SectionLabel>Recent orders</SectionLabel>
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: `${theme.space[2]}px 0 0`,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+          }}
+        >
+          {recent.map((v) => (
+            <li key={v.visit_id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  gap: theme.space[2],
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                <span>{formatVisitDate(v.visit_date)}</span>
+                {v.appointment_ref ? (
+                  <span style={{ fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                    {v.appointment_ref}
+                  </span>
+                ) : null}
+              </div>
+              <div style={{ fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.3 }}>
+                {v.items.map((it) => it.label).join(', ')}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      {/* 5. Overflow footer */}
+      {overflow > 0 ? (
+        <Section>
+          <div
             style={{
               fontSize: theme.type.size.xs,
               color: theme.color.inkMuted,
-              paddingTop: theme.space[1],
             }}
           >
-            +{overflow} earlier visit{overflow === 1 ? '' : 's'} not shown
-          </li>
-        ) : null}
-      </ul>
+            +{overflow} earlier order{overflow === 1 ? '' : 's'}
+          </div>
+        </Section>
+      ) : null}
     </div>
   );
+}
+
+// Section — one band of the hover card, separated from the band
+// above by a hairline rule. `first` skips the rule so the card's
+// outer border carries the top edge.
+function Section({ first, children }: { first?: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderTop: first ? undefined : `1px solid ${theme.color.border}`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        textTransform: 'uppercase',
+        letterSpacing: theme.type.tracking.wide,
+        color: theme.color.inkMuted,
+        fontWeight: theme.type.weight.medium,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Metric({
+  value,
+  label,
+  align = 'left',
+}: {
+  value: number | string;
+  label: string;
+  align?: 'left' | 'right';
+}) {
+  const display = typeof value === 'number' ? value.toLocaleString('en-GB') : value;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: theme.space[1],
+        textAlign: align,
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          fontVariantNumeric: 'tabular-nums',
+          lineHeight: 1.1,
+        }}
+      >
+        {display}
+      </span>
+      <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>{label}</span>
+    </div>
+  );
+}
+
+// Compose a friendly name string from a small list:
+//   []           → null   (nothing to show)
+//   ['A']        → "A"
+//   ['A','B']    → "A, B"
+//   ['A','B','C','D'] → "A, B + 2 more"
+function composeNames(names: string[]): string | null {
+  if (names.length === 0) return null;
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]}, ${names[1]}`;
+  const head = `${names[0]}, ${names[1]}`;
+  const remaining = names.length - 2;
+  return `${head} + ${remaining} more`;
 }
 
 // "G718PH" → "G71 8PH". Postcodes are stored normalised in the
