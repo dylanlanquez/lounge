@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { type GMap, type GMarker, loadMapsLib } from '../../lib/googleMaps.ts';
+import { computeHoverCardPosition, type HoverPosition } from '../../lib/hoverCardPosition.ts';
 import {
   type VisitorMapData,
   type VisitorMapPoint,
@@ -330,7 +331,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
       />
       <KpiBadges visitors={totalsForBadges.visitors} areas={totalsForBadges.areas} />
       <Legend data={data} filter={filter} onChange={setFilter} />
-      {hover ? <HoverCard hover={hover} filter={filter} /> : null}
+      {hover ? <HoverCard hover={hover} filter={filter} containerRef={containerRef} /> : null}
     </div>
   );
 }
@@ -340,7 +341,15 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
 // Lounge UI dialect. Pointer-events disabled because the card is
 // purely informational — clicking through it onto the map is the
 // expected behaviour.
-function HoverCard({ hover, filter }: { hover: HoverState; filter: VisitorMapFilter }) {
+function HoverCard({
+  hover,
+  filter,
+  containerRef,
+}: {
+  hover: HoverState;
+  filter: VisitorMapFilter;
+  containerRef: RefObject<HTMLDivElement | null>;
+}) {
   const breakdown = useMemo(() => {
     if (filter.level === 'sub') {
       const svc = hover.point.services.find((s) => s.service === filter.service);
@@ -365,16 +374,39 @@ function HoverCard({ hover, filter }: { hover: HoverState; filter: VisitorMapFil
       .join(', ');
   }, [hover, filter]);
 
+  // Measure-and-flip positioning: render at opacity 0 first, measure
+  // the rendered tooltip, then re-position with the proper side and
+  // horizontal clamp before paint via useLayoutEffect.
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<HoverPosition | null>(null);
+
+  useLayoutEffect(() => {
+    const tip = tipRef.current;
+    const container = containerRef.current;
+    if (!tip || !container) return;
+    const rect = tip.getBoundingClientRect();
+    setPos(
+      computeHoverCardPosition({
+        cursorX: hover.x,
+        cursorY: hover.y,
+        tipWidth: rect.width,
+        tipHeight: rect.height,
+        containerWidth: container.clientWidth,
+      }),
+    );
+  }, [hover.x, hover.y, hover.outward, containerRef]);
+
   return (
     <div
+      ref={tipRef}
       role="tooltip"
       style={{
         position: 'absolute',
-        // 14px gap above the cursor lifts the tooltip clear of the
-        // marker halo so it doesn't sit *on* the dot.
-        left: hover.x,
-        top: hover.y - 14,
-        transform: 'translate(-50%, -100%)',
+        left: pos?.left ?? hover.x,
+        top: pos?.top ?? hover.y - 14,
+        transform: pos?.transform ?? 'translate(-50%, -100%)',
+        opacity: pos ? 1 : 0,
+        transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         background: theme.color.surface,
         color: theme.color.ink,
         borderRadius: theme.radius.input,

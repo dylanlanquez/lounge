@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { type GMap, type GMarker, loadMapsLib } from '../../lib/googleMaps.ts';
+import { computeHoverCardPosition, type HoverPosition } from '../../lib/hoverCardPosition.ts';
 import {
   type VisitorAddressMapData,
   type VisitorAddressPoint,
@@ -286,7 +287,7 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
       />
       <KpiBadges placed={totals.placed} total={totals.total} visits={totals.visits} />
       <ServiceFilter data={data} filter={filter} onChange={setFilter} />
-      {hover ? <HoverCard hover={hover} /> : null}
+      {hover ? <HoverCard hover={hover} containerRef={containerRef} /> : null}
     </div>
   );
 }
@@ -816,20 +817,54 @@ function FilterRow({
 // padding.
 const RECENT_LIMIT = 3;
 
-function HoverCard({ hover }: { hover: HoverState }) {
+function HoverCard({
+  hover,
+  containerRef,
+}: {
+  hover: HoverState;
+  containerRef: RefObject<HTMLDivElement | null>;
+}) {
   const point = hover.point;
   const recent = point.visits.slice(0, RECENT_LIMIT);
   const overflow = point.visits.length - recent.length;
   const displayPostcode = formatPostcodeForDisplay(point.postcode);
   const namesLabel = composeNames(point.patient_names);
+
+  // First render: tooltipRef is set but position hasn't been
+  // computed yet. Render with opacity 0 (still measurable in the
+  // DOM) so useLayoutEffect can read its size, then flip opacity
+  // to 1 once we know where to place it. useLayoutEffect runs
+  // before paint, so the user never sees the un-positioned state.
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<HoverPosition | null>(null);
+
+  useLayoutEffect(() => {
+    const tip = tipRef.current;
+    const container = containerRef.current;
+    if (!tip || !container) return;
+    const rect = tip.getBoundingClientRect();
+    setPos(
+      computeHoverCardPosition({
+        cursorX: hover.x,
+        cursorY: hover.y,
+        tipWidth: rect.width,
+        tipHeight: rect.height,
+        containerWidth: container.clientWidth,
+      }),
+    );
+  }, [hover.x, hover.y, hover.point, containerRef]);
+
   return (
     <div
+      ref={tipRef}
       role="tooltip"
       style={{
         position: 'absolute',
-        left: hover.x,
-        top: hover.y - 14,
-        transform: 'translate(-50%, -100%)',
+        left: pos?.left ?? hover.x,
+        top: pos?.top ?? hover.y - 14,
+        transform: pos?.transform ?? 'translate(-50%, -100%)',
+        opacity: pos ? 1 : 0,
+        transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         background: theme.color.surface,
         color: theme.color.ink,
         borderRadius: theme.radius.input,
