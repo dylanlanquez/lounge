@@ -1196,6 +1196,13 @@ export interface VisitorAddressPoint {
   // surface "10 orders · £790 spent" in the hover summary.
   total_spent_pence: number;
   visits: VisitorAddressVisit[];
+  // Per-service breakdown at this address — same shape as the
+  // outward heatmap. Drives the hierarchical service / sub-category
+  // filter in the legend: a point shows up under "Denture repair"
+  // when services contains a denture_repair entry; under
+  // "Cracked denture" specifically when its denture_repair entry
+  // contains a sub with key='Cracked denture'.
+  services: VisitorMapPointService[];
   dominant_service: VisitorMapService;
 }
 
@@ -1255,6 +1262,11 @@ interface VisitorAddressMapVisit {
 export function aggregateVisitorAddressMap(
   visits: VisitorAddressMapVisit[],
 ): VisitorAddressMapData {
+  interface MutableServiceEntry {
+    service: VisitorMapService;
+    count: number;
+    subs: Map<string, number>;
+  }
   interface MutablePoint {
     line1: string;
     postcode: string;
@@ -1263,6 +1275,7 @@ export function aggregateVisitorAddressMap(
     visits: VisitorAddressVisit[];
     patient_names: string[];
     seen_patient_ids: Set<string>;
+    services: Map<VisitorMapService, MutableServiceEntry>;
     serviceCounts: Map<VisitorMapService, number>;
     total_spent_pence: number;
   }
@@ -1297,6 +1310,7 @@ export function aggregateVisitorAddressMap(
         visits: [],
         patient_names: [],
         seen_patient_ids: new Set(),
+        services: new Map(),
         serviceCounts: new Map(),
         total_spent_pence: 0,
       };
@@ -1329,6 +1343,20 @@ export function aggregateVisitorAddressMap(
       dominant.service,
       (bucket.serviceCounts.get(dominant.service) ?? 0) + 1,
     );
+
+    // Per-service / per-sub aggregation drives the hierarchical
+    // legend filter. A visit's dominant classification contributes a
+    // count of 1 to its service and (if applicable) one count to its
+    // sub-key, matching the structure the outward heatmap uses.
+    let svc = bucket.services.get(dominant.service);
+    if (!svc) {
+      svc = { service: dominant.service, count: 0, subs: new Map() };
+      bucket.services.set(dominant.service, svc);
+    }
+    svc.count += 1;
+    if (dominant.subKey) {
+      svc.subs.set(dominant.subKey, (svc.subs.get(dominant.subKey) ?? 0) + 1);
+    }
   }
 
   const points: VisitorAddressPoint[] = Array.from(byKey.values())
@@ -1342,6 +1370,15 @@ export function aggregateVisitorAddressMap(
           max = c;
         }
       }
+      const services = Array.from(b.services.values())
+        .map((s) => ({
+          service: s.service,
+          count: s.count,
+          subs: Array.from(s.subs.entries())
+            .map(([k, c]) => ({ key: k, label: humaniseSub(s.service, k), count: c }))
+            .sort((x, y) => y.count - x.count),
+        }))
+        .sort((x, y) => y.count - x.count);
       return {
         line1: b.line1,
         postcode: b.postcode,
@@ -1353,6 +1390,7 @@ export function aggregateVisitorAddressMap(
         // Newest visit first so the hover-card list reads chronologically
         // backwards — most relevant booking on top.
         visits: b.visits.sort((a, x) => x.visit_date.localeCompare(a.visit_date)),
+        services,
         dominant_service: dominant,
       };
     })
