@@ -98,8 +98,9 @@ import {
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'booking_types' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -148,6 +149,7 @@ export function Admin() {
             options={[
               { value: 'calendly', label: 'Calendly' },
               { value: 'catalogue', label: 'Catalogue' },
+              { value: 'booking_types', label: 'Booking types' },
               { value: 'upgrades', label: 'Upgrades' },
               { value: 'waivers', label: 'Waivers' },
               { value: 'receipts', label: 'Receipts' },
@@ -165,6 +167,8 @@ export function Admin() {
           <CalendlyTab />
         ) : tab === 'catalogue' ? (
           <CatalogueTab />
+        ) : tab === 'booking_types' ? (
+          <AdminBookingTypesTab />
         ) : tab === 'upgrades' ? (
           <UpgradesTab />
         ) : tab === 'waivers' ? (

@@ -1,0 +1,1096 @@
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Clock, Info, Plus, Settings2, Trash2 } from 'lucide-react';
+import {
+  Button,
+  Card,
+  Dialog,
+  DropdownSelect,
+  Input,
+  Skeleton,
+  Toast,
+} from '../components/index.ts';
+import { theme } from '../theme/index.ts';
+import {
+  type BookingServiceType,
+  type BookingTypeConfigRow,
+  type DayHours,
+  type DayOfWeek,
+  type WorkingHours,
+  BOOKING_SERVICE_TYPES,
+  DAYS_OF_WEEK,
+  bookingTypeRowLabel,
+  deleteBookingTypeChildOverride,
+  upsertBookingTypeConfig,
+  useBookingTypeConfigs,
+} from '../lib/queries/bookingTypes.ts';
+import { supabase } from '../lib/supabase.ts';
+
+// AdminBookingTypesTab — manages the per-booking-type scheduling config
+// that drives the reschedule slot picker, conflict checker, and (later)
+// the new-booking flow.
+//
+// Tree shape:
+//   Service (parent)               working hours summary, default duration
+//     ↳ child override 1           own hours / inherited; own duration / inherited
+//     ↳ child override 2
+//     ↳ + add override             dropdown to pick a catalogue child
+//
+// The parent rows are seeded by the migration and aren't deletable;
+// only their fields are editable. Child rows are added by the admin
+// when they want to override the parent's defaults for a specific
+// repair variant / appliance product / arch.
+//
+// Hours / durations on a child are *per-field nullable* — leaving a
+// field empty means "inherit from parent". The editor surfaces this
+// with a "Use parent default" toggle next to each section.
+
+// Day-of-week display labels in the UI's order (Mon first).
+const DAY_LABELS: Record<DayOfWeek, string> = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+  sat: 'Saturday',
+  sun: 'Sunday',
+};
+
+// What's being edited in the dialog. A row from the DB (parent or
+// child), or a new child row being authored — in which case the
+// child key is set but no row exists yet.
+type EditTarget =
+  | { kind: 'parent'; row: BookingTypeConfigRow }
+  | { kind: 'child'; row: BookingTypeConfigRow }
+  | {
+      kind: 'new-child';
+      service_type: BookingServiceType;
+      childKind: 'repair_variant' | 'product_key' | 'arch';
+      key: string;
+      label: string;
+    };
+
+export function AdminBookingTypesTab() {
+  const { data, loading, error, reload } = useBookingTypeConfigs();
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
+
+  // Group rows by service. Per service: the parent row (always
+  // exactly one due to the seed migration) and a sorted children
+  // array.
+  const grouped = useMemo(() => groupByService(data), [data]);
+
+  if (error) {
+    return (
+      <Card padding="lg">
+        <p style={{ margin: 0, color: theme.color.alert }}>
+          Could not load booking-type config: {error}
+        </p>
+      </Card>
+    );
+  }
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        <Skeleton height={120} />
+        <Skeleton height={240} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <Card padding="lg">
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+          }}
+        >
+          <Clock size={18} aria-hidden /> Booking types
+        </h2>
+        <p
+          style={{
+            margin: `${theme.space[2]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: 1.5,
+          }}
+        >
+          Working hours and duration per service. Each service has a parent default.
+          Add per-variant / per-product / per-arch overrides only when a specific
+          booking type needs to deviate — anything you leave empty inherits from the
+          parent.
+        </p>
+      </Card>
+
+      <Card padding="lg">
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[3],
+          }}
+        >
+          {BOOKING_SERVICE_TYPES.map((s) => {
+            const group = grouped.get(s.value);
+            if (!group) return null;
+            return (
+              <ServiceNode
+                key={s.value}
+                serviceLabel={s.label}
+                serviceType={s.value}
+                parent={group.parent}
+                children={group.children}
+                onEditParent={() => setEditTarget({ kind: 'parent', row: group.parent })}
+                onEditChild={(row) => setEditTarget({ kind: 'child', row })}
+                onAddChild={(target) => setEditTarget(target)}
+                onRemoveChild={async (row) => {
+                  try {
+                    await deleteBookingTypeChildOverride({
+                      service_type: row.service_type,
+                      repair_variant: row.repair_variant,
+                      product_key: row.product_key,
+                      arch: row.arch,
+                    });
+                    setToast({ tone: 'success', title: 'Override removed' });
+                    reload();
+                  } catch (e) {
+                    setToast({
+                      tone: 'error',
+                      title: e instanceof Error ? e.message : 'Could not remove',
+                    });
+                  }
+                }}
+              />
+            );
+          })}
+        </ul>
+      </Card>
+
+      {editTarget ? (
+        <BookingTypeEditorDialog
+          target={editTarget}
+          parent={
+            editTarget.kind === 'parent'
+              ? null
+              : grouped.get(serviceOfTarget(editTarget))?.parent ?? null
+          }
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            setToast({ tone: 'success', title: 'Saved' });
+            reload();
+          }}
+          onError={(msg) => setToast({ tone: 'error', title: msg })}
+        />
+      ) : null}
+
+      {toast ? (
+        <Toast
+          tone={toast.tone}
+          title={toast.title}
+          onDismiss={() => setToast(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+interface ServiceGroup {
+  parent: BookingTypeConfigRow;
+  children: BookingTypeConfigRow[];
+}
+
+function groupByService(rows: BookingTypeConfigRow[]): Map<BookingServiceType, ServiceGroup> {
+  const out = new Map<BookingServiceType, ServiceGroup>();
+  for (const r of rows) {
+    const isParent = !r.repair_variant && !r.product_key && !r.arch;
+    let group = out.get(r.service_type);
+    if (!group) {
+      // Initialise with the row as parent if it is one; placeholder
+      // otherwise. Misshapen data (a child without a parent) is a
+      // setup error but we tolerate it without crashing.
+      group = isParent ? { parent: r, children: [] } : { parent: r, children: [r] };
+      out.set(r.service_type, group);
+      continue;
+    }
+    if (isParent) group.parent = r;
+    else group.children.push(r);
+  }
+  return out;
+}
+
+function serviceOfTarget(t: EditTarget): BookingServiceType {
+  if (t.kind === 'parent' || t.kind === 'child') return t.row.service_type;
+  return t.service_type;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One service block — parent row + collapsible children.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ServiceNode({
+  serviceLabel,
+  serviceType,
+  parent,
+  children,
+  onEditParent,
+  onEditChild,
+  onAddChild,
+  onRemoveChild,
+}: {
+  serviceLabel: string;
+  serviceType: BookingServiceType;
+  parent: BookingTypeConfigRow;
+  children: BookingTypeConfigRow[];
+  onEditParent: () => void;
+  onEditChild: (row: BookingTypeConfigRow) => void;
+  onAddChild: (target: EditTarget) => void;
+  onRemoveChild: (row: BookingTypeConfigRow) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  // Children-set we can EXPOSE to the "Add override" dropdown — i.e.
+  // the catalogue (or arch enum) entries that don't yet have a row
+  // in lng_booking_type_config.
+  const [available, setAvailable] = useState<{ key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const all = await listAvailableChildren(serviceType);
+      if (cancelled) return;
+      const taken = new Set(
+        children.map((c) =>
+          c.repair_variant
+            ? `repair_variant:${c.repair_variant}`
+            : c.product_key
+            ? `product_key:${c.product_key}`
+            : c.arch
+            ? `arch:${c.arch}`
+            : '',
+        ),
+      );
+      setAvailable(all.filter((a) => !taken.has(`${a.kind}:${a.key}`)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceType, children]);
+
+  return (
+    <li
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            padding: 0,
+            textAlign: 'left',
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {expanded ? (
+            <ChevronDown size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+          ) : (
+            <ChevronRight size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+          )}
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            {serviceLabel}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {summariseHours(parent.working_hours)} · {summariseDuration(parent)}
+            {children.length > 0 ? ` · ${children.length} override${children.length === 1 ? '' : 's'}` : ''}
+          </span>
+        </button>
+        <Button variant="tertiary" size="sm" onClick={onEditParent}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Settings2 size={14} aria-hidden /> Configure
+          </span>
+        </Button>
+      </div>
+
+      {expanded ? (
+        <div
+          style={{
+            borderTop: `1px solid ${theme.color.border}`,
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            background: theme.color.bg,
+          }}
+        >
+          {children.length === 0 ? (
+            <p
+              style={{
+                margin: `0 0 ${theme.space[3]}px`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontStyle: 'italic',
+              }}
+            >
+              No overrides yet — every {serviceLabel.toLowerCase()} booking uses the parent defaults above.
+            </p>
+          ) : (
+            <ul
+              style={{
+                listStyle: 'none',
+                margin: 0,
+                padding: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[2],
+              }}
+            >
+              {children.map((c) => (
+                <ChildRow
+                  key={c.id}
+                  row={c}
+                  onEdit={() => onEditChild(c)}
+                  onRemove={() => onRemoveChild(c)}
+                />
+              ))}
+            </ul>
+          )}
+
+          {available.length > 0 ? (
+            <AddOverrideRow
+              available={available}
+              onAdd={(picked) =>
+                onAddChild({
+                  kind: 'new-child',
+                  service_type: serviceType,
+                  childKind: picked.kind,
+                  key: picked.key,
+                  label: picked.label,
+                })
+              }
+            />
+          ) : (
+            <p
+              style={{
+                margin: `${theme.space[3]}px 0 0`,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkSubtle,
+              }}
+            >
+              Every available {childKindLabel(serviceType)} already has an override — or this service has no child dimension.
+            </p>
+          )}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function ChildRow({
+  row,
+  onEdit,
+  onRemove,
+}: {
+  row: BookingTypeConfigRow;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const inheritsHours = row.working_hours == null;
+  const inheritsDuration =
+    row.duration_min == null && row.duration_max == null && row.duration_default == null;
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold }}>
+          {bookingTypeRowLabel(row)}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            display: 'flex',
+            gap: theme.space[2],
+            flexWrap: 'wrap',
+          }}
+        >
+          <InheritChip inherits={inheritsHours} label="Hours" override={summariseHours(row.working_hours)} />
+          <InheritChip inherits={inheritsDuration} label="Duration" override={summariseDuration(row)} />
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: theme.space[2], flexShrink: 0 }}>
+        <Button variant="tertiary" size="sm" onClick={onEdit}>
+          Configure
+        </Button>
+        <Button variant="tertiary" size="sm" onClick={onRemove}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
+            <Trash2 size={12} aria-hidden /> Remove
+          </span>
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+function InheritChip({
+  inherits,
+  label,
+  override,
+}: {
+  inherits: boolean;
+  label: string;
+  override: string;
+}) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 6px',
+        borderRadius: theme.radius.pill,
+        border: `1px solid ${theme.color.border}`,
+        background: inherits ? theme.color.bg : theme.color.surface,
+        color: inherits ? theme.color.inkMuted : theme.color.ink,
+        fontSize: 11,
+        fontWeight: theme.type.weight.medium,
+      }}
+    >
+      <span style={{ color: theme.color.inkSubtle }}>{label}:</span>
+      <span>{inherits ? 'inherits' : override}</span>
+    </span>
+  );
+}
+
+function AddOverrideRow({
+  available,
+  onAdd,
+}: {
+  available: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[];
+  onAdd: (picked: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }) => void;
+}) {
+  const [picked, setPicked] = useState<string>('');
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: theme.space[2],
+        marginTop: theme.space[3],
+        alignItems: 'center',
+      }}
+    >
+      <DropdownSelect<string>
+        ariaLabel="Pick a child to override"
+        value={picked}
+        options={available.map((a) => ({ value: `${a.kind}:${a.key}`, label: a.label }))}
+        placeholder="Add an override…"
+        onChange={(v) => setPicked(v)}
+      />
+      <Button
+        variant="primary"
+        size="sm"
+        disabled={!picked}
+        onClick={() => {
+          const found = available.find((a) => `${a.kind}:${a.key}` === picked);
+          if (found) {
+            onAdd(found);
+            setPicked('');
+          }
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+          <Plus size={14} aria-hidden /> Add
+        </span>
+      </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editor dialog — one form for parent rows, child rows, and new-child rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BookingTypeEditorDialog({
+  target,
+  parent,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  target: EditTarget;
+  parent: BookingTypeConfigRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  // Existing row vs new — drives initial values and the "inherits"
+  // toggles below.
+  const isNew = target.kind === 'new-child';
+  const isParent = target.kind === 'parent';
+  const row = isNew ? null : (target as { row: BookingTypeConfigRow }).row;
+
+  const [hours, setHours] = useState<WorkingHours>(() => {
+    if (row?.working_hours) return cloneHours(row.working_hours);
+    return defaultParentHours();
+  });
+  const [hoursInherits, setHoursInherits] = useState<boolean>(() => {
+    if (isParent) return false;
+    return !row?.working_hours;
+  });
+
+  const [durMin, setDurMin] = useState<string>(row?.duration_min?.toString() ?? '');
+  const [durDefault, setDurDefault] = useState<string>(row?.duration_default?.toString() ?? '');
+  const [durMax, setDurMax] = useState<string>(row?.duration_max?.toString() ?? '');
+  const [durationInherits, setDurationInherits] = useState<boolean>(() => {
+    if (isParent) return false;
+    return (
+      row?.duration_min == null &&
+      row?.duration_max == null &&
+      row?.duration_default == null
+    );
+  });
+
+  const [notes, setNotes] = useState<string>(row?.notes ?? '');
+  const [busy, setBusy] = useState(false);
+
+  // When a child toggles "inherit" on or off, prefill from the
+  // parent so the user can adjust from a reasonable starting point
+  // rather than typing into empty fields.
+  const fillFromParent = (which: 'hours' | 'duration') => {
+    if (!parent) return;
+    if (which === 'hours' && parent.working_hours) {
+      setHours(cloneHours(parent.working_hours));
+    }
+    if (which === 'duration') {
+      if (parent.duration_min != null) setDurMin(parent.duration_min.toString());
+      if (parent.duration_default != null) setDurDefault(parent.duration_default.toString());
+      if (parent.duration_max != null) setDurMax(parent.duration_max.toString());
+    }
+  };
+
+  const title = isParent
+    ? BOOKING_SERVICE_TYPES.find((s) => s.value === (row as BookingTypeConfigRow).service_type)?.label ?? 'Booking type'
+    : isNew
+    ? `${labelOfService((target as { service_type: BookingServiceType }).service_type)} · ${(target as { label: string }).label} (new override)`
+    : `${labelOfService((row as BookingTypeConfigRow).service_type)} · ${bookingTypeRowLabel(row as BookingTypeConfigRow)}`;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const payload = {
+        service_type:
+          target.kind === 'new-child'
+            ? target.service_type
+            : (target as { row: BookingTypeConfigRow }).row.service_type,
+        repair_variant:
+          target.kind === 'new-child'
+            ? target.childKind === 'repair_variant'
+              ? target.key
+              : null
+            : (target as { row: BookingTypeConfigRow }).row.repair_variant,
+        product_key:
+          target.kind === 'new-child'
+            ? target.childKind === 'product_key'
+              ? target.key
+              : null
+            : (target as { row: BookingTypeConfigRow }).row.product_key,
+        arch:
+          target.kind === 'new-child'
+            ? target.childKind === 'arch'
+              ? (target.key as 'upper' | 'lower' | 'both')
+              : null
+            : ((target as { row: BookingTypeConfigRow }).row.arch),
+        working_hours: hoursInherits ? null : hours,
+        duration_min: durationInherits ? null : parseDur(durMin),
+        duration_max: durationInherits ? null : parseDur(durMax),
+        duration_default: durationInherits ? null : parseDur(durDefault),
+        notes: notes.trim() === '' ? null : notes.trim(),
+      };
+
+      // Validate: parent rows must have non-null hours and durations.
+      // Child rows that don't inherit must have valid duration ranges.
+      if (isParent) {
+        if (hoursInherits) throw new Error("Parent rows can't inherit; set the working hours.");
+        if (
+          payload.duration_min == null ||
+          payload.duration_default == null ||
+          payload.duration_max == null
+        ) {
+          throw new Error('Parent rows need min, default and max durations.');
+        }
+      }
+      if (!durationInherits) {
+        const min = payload.duration_min;
+        const def = payload.duration_default;
+        const max = payload.duration_max;
+        if ((min != null && min <= 0) || (def != null && def <= 0) || (max != null && max <= 0)) {
+          throw new Error('Durations must be positive minutes.');
+        }
+        if (min != null && max != null && max < min) {
+          throw new Error('Max duration must be at least the minimum.');
+        }
+        if (
+          def != null &&
+          ((min != null && def < min) || (max != null && def > max))
+        ) {
+          throw new Error('Default must sit between min and max.');
+        }
+      }
+
+      await upsertBookingTypeConfig(payload);
+      onSaved();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      width={620}
+      title={title}
+      description={
+        isParent
+          ? 'These are the defaults that everything inside this service inherits from.'
+          : 'Override only the fields you want to change. Anything left as "Inherit" reads from the parent.'
+      }
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={save} loading={busy}>
+            Save
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        <SectionWithInherit
+          title="Working hours"
+          allowInherit={!isParent}
+          inherits={hoursInherits}
+          onToggleInherit={(v) => {
+            if (!v && parent) fillFromParent('hours');
+            setHoursInherits(v);
+          }}
+          parentSummary={parent ? summariseHours(parent.working_hours) : ''}
+        >
+          {!hoursInherits ? (
+            <WorkingHoursEditor value={hours} onChange={setHours} />
+          ) : null}
+        </SectionWithInherit>
+
+        <SectionWithInherit
+          title="Duration (minutes)"
+          allowInherit={!isParent}
+          inherits={durationInherits}
+          onToggleInherit={(v) => {
+            if (!v && parent) fillFromParent('duration');
+            setDurationInherits(v);
+          }}
+          parentSummary={parent ? summariseDuration(parent) : ''}
+        >
+          {!durationInherits ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: theme.space[3] }}>
+              <Input
+                label="Min"
+                type="number"
+                value={durMin}
+                onChange={(e) => setDurMin(e.target.value)}
+                placeholder="e.g. 30"
+              />
+              <Input
+                label="Default"
+                type="number"
+                value={durDefault}
+                onChange={(e) => setDurDefault(e.target.value)}
+                placeholder="e.g. 60"
+              />
+              <Input
+                label="Max"
+                type="number"
+                value={durMax}
+                onChange={(e) => setDurMax(e.target.value)}
+                placeholder="e.g. 90"
+              />
+            </div>
+          ) : null}
+        </SectionWithInherit>
+
+        <Input
+          label="Notes (admin only)"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Optional. Anything internal staff should know."
+        />
+      </div>
+    </Dialog>
+  );
+}
+
+// Wrapper for a section with an optional "Use parent default" toggle.
+function SectionWithInherit({
+  title,
+  allowInherit,
+  inherits,
+  onToggleInherit,
+  parentSummary,
+  children,
+}: {
+  title: string;
+  allowInherit: boolean;
+  inherits: boolean;
+  onToggleInherit: (v: boolean) => void;
+  parentSummary: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+        }}
+      >
+        <h4
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {title}
+        </h4>
+        {allowInherit ? (
+          <button
+            type="button"
+            onClick={() => onToggleInherit(!inherits)}
+            style={{
+              appearance: 'none',
+              border: `1px solid ${inherits ? theme.color.ink : theme.color.border}`,
+              background: inherits ? theme.color.bg : 'transparent',
+              borderRadius: theme.radius.pill,
+              padding: `4px ${theme.space[2]}px`,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              fontSize: 11,
+              fontWeight: theme.type.weight.medium,
+              color: inherits ? theme.color.ink : theme.color.inkMuted,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+            aria-pressed={inherits}
+          >
+            <Info size={11} aria-hidden /> {inherits ? 'Inheriting from parent' : 'Use parent default'}
+          </button>
+        ) : null}
+      </div>
+      {inherits ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            padding: theme.space[3],
+            background: theme.color.bg,
+            borderRadius: theme.radius.input,
+            border: `1px dashed ${theme.color.border}`,
+          }}
+        >
+          Inherits from parent: <strong>{parentSummary}</strong>
+        </p>
+      ) : (
+        children
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Working-hours grid (Mon-Sun).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function WorkingHoursEditor({
+  value,
+  onChange,
+}: {
+  value: WorkingHours;
+  onChange: (next: WorkingHours) => void;
+}) {
+  const setDay = (day: DayOfWeek, hours: DayHours | null) => {
+    const next: WorkingHours = { ...value };
+    if (hours === null) next[day] = null;
+    else next[day] = hours;
+    onChange(next);
+  };
+  return (
+    <ul
+      style={{
+        listStyle: 'none',
+        margin: 0,
+        padding: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      {DAYS_OF_WEEK.map((day) => {
+        const v = value[day];
+        const closed = v === null || v === undefined;
+        return (
+          <li
+            key={day}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '120px auto 1fr 1fr',
+              alignItems: 'center',
+              gap: theme.space[3],
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+            }}
+          >
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+              }}
+            >
+              {DAY_LABELS[day]}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setDay(day, closed ? { open: '09:00', close: '18:00' } : null)
+              }
+              style={{
+                appearance: 'none',
+                border: `1px solid ${closed ? theme.color.border : theme.color.ink}`,
+                background: closed ? theme.color.bg : theme.color.accentBg,
+                borderRadius: theme.radius.pill,
+                padding: `2px ${theme.space[2]}px`,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: 11,
+                fontWeight: theme.type.weight.medium,
+                color: closed ? theme.color.inkMuted : theme.color.accent,
+              }}
+            >
+              {closed ? 'Closed' : 'Open'}
+            </button>
+            {!closed ? (
+              <>
+                <Input
+                  label="Open"
+                  type="time"
+                  value={v?.open ?? ''}
+                  onChange={(e) =>
+                    setDay(day, { open: e.target.value, close: v?.close ?? '18:00' })
+                  }
+                />
+                <Input
+                  label="Close"
+                  type="time"
+                  value={v?.close ?? ''}
+                  onChange={(e) =>
+                    setDay(day, { open: v?.open ?? '09:00', close: e.target.value })
+                  }
+                />
+              </>
+            ) : (
+              <span style={{ gridColumn: '3 / span 2' }} />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cloneHours(h: WorkingHours): WorkingHours {
+  const out: WorkingHours = {};
+  for (const d of DAYS_OF_WEEK) {
+    const v = h[d];
+    out[d] = v == null ? null : { open: v.open, close: v.close };
+  }
+  return out;
+}
+
+function defaultParentHours(): WorkingHours {
+  return {
+    mon: { open: '09:00', close: '18:00' },
+    tue: { open: '09:00', close: '18:00' },
+    wed: { open: '09:00', close: '18:00' },
+    thu: { open: '09:00', close: '18:00' },
+    fri: { open: '09:00', close: '18:00' },
+    sat: { open: '10:00', close: '16:00' },
+    sun: null,
+  };
+}
+
+function summariseHours(h: WorkingHours | null | undefined): string {
+  if (!h) return 'inherits';
+  const open = DAYS_OF_WEEK.filter((d) => h[d] != null);
+  if (open.length === 0) return 'closed';
+  const earliest = open.reduce(
+    (acc, d) => (acc === null || (h[d]!.open < acc) ? h[d]!.open : acc),
+    null as string | null,
+  );
+  const latest = open.reduce(
+    (acc, d) => (acc === null || (h[d]!.close > acc) ? h[d]!.close : acc),
+    null as string | null,
+  );
+  return `${open.length}d · ${earliest}–${latest}`;
+}
+
+function summariseDuration(row: BookingTypeConfigRow): string {
+  const min = row.duration_min;
+  const def = row.duration_default;
+  const max = row.duration_max;
+  if (min == null && def == null && max == null) return 'inherits';
+  if (min != null && def != null && max != null) {
+    if (min === max) return `${def}m`;
+    return `${min}–${max}m (default ${def})`;
+  }
+  // Partial — surface what's set.
+  const parts: string[] = [];
+  if (min != null) parts.push(`min ${min}`);
+  if (def != null) parts.push(`default ${def}`);
+  if (max != null) parts.push(`max ${max}`);
+  return parts.join(', ');
+}
+
+function parseDur(s: string): number | null {
+  const t = s.trim();
+  if (t === '') return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n);
+}
+
+function labelOfService(s: BookingServiceType): string {
+  return BOOKING_SERVICE_TYPES.find((x) => x.value === s)?.label ?? s;
+}
+
+function childKindLabel(s: BookingServiceType): string {
+  switch (s) {
+    case 'denture_repair':
+      return 'repair variant';
+    case 'same_day_appliance':
+      return 'product';
+    case 'click_in_veneers':
+    case 'impression_appointment':
+      return 'arch';
+    case 'other':
+      return 'child';
+  }
+}
+
+// Returns the catalogue (or arch enum) entries that can be added as
+// child overrides for the given service. The caller filters out the
+// ones that already have a row in lng_booking_type_config.
+async function listAvailableChildren(
+  service: BookingServiceType,
+): Promise<{ key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[]> {
+  if (service === 'click_in_veneers' || service === 'impression_appointment') {
+    return [
+      { key: 'upper', label: 'Upper arch', kind: 'arch' },
+      { key: 'lower', label: 'Lower arch', kind: 'arch' },
+      { key: 'both', label: 'Both arches', kind: 'arch' },
+    ];
+  }
+  if (service === 'other') return [];
+  // denture_repair → distinct repair_variant; same_day_appliance →
+  // distinct product_key. Pulled from active catalogue rows so admins
+  // can't add overrides for dead inventory.
+  const column = service === 'denture_repair' ? 'repair_variant' : 'product_key';
+  const { data, error } = await supabase
+    .from('lwo_catalogue')
+    .select(column)
+    .eq('service_type', service)
+    .eq('active', true)
+    .not(column, 'is', null);
+  if (error) return [];
+  const seen = new Set<string>();
+  const out: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[] = [];
+  for (const r of (data ?? []) as Record<string, string>[]) {
+    const v = r[column];
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push({
+      key: v,
+      label: column === 'product_key' ? humanise(v) : v,
+      kind: column as 'repair_variant' | 'product_key',
+    });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function humanise(s: string): string {
+  return s
+    .split('_')
+    .map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p))
+    .join(' ');
+}
