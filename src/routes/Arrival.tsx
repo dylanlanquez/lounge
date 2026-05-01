@@ -512,6 +512,13 @@ export function Arrival() {
     }
     need('Emergency contact name', snapshot.emergency_contact_name, form.emergency_contact_name);
     need('Emergency contact phone', snapshot.emergency_contact_phone, form.emergency_contact_phone);
+    // "How did you hear about us?" — required only when not already
+    // on file. The ReferralSourceSection itself only renders when
+    // snapshot.referred_by is empty, so the same condition gates
+    // whether the answer is required to advance.
+    if ((snapshot.referred_by ?? '') === '' && form.referred_by.trim() === '') {
+      list.push('How did you hear about us?');
+    }
     return list;
   }, [snapshot, form]);
 
@@ -2073,6 +2080,7 @@ const REFERRAL_CHANNELS: { value: string; label: string }[] = [
   { value: 'Instagram', label: 'Instagram' },
   { value: 'Facebook', label: 'Facebook' },
   { value: 'TikTok', label: 'TikTok' },
+  { value: 'Taxi signage', label: 'Taxi signage' },
   { value: 'Friend or family', label: 'Friend or family' },
   { value: 'Saw the sign', label: 'Saw the sign / walked past' },
   { value: 'Returning customer', label: 'I have been before' },
@@ -2147,6 +2155,7 @@ function ReferralSourceSection({
       </div>
       <DropdownSelect<string>
         label="Channel"
+        required
         value={dropdownValue}
         options={REFERRAL_CHANNELS}
         placeholder="Pick the closest one"
@@ -2155,8 +2164,10 @@ function ReferralSourceSection({
       {dropdownValue === 'Other' ? (
         <Input
           label="Tell us a bit more"
+          required
           value={otherText}
-          onChange={(e) => onChange(e.target.value)}
+          maxLength={30}
+          onChange={(e) => onChange(e.target.value.slice(0, 30))}
           placeholder="e.g. influencer name, magazine, local poster"
         />
       ) : null}

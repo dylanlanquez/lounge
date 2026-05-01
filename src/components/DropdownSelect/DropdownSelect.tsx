@@ -311,34 +311,58 @@ export function DropdownSelect<T extends string>({
               ref={panelRef}
               id={listboxId}
               role="listbox"
-              style={{
+              style={(() => {
                 // Portal'd to document.body to escape every parent
                 // overflow:hidden context (the catalogue picker's
                 // expansion panel uses overflow:hidden for its grid-
                 // rows animation, which would otherwise clip us).
-                position: 'fixed',
-                top: triggerRect.bottom + 6,
-                left: triggerRect.left,
-                // Pin to the trigger's width for the card / inline
-                // variants (the field already controls width), but for
-                // the slim text variant the trigger is just a value
-                // phrase + chevron, ~60px wide. The panel needs room
-                // for the longest option ("September", "Wednesday",
-                // …) so we floor it at 180px.
-                width: Math.max(triggerRect.width, 180),
-                margin: 0,
-                padding: theme.space[1],
-                listStyle: 'none',
-                background: theme.color.surface,
-                border: `1px solid ${theme.color.border}`,
-                borderRadius: theme.radius.input,
-                boxShadow: theme.shadow.overlay,
-                // Above BottomSheet (1000) and Toast (1100).
-                zIndex: 1200,
-                maxHeight: 320,
-                overflowY: 'auto',
-                animation: `lng-dropdown-enter ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
-              }}
+                //
+                // Flip-and-cap positioning: render below the trigger
+                // when there's room, otherwise above. Cap maxHeight
+                // to the available space on the chosen side so the
+                // panel never extends past the viewport — without a
+                // cap, a trigger near the bottom of the screen would
+                // push the first options off the visible area.
+                const VIEWPORT_PAD = 12;
+                const GAP = 6;
+                const DESIRED_MAX = 320;
+                const viewportH =
+                  typeof window === 'undefined' ? 800 : window.innerHeight;
+                const spaceBelow = viewportH - triggerRect.bottom - GAP - VIEWPORT_PAD;
+                const spaceAbove = triggerRect.top - GAP - VIEWPORT_PAD;
+                const openDown = spaceBelow >= DESIRED_MAX || spaceBelow >= spaceAbove;
+                const maxHeight = Math.max(
+                  120,
+                  Math.min(DESIRED_MAX, openDown ? spaceBelow : spaceAbove),
+                );
+                const top = openDown
+                  ? triggerRect.bottom + GAP
+                  : triggerRect.top - GAP - maxHeight;
+                return {
+                  position: 'fixed',
+                  top,
+                  left: triggerRect.left,
+                  // Pin to the trigger's width for the card / inline
+                  // variants (the field already controls width), but
+                  // for the slim text variant the trigger is just a
+                  // value phrase + chevron, ~60px wide. The panel
+                  // needs room for the longest option, so floor at
+                  // 180px.
+                  width: Math.max(triggerRect.width, 180),
+                  margin: 0,
+                  padding: theme.space[1],
+                  listStyle: 'none',
+                  background: theme.color.surface,
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  boxShadow: theme.shadow.overlay,
+                  // Above BottomSheet (1000) and Toast (1100).
+                  zIndex: 1200,
+                  maxHeight,
+                  overflowY: 'auto',
+                  animation: `lng-dropdown-enter ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+                } as CSSProperties;
+              })()}
             >
           {items.map((item) => {
             const isSelected = item.value === value;
