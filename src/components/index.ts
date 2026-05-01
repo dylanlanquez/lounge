@@ -97,6 +97,9 @@ export type { VisitorHeatmapProps } from './VisitorHeatmap/VisitorHeatmap.tsx';
 export { VisitorAddressMap } from './VisitorAddressMap/VisitorAddressMap.tsx';
 export type { VisitorAddressMapProps } from './VisitorAddressMap/VisitorAddressMap.tsx';
 
+export { RescheduleSheet } from './RescheduleSheet/RescheduleSheet.tsx';
+export type { RescheduleSheetProps } from './RescheduleSheet/RescheduleSheet.tsx';
+
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
