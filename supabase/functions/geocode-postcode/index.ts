@@ -92,9 +92,18 @@ Deno.serve(async (req) => {
   //    rate limits and the per-call latency is fine for the Reports
   //    page (initial cohort of outwards is small after the first
   //    visit; later opens are nearly all cache hits).
+  //
+  // Loud-failure rule: if EVERY miss fails (key not configured,
+  // wrong key restriction, Geocoding API not enabled), surface a
+  // 502 with the first error message rather than returning an
+  // empty results list. A silent empty response would have the
+  // Reports page render an empty map with no signal that anything
+  // is broken — that's the trap the brief explicitly forbids.
   const fresh: GeocodeResult[] = [];
+  const failures: { outward: string; reason: string }[] = [];
   if (misses.length > 0) {
     if (!GOOGLE_GEOCODING_API_KEY) {
+      await logFailure(supabase, 'critical', 'GOOGLE_GEOCODING_API_KEY not configured', { misses });
       return j(500, { error: 'GOOGLE_GEOCODING_API_KEY not configured' });
     }
     for (const outward of misses) {
@@ -102,9 +111,9 @@ Deno.serve(async (req) => {
         const result = await geocodeOutward(outward, GOOGLE_GEOCODING_API_KEY);
         if (result) fresh.push(result);
       } catch (e) {
-        // Don't abort the whole batch on a single failure — log and
-        // move on. The caller still gets cached + remaining results.
-        console.error(`[geocode-postcode] ${outward}:`, e);
+        const reason = e instanceof Error ? e.message : String(e);
+        failures.push({ outward, reason });
+        console.error(`[geocode-postcode] ${outward}:`, reason);
       }
     }
     if (fresh.length > 0) {
@@ -115,16 +124,53 @@ Deno.serve(async (req) => {
           { onConflict: 'outward' },
         );
       if (upsert.error) {
-        // Cache write failure is non-fatal — return the fresh
-        // values to the caller, but log the failure so the operator
-        // sees it.
+        // Cache write failure is non-fatal for this request — return
+        // the fresh values to the caller, but log so operator sees it.
         console.error('[geocode-postcode] cache upsert failed:', upsert.error);
+        await logFailure(supabase, 'error', `Geocode cache upsert failed: ${upsert.error.message}`, {
+          fresh_count: fresh.length,
+        });
       }
+    }
+    // If every miss failed AND we don't even have any cached hits to
+    // fall back on, this is a hard error — surface it.
+    if (failures.length === misses.length && cached.length === 0) {
+      await logFailure(supabase, 'critical', `Geocoding rejected every outward: ${failures[0]?.reason}`, {
+        failures,
+      });
+      return j(502, {
+        error: `Geocoding API rejected the request: ${failures[0]?.reason ?? 'unknown'}`,
+        failures,
+      });
+    }
+    // Partial failures still log so they don't go silently dropped.
+    if (failures.length > 0) {
+      await logFailure(supabase, 'warning', `Geocoding rejected ${failures.length}/${misses.length} outwards`, {
+        failures,
+      });
     }
   }
 
-  return j(200, { results: [...cached, ...fresh] });
+  return j(200, { results: [...cached, ...fresh], partial_failures: failures });
 });
+
+async function logFailure(
+  supabase: ReturnType<typeof createClient>,
+  severity: 'info' | 'warning' | 'error' | 'critical',
+  message: string,
+  context: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await supabase.from('lng_system_failures').insert({
+      source: 'geocode-postcode',
+      severity,
+      message,
+      context,
+    });
+  } catch (e) {
+    console.error('[geocode-postcode] failure log insert failed:', e);
+  }
+}
 
 async function geocodeOutward(outward: string, apiKey: string): Promise<GeocodeResult | null> {
   const params = new URLSearchParams({
