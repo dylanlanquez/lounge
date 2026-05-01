@@ -15,7 +15,7 @@ import {
   StatCard,
 } from '../../components/index.ts';
 import { theme } from '../../theme/index.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import {
   type ReportsOverview,
   type TopService,
@@ -96,19 +96,19 @@ function KpiGrid({ data }: { data: ReportsOverview }) {
     >
       <StatCard
         label="Total visits"
-        value={data.total_visits.toLocaleString('en-GB')}
+        value={formatNumber(data.total_visits)}
         delta={visitsDelta(data)}
         icon={<Users size={14} />}
       />
       <StatCard
         label="Walk-ins"
-        value={data.walk_ins.toLocaleString('en-GB')}
+        value={formatNumber(data.walk_ins)}
         delta={walkInsDelta(data)}
         icon={<UserPlus size={14} />}
       />
       <StatCard
         label="Scheduled"
-        value={data.scheduled.toLocaleString('en-GB')}
+        value={formatNumber(data.scheduled)}
         delta={scheduledDelta(data)}
         icon={<Calendar size={14} />}
       />
@@ -116,7 +116,7 @@ function KpiGrid({ data }: { data: ReportsOverview }) {
         label="Revenue"
         value={formatPence(data.revenue_pence)}
         tone="accent"
-        delta={`${data.payments_count.toLocaleString('en-GB')} payments`}
+        delta={`${formatNumber(data.payments_count)} payments`}
         icon={<Coins size={14} />}
       />
       <StatCard
@@ -127,7 +127,7 @@ function KpiGrid({ data }: { data: ReportsOverview }) {
       />
       <StatCard
         label="Unique patients"
-        value={data.unique_patients.toLocaleString('en-GB')}
+        value={formatNumber(data.unique_patients)}
         delta={uniquePatientsDelta(data)}
         icon={<Sparkles size={14} />}
       />
@@ -346,7 +346,7 @@ function TopServicesCard({ services }: { services: TopService[] }) {
                   textAlign: 'right',
                 }}
               >
-                {s.count.toLocaleString('en-GB')} sold
+                {formatNumber(s.count)} sold
               </span>
             </div>
           </li>

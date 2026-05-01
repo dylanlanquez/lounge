@@ -13,7 +13,16 @@ export interface LineChartSeries {
   // Y values aligned to the parent chart's xLabels. NaN entries
   // render as gaps in the line.
   values: number[];
+  // Optional formatter applied wherever this series's number lands
+  // in front of a human — y-axis tick labels (when this is the only
+  // series), the per-point hover title, and the legend's
+  // total/last/avg figure. Defaults to en-GB integer formatting
+  // (thousand separators included). Currency series should pass
+  // `formatPounds` from queries/carts.ts.
+  formatValue?: (n: number) => string;
 }
+
+export type LineChartLegendMode = 'total' | 'last' | 'avg' | 'max';
 
 export interface LineChartProps {
   // Categorical x-axis labels. Their order defines the rendered
@@ -32,6 +41,13 @@ export interface LineChartProps {
   // Visual height of the SVG plot area. Defaults to a comfortable
   // 220px which shows trends without dominating the page.
   height?: number;
+  // Which figure to surface in the legend per series:
+  //   • 'total' — sum across the period (default; what a manager
+  //     usually wants for time-series — e.g. "9 bookings this period")
+  //   • 'last' — the last finite value (current standing)
+  //   • 'avg'  — mean across finite values
+  //   • 'max'  — peak value
+  legendMode?: LineChartLegendMode;
 }
 
 // LineChart — multi-series time-series chart for the Reports section.
@@ -51,6 +67,7 @@ export function LineChart({
   title,
   subtitle,
   height = 220,
+  legendMode = 'total',
 }: LineChartProps) {
   if (xLabels.length === 0) {
     return (
@@ -96,6 +113,14 @@ export function LineChart({
   const yForNice = (v: number): number =>
     padT + plotH - (v / (niceMax || 1)) * plotH;
 
+  // Pick the y-axis formatter: when every series passes the same
+  // formatValue we use it for the axis ticks too, so a currency
+  // chart shows "£100" / "£200" rather than "100" / "200". Mixed
+  // formatters fall back to the default int formatter — sensible
+  // default and the per-series legend value still reflects each
+  // formatter individually.
+  const yAxisFormat = pickSharedFormatter(series);
+
   return (
     <ChartFrame title={title} subtitle={subtitle}>
       <div style={{ position: 'relative', width: '100%', height }}>
@@ -126,7 +151,7 @@ export function LineChart({
                 fill={theme.color.inkSubtle}
                 fontFamily="inherit"
               >
-                {t.toLocaleString('en-GB')}
+                {yAxisFormat(t)}
               </text>
             </g>
           ))}
@@ -144,8 +169,10 @@ export function LineChart({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-                {s.values.map((v, i) =>
-                  Number.isFinite(v) ? (
+                {s.values.map((v, i) => {
+                  if (!Number.isFinite(v)) return null;
+                  const fmt = s.formatValue ?? defaultFormat;
+                  return (
                     <circle
                       key={`${s.id}-${i}`}
                       cx={xFor(i)}
@@ -155,10 +182,10 @@ export function LineChart({
                       stroke={s.colour}
                       strokeWidth={2}
                     >
-                      <title>{`${s.label} · ${xLabels[i]}: ${v.toLocaleString('en-GB')}`}</title>
+                      <title>{`${s.label} · ${xLabels[i]}: ${fmt(v)}`}</title>
                     </circle>
-                  ) : null,
-                )}
+                  );
+                })}
               </g>
             );
           })}
@@ -197,7 +224,8 @@ export function LineChart({
         }}
       >
         {series.map((s) => {
-          const last = lastFinite(s.values);
+          const fmt = s.formatValue ?? defaultFormat;
+          const headline = legendValue(s.values, legendMode);
           return (
             <li
               key={`legend-${s.id}`}
@@ -227,7 +255,7 @@ export function LineChart({
                   fontVariantNumeric: 'tabular-nums',
                 }}
               >
-                {last === null ? '—' : last.toLocaleString('en-GB')}
+                {headline === null ? '—' : fmt(headline)}
               </span>
             </li>
           );
@@ -307,6 +335,49 @@ function lastFinite(values: number[]): number | null {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
   }
   return null;
+}
+
+// Default integer formatter for any series that doesn't ship its
+// own. Locale-pinned so the kiosk renders the UK convention
+// regardless of the browser's profile.
+const INT_FMT = new Intl.NumberFormat('en-GB', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+function defaultFormat(n: number): string {
+  return INT_FMT.format(n);
+}
+
+// Pick the y-axis tick formatter. When every series declares the same
+// formatValue function reference, use it; otherwise fall back to the
+// default integer formatter. Comparing by reference is intentional —
+// two series that pass the same imported formatter share visual
+// language; ad-hoc lambdas don't, so a multi-currency mixed chart
+// (rare) falls back safely.
+function pickSharedFormatter(series: LineChartSeries[]): (n: number) => string {
+  if (series.length === 0) return defaultFormat;
+  const first = series[0]?.formatValue;
+  if (!first) return defaultFormat;
+  for (const s of series) {
+    if (s.formatValue !== first) return defaultFormat;
+  }
+  return first;
+}
+
+function legendValue(values: number[], mode: LineChartLegendMode): number | null {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length === 0) return null;
+  switch (mode) {
+    case 'last':
+      return lastFinite(values);
+    case 'avg':
+      return finite.reduce((s, n) => s + n, 0) / finite.length;
+    case 'max':
+      return Math.max(...finite);
+    case 'total':
+    default:
+      return finite.reduce((s, n) => s + n, 0);
+  }
 }
 
 // Choose ~n+1 nicely-rounded ticks from 0 → max. Returns ascending,

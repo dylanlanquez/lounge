@@ -398,3 +398,18 @@ export function formatPence(pence: number): string {
 export function formatPounds(pounds: number): string {
   return GBP.format(pounds);
 }
+
+// Integer formatter used wherever a non-currency number lands in
+// front of a human — counts, durations, ages, etc. Always emits
+// thousand separators ("1,248" not "1248") per the brief. Locale is
+// pinned to en-GB so a US laptop browsing the kiosk doesn't render
+// "1,248" as "1.248" (German-style). Negative values are preserved.
+const INT = new Intl.NumberFormat('en-GB', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+export function formatNumber(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  return INT.format(n);
+}

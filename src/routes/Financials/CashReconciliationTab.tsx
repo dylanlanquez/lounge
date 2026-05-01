@@ -22,7 +22,7 @@ import {
   useCashCountStatement,
   useCashPosition,
 } from '../../lib/queries/cashCounts.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { listManagers, type ManagerRow } from '../../lib/queries/staff.ts';
 import { buildCashCountPdf, downloadCashCountPdf } from '../../lib/cashCountPdf.ts';
@@ -151,7 +151,7 @@ function CurrentPositionCard({
         <StatCard
           label="Expected in safe"
           value={formatPence(position.expected_in_safe_pence)}
-          delta={`${position.payment_count.toLocaleString('en-GB')} cash payment${position.payment_count === 1 ? '' : 's'}`}
+          delta={`${formatNumber(position.payment_count)} cash payment${position.payment_count === 1 ? '' : 's'}`}
           tone="accent"
           icon={<Banknote size={14} />}
         />

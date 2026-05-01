@@ -14,7 +14,7 @@ import {
   type VoidsData,
   useFinancialsVoids,
 } from '../../lib/queries/financials.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
 
 interface Props {
@@ -85,7 +85,7 @@ function Kpis({ data }: { data: VoidsData }) {
         gap: theme.space[3],
       }}
     >
-      <StatCard label="Total voids" value={data.count.toLocaleString('en-GB')} icon={<Ban size={14} />} />
+      <StatCard label="Total voids" value={formatNumber(data.count)} icon={<Ban size={14} />} />
       <StatCard
         label="Total voided"
         value={formatPence(data.total_amount_pence)}
@@ -94,7 +94,7 @@ function Kpis({ data }: { data: VoidsData }) {
       />
       <StatCard
         label={`Voided in ≤${SAME_DAY_WINDOW_MINUTES}m`}
-        value={data.same_day_count.toLocaleString('en-GB')}
+        value={formatNumber(data.same_day_count)}
         delta="captured then immediately voided"
         tone={data.same_day_count > 0 ? 'alert' : 'normal'}
       />

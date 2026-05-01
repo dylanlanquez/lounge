@@ -12,8 +12,9 @@ import {
   type ReferralSourceEntry,
   useReportsPatients,
 } from '../../lib/queries/reports.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
+import { titleCase } from '../../lib/text.ts';
 
 interface Props {
   range: DateRange;
@@ -76,14 +77,14 @@ export function MarketingTab({ range }: Props) {
       >
         <StatCard
           label="Channels active"
-          value={data.referral_sources.length.toLocaleString('en-GB')}
-          delta={`${data.total_unique_patients.toLocaleString('en-GB')} patients across all`}
+          value={formatNumber(data.referral_sources.length)}
+          delta={`${formatNumber(data.total_unique_patients)} patients across all`}
           icon={<Megaphone size={14} />}
         />
         <StatCard
           label="Top channel"
-          value={top ? top.source : '—'}
-          delta={top ? `${top.patients.toLocaleString('en-GB')} patients · ${formatPence(top.revenue_pence)}` : '—'}
+          value={top ? titleCase(top.source) : '—'}
+          delta={top ? `${formatNumber(top.patients)} patients · ${formatPence(top.revenue_pence)}` : '—'}
           tone="accent"
           icon={<TrendingUp size={14} />}
         />
@@ -173,7 +174,7 @@ export function MarketingTab({ range }: Props) {
                   }}
                 >
                   <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold }}>
-                    {i + 1}. {entry.source}
+                    {i + 1}. {titleCase(entry.source)}
                   </span>
                   <span
                     style={{
@@ -211,8 +212,8 @@ export function MarketingTab({ range }: Props) {
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {entry.patients.toLocaleString('en-GB')} unique patient{entry.patients === 1 ? '' : 's'} ·{' '}
-                  {entry.visits.toLocaleString('en-GB')} visit{entry.visits === 1 ? '' : 's'}
+                  {formatNumber(entry.patients)} unique patient{entry.patients === 1 ? '' : 's'} ·{' '}
+                  {formatNumber(entry.visits)} visit{entry.visits === 1 ? '' : 's'}
                   {entry.patients > 0
                     ? ` · ${formatPence(Math.round(entry.revenue_pence / entry.patients))} per patient`
                     : ''}

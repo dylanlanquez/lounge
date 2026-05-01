@@ -13,7 +13,7 @@ import {
   type BookingsVsWalkInsData,
   useReportsBookingsVsWalkIns,
 } from '../../lib/queries/reports.ts';
-import { formatPence } from '../../lib/queries/carts.ts';
+import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { Calendar, UserPlus, UserX } from 'lucide-react';
 
 interface Props {
@@ -76,13 +76,13 @@ function Kpis({ data }: { data: BookingsVsWalkInsData }) {
     >
       <StatCard
         label="Booked"
-        value={data.total_booked.toLocaleString('en-GB')}
+        value={formatNumber(data.total_booked)}
         delta={`${data.no_show_count} no-show${data.no_show_count === 1 ? '' : 's'}`}
         icon={<Calendar size={14} />}
       />
       <StatCard
         label="Walk-ins"
-        value={data.total_walk_in.toLocaleString('en-GB')}
+        value={formatNumber(data.total_walk_in)}
         delta={data.total_booked + data.total_walk_in === 0
           ? 'No visits'
           : `${Math.round((data.total_walk_in / (data.total_booked + data.total_walk_in)) * 100)}% of activity`}
@@ -91,7 +91,7 @@ function Kpis({ data }: { data: BookingsVsWalkInsData }) {
       <StatCard
         label="No-show rate"
         value={data.total_booked === 0 ? '—' : `${(data.no_show_rate * 100).toFixed(1)}%`}
-        delta={data.total_booked === 0 ? 'No bookings' : `out of ${data.total_booked.toLocaleString('en-GB')} booked`}
+        delta={data.total_booked === 0 ? 'No bookings' : `out of ${formatNumber(data.total_booked)} booked`}
         tone={data.no_show_rate > 0.15 ? 'warn' : 'normal'}
         icon={<UserX size={14} />}
       />
@@ -114,7 +114,7 @@ function DailySeriesCard({ data }: { data: BookingsVsWalkInsData }) {
     <Card padding="lg">
       <LineChart
         title="Volume over time"
-        subtitle="Daily count of new bookings vs walk-ins."
+        subtitle="Daily count of new bookings vs walk-ins. Legend shows the period total per series."
         xLabels={xLabels}
         ariaSummary={`Line chart showing daily bookings and walk-ins from ${data.daily[0]?.date ?? ''} to ${
           data.daily[data.daily.length - 1]?.date ?? ''
@@ -133,6 +133,7 @@ function DailySeriesCard({ data }: { data: BookingsVsWalkInsData }) {
             values: data.daily.map((d) => d.walk_in),
           },
         ]}
+        legendMode="total"
       />
     </Card>
   );

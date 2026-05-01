@@ -3,6 +3,7 @@ import { supabase } from '../supabase.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
 import { addDaysIso } from '../calendarMonth.ts';
 import { logFailure } from '../failureLog.ts';
+import { properCase } from './appointments.ts';
 
 // Reports — read-side hooks for the Reports section.
 //
@@ -1491,10 +1492,13 @@ function composeDisplay(
   p: { first_name: string | null; last_name: string | null; name: string | null } | null,
 ): string {
   if (!p) return 'Unknown patient';
-  const fn = p.first_name?.trim();
-  const ln = p.last_name?.trim();
+  // Title Case patient + staff names so "BETH MACKAY" and
+  // "beth mackay" both render as "Beth Mackay" in lifetime-value
+  // top-spender lists, etc.
+  const fn = properCase(p.first_name);
+  const ln = properCase(p.last_name);
   if (fn && ln) return `${fn} ${ln}`;
-  return fn ?? ln ?? p.name?.trim() ?? 'Unknown patient';
+  return fn || ln || properCase(p.name) || 'Unknown patient';
 }
 
 function median(xs: number[]): number {

@@ -95,7 +95,8 @@ export function BarChart({
           preserveAspectRatio="none"
           style={{ width: '100%', height: '100%', display: 'block' }}
         >
-          {/* Gridlines + y-tick labels */}
+          {/* Gridlines + y-tick labels — share the chart's formatter
+              so currency bars get "£100" axis ticks for free. */}
           {yTicks.map((t) => (
             <g key={`grid-${t}`}>
               <line
@@ -115,7 +116,7 @@ export function BarChart({
                 fill={theme.color.inkSubtle}
                 fontFamily="inherit"
               >
-                {t.toLocaleString('en-GB')}
+                {fmt(t)}
               </text>
             </g>
           ))}
