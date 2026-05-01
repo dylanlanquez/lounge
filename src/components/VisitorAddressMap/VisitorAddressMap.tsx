@@ -9,6 +9,12 @@ import {
 } from '../../lib/queries/reports.ts';
 import type { AddressGeocode } from '../../lib/queries/addressGeocodes.ts';
 import { logFailure } from '../../lib/failureLog.ts';
+import {
+  MAP_STYLE,
+  MAP_BACKGROUND,
+  MARKER_COLOUR,
+  haloMarkerIcon,
+} from '../../lib/visitorMapStyling.ts';
 
 // VisitorAddressMap — admin-only address-resolution heatmap.
 //
@@ -29,59 +35,6 @@ import { logFailure } from '../../lib/failureLog.ts';
 export interface VisitorAddressMapProps {
   data: VisitorAddressMapData;
   geocodes: AddressGeocode[];
-}
-
-const MARKER_COLOUR: Record<VisitorMapService, string> = {
-  denture_repair: '#4F6F89',
-  click_in_veneers: '#2D3539',
-  same_day_appliance: theme.color.accent,
-  impression_appointment: '#B36815',
-  other: '#6B7378',
-};
-
-// Same dark/light-style trade-off as VisitorHeatmap — light premium
-// minimalist basemap, no roads / POIs / transit / parcels.
-const MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#F7F6F2' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#F7F6F2' }, { weight: 3 }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6B7378' }] },
-
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#FAF8F4' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#FAF8F4' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#D7E0E5' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#8C9AA0' }] },
-
-  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#D8DAD6' }, { weight: 1 }] },
-  { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#3C4448' }] },
-  { featureType: 'administrative.province', elementType: 'labels.text.fill', stylers: [{ color: '#5F6B72' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#7A8389' }] },
-
-  { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
-  { featureType: 'administrative.neighborhood', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-];
-
-// SVG halo marker — outer glow, mid halo, inner core with white
-// stroke. Tuned for visibility on the cream basemap.
-function haloMarkerIcon(colour: string, scaleCore: number): {
-  url: string;
-  scaledSize: { width: number; height: number };
-  anchor: { x: number; y: number };
-} {
-  const outer = scaleCore * 3.0;
-  const mid = scaleCore * 1.9;
-  const inner = scaleCore;
-  const size = Math.ceil(outer * 2);
-  const c = size / 2;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${c}" cy="${c}" r="${outer}" fill="${colour}" opacity="0.18"/><circle cx="${c}" cy="${c}" r="${mid}" fill="${colour}" opacity="0.38"/><circle cx="${c}" cy="${c}" r="${inner}" fill="${colour}" stroke="#FFFFFF" stroke-width="2" opacity="1"/></svg>`;
-  return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: { width: size, height: size },
-    anchor: { x: c, y: c },
-  };
 }
 
 interface HoverState {
@@ -152,7 +105,7 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
           zoomControl: true,
           clickableIcons: false,
           styles: MAP_STYLE,
-          backgroundColor: '#F7F6F2',
+          backgroundColor: MAP_BACKGROUND,
           gestureHandling: 'greedy',
         });
         setMap(instance);
@@ -270,7 +223,7 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
           width: '100%',
           minHeight: 480,
           borderRadius: theme.radius.input,
-          background: '#F7F6F2',
+          background: MAP_BACKGROUND,
           border: `1px solid ${theme.color.border}`,
           overflow: 'hidden',
         }}

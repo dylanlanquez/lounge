@@ -10,6 +10,12 @@ import {
 } from '../../lib/queries/reports.ts';
 import type { PostcodeGeocode } from '../../lib/queries/postcodeGeocodes.ts';
 import { logFailure } from '../../lib/failureLog.ts';
+import {
+  MAP_STYLE,
+  MAP_BACKGROUND,
+  MARKER_COLOUR,
+  haloMarkerIcon,
+} from '../../lib/visitorMapStyling.ts';
 
 // Hierarchical filter state. Three levels:
 //   • 'all'     → every visitor regardless of service
@@ -32,80 +38,8 @@ export interface VisitorHeatmapProps {
   geocodes: PostcodeGeocode[];
 }
 
-// Categorical palette for the heatmap and its legend.
-//
-// Why not the base theme colours: theme.color.alert is the project's
-// red for *errors and warnings*. Using it on "Denture repair" reads
-// as if the service itself is bad. A categorical legend needs colours
-// that distinguish without implying status — calm, dashboard-grade,
-// no semantic baggage.
-//
-// The palette is anchored on the brand green for "Same-day appliance"
-// (the closest category to a Lounge default), then opposes it across
-// the colour wheel for separation: slate-blue, charcoal, ochre, stone.
-const MARKER_COLOUR: Record<VisitorMapService, string> = {
-  denture_repair: '#4F6F89',         // slate blue — calm, dominant
-  click_in_veneers: '#2D3539',        // charcoal — premium feel
-  same_day_appliance: theme.color.accent, // brand green
-  impression_appointment: '#B36815',  // ochre (kept from theme.warn)
-  other: '#6B7378',                   // stone grey
-};
-
 function colourFor(service: VisitorMapService): string {
   return MARKER_COLOUR[service];
-}
-
-// Light basemap style. Premium minimalist look — Apple Maps /
-// Stripe-light aesthetic: cream land, soft blue-grey water,
-// barely-there admin borders. POIs / roads / transit / parcels
-// stripped so the data overlays carry the visual weight.
-const MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#F7F6F2' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#F7F6F2' }, { weight: 3 }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6B7378' }] },
-
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#FAF8F4' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#FAF8F4' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#D7E0E5' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#8C9AA0' }] },
-
-  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#D8DAD6' }, { weight: 1 }] },
-  { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#3C4448' }] },
-  { featureType: 'administrative.province', elementType: 'labels.text.fill', stylers: [{ color: '#5F6B72' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#7A8389' }] },
-
-  // Strip noise so the data overlays own the canvas.
-  { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
-  { featureType: 'administrative.neighborhood', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-];
-
-// Build a layered SVG marker — outer glow, mid halo, inner core
-// with white stroke. The triple-layer fade gives a luminous look
-// without the overhead of CSS animations on a hundred markers.
-// `scaleCore` is the inner-dot radius in pixels; the halo expands
-// proportionally. Halo opacities are tuned for the light basemap:
-// stronger than they would need to be on dark, because a 14% red
-// glow against cream is invisible.
-function haloMarkerIcon(colour: string, scaleCore: number): {
-  url: string;
-  scaledSize: { width: number; height: number };
-  anchor: { x: number; y: number };
-} {
-  const outer = scaleCore * 3.0;
-  const mid = scaleCore * 1.9;
-  const inner = scaleCore;
-  const size = Math.ceil(outer * 2);
-  const c = size / 2;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${c}" cy="${c}" r="${outer}" fill="${colour}" opacity="0.18"/><circle cx="${c}" cy="${c}" r="${mid}" fill="${colour}" opacity="0.38"/><circle cx="${c}" cy="${c}" r="${inner}" fill="${colour}" stroke="#FFFFFF" stroke-width="2" opacity="1"/></svg>`;
-  return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: { width: size, height: size },
-    anchor: { x: c, y: c },
-  };
 }
 
 interface ResolvedPoint {
@@ -215,7 +149,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           zoomControl: true,
           clickableIcons: false,
           styles: MAP_STYLE,
-          backgroundColor: '#F7F6F2',
+          backgroundColor: MAP_BACKGROUND,
           gestureHandling: 'greedy',
         });
         setMap(instance);
@@ -369,7 +303,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           borderRadius: theme.radius.input,
           // Cream backdrop matches the basemap so there's no flash
           // of mismatched colour while Maps JS loads.
-          background: '#F7F6F2',
+          background: MAP_BACKGROUND,
           border: `1px solid ${theme.color.border}`,
           overflow: 'hidden',
         }}
