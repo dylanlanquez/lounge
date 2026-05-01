@@ -65,8 +65,12 @@ interface ResolvedPoint {
 
 export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<GMap | null>(null);
   const circlesRef = useRef<GCircle[]>([]);
+  // The map is held in state — not a ref — so the circle-drawing
+  // effect re-runs once the map finishes loading. With a ref, a fast
+  // cache return for geocodes would let the effect fire before the
+  // map exists, return early, and never re-fire.
+  const [map, setMap] = useState<GMap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [filter, setFilter] = useState<VisitorMapFilter>({ level: 'all' });
@@ -119,6 +123,9 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
     [resolvedPoints],
   );
 
+  // Map creation runs once on mount. setMap is the trigger that lets
+  // the circle effect downstream run with a real map — see comment on
+  // the `map` state above.
   useEffect(() => {
     if (!containerRef.current) return;
     let cancelled = false;
@@ -131,7 +138,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           return;
         }
         if (!containerRef.current) return;
-        const map = new lib.Map(containerRef.current, {
+        const instance = new lib.Map(containerRef.current, {
           center: { lat: 54.0, lng: -2.5 },
           zoom: 6,
           disableDefaultUI: false,
@@ -142,7 +149,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
           backgroundColor: theme.color.bg,
           gestureHandling: 'greedy',
         });
-        mapRef.current = map;
+        setMap(instance);
       } catch (e) {
         if (cancelled) return;
         const message = e instanceof Error ? e.message : 'Map failed to load';
@@ -160,9 +167,11 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
     };
   }, []);
 
-  // Redraw whenever the resolved points change.
+  // Redraw circles whenever the map, resolved points, or geocodes
+  // change. The map dep is what makes this correct under fast caches:
+  // if geocodes resolve before the map mounts, this still re-runs on
+  // setMap and the circles render.
   useEffect(() => {
-    const map = mapRef.current;
     if (!map) return;
     let cancelled = false;
     void (async () => {
@@ -199,7 +208,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
     return () => {
       cancelled = true;
     };
-  }, [resolvedPoints, geoIndex]);
+  }, [map, resolvedPoints, geoIndex]);
 
   if (unavailable) {
     return (
