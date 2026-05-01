@@ -2100,18 +2100,33 @@ function ReferralSourceSection({
   onChange: (next: string) => void;
   isMobile: boolean;
 }) {
-  // The dropdown's "selected" option and the saved value are
-  // related but distinct. If the saved value matches a preset, the
-  // dropdown shows that preset and there's no free-text box. If
-  // the saved value is anything else, the dropdown shows "Other"
-  // and a free-text box appears pre-filled with the value.
-  const isOther = value !== '' && !REFERRAL_PRESET_VALUES.has(value);
-  const dropdownValue = value === '' ? '' : isOther ? 'Other' : value;
-  const otherText = isOther ? value : '';
+  // The dropdown's selection is held locally — independent of the
+  // saved value (form.referred_by) — because the two diverge when
+  // the user picks "Other": the dropdown shows "Other" while the
+  // saved value is whatever they type into the free-text box (or
+  // empty until they type).
+  //
+  // The previous implementation derived selection from value, which
+  // collapsed the moment we cleared the value on Other-pick: the
+  // dropdown reverted to placeholder and the input never appeared.
+  //
+  // Initial selection is computed once from the prop:
+  //   • '' (no value)              → no selection
+  //   • a preset value             → that preset
+  //   • a custom value (typed in)  → 'Other' with the input pre-
+  //                                   populated to the saved value
+  const [selection, setSelection] = useState<string>(() => {
+    if (value === '') return '';
+    if (REFERRAL_PRESET_VALUES.has(value)) return value;
+    return 'Other';
+  });
 
   const handleChannel = (next: string) => {
+    setSelection(next);
     if (next === 'Other') {
-      // Clear so the input renders empty; user types their own.
+      // Picking Other clears the saved value so validation flags it
+      // as missing until the user types something. The dropdown
+      // stays on "Other" via local state regardless.
       onChange('');
     } else {
       onChange(next);
@@ -2156,16 +2171,16 @@ function ReferralSourceSection({
       <DropdownSelect<string>
         label="Channel"
         required
-        value={dropdownValue}
+        value={selection}
         options={REFERRAL_CHANNELS}
         placeholder="Pick the closest one"
         onChange={handleChannel}
       />
-      {dropdownValue === 'Other' ? (
+      {selection === 'Other' ? (
         <Input
           label="Tell us a bit more"
           required
-          value={otherText}
+          value={value}
           maxLength={30}
           onChange={(e) => onChange(e.target.value.slice(0, 30))}
           placeholder="e.g. influencer name, magazine, local poster"
