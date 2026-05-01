@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Clock, Info, Plus, Settings2, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Plus, Settings2, Trash2 } from 'lucide-react';
 import {
   Button,
   Card,
+  Checkbox,
   Dialog,
   DropdownSelect,
   Input,
@@ -619,7 +620,7 @@ function BookingTypeEditorDialog({
   const title = isParent
     ? BOOKING_SERVICE_TYPES.find((s) => s.value === (row as BookingTypeConfigRow).service_type)?.label ?? 'Booking type'
     : isNew
-    ? `${labelOfService((target as { service_type: BookingServiceType }).service_type)} · ${(target as { label: string }).label} (new override)`
+    ? `${labelOfService((target as { service_type: BookingServiceType }).service_type)} · ${(target as { label: string }).label}`
     : `${labelOfService((row as BookingTypeConfigRow).service_type)} · ${bookingTypeRowLabel(row as BookingTypeConfigRow)}`;
 
   const save = async () => {
@@ -703,7 +704,7 @@ function BookingTypeEditorDialog({
       description={
         isParent
           ? 'These are the defaults that everything inside this service inherits from.'
-          : 'Override only the fields you want to change. Anything left as "Inherit" reads from the parent.'
+          : 'Flip Override on for the sections that should differ from the parent. Sections left off read from the parent automatically.'
       }
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
@@ -733,7 +734,7 @@ function BookingTypeEditorDialog({
         </SectionWithInherit>
 
         <SectionWithInherit
-          title="Duration (minutes)"
+          title="Duration"
           allowInherit={!isParent}
           inherits={durationInherits}
           onToggleInherit={(v) => {
@@ -743,29 +744,14 @@ function BookingTypeEditorDialog({
           parentSummary={parent ? summariseDuration(parent) : ''}
         >
           {!durationInherits ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: theme.space[3] }}>
-              <Input
-                label="Min"
-                type="number"
-                value={durMin}
-                onChange={(e) => setDurMin(e.target.value)}
-                placeholder="e.g. 30"
-              />
-              <Input
-                label="Default"
-                type="number"
-                value={durDefault}
-                onChange={(e) => setDurDefault(e.target.value)}
-                placeholder="e.g. 60"
-              />
-              <Input
-                label="Max"
-                type="number"
-                value={durMax}
-                onChange={(e) => setDurMax(e.target.value)}
-                placeholder="e.g. 90"
-              />
-            </div>
+            <DurationRangeEditor
+              durMin={durMin}
+              durDefault={durDefault}
+              durMax={durMax}
+              onMin={setDurMin}
+              onDefault={setDurDefault}
+              onMax={setDurMax}
+            />
           ) : null}
         </SectionWithInherit>
 
@@ -780,7 +766,17 @@ function BookingTypeEditorDialog({
   );
 }
 
-// Wrapper for a section with an optional "Use parent default" toggle.
+// Wrapper for a section with an optional "Override" toggle. Models
+// the Linear / Stripe / Vercel pattern for inherit-or-override:
+//
+//   • Section header: uppercase tracked-wide label on the left,
+//     OS-style toggle switch on the right (only when allowInherit).
+//   • Off state: a single line of muted prose showing what the
+//     parent's value is. The admin reads it and moves on.
+//   • On state: the editable controls appear. Prefilled from parent
+//     so the admin starts from a sensible point.
+//
+// One affordance per section, one state, no chip-plus-card.
 function SectionWithInherit({
   title,
   allowInherit,
@@ -796,9 +792,15 @@ function SectionWithInherit({
   parentSummary: string;
   children: React.ReactNode;
 }) {
+  // Override switch is the inverse of "inherits" — we surface it that
+  // way to the admin because "Override" is the verb that matches
+  // the action they're considering.
+  const isOverriding = !inherits;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <div
+    <section
+      style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}
+    >
+      <header
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -806,59 +808,110 @@ function SectionWithInherit({
           gap: theme.space[3],
         }}
       >
-        <h4
+        <span
           style={{
-            margin: 0,
-            fontSize: theme.type.size.sm,
+            fontSize: theme.type.size.xs,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+            color: theme.color.inkMuted,
             fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
           }}
         >
           {title}
-        </h4>
+        </span>
         {allowInherit ? (
-          <button
-            type="button"
-            onClick={() => onToggleInherit(!inherits)}
-            style={{
-              appearance: 'none',
-              border: `1px solid ${inherits ? theme.color.ink : theme.color.border}`,
-              background: inherits ? theme.color.bg : 'transparent',
-              borderRadius: theme.radius.pill,
-              padding: `4px ${theme.space[2]}px`,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              fontSize: 11,
-              fontWeight: theme.type.weight.medium,
-              color: inherits ? theme.color.ink : theme.color.inkMuted,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-            aria-pressed={inherits}
-          >
-            <Info size={11} aria-hidden /> {inherits ? 'Inheriting from parent' : 'Use parent default'}
-          </button>
+          <ToggleSwitch
+            label="Override"
+            on={isOverriding}
+            onChange={(next) => onToggleInherit(!next)}
+          />
         ) : null}
-      </div>
+      </header>
       {inherits ? (
         <p
           style={{
             margin: 0,
-            fontSize: theme.type.size.xs,
+            fontSize: theme.type.size.sm,
             color: theme.color.inkMuted,
-            padding: theme.space[3],
-            background: theme.color.bg,
-            borderRadius: theme.radius.input,
-            border: `1px dashed ${theme.color.border}`,
+            lineHeight: 1.5,
           }}
         >
-          Inherits from parent: <strong>{parentSummary}</strong>
+          Using parent default: <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>{parentSummary}</span>
         </p>
       ) : (
         children
       )}
-    </div>
+    </section>
+  );
+}
+
+// OS-style toggle switch. Track + thumb, animated. Used here as the
+// "Override" affordance per section. Two visual states only.
+function ToggleSwitch({
+  label,
+  on,
+  onChange,
+}: {
+  label: string;
+  on: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={() => onChange(!on)}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        padding: 0,
+        fontFamily: 'inherit',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: on ? theme.color.ink : theme.color.inkMuted,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        aria-hidden
+        style={{
+          width: 32,
+          height: 18,
+          borderRadius: 999,
+          background: on ? theme.color.accent : theme.color.border,
+          position: 'relative',
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          flexShrink: 0,
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: on ? 16 : 2,
+            width: 14,
+            height: 14,
+            borderRadius: '50%',
+            background: '#FFFFFF',
+            boxShadow: '0 1px 2px rgba(14, 20, 20, 0.2)',
+            transition: `left ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+          }}
+        />
+      </span>
+    </button>
   );
 }
 
@@ -866,6 +919,17 @@ function SectionWithInherit({
 // Working-hours grid (Mon-Sun).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// WorkingHoursEditor — Calendly / Shopify-admin pattern.
+//
+//   • One 44px row per day, hairline separators between rows.
+//   • Day name + checkbox on the left (96px column for alignment).
+//   • Time pair on the right: `start — end`. No repeating "Open" /
+//     "Close" labels above each day; the relationship is read from
+//     the dash separator like a range.
+//   • Closed days collapse the time control to muted "Closed" text.
+//   • "Apply Mon to weekdays" ghost button surfaces only when
+//     Monday's hours differ from at least one of Tue–Fri (so it's
+//     not visual noise when nothing's actionable).
 function WorkingHoursEditor({
   value,
   onChange,
@@ -874,94 +938,320 @@ function WorkingHoursEditor({
   onChange: (next: WorkingHours) => void;
 }) {
   const setDay = (day: DayOfWeek, hours: DayHours | null) => {
+    onChange({ ...value, [day]: hours });
+  };
+
+  // Apply-to-weekdays affordance — Calendly-style. Detect whether
+  // Monday's hours are unique vs Tue–Fri before showing the button,
+  // so it only appears when there's actually something to do.
+  const monday = value.mon ?? null;
+  const weekdays: DayOfWeek[] = ['tue', 'wed', 'thu', 'fri'];
+  const canApplyMonday =
+    monday !== null &&
+    weekdays.some((d) => {
+      const v = value[d];
+      if (!v) return true;
+      return v.open !== monday.open || v.close !== monday.close;
+    });
+  const applyMondayToWeekdays = () => {
+    if (!monday) return;
     const next: WorkingHours = { ...value };
-    if (hours === null) next[day] = null;
-    else next[day] = hours;
+    for (const d of weekdays) next[d] = { open: monday.open, close: monday.close };
     onChange(next);
   };
+
   return (
-    <ul
+    <div
       style={{
-        listStyle: 'none',
-        margin: 0,
-        padding: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        overflow: 'hidden',
       }}
     >
-      {DAYS_OF_WEEK.map((day) => {
-        const v = value[day];
-        const closed = v === null || v === undefined;
-        return (
-          <li
-            key={day}
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {DAYS_OF_WEEK.map((day, i) => {
+          const v = value[day] ?? null;
+          const closed = v === null;
+          return (
+            <li
+              key={day}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[3],
+                minHeight: 44,
+                padding: `0 ${theme.space[3]}px`,
+                borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}`,
+              }}
+            >
+              <Checkbox
+                checked={!closed}
+                onChange={(c) =>
+                  setDay(day, c ? { open: '09:00', close: '18:00' } : null)
+                }
+                size={18}
+                ariaLabel={`${DAY_LABELS[day]} open`}
+              />
+              <span
+                style={{
+                  width: 96,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  color: closed ? theme.color.inkMuted : theme.color.ink,
+                }}
+              >
+                {DAY_LABELS[day]}
+              </span>
+              <div
+                style={{
+                  marginLeft: 'auto',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[2],
+                }}
+              >
+                {closed ? (
+                  <span
+                    style={{
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.inkSubtle,
+                      fontStyle: 'italic',
+                    }}
+                  >
+                    Closed
+                  </span>
+                ) : (
+                  <>
+                    <TimeField
+                      value={v.open}
+                      onChange={(t) => setDay(day, { open: t, close: v.close })}
+                      ariaLabel={`${DAY_LABELS[day]} open time`}
+                    />
+                    <span
+                      aria-hidden
+                      style={{
+                        fontSize: theme.type.size.sm,
+                        color: theme.color.inkSubtle,
+                      }}
+                    >
+                      —
+                    </span>
+                    <TimeField
+                      value={v.close}
+                      onChange={(t) => setDay(day, { open: v.open, close: t })}
+                      ariaLabel={`${DAY_LABELS[day]} close time`}
+                    />
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {canApplyMonday ? (
+        <div
+          style={{
+            borderTop: `1px solid ${theme.color.border}`,
+            background: theme.color.bg,
+            padding: `${theme.space[2]}px ${theme.space[3]}px`,
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <button
+            type="button"
+            onClick={applyMondayToWeekdays}
             style={{
-              display: 'grid',
-              gridTemplateColumns: '120px auto 1fr 1fr',
-              alignItems: 'center',
-              gap: theme.space[3],
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              appearance: 'none',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.accent,
+              padding: `${theme.space[1]}px ${theme.space[2]}px`,
               borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.surface,
+              WebkitTapHighlightColor: 'transparent',
             }}
           >
-            <span
-              style={{
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-              }}
-            >
-              {DAY_LABELS[day]}
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setDay(day, closed ? { open: '09:00', close: '18:00' } : null)
-              }
-              style={{
-                appearance: 'none',
-                border: `1px solid ${closed ? theme.color.border : theme.color.ink}`,
-                background: closed ? theme.color.bg : theme.color.accentBg,
-                borderRadius: theme.radius.pill,
-                padding: `2px ${theme.space[2]}px`,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                fontSize: 11,
-                fontWeight: theme.type.weight.medium,
-                color: closed ? theme.color.inkMuted : theme.color.accent,
-              }}
-            >
-              {closed ? 'Closed' : 'Open'}
-            </button>
-            {!closed ? (
-              <>
-                <Input
-                  label="Open"
-                  type="time"
-                  value={v?.open ?? ''}
-                  onChange={(e) =>
-                    setDay(day, { open: e.target.value, close: v?.close ?? '18:00' })
-                  }
-                />
-                <Input
-                  label="Close"
-                  type="time"
-                  value={v?.close ?? ''}
-                  onChange={(e) =>
-                    setDay(day, { open: v?.open ?? '09:00', close: e.target.value })
-                  }
-                />
-              </>
-            ) : (
-              <span style={{ gridColumn: '3 / span 2' }} />
-            )}
-          </li>
-        );
-      })}
-    </ul>
+            Apply Monday's hours to all weekdays
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// DurationRangeEditor — three numeric fields in one strip.
+//
+//   Min  ─  Default (emphasised)  ─  Max
+//   minutes                          minutes
+//
+// Default is the most-used value (it's what the receptionist sees
+// pre-selected when booking), so it's visually heavier — larger
+// type, bolder weight, the focal point. Min and Max are smaller and
+// muted — they bound the slider but aren't the primary interaction.
+//
+// Visible em-dash separators between fields read the trio as a
+// "30 — 60 — 90 minutes" range at a glance.
+function DurationRangeEditor({
+  durMin,
+  durDefault,
+  durMax,
+  onMin,
+  onDefault,
+  onMax,
+}: {
+  durMin: string;
+  durDefault: string;
+  durMax: string;
+  onMin: (v: string) => void;
+  onDefault: (v: string) => void;
+  onMax: (v: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        display: 'flex',
+        alignItems: 'flex-end',
+        gap: theme.space[3],
+      }}
+    >
+      <DurationField label="Min" emphasis="muted" value={durMin} onChange={onMin} />
+      <DurationDash />
+      <DurationField label="Default" emphasis="primary" value={durDefault} onChange={onDefault} />
+      <DurationDash />
+      <DurationField label="Max" emphasis="muted" value={durMax} onChange={onMax} />
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          paddingBottom: 6,
+          marginLeft: theme.space[1],
+        }}
+      >
+        minutes
+      </span>
+    </div>
+  );
+}
+
+function DurationDash() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        color: theme.color.inkSubtle,
+        fontSize: theme.type.size.md,
+        paddingBottom: 8,
+      }}
+    >
+      —
+    </span>
+  );
+}
+
+function DurationField({
+  label,
+  emphasis,
+  value,
+  onChange,
+}: {
+  label: string;
+  emphasis: 'primary' | 'muted';
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const isPrimary = emphasis === 'primary';
+  return (
+    <label
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        flex: isPrimary ? 1.4 : 1,
+        minWidth: 0,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          color: isPrimary ? theme.color.ink : theme.color.inkMuted,
+          fontWeight: isPrimary ? theme.type.weight.semibold : theme.type.weight.medium,
+        }}
+      >
+        {label}
+      </span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={0}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          appearance: 'none',
+          border: `1px solid ${theme.color.border}`,
+          background: theme.color.bg,
+          borderRadius: theme.radius.input,
+          padding: `${isPrimary ? 8 : 6}px ${theme.space[2]}px`,
+          fontSize: isPrimary ? theme.type.size.lg : theme.type.size.md,
+          fontWeight: isPrimary ? theme.type.weight.semibold : theme.type.weight.medium,
+          color: isPrimary ? theme.color.ink : theme.color.inkMuted,
+          fontFamily: 'inherit',
+          fontVariantNumeric: 'tabular-nums',
+          textAlign: 'center',
+          minWidth: 0,
+          width: '100%',
+          outline: 'none',
+        }}
+      />
+    </label>
+  );
+}
+
+// Compact native time input. Native `<input type="time">` keeps the
+// keyboard / picker behaviour the OS provides (sensible on iPad
+// kiosks and Mac admins alike); we just style the chrome to match
+// the rest of the form so it doesn't look like a default browser
+// control.
+function TimeField({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <input
+      type="time"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={ariaLabel}
+      style={{
+        appearance: 'none',
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        borderRadius: theme.radius.input,
+        padding: `6px ${theme.space[2]}px`,
+        fontSize: theme.type.size.sm,
+        color: theme.color.ink,
+        fontFamily: 'inherit',
+        fontVariantNumeric: 'tabular-nums',
+        width: 96,
+        minWidth: 0,
+        outline: 'none',
+      }}
+    />
   );
 }
 
