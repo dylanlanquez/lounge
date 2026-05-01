@@ -1217,7 +1217,7 @@ export function useReportsLifetimeValue(range: DateRange): LifetimeValueResult {
           .from('lng_visits')
           .select(
             `id, patient_id, opened_at,
-             patient:patients!inner ( id, first_name, last_name, name ),
+             patient:patients!inner ( id, first_name, last_name ),
              cart:lng_carts ( id, status, total_pence )`,
           )
           .in('patient_id', cohortIds);

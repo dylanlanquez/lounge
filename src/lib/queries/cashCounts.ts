@@ -243,7 +243,7 @@ export function useCashPosition(): CashPositionResult {
             `id, amount_pence, succeeded_at,
              cart:lng_carts (
                visit:lng_visits (
-                 patient:patients ( first_name, last_name, name ),
+                 patient:patients ( first_name, last_name ),
                  appointment:lng_appointments ( appointment_ref ),
                  walk_in:lng_walk_ins ( appointment_ref )
                )
@@ -684,7 +684,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
        cart:lng_carts (
          total_pence,
          visit:lng_visits (
-           patient:patients ( first_name, last_name, name ),
+           patient:patients ( first_name, last_name ),
            appointment:lng_appointments ( appointment_ref ),
            walk_in:lng_walk_ins ( appointment_ref )
          )
