@@ -1,4 +1,5 @@
 import { supabase } from '../supabase.ts';
+import { callEdgeFunction } from '../edgeFunction.ts';
 
 // Arrival intake — persisting the data captured by the
 // ArrivalIntakeSheet before staff actually flip the appointment to
@@ -270,31 +271,16 @@ export interface JbAvailabilityResult {
 }
 
 export async function checkJbAvailability(jbRef: string): Promise<JbAvailabilityResult> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const token = sessionData.session?.access_token;
-  if (!token) throw new Error('Not signed in');
-
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  if (!supabaseUrl) throw new Error('VITE_SUPABASE_URL not configured');
-  const projectRef = new URL(supabaseUrl).hostname.split('.')[0];
-
-  const r = await fetch(`https://${projectRef}.functions.supabase.co/checkpoint-jb-check`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ jb_ref: jbRef }),
-  });
-
-  let body: Record<string, unknown> = {};
-  try {
-    body = await r.json();
-  } catch {
-    body = {};
-  }
-  if (!r.ok) {
-    const code = (body.error as string | undefined) ?? `HTTP ${r.status}`;
+  // callEdgeFunction handles stale-JWT recovery: a 401 triggers an
+  // automatic supabase.auth.refreshSession() + one retry, so a
+  // background-tab session that's drifted past expires_at doesn't
+  // surface as "auth_invalid" to the user.
+  const { ok, status, body } = await callEdgeFunction<Record<string, unknown>>(
+    'checkpoint-jb-check',
+    { jb_ref: jbRef },
+  );
+  if (!ok) {
+    const code = (body.error as string | undefined) ?? `HTTP ${status}`;
     const detail = body.detail as string | undefined;
     const source = body.source as string | undefined;
     // Surface the Checkpoint error detail so we can diagnose schema /
