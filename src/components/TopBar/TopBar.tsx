@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
-import { ArrowLeft, BarChart3, LogOut, PoundSterling, Settings } from 'lucide-react';
+import { ArrowLeft, BarChart3, LogOut, Settings } from 'lucide-react';
+import { ReceiptPoundIcon } from '../Icons/ReceiptPoundIcon.tsx';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -100,7 +101,7 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
               onClick={() => navigate('/financials')}
               style={iconButtonStyle}
             >
-              <PoundSterling size={18} />
+              <ReceiptPoundIcon size={18} />
             </button>
           ) : null}
           {showAdminButton ? (
@@ -134,7 +135,7 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
           {showFinancialsButton ? (
             <Button variant="tertiary" size="sm" onClick={() => navigate('/financials')}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                <PoundSterling size={16} /> Financials
+                <ReceiptPoundIcon size={16} /> Financials
               </span>
             </Button>
           ) : null}
