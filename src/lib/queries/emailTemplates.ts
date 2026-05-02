@@ -242,17 +242,123 @@ export async function resetEmailTemplateToDefault(templateKey: string): Promise<
 
 // User-facing labels for each known template key. Matches the seed
 // + admin UI hierarchy. Add a row here when a new template ships.
-export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<{
+export interface EmailTemplateDefinition {
   key: string;
   label: string;
   group: string;
   description: string;
-}> = [
+  // Variables this template supports. Drives both the "insert
+  // variable" picker (label + description) AND the live preview's
+  // sample values (so the preview reads naturally instead of with
+  // empty placeholders).
+  variables: ReadonlyArray<EmailTemplateVariable>;
+}
+
+export interface EmailTemplateVariable {
+  /** The placeholder name as it appears between {{}}. */
+  name: string;
+  /** Human label shown in the variables picker. */
+  label: string;
+  /** One-line description shown next to the variable in the picker. */
+  description: string;
+  /** Sample value used by the live preview so the rendered email
+   * reads as a real one would. */
+  sample: string;
+}
+
+// Variables shared across appointment-related templates. Pulled out
+// so the same list can be reused when reminder / confirmation /
+// reschedule / cancellation templates land — no drift.
+const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'patientFirstName',
+    label: 'Patient first name',
+    description: 'First name on the patient record. Falls back to "there" if empty.',
+    sample: 'Sarah',
+  },
+  {
+    name: 'patientLastName',
+    label: 'Patient last name',
+    description: 'Last name on the patient record. Empty when not on file.',
+    sample: 'Henderson',
+  },
+  {
+    name: 'serviceLabel',
+    label: 'Service',
+    description: 'The booking type label, e.g. "Click-in veneers" or "Denture repair".',
+    sample: 'Click-in veneers',
+  },
+  {
+    name: 'appointmentDateTime',
+    label: 'Date and time',
+    description: 'Combined day + time, e.g. "Sat 9 May at 11:00".',
+    sample: 'Sat 9 May at 11:00',
+  },
+  {
+    name: 'appointmentDate',
+    label: 'Date',
+    description: 'Short day-of-week + date, e.g. "Sat 9 May".',
+    sample: 'Sat 9 May',
+  },
+  {
+    name: 'appointmentDateLong',
+    label: 'Date (long)',
+    description: 'Long format, e.g. "Saturday 9 May 2026".',
+    sample: 'Saturday 9 May 2026',
+  },
+  {
+    name: 'appointmentTime',
+    label: 'Time',
+    description: '24-hour HH:MM, e.g. "11:00".',
+    sample: '11:00',
+  },
+  {
+    name: 'locationName',
+    label: 'Clinic name',
+    description: 'The clinic the booking is at, e.g. "Venneir Lounge".',
+    sample: 'Venneir Lounge',
+  },
+  {
+    name: 'locationCity',
+    label: 'Clinic city',
+    description: 'Just the city, e.g. "Glasgow". Empty if not set on the location.',
+    sample: 'Glasgow',
+  },
+  {
+    name: 'locationAddress',
+    label: 'Clinic full address',
+    description:
+      'Comma-joined name + street + city. Falls back to clinic name only if address fields are empty.',
+    sample: 'Venneir Lounge, 123 High Street, Glasgow',
+  },
+  {
+    name: 'appointmentRef',
+    label: 'LAP reference',
+    description: 'The LAP-NNNNN appointment reference. Empty until intake stamps it.',
+    sample: 'LAP-00042',
+  },
+];
+
+export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> = [
   {
     key: 'appointment_reminder',
     label: 'Appointment reminder (24h before)',
     group: 'Appointments',
     description:
       'Sent automatically 24 hours before each native booking. Patient gets a friendly nudge with the slot details.',
+    variables: APPOINTMENT_VARIABLES,
   },
 ];
+
+// Build a {{var}} → sample-value map for a template, used to
+// hydrate the live preview. Returns a plain Record so the renderer
+// can consume it directly.
+export function sampleVariablesFor(
+  templateKey: string,
+): Record<string, string> {
+  const def = EMAIL_TEMPLATE_DEFINITIONS.find((d) => d.key === templateKey);
+  if (!def) return {};
+  const map: Record<string, string> = {};
+  for (const v of def.variables) map[v.name] = v.sample;
+  return map;
+}
