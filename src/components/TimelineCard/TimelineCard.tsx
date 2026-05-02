@@ -192,7 +192,7 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             {compactTimestamp(event.timestamp)}
           </span>
         </div>
-        {event.detail || event.actor ? (
+        {event.detail || event.actor || (event.facts && event.facts.length > 0) ? (
           <p
             style={{
               margin: `${theme.space[1]}px 0 0`,
@@ -202,61 +202,19 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             }}
           >
             {event.detail}
-            {event.detail && event.actor ? (
+            {event.detail && event.facts && event.facts.length > 0 ? (
+              <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
+            ) : null}
+            {event.facts && event.facts.length > 0 ? (
+              <FactsLine facts={event.facts} />
+            ) : null}
+            {(event.detail || (event.facts && event.facts.length > 0)) && event.actor ? (
               <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
             ) : null}
             {event.actor ? (
               <span style={{ color: theme.color.inkSubtle }}>by {event.actor}</span>
             ) : null}
           </p>
-        ) : null}
-        {event.facts && event.facts.length > 0 ? (
-          // Structured fact list under the detail line. Each label is
-          // muted-uppercase to match the section eyebrows used
-          // elsewhere (BookingFactsCard / IntakeCard) so the timeline
-          // reads as a peer surface for the same data, not a parallel
-          // dialect.
-          <dl
-            style={{
-              margin: `${theme.space[3]}px 0 0`,
-              padding: `${theme.space[3]}px ${theme.space[3]}px`,
-              background: theme.color.bg,
-              border: `1px solid ${theme.color.border}`,
-              borderRadius: theme.radius.input,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: theme.space[2],
-            }}
-          >
-            {event.facts.map((f, i) => (
-              <div key={`${f.label}|${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <dt
-                  style={{
-                    margin: 0,
-                    fontSize: 11,
-                    color: theme.color.inkMuted,
-                    fontWeight: theme.type.weight.semibold,
-                    textTransform: 'uppercase',
-                    letterSpacing: theme.type.tracking.wide,
-                  }}
-                >
-                  {f.label}
-                </dt>
-                <dd
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.sm,
-                    color: theme.color.ink,
-                    lineHeight: theme.type.leading.relaxed,
-                    whiteSpace: 'pre-wrap',
-                    fontWeight: theme.type.weight.medium,
-                  }}
-                >
-                  {f.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
         ) : null}
       </div>
     </li>
@@ -274,6 +232,31 @@ const TONE: Record<'accent' | 'warn' | 'alert' | 'neutral', EventTone> = {
   alert: { bg: 'rgba(184, 58, 42, 0.10)', fg: theme.color.alert },
   neutral: { bg: 'rgba(14, 20, 20, 0.05)', fg: theme.color.inkMuted },
 };
+
+// Renders a structured fact list inline as descriptive text rather
+// than a separate panel. Each fact reads "label value" with the
+// label muted-italic and the value in ink, joined with " · " so the
+// resulting line scans as a sentence under the event detail.
+//
+// Previous version put the facts in a tinted box. The box was
+// visually heavy for a couple of values and felt disconnected from
+// the timeline event's title/detail line. Inline text keeps the
+// timeline reading top-down with no awkward containers.
+function FactsLine({ facts }: { facts: ReadonlyArray<{ label: string; value: string }> }) {
+  return (
+    <>
+      {facts.map((f, i) => (
+        <span key={`${f.label}|${i}`}>
+          {i > 0 ? <span style={{ color: theme.color.inkSubtle }}>{' · '}</span> : null}
+          <span style={{ color: theme.color.inkSubtle }}>{f.label} </span>
+          <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
+            {f.value}
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
 
 function toneFor(event: TimelineEvent): EventTone {
   if (event.tone) return TONE[event.tone];
