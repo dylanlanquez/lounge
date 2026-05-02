@@ -84,6 +84,10 @@ interface EntryState {
   from?: 'ledger' | 'patient' | 'schedule';
   patientId?: string;
   patientName?: string;
+  // YYYY-MM-DD of the day the receptionist was viewing on Schedule
+  // when they tapped into this appointment. Used by the breadcrumb
+  // back-link so they return to the same day, not today.
+  scheduleDate?: string;
 }
 
 export function AppointmentDetail() {
@@ -134,6 +138,9 @@ export function AppointmentDetail() {
                 patient_last_name: result.data.patient.last_name,
               } as never),
               visitOpenedAt: result.data.visit.opened_at,
+              // Forward the originating Schedule date so VisitDetail's
+              // breadcrumb back-link returns to the same day.
+              scheduleDate: entry.scheduleDate,
             }}
           />
         ) : (
@@ -201,8 +208,11 @@ function Breadcrumbs({
       // Schedule › Sarah's Appt. 9 May — name baked into the visit
       // crumb, since Schedule rows already show patient + service +
       // date before the click.
+      const scheduleHref = entry.scheduleDate
+        ? `/schedule?date=${encodeURIComponent(entry.scheduleDate)}`
+        : '/schedule';
       return [
-        { label: 'Schedule', onClick: () => navigate('/schedule') },
+        { label: 'Schedule', onClick: () => navigate(scheduleHref) },
         { label: apptCrumbInline(true) },
       ];
     }

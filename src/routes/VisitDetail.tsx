@@ -2005,6 +2005,10 @@ interface VisitEntryState {
   // forwarding it lets the breadcrumb render the full "Appointment,
   // 29 Apr, 21:43" label on first paint instead of a shimmer.
   visitOpenedAt?: string;
+  // YYYY-MM-DD of the day the receptionist was viewing on Schedule
+  // when they drilled in. Used by the Schedule breadcrumb back-link
+  // so they return to the same day instead of today.
+  scheduleDate?: string;
 }
 
 function VisitBreadcrumbs({
@@ -2082,10 +2086,15 @@ function VisitBreadcrumbs({
       ];
     }
     // 'schedule' or no hint — default trail. Patient crumb renders
-    // when we have any identity to link to.
+    // when we have any identity to link to. When we know which day
+    // the receptionist was viewing on Schedule, we route the back-link
+    // to that exact day so they don't lose their place.
+    const scheduleHref = entry.scheduleDate
+      ? `/schedule?date=${encodeURIComponent(entry.scheduleDate)}`
+      : '/schedule';
     if (patient) {
       return [
-        { label: 'Schedule', onClick: () => navigate('/schedule') },
+        { label: 'Schedule', onClick: () => navigate(scheduleHref) },
         {
           label: patientNameLabel,
           onClick: () =>
@@ -2100,7 +2109,7 @@ function VisitBreadcrumbs({
     // crumb so the receptionist isn't staring at a bare "Appt." while
     // the page resolves.
     return [
-      { label: 'Schedule', onClick: () => navigate('/schedule') },
+      { label: 'Schedule', onClick: () => navigate(scheduleHref) },
       { label: buildVisitLabel(true) },
     ];
   })();
