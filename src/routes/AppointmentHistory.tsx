@@ -346,7 +346,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
       <Search size={16} color={theme.color.inkSubtle} aria-hidden style={{ flexShrink: 0 }} />
       <input
         type="search"
-        placeholder="Search by patient name"
+        placeholder="Search by name, LAP ref, MP ref, email or phone"
         aria-label="Search appointments"
         value={value}
         onChange={(e) => onChange(e.target.value)}
