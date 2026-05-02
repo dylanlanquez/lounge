@@ -289,6 +289,7 @@ function FiltersRow({
           alignItems: 'center',
         }}
       >
+        <TimeWindowToggle dateRange={dateRange} onChange={onDateRangeChange} />
         <FilterPill<LedgerStatus>
           label="Status"
           placeholder="All statuses"
@@ -722,6 +723,119 @@ function pageButton(disabled: boolean): CSSProperties {
 // count, X-clear when at least one option is selected). Local to the
 // Ledger route until a second surface needs the same shape.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Quick-toggle buttons that set the date range to "Upcoming" (today
+// onwards) or "Past" (everything before today). The receptionist's
+// most common framings — "what's coming up?" / "what happened?" —
+// shouldn't require fishing through the date picker. Active state
+// reflects whichever preset's bounds the current dateRange matches;
+// clicking the active preset clears it back to "Any date".
+//
+// The bounds are wide (1 year either side) so a normal clinic horizon
+// fits without the receptionist needing to bump the picker. Bounded,
+// not open-ended, because the LedgerFilters / view query treats null
+// as "no filter" — picking a preset has to send real values.
+function TimeWindowToggle({
+  dateRange,
+  onChange,
+}: {
+  dateRange: DateRange | null;
+  onChange: (next: DateRange | null) => void;
+}) {
+  const upcoming = computeUpcomingRange();
+  const past = computePastRange();
+  const isUpcoming =
+    dateRange?.preset === 'custom' &&
+    dateRange.start === upcoming.start &&
+    dateRange.end === upcoming.end;
+  const isPast =
+    dateRange?.preset === 'custom' &&
+    dateRange.start === past.start &&
+    dateRange.end === past.end;
+  return (
+    <div
+      role="group"
+      aria-label="Time window"
+      style={{
+        display: 'inline-flex',
+        gap: theme.space[1],
+      }}
+    >
+      <PresetButton
+        label="Upcoming"
+        active={isUpcoming}
+        onClick={() => onChange(isUpcoming ? null : upcoming)}
+      />
+      <PresetButton
+        label="Past"
+        active={isPast}
+        onClick={() => onChange(isPast ? null : past)}
+      />
+    </div>
+  );
+}
+
+function PresetButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        height: 36,
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: `0 ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        border: `1px solid ${active ? theme.color.ink : theme.color.border}`,
+        background: active ? theme.color.ink : theme.color.surface,
+        color: active ? theme.color.surface : theme.color.ink,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        cursor: 'pointer',
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Today + 1 year (inclusive). Returns YYYY-MM-DD strings shaped as a
+// DateRange. The exact upper bound rarely matters — the receptionist
+// sees "this is everything from today onwards" — but a bounded pair
+// is what the view's gte/lte filter expects.
+function computeUpcomingRange(): DateRange {
+  const today = new Date();
+  const start = isoDay(today);
+  const end = isoDay(new Date(today.getFullYear() + 1, today.getMonth(), today.getDate()));
+  return { start, end, preset: 'custom' };
+}
+
+function computePastRange(): DateRange {
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const start = isoDay(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()));
+  const end = isoDay(yesterday);
+  return { start, end, preset: 'custom' };
+}
+
+function isoDay(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 function FilterPill<T extends string>({
   label,

@@ -659,39 +659,50 @@ function IntakeCard({
       <SectionLabel>Intake answers</SectionLabel>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {intake.map((item, i) => (
-          <IntakeRow key={`${item.question}|${i}`} question={item.question} answer={item.answer} />
+          <IntakeRow
+            key={`${item.question}|${i}`}
+            question={item.question}
+            answer={item.answer}
+            isFirst={i === 0}
+          />
         ))}
       </ul>
     </Card>
   );
 }
 
-// Single intake question row. Mirrors the BookingFactsCard's Row
-// shape (hairline divider top + sentence-case label + ink answer)
-// but skips the icon column since intake questions are too varied
-// to map to a single glyph each. The label uses the same uppercase
-// muted treatment as the section label so the question/answer
-// hierarchy reads cleanly without competing with the answer body.
-function IntakeRow({ question, answer }: { question: string; answer: string }) {
+// Two-column intake row: label on the left (muted, sentence case),
+// value on the right (ink, semibold). Same shape used by the
+// timeline's fact strip and the DepositCard so the three surfaces
+// share one visual rhythm. The previous "uppercase eyebrow above the
+// value" stack read as bleak next to the rest of the page.
+function IntakeRow({
+  question,
+  answer,
+  isFirst,
+}: {
+  question: string;
+  answer: string;
+  isFirst: boolean;
+}) {
   const label = humaniseIntakeQuestion(question);
   const value = humaniseIntakeAnswer(label, answer);
   return (
     <li
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 140px) minmax(0, 1fr)',
+        gap: theme.space[3],
+        alignItems: 'baseline',
         padding: `${theme.space[3]}px 0`,
-        borderTop: `1px solid ${theme.color.border}`,
+        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
       <span
         style={{
-          fontSize: 11,
+          fontSize: theme.type.size.sm,
           color: theme.color.inkMuted,
-          fontWeight: theme.type.weight.semibold,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
+          fontWeight: theme.type.weight.medium,
         }}
       >
         {label}
@@ -702,7 +713,7 @@ function IntakeRow({ question, answer }: { question: string; answer: string }) {
           color: theme.color.ink,
           lineHeight: theme.type.leading.relaxed,
           whiteSpace: 'pre-wrap',
-          fontWeight: theme.type.weight.medium,
+          fontWeight: theme.type.weight.semibold,
         }}
       >
         {value}
