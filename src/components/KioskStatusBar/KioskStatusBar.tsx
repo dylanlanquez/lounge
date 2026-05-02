@@ -157,6 +157,9 @@ export function KioskStatusBar() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProfileButton({ name, onClick }: { name: string; onClick: () => void }) {
+  // Sized to match the rhythm of the other icon buttons in the bar
+  // (24×24 container, 15px icon). The avatar drops to xs (24px) so
+  // the initials don't dominate the 32px-tall bar.
   return (
     <button
       type="button"
@@ -176,7 +179,7 @@ function ProfileButton({ name, onClick }: { name: string; onClick: () => void })
         outline: 'none',
       }}
     >
-      <Avatar name={name} size="sm" />
+      <Avatar name={name} size="xs" />
     </button>
   );
 }
