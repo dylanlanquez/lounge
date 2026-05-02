@@ -147,6 +147,14 @@ export type { TimelineCardProps } from './TimelineCard/TimelineCard.tsx';
 export { AppointmentTimeline } from './AppointmentTimeline/AppointmentTimeline.tsx';
 export type { AppointmentTimelineProps } from './AppointmentTimeline/AppointmentTimeline.tsx';
 
+export { AppointmentHero } from './AppointmentHero/AppointmentHero.tsx';
+export type {
+  AppointmentHeroProps,
+  AppointmentHeroPill,
+  AppointmentHeroTone,
+  AppointmentHeroWhen,
+} from './AppointmentHero/AppointmentHero.tsx';
+
 export { PatientFilesGrid } from './PatientFilesGrid/PatientFilesGrid.tsx';
 
 export { FinalDeliveries } from './FinalDeliveries/FinalDeliveries.tsx';
