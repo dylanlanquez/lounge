@@ -3,7 +3,7 @@ import { supabase } from '../supabase.ts';
 import { logFailure } from '../failureLog.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
-import type { TimelineEvent, TimelineTone } from './visitTimeline.ts';
+import type { TimelineEvent, TimelineFact, TimelineTone } from './visitTimeline.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useAppointmentTimeline — full audit trail for a single appointment.
@@ -73,6 +73,23 @@ interface RawAppointmentRow {
   reschedule_to_id: string | null;
   calendly_invitee_uri: string | null;
   patient_id: string;
+  // Booking-time facts surfaced as TimelineFact rows under the
+  // "Booking placed" event so the timeline doubles as the audit
+  // record of what the patient told us at booking time.
+  event_type_label: string | null;
+  intake: ReadonlyArray<{ question: string; answer: string }> | null;
+  notes: string | null;
+  // Walk-in marker rows have walk_in_id set; the rich intake (repair
+  // type / appliance / arch) lives on the walk-in row itself, fetched
+  // separately when this is non-null.
+  walk_in_id: string | null;
+}
+
+interface RawWalkInRow {
+  service_type: string | null;
+  appliance_type: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  repair_notes: string | null;
 }
 
 interface RawSystemFailureRow {
@@ -111,7 +128,7 @@ export function useAppointmentTimeline(
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, source, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id',
+            'id, source, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -136,6 +153,31 @@ export function useAppointmentTimeline(
           setError(null);
           settle();
           return;
+        }
+
+        // Walk-in marker rows carry their rich intake on the walk-in
+        // table itself (service_type / appliance_type / arch /
+        // repair_notes). Fetched here so the booking event surfaces
+        // those facts inline. Failure is non-fatal — the timeline
+        // still renders, we just lose the intake column.
+        let walkIn: RawWalkInRow | null = null;
+        if (appt.walk_in_id) {
+          const { data: wkData, error: wkErr } = await supabase
+            .from('lng_walk_ins')
+            .select('service_type, appliance_type, arch, repair_notes')
+            .eq('id', appt.walk_in_id)
+            .maybeSingle();
+          if (cancelled) return;
+          if (wkErr) {
+            await logFailure({
+              source: 'useAppointmentTimeline.walkIn',
+              severity: 'warning',
+              message: wkErr.message,
+              context: { appointmentId, walkInId: appt.walk_in_id },
+            });
+          } else {
+            walkIn = (wkData as RawWalkInRow | null) ?? null;
+          }
         }
 
         // Build the OR string. Every payload shape that could
@@ -309,13 +351,14 @@ export function useAppointmentTimeline(
             timestamp: appt.created_at,
             title: 'Booking placed',
             detail: humaniseSource(appt.source),
+            facts: bookingFacts(appt, walkIn),
             hint: 'calendar',
             tone: 'accent',
           });
         }
 
         for (const r of rows) {
-          const mapped = mapEvent(r, appt, actorById, siblingById, accountById);
+          const mapped = mapEvent(r, appt, actorById, siblingById, accountById, walkIn);
           if (mapped) out.push(mapped);
         }
 
@@ -372,6 +415,7 @@ function mapEvent(
   actorById: Map<string, string>,
   siblingById: Map<string, { start_at: string }>,
   accountById: Map<string, string>,
+  walkIn: RawWalkInRow | null,
 ): TimelineEvent | null {
   const actor = row.actor_account_id ? actorById.get(row.actor_account_id) : undefined;
   const base = { id: row.id, timestamp: row.created_at, actor };
@@ -384,6 +428,7 @@ function mapEvent(
         type: 'appointment_created',
         title: 'Booking placed',
         detail: humaniseSource(source),
+        facts: bookingFacts(appt, walkIn),
         hint: 'calendar',
         tone: 'accent',
       };
@@ -724,6 +769,127 @@ function humaniseSource(source: string): string {
   if (source === 'manual') return 'Manually added';
   if (source === 'native') return 'Created in Lounge';
   return source;
+}
+
+// Builds the structured fact list rendered under the "Booking
+// placed" event. Captures everything the patient (or the operator)
+// told us at booking time so the timeline doubles as the audit
+// record of intake answers, repair type, appliance, arch and notes.
+//
+// Three sources merge here:
+//
+//   1. Service / event-type label from the appointment row. Always
+//      first so the fact list opens with what was booked.
+//   2. Calendly-style intake question/answer pairs from
+//      lng_appointments.intake. Each row becomes its own fact with
+//      a humanised question label and the patient's answer.
+//   3. Walk-in extras from lng_walk_ins (appliance type, arch,
+//      repair notes) when this booking is a walk-in marker. The
+//      walk-in flow doesn't write Calendly-shaped intake rows; the
+//      structured columns ARE the intake.
+//
+// Notes from the appointment itself are folded in last so the
+// receptionist sees any free-text caveat alongside the structured
+// answers.
+function bookingFacts(
+  appt: RawAppointmentRow,
+  walkIn: RawWalkInRow | null,
+): TimelineFact[] {
+  const facts: TimelineFact[] = [];
+
+  const service = humaniseEventTypeLabelLocal(appt.event_type_label);
+  if (service) facts.push({ label: 'Service', value: service });
+
+  // Calendly intake: array of { question, answer } pairs. Skip
+  // empty answers so the fact list doesn't list a question with no
+  // value (Calendly returns '' for skipped optional questions).
+  if (appt.intake) {
+    for (const item of appt.intake) {
+      const value = item.answer?.trim();
+      if (!value) continue;
+      facts.push({ label: humaniseIntakeQuestion(item.question), value });
+    }
+  }
+
+  // Walk-in structured fields. Only emit non-empty.
+  if (walkIn) {
+    if (walkIn.appliance_type?.trim()) {
+      facts.push({ label: 'Appliance type', value: walkIn.appliance_type.trim() });
+    }
+    if (walkIn.arch) {
+      facts.push({ label: 'Arch', value: humaniseArch(walkIn.arch) });
+    }
+    if (walkIn.repair_notes?.trim()) {
+      facts.push({ label: 'Repair notes', value: walkIn.repair_notes.trim() });
+    }
+  }
+
+  // Booking notes — free-text the operator typed when creating the
+  // booking. Distinct from the live "Notes" card on the page (which
+  // edits the same column); shown here as a snapshot of the value
+  // at booking time. NOT the on-the-day notes — that's a deliberate
+  // design choice: the timeline is a log of what was true then.
+  // Future improvement: snapshot the value on every edit so the
+  // history shows drift.
+  if (appt.notes?.trim()) {
+    facts.push({ label: 'Booking notes', value: appt.notes.trim() });
+  }
+
+  return facts;
+}
+
+// Local copy of the patientProfile-side humaniser. Kept here to
+// avoid bouncing through the patientProfile module from a query
+// that has nothing else in common with it. Same logic: pass
+// already-friendly labels through; only humanise when the input
+// looks like a slug (a-z, 0-9, underscores only).
+function humaniseEventTypeLabelLocal(label: string | null): string | null {
+  if (!label) return null;
+  if (/^[a-z0-9_]+$/.test(label)) {
+    return label
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  return label;
+}
+
+// Mirror the AppointmentDetail intake-question humaniser so the
+// timeline labels read identically to the IntakeCard's labels.
+// Kept in sync by hand — small surface, low drift risk.
+function humaniseIntakeQuestion(question: string): string {
+  const trimmed = question.trim().replace(/[?:]+$/, '');
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  switch (lower) {
+    case 'what is the type of repair you would like done':
+    case 'what type of repair would you like done':
+    case 'type of repair':
+      return 'Repair type';
+    case 'contact number':
+    case 'phone number':
+    case "what's your contact number":
+      return 'Contact number';
+    case 'what is the name of the dentures':
+    case 'what is the brand of the dentures':
+      return 'Denture brand';
+    case 'where did you buy the dentures':
+      return 'Where the dentures were bought';
+    case 'how old are the dentures':
+      return 'Age of the dentures';
+    default:
+      return trimmed;
+  }
+}
+
+function humaniseArch(arch: 'upper' | 'lower' | 'both'): string {
+  switch (arch) {
+    case 'upper':
+      return 'Upper';
+    case 'lower':
+      return 'Lower';
+    case 'both':
+      return 'Upper and lower';
+  }
 }
 
 function describeChanges(
