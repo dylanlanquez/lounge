@@ -1,7 +1,7 @@
 import { type CSSProperties, useState } from 'react';
 import { theme } from '../../theme/index.ts';
 
-export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+export type AvatarSize = 'xxs' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 export interface AvatarProps {
   // Either a URL, a Meridian avatar_data string ('preset:cat:seed', 'logo:url',
@@ -15,6 +15,7 @@ export interface AvatarProps {
 }
 
 const SIZES: Record<AvatarSize, number> = {
+  xxs: 20,
   xs: 24,
   sm: 32,
   md: 40,
@@ -23,6 +24,7 @@ const SIZES: Record<AvatarSize, number> = {
 };
 
 const FONT: Record<AvatarSize, number> = {
+  xxs: 9,
   xs: 10,
   sm: 12,
   md: 14,

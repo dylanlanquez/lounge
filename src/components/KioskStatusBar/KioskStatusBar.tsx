@@ -105,10 +105,6 @@ export function KioskStatusBar() {
             <Settings size={15} />
           </KioskIconButton>
         ) : null}
-        <ProfileButton
-          name={account?.display_name ?? user.email ?? 'You'}
-          onClick={() => setProfileOpen(true)}
-        />
         {showReportsButton || showFinancialsButton || showAdminButton ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
@@ -132,6 +128,11 @@ export function KioskStatusBar() {
           </span>
           <span style={{ fontWeight: theme.type.weight.semibold }}>{time}</span>
         </span>
+        <Divider />
+        <ProfileButton
+          name={account?.display_name ?? user.email ?? 'You'}
+          onClick={() => setProfileOpen(true)}
+        />
       </span>
 
       <StatusBarKeyframes />
@@ -157,9 +158,9 @@ export function KioskStatusBar() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProfileButton({ name, onClick }: { name: string; onClick: () => void }) {
-  // Sized to match the rhythm of the other icon buttons in the bar
-  // (24×24 container, 15px icon). The avatar drops to xs (24px) so
-  // the initials don't dominate the 32px-tall bar.
+  // The avatar uses the new xxs (20px) size so it reads as a small
+  // identity glyph in the system tray rather than a feature element.
+  // Anything larger competes with the date/time on the 32px-tall bar.
   return (
     <button
       type="button"
@@ -179,7 +180,7 @@ function ProfileButton({ name, onClick }: { name: string; onClick: () => void })
         outline: 'none',
       }}
     >
-      <Avatar name={name} size="xs" />
+      <Avatar name={name} size="xxs" />
     </button>
   );
 }
