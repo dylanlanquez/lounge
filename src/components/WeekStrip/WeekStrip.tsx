@@ -182,7 +182,15 @@ export function WeekStrip({
               isToday={dateIso === todayIso}
               isPast={dateIso < todayIso}
               count={counts.get(dateIso) ?? 0}
-              onSelect={onSelect}
+              // Pick-in-place: prime lastEmittedRef so the
+              // selectedIso effect skips its scroll-to-centre.
+              // The user clicked the date they were already
+              // pointing at, the strip should stay where it is.
+              onPickInPlace={(d) => {
+                lastEmittedRef.current = d;
+                onSelect(d);
+              }}
+              onNavigate={onSelect}
             />
           );
         })}
@@ -203,7 +211,13 @@ interface DayPillProps {
   isToday: boolean;
   isPast: boolean;
   count: number;
-  onSelect: (dateIso: string) => void;
+  // onPickInPlace fires for click and Enter/Space — the user is
+  // selecting the day they're already pointing at, so the strip
+  // should NOT scroll it to centre afterwards. onNavigate fires
+  // for arrow-key navigation, where the new pill may be
+  // off-screen and auto-scrolling it into view is desired.
+  onPickInPlace: (dateIso: string) => void;
+  onNavigate: (dateIso: string) => void;
 }
 
 function DayPill({
@@ -214,7 +228,8 @@ function DayPill({
   isToday,
   isPast,
   count,
-  onSelect,
+  onPickInPlace,
+  onNavigate,
 }: DayPillProps) {
   // iOS-style strip: bare numerals on the page background, with a
   // hairline-ring around the selected day and an accent-coloured
@@ -231,15 +246,15 @@ function DayPill({
   const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      onSelect(dateIso);
+      onPickInPlace(dateIso);
       return;
     }
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      onSelect(addDaysIso(dateIso, -1));
+      onNavigate(addDaysIso(dateIso, -1));
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      onSelect(addDaysIso(dateIso, 1));
+      onNavigate(addDaysIso(dateIso, 1));
     }
   };
 
@@ -252,7 +267,7 @@ function DayPill({
       aria-label={a11yLabel(dateIso, weekdayLong, count, isToday)}
       tabIndex={isSelected ? 0 : -1}
       data-date={dateIso}
-      onClick={() => onSelect(dateIso)}
+      onClick={() => onPickInPlace(dateIso)}
       onKeyDown={handleKeyDown}
       style={{
         appearance: 'none',
