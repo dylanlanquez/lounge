@@ -82,10 +82,17 @@ export function TimePicker({
   const animId = useId().replace(/:/g, '');
 
   // ─── Desktop popover positioning ─────────────────────────────────
+  // Auto-flip and adaptive max-height. When the trigger sits near
+  // the bottom of the viewport, the popover would otherwise extend
+  // past the visible area — instead we either cap the list height
+  // to the available space below the trigger, or flip up entirely
+  // if there's substantially more room above.
   const [popoverPos, setPopoverPos] = useState<{
     top: number;
     left?: number;
     right?: number;
+    listMaxHeight: number;
+    transformOrigin: string;
   } | null>(null);
   useLayoutEffect(() => {
     if (!open || isMobile) return;
@@ -95,11 +102,45 @@ export function TimePicker({
       const rect = el.getBoundingClientRect();
       const fitsOnRight =
         rect.left + POPOVER_WIDTH <= window.innerWidth - POPOVER_PAD;
-      setPopoverPos(
-        fitsOnRight
-          ? { top: rect.bottom + 8, left: rect.left }
-          : { top: rect.bottom + 8, right: window.innerWidth - rect.right },
-      );
+      const horizontal = fitsOnRight
+        ? { left: rect.left }
+        : { right: window.innerWidth - rect.right };
+
+      // Header + paddings + list. The list is the only flexible piece;
+      // everything else is roughly HEADER_H tall. We cap the list so
+      // the panel as a whole stays inside the viewport.
+      const HEADER_AND_PADDING = 76;
+      const MIN_LIST_HEIGHT = SLOT_HEIGHT * 3;
+      const PREFERRED_LIST_HEIGHT = SLOT_HEIGHT * VISIBLE_SLOTS;
+      const spaceBelow = window.innerHeight - rect.bottom - 8 - POPOVER_PAD;
+      const spaceAbove = rect.top - 8 - POPOVER_PAD;
+      const availBelow = Math.max(0, spaceBelow - HEADER_AND_PADDING);
+      const availAbove = Math.max(0, spaceAbove - HEADER_AND_PADDING);
+
+      // Prefer rendering below; flip up only when below can't fit a
+      // useful list AND above can fit a bigger one.
+      const flipUp =
+        availBelow < MIN_LIST_HEIGHT && availAbove > availBelow;
+      const listMaxHeight = flipUp
+        ? Math.min(PREFERRED_LIST_HEIGHT, availAbove)
+        : Math.min(PREFERRED_LIST_HEIGHT, availBelow || PREFERRED_LIST_HEIGHT);
+
+      const top = flipUp
+        ? rect.top - 8 - HEADER_AND_PADDING - listMaxHeight
+        : rect.bottom + 8;
+      const transformOrigin = flipUp
+        ? fitsOnRight
+          ? 'bottom left'
+          : 'bottom right'
+        : fitsOnRight
+        ? 'top left'
+        : 'top right';
+      setPopoverPos({
+        top,
+        ...horizontal,
+        listMaxHeight: Math.max(MIN_LIST_HEIGHT, listMaxHeight),
+        transformOrigin,
+      });
     };
     update();
     window.addEventListener('scroll', update, true);
@@ -184,7 +225,7 @@ export function TimePicker({
             // unique anim id so multiple pickers on the same page
             // don't share the keyframe and de-sync.
             animation: `lng-time-pop-${animId} ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
-            transformOrigin: 'top right',
+            transformOrigin: popoverPos.transformOrigin,
           }}
         >
           <PopoverHeader
@@ -196,7 +237,7 @@ export function TimePicker({
             slots={slots}
             value={value}
             onPick={handlePick}
-            maxHeight={SLOT_HEIGHT * VISIBLE_SLOTS}
+            maxHeight={popoverPos.listMaxHeight}
           />
           <style>{`
             @keyframes lng-time-pop-${animId} {
