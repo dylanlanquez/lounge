@@ -83,10 +83,22 @@ export interface BookingTypeConfigRow {
 // capacity. A booking consumes 1 unit of every pool its service
 // type maps to, for the duration of the booking; capacity governs
 // concurrent claims.
+//
+// `kind` discriminates two flavours of pool with identical conflict
+// semantics — only the admin UI groups them differently:
+//
+//   resource    physical things — chairs, lab bench, consult room
+//   staff_role  people in a role — impression takers, denture techs
+//
+// The conflict checker treats both the same way; this is purely
+// presentation.
+export type ResourcePoolKind = 'resource' | 'staff_role';
+
 export interface ResourcePoolRow {
   id: string;
   display_name: string;
   capacity: number;
+  kind: ResourcePoolKind;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -299,6 +311,7 @@ export async function upsertResourcePool(input: {
   id: string;
   display_name: string;
   capacity: number;
+  kind: ResourcePoolKind;
   notes?: string | null;
 }): Promise<void> {
   if (!isValidPoolId(input.id)) {
@@ -311,6 +324,7 @@ export async function upsertResourcePool(input: {
         id: input.id,
         display_name: input.display_name,
         capacity: input.capacity,
+        kind: input.kind,
         notes: input.notes ?? null,
       },
       { onConflict: 'id' },

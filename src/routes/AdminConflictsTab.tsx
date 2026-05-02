@@ -15,6 +15,7 @@ import { theme } from '../theme/index.ts';
 import {
   type BookingServiceType,
   type BookingTypeConfigRow,
+  type ResourcePoolKind,
   type ResourcePoolRow,
   type ServicePoolRow,
   BOOKING_SERVICE_TYPES,
@@ -512,12 +513,44 @@ function ResourcesSection({
     return map;
   }, [servicePools]);
 
+  // Split pools into the two visual groups. Same conflict semantics
+  // apply to both — this is purely a presentation split so the
+  // admin can scan resources and staff roles without mixing them.
+  const resourcePools = useMemo(
+    () => pools.filter((p) => p.kind === 'resource'),
+    [pools],
+  );
+  const staffRolePools = useMemo(
+    () => pools.filter((p) => p.kind === 'staff_role'),
+    [pools],
+  );
+
+  const handleRemove = async (poolId: string) => {
+    if ((usageByPool.get(poolId) ?? []).length > 0) {
+      onToast({
+        tone: 'error',
+        title: 'In use. Remove it from every booking type first.',
+      });
+      return;
+    }
+    try {
+      await deleteResourcePool(poolId);
+      onToast({ tone: 'success', title: 'Removed' });
+      onChanged();
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: e instanceof Error ? e.message : 'Could not remove',
+      });
+    }
+  };
+
   return (
     <Card padding="none">
       <SectionHeader
         icon={<Box size={16} aria-hidden />}
         title="Things in your clinic"
-        subtitle="Chairs, rooms, equipment, anything that limits how many bookings can happen at once."
+        subtitle="Anything finite that limits how many bookings can run at once. Spaces and equipment, plus staff roles like an impression taker or a denture tech."
         action={
           <Button variant="tertiary" size="sm" onClick={() => setEditing({ kind: 'new' })}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
@@ -530,7 +563,7 @@ function ResourcesSection({
         <EmptyState
           icon={<Box size={20} />}
           title="Add what you have"
-          description="Most clinics have chairs (one booking per chair), maybe a lab bench for veneers, and a consult room. Add yours below to start."
+          description="Most clinics start with chairs (one booking per chair), a lab bench, and a consult room. Add staff roles too if certain services need a specific team member, like an impression taker."
           action={
             <Button variant="primary" size="sm" onClick={() => setEditing({ kind: 'new' })}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
@@ -540,36 +573,24 @@ function ResourcesSection({
           }
         />
       ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {pools.map((p, i) => (
-            <PoolRow
-              key={p.id}
-              isFirst={i === 0}
-              pool={p}
-              consumers={usageByPool.get(p.id) ?? []}
-              onEdit={() => setEditing({ kind: 'edit', pool: p })}
-              onRemove={async () => {
-                if ((usageByPool.get(p.id) ?? []).length > 0) {
-                  onToast({
-                    tone: 'error',
-                    title: 'In use. Remove it from every booking type first.',
-                  });
-                  return;
-                }
-                try {
-                  await deleteResourcePool(p.id);
-                  onToast({ tone: 'success', title: 'Removed' });
-                  onChanged();
-                } catch (e) {
-                  onToast({
-                    tone: 'error',
-                    title: e instanceof Error ? e.message : 'Could not remove',
-                  });
-                }
-              }}
-            />
-          ))}
-        </ul>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <PoolGroup
+            title="Spaces & equipment"
+            emptyText="No physical resources yet."
+            pools={resourcePools}
+            usageByPool={usageByPool}
+            onEdit={(pool) => setEditing({ kind: 'edit', pool })}
+            onRemove={handleRemove}
+          />
+          <PoolGroup
+            title="Staff roles"
+            emptyText="No staff roles yet. Add one if a service needs a specific kind of staff member, like an impression taker."
+            pools={staffRolePools}
+            usageByPool={usageByPool}
+            onEdit={(pool) => setEditing({ kind: 'edit', pool })}
+            onRemove={handleRemove}
+          />
+        </div>
       )}
 
       {editing ? (
@@ -586,6 +607,79 @@ function ResourcesSection({
         />
       ) : null}
     </Card>
+  );
+}
+
+// Sub-group inside the Things-in-your-clinic card. One per pool
+// kind (Spaces & equipment / Staff roles). Renders an eyebrow
+// header + the matching rows, or a quiet "none yet" hint when
+// the group is empty.
+function PoolGroup({
+  title,
+  emptyText,
+  pools,
+  usageByPool,
+  onEdit,
+  onRemove,
+}: {
+  title: string;
+  emptyText: string;
+  pools: ResourcePoolRow[];
+  usageByPool: Map<string, BookingServiceType[]>;
+  onEdit: (pool: ResourcePoolRow) => void;
+  onRemove: (poolId: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        borderTop: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <div
+        style={{
+          padding: `${theme.space[3]}px ${theme.space[5]}px ${theme.space[2]}px`,
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: 11,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.wide,
+            textTransform: 'uppercase',
+            color: theme.color.inkMuted,
+          }}
+        >
+          {title}
+        </p>
+      </div>
+      {pools.length === 0 ? (
+        <p
+          style={{
+            margin: 0,
+            padding: `0 ${theme.space[5]}px ${theme.space[4]}px`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkSubtle,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          {emptyText}
+        </p>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          {pools.map((p, i) => (
+            <PoolRow
+              key={p.id}
+              isFirst={i === 0}
+              pool={p}
+              consumers={usageByPool.get(p.id) ?? []}
+              onEdit={() => onEdit(p)}
+              onRemove={() => onRemove(p.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -687,6 +781,9 @@ function PoolEditorDialog({
 }) {
   const isNew = target.kind === 'new';
   const seed = isNew ? null : target.pool;
+  const [poolKind, setPoolKind] = useState<ResourcePoolKind>(
+    seed?.kind ?? 'resource',
+  );
   const [displayName, setDisplayName] = useState(seed?.display_name ?? '');
   const [poolId, setPoolId] = useState(seed?.id ?? '');
   const [capacity, setCapacity] = useState<string>(
@@ -718,6 +815,7 @@ function PoolEditorDialog({
         id: poolId,
         display_name: displayName.trim(),
         capacity: cap,
+        kind: poolKind,
         notes: notes.trim() === '' ? null : notes.trim(),
       });
       onSaved();
@@ -728,6 +826,15 @@ function PoolEditorDialog({
     }
   };
 
+  // Copy adapts to the chosen kind so the helper text reads
+  // naturally for both "How many chairs do you have?" and "How many
+  // impression takers do you have on a typical day?".
+  const isStaffRole = poolKind === 'staff_role';
+  const namePlaceholder = isStaffRole ? 'e.g. Impression takers' : 'e.g. Chairs';
+  const capacityHelper = isStaffRole
+    ? 'How many people in this role can be working at once. The booking that needs this role can run that many side-by-side.'
+    : 'Bookings that need this can run side-by-side up to this number.';
+
   return (
     <Dialog
       open
@@ -736,19 +843,24 @@ function PoolEditorDialog({
       title={isNew ? 'Add to your clinic' : `Edit ${seed?.display_name ?? 'this'}`}
       description={
         isNew
-          ? 'Anything finite that limits how many bookings can happen at once. Chairs, rooms, equipment.'
+          ? 'Anything finite that limits how many bookings can run at once. Pick whether this is a space / piece of equipment, or a staff role.'
           : 'Changes apply to all future bookings. Existing bookings keep their slots.'
       }
       footer={<DialogFooter onCancel={onClose} onSave={save} busy={busy} />}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        {isNew ? (
+          <KindPicker value={poolKind} onChange={setPoolKind} />
+        ) : (
+          <KindBadge kind={poolKind} />
+        )}
         <Input
           label="Name"
           required
           autoFocus
           value={displayName}
           onChange={(e) => handleNameChange(e.target.value)}
-          placeholder="e.g. Chairs"
+          placeholder={namePlaceholder}
           helper="What you'll call this in the rules below."
         />
         <Input
@@ -756,7 +868,7 @@ function PoolEditorDialog({
           required
           value={poolId}
           onChange={(e) => setPoolId(e.target.value.toLowerCase())}
-          placeholder="chairs"
+          placeholder={isStaffRole ? 'impression-takers' : 'chairs'}
           disabled={!isNew}
           helper={
             isNew
@@ -765,13 +877,13 @@ function PoolEditorDialog({
           }
         />
         <Input
-          label="How many do you have?"
+          label={isStaffRole ? 'How many in this role?' : 'How many do you have?'}
           required
           type="number"
           value={capacity}
           onChange={(e) => setCapacity(e.target.value)}
           placeholder="1"
-          helper="Bookings that need this can run side-by-side up to this number."
+          helper={capacityHelper}
         />
         <Input
           label="Note (optional)"
@@ -781,6 +893,120 @@ function PoolEditorDialog({
         />
       </div>
     </Dialog>
+  );
+}
+
+// Two-button picker for the pool kind, used at create time. Once a
+// pool is created its kind is locked in (changing it would be a
+// data-model edit dressed up as a checkbox), so the editor renders
+// a read-only badge instead.
+function KindPicker({
+  value,
+  onChange,
+}: {
+  value: ResourcePoolKind;
+  onChange: (k: ResourcePoolKind) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.ink,
+        }}
+      >
+        What kind of thing?<span style={{ color: theme.color.alert, marginLeft: 4 }}>*</span>
+      </span>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[2] }}>
+        <KindOption
+          active={value === 'resource'}
+          onClick={() => onChange('resource')}
+          title="Space or equipment"
+          sub="Chairs, rooms, lab bench."
+        />
+        <KindOption
+          active={value === 'staff_role'}
+          onClick={() => onChange('staff_role')}
+          title="Staff role"
+          sub="Impression taker, denture tech."
+        />
+      </div>
+    </div>
+  );
+}
+
+function KindOption({
+  active,
+  onClick,
+  title,
+  sub,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  sub: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        appearance: 'none',
+        textAlign: 'left',
+        background: active ? theme.color.accentBg : theme.color.surface,
+        border: `1px solid ${active ? theme.color.accent : theme.color.border}`,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <div
+        style={{
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          color: active ? theme.color.accent : theme.color.ink,
+        }}
+      >
+        {title}
+      </div>
+      <div
+        style={{
+          marginTop: 2,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        {sub}
+      </div>
+    </button>
+  );
+}
+
+function KindBadge({ kind }: { kind: ResourcePoolKind }) {
+  const label = kind === 'staff_role' ? 'Staff role' : 'Space or equipment';
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        padding: `${theme.space[1]}px ${theme.space[3]}px`,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.pill,
+        fontSize: theme.type.size.xs,
+        color: theme.color.inkMuted,
+        fontWeight: theme.type.weight.medium,
+        alignSelf: 'flex-start',
+      }}
+    >
+      {label}
+    </div>
   );
 }
 
