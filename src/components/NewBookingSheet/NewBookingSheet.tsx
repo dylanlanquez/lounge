@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CalendarClock,
   CalendarPlus,
   Check,
+  ChevronDown,
+  Clock,
   Info,
   User,
 } from 'lucide-react';
@@ -11,8 +13,10 @@ import {
   BottomSheet,
   Button,
   Checkbox,
+  DatePicker,
   DropdownSelect,
   Input,
+  TimePicker,
   Toast,
   Tooltip,
 } from '../index.ts';
@@ -98,6 +102,13 @@ export function NewBookingSheet({
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
 
+  // In-app date / time pickers replace the native <input type="date">
+  // and <input type="time"> so the experience matches the rest of the
+  // form and respects the no-system-UI-dropdowns rule.
+  const dateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const timeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [dateOpen, setDateOpen] = useState(false);
+  const [timeOpen, setTimeOpen] = useState(false);
 
   // Reset form when the sheet opens at a fresh slot. We don't reset
   // on close so the operator's last patient pick survives a
@@ -336,19 +347,49 @@ export function NewBookingSheet({
             info="The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the slot is in hours and conflict-free."
           >
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
-              <Input
+              <FieldTrigger
+                ref={dateTriggerRef}
                 label="Date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+                icon={<CalendarClock size={16} aria-hidden />}
+                value={date ? formatDateLong(date) : ''}
+                placeholder="Pick a date"
+                open={dateOpen}
+                onClick={() => {
+                  setTimeOpen(false);
+                  setDateOpen((v) => !v);
+                }}
               />
-              <Input
+              <FieldTrigger
+                ref={timeTriggerRef}
                 label="Start time"
-                type="time"
+                icon={<Clock size={16} aria-hidden />}
                 value={time}
-                onChange={(e) => setTime(e.target.value)}
+                placeholder="Pick a time"
+                open={timeOpen}
+                onClick={() => {
+                  setDateOpen(false);
+                  setTimeOpen((v) => !v);
+                }}
               />
             </div>
+            <DatePicker
+              open={dateOpen}
+              onClose={() => setDateOpen(false)}
+              value={date}
+              onChange={(iso) => setDate(iso)}
+              anchorRef={dateTriggerRef}
+              title="Pick the booking date"
+            />
+            <TimePicker
+              open={timeOpen}
+              onClose={() => setTimeOpen(false)}
+              value={time}
+              onChange={(t) => setTime(t)}
+              anchorRef={timeTriggerRef}
+              title="Pick the start time"
+              startHour={hoursForDate ? clampHour(hoursForDate.open) : 6}
+              endHour={hoursForDate ? clampHour(hoursForDate.close, true) : 22}
+            />
             {config ? (
               <InlineHint
                 tone={hoursForDate || !date ? 'muted' : 'alert'}
@@ -818,4 +859,104 @@ function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
     6: 'sat',
   };
   return map[d.getDay()] ?? null;
+}
+
+// Inline label-on-top trigger button styled to match the Input
+// component visually (border, padding, label) but behaves as a
+// picker opener instead of a real input. Used for Date and Start
+// time so neither falls back to the native browser picker.
+function FieldTrigger({
+  ref,
+  label,
+  icon,
+  value,
+  placeholder,
+  open,
+  onClick,
+}: {
+  ref: Ref<HTMLButtonElement>;
+  label: string;
+  icon: ReactNode;
+  value: string;
+  placeholder: string;
+  open: boolean;
+  onClick: () => void;
+}) {
+  const wrapper: CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: theme.space[1],
+  };
+  const labelStyle: CSSProperties = {
+    fontSize: theme.type.size.sm,
+    color: theme.color.ink,
+    fontWeight: theme.type.weight.medium,
+  };
+  const buttonStyle: CSSProperties = {
+    appearance: 'none',
+    width: '100%',
+    textAlign: 'left',
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    background: theme.color.surface,
+    border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
+    borderRadius: theme.radius.input,
+    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: theme.space[3],
+    transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+  };
+  const valueStyle: CSSProperties = {
+    flex: 1,
+    fontSize: theme.type.size.md,
+    color: value ? theme.color.ink : theme.color.inkSubtle,
+    fontVariantNumeric: 'tabular-nums',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  };
+  return (
+    <div style={wrapper}>
+      <span style={labelStyle}>{label}</span>
+      <button
+        ref={ref}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={onClick}
+        style={buttonStyle}
+      >
+        <span aria-hidden style={{ color: theme.color.inkMuted, display: 'inline-flex' }}>
+          {icon}
+        </span>
+        <span style={valueStyle}>{value || placeholder}</span>
+        <ChevronDown size={14} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+      </button>
+    </div>
+  );
+}
+
+// Working hours come back as 'HH:MM' strings; bound them to whole
+// hours for the TimePicker's startHour / endHour scrollable range.
+// `endRoundUp` rounds 18:30 → 19 so the last in-hours slot is
+// reachable.
+function formatDateLong(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function clampHour(hhmm: string, endRoundUp = false): number {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (Number.isNaN(h)) return endRoundUp ? 22 : 6;
+  if (endRoundUp && m > 0) return Math.min(23, h + 1);
+  return h;
 }
