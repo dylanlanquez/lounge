@@ -21,6 +21,7 @@ import {
 import {
   AppointmentTimeline,
   Avatar,
+  BottomSheet,
   Breadcrumb,
   Button,
   Card,
@@ -497,7 +498,7 @@ function Loaded({
       ) : null}
 
       {confirmNoShowOpen ? (
-        <NoShowDialog
+        <NoShowSheet
           appt={appt}
           onClose={() => setConfirmNoShowOpen(false)}
           onMarked={() => {
@@ -1241,7 +1242,12 @@ function CancelDialog({
   );
 }
 
-function NoShowDialog({
+// Mirrors Schedule's no-show flow: a bottom sheet sliding up with the
+// "Why was this a no-show?" copy and four reasons rendered as
+// tappable rows. One tap commits — no separate Confirm button. Same
+// component shape and behaviour staff already use on Schedule, so
+// they don't relearn the gesture coming from the appointment detail.
+function NoShowSheet({
   appt,
   onClose,
   onMarked,
@@ -1250,11 +1256,10 @@ function NoShowDialog({
   onClose: () => void;
   onMarked: () => void;
 }) {
-  const [reason, setReason] = useState<typeof NO_SHOW_REASONS[number]['value']>(NO_SHOW_REASONS[0]!.value);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
+  const submit = async (reason: typeof NO_SHOW_REASONS[number]['value']) => {
     if (submitting) return;
     setSubmitting(true);
     setError(null);
@@ -1279,51 +1284,52 @@ function NoShowDialog({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={submitting ? () => undefined : onClose}
-      width={460}
-      title="Mark as no-show?"
-      description="The patient did not turn up. Pick a reason so reports can break no-shows down by cause."
-      footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
-          <Button variant="tertiary" onClick={onClose} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={submit} loading={submitting} disabled={submitting}>
-            {submitting ? 'Marking…' : 'Mark as no-show'}
-          </Button>
-        </div>
-      }
+      onBack={submitting ? undefined : onClose}
+      title="Why was this a no-show?"
+      description="Pick the reason. We log it against the appointment so reports show no-show causes."
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-        {NO_SHOW_REASONS.map((r) => (
-          <label
-            key={r.value}
+        {NO_SHOW_REASONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            disabled={submitting}
+            onClick={() => submit(opt.value)}
             style={{
+              appearance: 'none',
+              width: '100%',
+              textAlign: 'left',
+              padding: `${theme.space[4]}px ${theme.space[5]}px`,
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: 14,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.ink,
+              cursor: submitting ? 'not-allowed' : 'pointer',
+              opacity: submitting ? 0.5 : 1,
               display: 'flex',
               alignItems: 'center',
+              justifyContent: 'space-between',
               gap: theme.space[3],
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
-              border: `1px solid ${reason === r.value ? theme.color.ink : theme.color.border}`,
-              borderRadius: theme.radius.input,
-              cursor: submitting ? 'not-allowed' : 'pointer',
-              fontSize: theme.type.size.sm,
-              color: theme.color.ink,
-              background:
-                reason === r.value ? theme.color.bg : theme.color.surface,
+              minHeight: theme.layout.minTouchTarget,
+              transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            }}
+            onMouseEnter={(e) => {
+              if (submitting) return;
+              (e.currentTarget as HTMLElement).style.borderColor = theme.color.ink;
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
             }}
           >
-            <input
-              type="radio"
-              name="no-show-reason"
-              value={r.value}
-              checked={reason === r.value}
-              onChange={() => setReason(r.value)}
-              disabled={submitting}
-            />
-            <span>{r.label}</span>
-          </label>
+            <span>{opt.label}</span>
+            <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
+          </button>
         ))}
         {error ? (
           <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
@@ -1331,7 +1337,7 @@ function NoShowDialog({
           </p>
         ) : null}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
