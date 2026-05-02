@@ -54,6 +54,7 @@ import { patientFullName } from '../lib/queries/patients.ts';
 import {
   appointmentRequiresJbRef,
   checkJbAvailability,
+  jbConflictAppLabel,
   readIntakeSnapshot,
   submitArrivalIntake,
   walkInServiceLabel,
@@ -1775,6 +1776,7 @@ function JbBoxInput({
             <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.ink }}>
               {check!.conflict?.customer_name ?? 'Another patient'}
               {check!.conflict?.order_name ? ` · ${check!.conflict.order_name}` : ''}
+              {check!.conflict ? ` in ${jbConflictAppLabel(check!.conflict.source)}` : ''}
               . Pick a different box.
             </p>
           </div>
