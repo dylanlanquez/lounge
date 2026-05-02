@@ -279,90 +279,67 @@ export function NewBookingSheet({
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          <Section title="Patient">
-            {patient ? (
-              <PickedPatient patient={patient} onClear={() => setPatient(null)} />
-            ) : (
-              <PatientSearch
-                onPick={setPatient}
-                placeholder="Phone, name, or email"
-                enableShopifyLookup={Boolean(locationId)}
-                registerLocationId={locationId}
-                emptyHint={
-                  <span>
-                    Search by phone, name, or email. Includes Venneir.com customers
-                    who haven't been seen at this clinic yet, scoped via this location.
-                  </span>
-                }
-              />
-            )}
-          </Section>
-
-          <Section title="Service">
-            <DropdownSelect<BookingServiceType>
-              label="Service"
-              required
-              value={serviceType}
-              onChange={(v) => setServiceType(v)}
-              options={BOOKING_SERVICE_TYPES}
-              placeholder="Choose a service"
+          {patient ? (
+            <PickedPatient patient={patient} onClear={() => setPatient(null)} />
+          ) : (
+            <PatientSearch
+              onPick={setPatient}
+              placeholder="Phone, name, or email"
+              enableShopifyLookup={Boolean(locationId)}
+              registerLocationId={locationId}
             />
-            {configError ? (
-              <ErrorBanner title="Couldn't load booking config" body={configError} />
-            ) : null}
-          </Section>
+          )}
 
-          <Section title="When">
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
-              <Input
-                label="Date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
-              <Input
-                label="Start time"
-                type="time"
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-              />
-            </div>
-            {config ? (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.xs,
-                  color: theme.color.inkMuted,
-                  lineHeight: 1.5,
-                }}
-              >
-                Duration: <strong style={{ color: theme.color.ink }}>{config.duration_default} minutes</strong>
-                {hoursForDate ? (
-                  <> {' · '} Hours that day: {hoursForDate.open}–{hoursForDate.close}</>
-                ) : date ? (
-                  <span style={{ color: theme.color.alert }}>{' · '}The clinic is closed on this day.</span>
-                ) : null}
-              </p>
-            ) : serviceType ? null : (
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.xs,
-                  color: theme.color.inkMuted,
-                  lineHeight: 1.5,
-                }}
-              >
-                Pick a service to see the duration and working hours.
-              </p>
-            )}
-            {!inWorkingHours && date && time && hoursForDate ? (
-              <ErrorBanner
-                title="Outside working hours"
-                body={`This service runs ${hoursForDate.open}–${hoursForDate.close} on the day you picked.`}
-                subtle
-              />
-            ) : null}
-          </Section>
+          <DropdownSelect<BookingServiceType>
+            label="Service"
+            required
+            value={serviceType}
+            onChange={(v) => setServiceType(v)}
+            options={BOOKING_SERVICE_TYPES}
+            placeholder="Choose a service"
+          />
+          {configError ? (
+            <ErrorBanner title="Couldn't load booking config" body={configError} />
+          ) : null}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
+            <Input
+              label="Date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+            <Input
+              label="Start time"
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+            />
+          </div>
+          {config ? (
+            <p
+              style={{
+                margin: `-${theme.space[3]}px 0 0`,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                lineHeight: 1.5,
+              }}
+            >
+              Duration: <strong style={{ color: theme.color.ink }}>{config.duration_default} minutes</strong>
+              {hoursForDate ? (
+                <> {' · '} Hours that day: {hoursForDate.open}–{hoursForDate.close}</>
+              ) : date ? (
+                <span style={{ color: theme.color.alert }}>{' · '}The clinic is closed on this day.</span>
+              ) : null}
+            </p>
+          ) : null}
+          {!inWorkingHours && date && time && hoursForDate ? (
+            <ErrorBanner
+              title="Outside working hours"
+              body={`This service runs ${hoursForDate.open}–${hoursForDate.close} on the day you picked.`}
+              subtle
+            />
+          ) : null}
 
           <ConflictBlock
             checking={checkingConflicts}
@@ -372,20 +349,18 @@ export function NewBookingSheet({
             durationMinutes={config?.duration_default ?? null}
           />
 
-          <Section title="Staff (optional)">
-            <DropdownSelect<string>
-              ariaLabel="Staff member"
-              value={staffAccountId}
-              onChange={(v) => setStaffAccountId(v)}
-              options={[
-                { value: '', label: 'No specific staff' },
-                ...staff.data
-                  .filter((s) => s.status === 'active')
-                  .map((s) => ({ value: s.account_id, label: s.display_name })),
-              ]}
-              placeholder={staff.loading ? 'Loading…' : 'No specific staff'}
-            />
-          </Section>
+          <DropdownSelect<string>
+            label="Staff (optional)"
+            value={staffAccountId}
+            onChange={(v) => setStaffAccountId(v)}
+            options={[
+              { value: '', label: 'No specific staff' },
+              ...staff.data
+                .filter((s) => s.status === 'active')
+                .map((s) => ({ value: s.account_id, label: s.display_name })),
+            ]}
+            placeholder={staff.loading ? 'Loading…' : 'No specific staff'}
+          />
 
           <Input
             label="Notes (optional)"
@@ -419,27 +394,6 @@ export function NewBookingSheet({
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <header>
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.semibold,
-          }}
-        >
-          {title}
-        </span>
-      </header>
-      {children}
-    </section>
-  );
-}
 
 function PickedPatient({
   patient,
