@@ -60,7 +60,13 @@ export function EditBookingSheet({
   appointment,
   onSaved,
 }: EditBookingSheetProps) {
-  const [notes, setNotes] = useState<string>(appointment.notes ?? '');
+  // Treat the legacy "None" string the same as null/empty when
+  // seeding — older rows have the literal word stored where null
+  // would now live, and pre-filling that into the edit form would
+  // make staff manually clear it before they could type real notes.
+  const [notes, setNotes] = useState<string>(
+    isMeaningfulNotes(appointment.notes) ? (appointment.notes as string) : '',
+  );
   const [staffAccountId, setStaffAccountId] = useState<string>(
     appointment.staff_account_id ?? '',
   );
@@ -75,13 +81,19 @@ export function EditBookingSheet({
   // session bleed in.
   useEffect(() => {
     if (!open) return;
-    setNotes(appointment.notes ?? '');
+    setNotes(isMeaningfulNotes(appointment.notes) ? (appointment.notes as string) : '');
     setStaffAccountId(appointment.staff_account_id ?? '');
     setError(null);
   }, [open, appointment.id, appointment.notes, appointment.staff_account_id]);
 
+  // Compare against the meaningful-notes view of the seed value so
+  // the legacy "None" doesn't count as a "no changes" no-op when
+  // the user clears it.
+  const seededNotes = isMeaningfulNotes(appointment.notes)
+    ? (appointment.notes as string)
+    : null;
   const noChanges =
-    (notes.trim() || null) === (appointment.notes ?? null) &&
+    (notes.trim() || null) === seededNotes &&
     (staffAccountId || null) === (appointment.staff_account_id ?? null);
 
   const onSave = async () => {
@@ -311,4 +323,16 @@ function composePatientName(first: string | null, last: string | null): string |
   const l = last?.trim();
   if (!f && !l) return null;
   return [f, l].filter(Boolean).join(' ');
+}
+
+// Notes column historically allowed the literal string "None" where
+// null would now live. Treat that as no notes when seeding the form
+// so the operator doesn't have to manually clear the placeholder
+// before typing real notes.
+function isMeaningfulNotes(notes: string | null): boolean {
+  if (!notes) return false;
+  const trimmed = notes.trim();
+  if (!trimmed) return false;
+  if (/^none$/i.test(trimmed)) return false;
+  return true;
 }
