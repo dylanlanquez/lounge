@@ -994,7 +994,13 @@ export function Schedule() {
                 }}
                 onPatientProfile={() => {
                   navigate(`/patient/${selected.patient_id}`, {
-                    state: { patientName: patientDisplayName(selected) },
+                    state: {
+                      from: 'schedule',
+                      patientName: patientDisplayName(selected),
+                      // Forward the day the receptionist was viewing
+                      // so the back-link returns to the same day.
+                      scheduleDate: selectedDate,
+                    },
                   });
                 }}
                 onEdit={() => setEditingRow(selected)}

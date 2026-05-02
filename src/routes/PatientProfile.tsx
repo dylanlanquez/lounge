@@ -204,7 +204,7 @@ export function PatientProfile() {
 // flash a literal placeholder ("Patient") or pop in late once the
 // query lands — the exact flicker we're avoiding.
 interface PatientEntryState {
-  from?: 'visit' | 'ledger' | 'appointment';
+  from?: 'visit' | 'ledger' | 'appointment' | 'schedule';
   visitId?: string;
   visitOpenedAt?: string;
   // Mirror of VisitDetail's VisitEntryState. Carrying visitOpenedAt
@@ -224,6 +224,11 @@ interface PatientEntryState {
   appointmentId?: string;
   appointmentStartAt?: string;
   patientName?: string;
+  // When entering from Schedule's bottom-sheet "Patient profile"
+  // quick-action. We forward the day the receptionist was viewing so
+  // the Schedule breadcrumb back-link returns to the same day, not
+  // today.
+  scheduleDate?: string;
 }
 
 function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
@@ -278,6 +283,18 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
     if (entry.from === 'ledger') {
       return [
         { label: 'Ledger', onClick: () => navigate('/ledger') },
+        { label: nameLabel },
+      ];
+    }
+    if (entry.from === 'schedule') {
+      // Schedule › <Name>. The receptionist tapped "Patient profile"
+      // from the booking bottom-sheet. Forwarding scheduleDate keeps
+      // the back-link landing on the same day they were viewing.
+      const scheduleHref = entry.scheduleDate
+        ? `/schedule?date=${encodeURIComponent(entry.scheduleDate)}`
+        : '/schedule';
+      return [
+        { label: 'Schedule', onClick: () => navigate(scheduleHref) },
         { label: nameLabel },
       ];
     }
