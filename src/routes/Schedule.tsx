@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CalendarOff,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   List,
@@ -20,6 +21,7 @@ import {
   BottomSheet,
   Button,
   Card,
+  DatePicker,
   EmptyState,
   NewBookingSheet,
   RescheduleSheet,
@@ -123,6 +125,10 @@ export function Schedule() {
   // non-null the NewBookingSheet renders pre-filled with this time.
   const [newBookingSlot, setNewBookingSlot] = useState<string | null>(null);
   const currentLocation = useCurrentLocation();
+  // "Jump to date" picker — anchored to the month-label pill so the
+  // operator can leap to any date without flicking through weeks.
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const monthPillRef = useRef<HTMLButtonElement | null>(null);
 
   const day = useDayAppointments(selectedDate);
   // Week-of-selected counts power the dots under each day pill.
@@ -250,20 +256,46 @@ export function Schedule() {
             marginBottom: theme.space[3],
           }}
         >
-          <span
-            aria-live="polite"
+          <button
+            ref={monthPillRef}
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={datePickerOpen}
+            aria-label={`${toolbarLabel}, jump to a different date`}
+            onClick={() => setDatePickerOpen((v) => !v)}
             style={{
+              appearance: 'none',
+              border: `1px solid ${datePickerOpen ? theme.color.ink : 'transparent'}`,
+              background: 'transparent',
+              padding: `${theme.space[1]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.pill,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              color: theme.color.inkMuted,
+              fontFamily: 'inherit',
               fontSize: theme.type.size.xs,
               fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
               textTransform: 'uppercase',
               letterSpacing: theme.type.tracking.wide,
               whiteSpace: 'nowrap',
+              transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
             }}
           >
-            {toolbarLabel}
-          </span>
+            <CalendarDays size={12} aria-hidden />
+            <span aria-live="polite">{toolbarLabel}</span>
+            <ChevronDown size={12} aria-hidden />
+          </button>
         </div>
+        <DatePicker
+          open={datePickerOpen}
+          onClose={() => setDatePickerOpen(false)}
+          value={selectedDate}
+          onChange={(iso) => handleSelectDate(iso)}
+          anchorRef={monthPillRef}
+          title="Jump to a date"
+        />
 
         <div
           style={{
