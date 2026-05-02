@@ -25,7 +25,6 @@ import {
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { type PatientRow, patientFullName } from '../../lib/queries/patients.ts';
-import { useStaff } from '../../lib/queries/staff.ts';
 
 // NewBookingSheet — bottom-sheet UI for creating a brand-new
 // native (non-Calendly) appointment. Opened from the Schedule when
@@ -75,7 +74,6 @@ export function NewBookingSheet({
   const [time, setTime] = useState<string>(initial.time);
   const [patient, setPatient] = useState<PatientRow | null>(null);
   const [serviceType, setServiceType] = useState<BookingServiceType | ''>('');
-  const [staffAccountId, setStaffAccountId] = useState<string | ''>('');
   const [notes, setNotes] = useState<string>('');
   // Default sendEmail to true, then re-derive once a patient is
   // picked (it stays on if they have an email, off if not). The
@@ -93,7 +91,6 @@ export function NewBookingSheet({
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
 
-  const staff = useStaff();
 
   // Reset form when the sheet opens at a fresh slot. We don't reset
   // on close so the operator's last patient pick survives a
@@ -105,7 +102,6 @@ export function NewBookingSheet({
     setTime(i.time);
     setPatient(null);
     setServiceType('');
-    setStaffAccountId('');
     setNotes('');
     setSendEmail(true);
     setSendEmailUserOverride(false);
@@ -226,7 +222,6 @@ export function NewBookingSheet({
         locationId,
         serviceType: serviceType as BookingServiceType,
         startAt: newStart,
-        staffAccountId: staffAccountId || null,
         notes,
         sendEmail,
       });
@@ -359,21 +354,6 @@ export function NewBookingSheet({
             </div>
           </Section>
 
-          <Section title="Staff" info="Optional. Pick the team member taking this appointment, or leave it open and assign later.">
-            <DropdownSelect<string>
-              ariaLabel="Staff member"
-              value={staffAccountId}
-              onChange={(v) => setStaffAccountId(v)}
-              options={[
-                { value: '', label: 'No specific staff' },
-                ...staff.data
-                  .filter((s) => s.status === 'active')
-                  .map((s) => ({ value: s.account_id, label: s.display_name })),
-              ]}
-              placeholder={staff.loading ? 'Loading…' : 'No specific staff'}
-            />
-          </Section>
-
           <Section title="Notes" info="Optional. Anything the team should know going in. Visible on the schedule card and on the patient profile.">
             <Input
               aria-label="Notes"
@@ -470,7 +450,7 @@ function Section({
           ) : null}
         </h2>
         {info ? (
-          <Tooltip align="start" maxWidth={300} content={info}>
+          <Tooltip align="start" maxWidth={300} variant="light" content={info}>
             <button
               type="button"
               aria-label={`More about: ${title}`}

@@ -323,14 +323,29 @@ export function DropdownSelect<T extends string>({
                 // panel never extends past the viewport — without a
                 // cap, a trigger near the bottom of the screen would
                 // push the first options off the visible area.
+                //
+                // Down is the natural reading direction, so we only
+                // flip up when the panel's *actual* height won't fit
+                // below. Earlier this used a fixed 320px threshold,
+                // which made every short dropdown (e.g. a 4-row staff
+                // picker) flip upward whenever it sat mid-screen
+                // because spaceBelow was < 320 even though the panel
+                // was only ~200px tall and would have fit comfortably.
                 const VIEWPORT_PAD = 12;
                 const GAP = 6;
+                const ROW_H = 48; // matches the touch-target row height below
+                const PANEL_PADDING = theme.space[1] * 2; // top + bottom
                 const DESIRED_MAX = 320;
                 const viewportH =
                   typeof window === 'undefined' ? 800 : window.innerHeight;
                 const spaceBelow = viewportH - triggerRect.bottom - GAP - VIEWPORT_PAD;
                 const spaceAbove = triggerRect.top - GAP - VIEWPORT_PAD;
-                const openDown = spaceBelow >= DESIRED_MAX || spaceBelow >= spaceAbove;
+                const naturalHeight = Math.min(
+                  items.length * ROW_H + PANEL_PADDING,
+                  DESIRED_MAX,
+                );
+                const openDown =
+                  spaceBelow >= naturalHeight || spaceBelow >= spaceAbove;
                 const maxHeight = Math.max(
                   120,
                   Math.min(DESIRED_MAX, openDown ? spaceBelow : spaceAbove),
