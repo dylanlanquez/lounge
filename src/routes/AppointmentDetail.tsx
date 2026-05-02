@@ -558,21 +558,43 @@ function Hero({
 }) {
   const sourceLabel = humaniseLedgerSource(appt.source);
   const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
+  const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
+  const dateLong = formatDateLongOrdinal(appt.start_at);
+  const timeRange = formatTimeRange(appt.start_at, appt.end_at);
+  const relative = appt.status === 'booked' ? relativeWhen(appt.start_at) : null;
+
+  // Booked future appointments lean into the upcoming framing — soft
+  // accent-tinted ribbon with the date front and centre. Past /
+  // terminal states drop the accent to match the status's tone so a
+  // cancelled or no-show booking doesn't read as a thing happening
+  // soon.
+  const upcoming = appt.status === 'booked' && new Date(appt.start_at).getTime() > Date.now();
+
   return (
-    <Card padding="md" elevation="raised">
-      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], minWidth: 0 }}>
+    <Card padding="none" elevation="raised">
+      {/* Top zone: identity */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[4],
+          padding: `${theme.space[5]}px ${theme.space[5]}px`,
+          minWidth: 0,
+        }}
+      >
         <Avatar name={fullName} src={appt.patient.avatar_data} size="lg" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexWrap: 'wrap' }}>
             <p
               style={{
                 margin: 0,
-                fontSize: theme.type.size.lg,
+                fontSize: theme.type.size.xl,
                 fontWeight: theme.type.weight.semibold,
                 color: theme.color.ink,
                 letterSpacing: theme.type.tracking.tight,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
+                lineHeight: 1.15,
               }}
             >
               {fullName}
@@ -598,8 +620,155 @@ function Hero({
           ) : null}
         </div>
       </div>
+
+      {/* Bottom zone: when + what. Tinted when the booking is upcoming
+          so it pops as the headline info — receptionists scanning the
+          page should see the date before anything else. */}
+      <div
+        style={{
+          padding: `${theme.space[4]}px ${theme.space[5]}px ${theme.space[5]}px`,
+          background: upcoming ? theme.color.accentBg : theme.color.bg,
+          borderTop: `1px solid ${theme.color.border}`,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            flexWrap: 'wrap',
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 32,
+              height: 32,
+              borderRadius: theme.radius.pill,
+              background: upcoming ? theme.color.surface : theme.color.bg,
+              border: `1px solid ${theme.color.border}`,
+              color: upcoming ? theme.color.accent : theme.color.inkMuted,
+              flexShrink: 0,
+            }}
+          >
+            <CalendarClock size={16} aria-hidden />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+                lineHeight: 1.2,
+              }}
+            >
+              {dateLong}
+            </p>
+            <p
+              style={{
+                margin: '2px 0 0',
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {timeRange}
+              {relative ? (
+                <>
+                  <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
+                  <span
+                    style={{
+                      color: upcoming ? theme.color.accent : theme.color.inkMuted,
+                      fontWeight: theme.type.weight.semibold,
+                    }}
+                  >
+                    {relative}
+                  </span>
+                </>
+              ) : null}
+            </p>
+          </div>
+        </div>
+        <p
+          style={{
+            margin: 0,
+            paddingLeft: 44,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          {service}
+        </p>
+      </div>
     </Card>
   );
+}
+
+// "Friday 1st May 2026" — ordinal day so the date reads like a person
+// would say it aloud. Uses Intl for the locale-correct weekday and
+// month names; the ordinal suffix is hand-rolled because Intl doesn't
+// expose it.
+function formatDateLongOrdinal(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const weekday = d.toLocaleDateString('en-GB', { weekday: 'long' });
+  const day = d.getDate();
+  const month = d.toLocaleDateString('en-GB', { month: 'long' });
+  const year = d.getFullYear();
+  return `${weekday} ${day}${ordinalSuffix(day)} ${month} ${year}`;
+}
+
+function ordinalSuffix(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return 'th';
+  switch (n % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+}
+
+function formatTimeRange(startIso: string, endIso: string): string {
+  const s = new Date(startIso);
+  const e = new Date(endIso);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return '';
+  const fmt = (d: Date) =>
+    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${fmt(s)} — ${fmt(e)}`;
+}
+
+// Friendly "in 5 days" / "Tomorrow" / "Today" indicator. Returns null
+// for absolute dates the receptionist won't read as relative — past
+// the 30-day window in either direction it just falls back to the
+// absolute date in the line above.
+function relativeWhen(iso: string): string | null {
+  const target = new Date(iso);
+  if (Number.isNaN(target.getTime())) return null;
+  const now = new Date();
+  // Day diff calculated against midnight-anchored dates so a 13:00
+  // appointment "today" doesn't read as "yesterday" at 14:00.
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(target) - startOfDay(now)) / 86_400_000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days === -1) return 'Yesterday';
+  if (days > 1 && days <= 30) return `In ${days} days`;
+  if (days < -1 && days >= -30) return `${Math.abs(days)} days ago`;
+  return null;
 }
 
 function humaniseAppointmentStatus(status: AppointmentStatus): string {
@@ -628,21 +797,6 @@ function humaniseAppointmentStatus(status: AppointmentStatus): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
-  const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
-  const start = new Date(appt.start_at);
-  const end = new Date(appt.end_at);
-  const dateLabel = Number.isNaN(start.getTime())
-    ? appt.start_at
-    : start.toLocaleDateString('en-GB', {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      });
-  const timeLabel =
-    Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())
-      ? ''
-      : `${start.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} – ${end.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
   const locationLine = appt.location?.name
     ? [appt.location.name, appt.location.city].filter(Boolean).join(', ')
     : null;
@@ -650,22 +804,16 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
     ? [properCase(appt.staff.first_name), properCase(appt.staff.last_name)].filter(Boolean).join(' ').trim()
     : null;
 
+  // Service + when moved into the Hero so this card carries the
+  // supplementary facts only — location, staff, contact. If the
+  // booking has none of those (rare), the card is skipped entirely
+  // by the parent so we don't render an empty box.
+  const hasContent = !!locationLine || !!staffLine || !!appt.patient.email;
+  if (!hasContent) return null;
+
   return (
     <Card padding="md">
       <SectionLabel>Booking</SectionLabel>
-      <Row icon={<CalendarCheck size={14} aria-hidden />} label="Service" value={service} />
-      <Row
-        icon={<CalendarClock size={14} aria-hidden />}
-        label="When"
-        value={
-          <span>
-            {dateLabel}
-            {timeLabel ? (
-              <span style={{ color: theme.color.inkMuted, marginLeft: theme.space[2] }}>{timeLabel}</span>
-            ) : null}
-          </span>
-        }
-      />
       {locationLine ? (
         <Row icon={<MapPin size={14} aria-hidden />} label="Location" value={locationLine} />
       ) : null}
@@ -687,37 +835,91 @@ function IntakeCard({
   return (
     <Card padding="md">
       <SectionLabel>Intake answers</SectionLabel>
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {intake.map((item, i) => (
-          <li key={`${item.question}|${i}`}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-              }}
-            >
-              {item.question}
-            </p>
-            <p
-              style={{
-                margin: '2px 0 0',
-                fontSize: theme.type.size.sm,
-                color: theme.color.ink,
-                lineHeight: theme.type.leading.relaxed,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {item.answer}
-            </p>
-          </li>
+          <IntakeRow key={`${item.question}|${i}`} question={item.question} answer={item.answer} />
         ))}
       </ul>
     </Card>
   );
+}
+
+// Single intake question row. Mirrors the BookingFactsCard's Row
+// shape (hairline divider top + sentence-case label + ink answer)
+// but skips the icon column since intake questions are too varied
+// to map to a single glyph each. The label uses the same uppercase
+// muted treatment as the section label so the question/answer
+// hierarchy reads cleanly without competing with the answer body.
+function IntakeRow({ question, answer }: { question: string; answer: string }) {
+  return (
+    <li
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        padding: `${theme.space[3]}px 0`,
+        borderTop: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          color: theme.color.inkMuted,
+          fontWeight: theme.type.weight.semibold,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        {humaniseIntakeQuestion(question)}
+      </span>
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          color: theme.color.ink,
+          lineHeight: theme.type.leading.relaxed,
+          whiteSpace: 'pre-wrap',
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        {answer}
+      </span>
+    </li>
+  );
+}
+
+// Calendly intake questions arrive as raw strings exactly as the
+// admin typed them in Calendly's question editor. Most are already
+// human-readable, so the default is to pass through. The cases below
+// rewrite the few questions whose Calendly form-builder phrasing
+// reads worse than what staff would naturally say. Keep this small —
+// every rewrite is a place where Calendly-side and Lounge-side copy
+// can drift.
+function humaniseIntakeQuestion(question: string): string {
+  const trimmed = question.trim().replace(/[?:]+$/, '');
+  if (!trimmed) return '';
+  // Common phrasings we shorten so the upper-case label stays
+  // scannable. Match case-insensitively; other questions pass through
+  // verbatim with a Title-Case nudge on all-lowercase strings.
+  const lower = trimmed.toLowerCase();
+  switch (lower) {
+    case 'what is the type of repair you would like done':
+    case 'what type of repair would you like done':
+    case 'type of repair':
+      return 'Repair type';
+    case 'contact number':
+    case 'phone number':
+    case "what's your contact number":
+      return 'Contact number';
+    case 'what is the name of the dentures':
+    case 'what is the brand of the dentures':
+      return 'Denture brand';
+    case 'where did you buy the dentures':
+      return 'Where the dentures were bought';
+    case 'how old are the dentures':
+      return 'Age of the dentures';
+    default:
+      return trimmed;
+  }
 }
 
 function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
