@@ -119,18 +119,7 @@ export function useAppointmentHistory(
           q = q.lte('start_at', `${filters.toDate}T23:59:59.999`);
         }
         if (trimmed.length >= 2) {
-          // Patient name search — splits on whitespace so "John Smi"
-          // matches first_name=John AND last_name=Smith. Each token
-          // requires at least one of first/last to match (ilike), so
-          // staff can search by either side.
-          const tokens = trimmed.split(/\s+/).slice(0, 4);
-          for (const t of tokens) {
-            const escaped = t.replace(/,/g, '\\,').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-            q = q.or(
-              `first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%`,
-              { foreignTable: 'patients' },
-            );
-          }
+          q = applyAppointmentSearch(q, trimmed);
         }
 
         const { data: rows, error: err } = await q
@@ -264,4 +253,96 @@ function filtersToKey(f: AppointmentHistoryFilters): string {
     f.toDate ?? '',
     f.search.trim(),
   ].join('|');
+}
+
+// Search across the surfaces a receptionist actually types into the
+// box: patient name (first / last), MP ref (patients.internal_ref),
+// email, phone (digit-tolerant, dial-pad characters allowed), and
+// the appointment-level LAP ref on lng_appointments. Mirrors the
+// shape of applyPatientSearch in patients.ts so the matching rules
+// are predictable across the app — the only thing different here is
+// that the LAP ref lives on the parent row, not the embedded
+// patients relation, so it gets its own column filter.
+//
+// PostgREST OR groups can't span parent + foreign columns in a single
+// query, so we detect what the term LOOKS like and route to the
+// right surface:
+//
+//   • "LAP" / "lap-NNN" → parent appointment_ref
+//   • "MP"  / "mp-NNN"  → embedded patients.internal_ref
+//   • contains "@"      → embedded patients.email
+//   • mostly digits     → embedded patients.phone (digit-stripped)
+//   • else              → embedded patients name+email+ref OR group
+//
+// `q` is the lng_appointments select chain; we return the chain so
+// the caller can keep adding filters / order / range.
+//
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyAppointmentSearch<Q extends { ilike: any; or: any }>(q: Q, term: string): Q {
+  const cleaned = term.trim();
+  if (!cleaned) return q;
+
+  // LAP — appointment-level ref on the parent row.
+  if (/^lap/i.test(cleaned)) {
+    return q.ilike('appointment_ref', `%${escapeOr(cleaned)}%`);
+  }
+
+  // MP — patient-level ref on the embedded patients row.
+  if (/^mp/i.test(cleaned)) {
+    return q.or(`internal_ref.ilike.%${escapeOr(cleaned)}%`, { foreignTable: 'patients' });
+  }
+
+  // Email — anything with an @ goes straight to patients.email.
+  if (cleaned.includes('@')) {
+    return q.or(`email.ilike.%${escapeOr(cleaned)}%`, { foreignTable: 'patients' });
+  }
+
+  // Phone — entirely dial-pad characters with at least 7 digits.
+  // Strip non-digits before matching so "07700 900123" finds the
+  // canonical "07700900123" and the partial "0770" still works once
+  // it's long enough to filter to a sensible result set.
+  const phoneDigits = cleaned.replace(/\D/g, '');
+  const isPhone =
+    phoneDigits.length >= 7 &&
+    phoneDigits.length <= 15 &&
+    /^[\d\s+()\-]+$/.test(cleaned);
+  if (isPhone) {
+    return q.or(`phone.ilike.%${phoneDigits}%`, { foreignTable: 'patients' });
+  }
+
+  // Multi-word: tokenise and AND each token across name+email+ref so
+  // "James Smi" matches first_name=James AND last_name=Smith. Chained
+  // .or()s sit at the top level, which PostgREST treats as AND.
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length > 1) {
+    let out = q;
+    for (const word of words.slice(0, 4)) {
+      const w = escapeOr(word);
+      out = out.or(
+        `first_name.ilike.%${w}%,last_name.ilike.%${w}%,email.ilike.%${w}%,internal_ref.ilike.%${w}%`,
+        { foreignTable: 'patients' },
+      );
+    }
+    return out;
+  }
+
+  // Single token: OR across name+email+ref. Add a phone-fragment
+  // match when there are enough digits (4+) to avoid false positives
+  // from a short numeric search ("9" wouldn't filter usefully).
+  const w = escapeOr(words[0]!);
+  const orParts: string[] = [
+    `last_name.ilike.%${w}%`,
+    `first_name.ilike.%${w}%`,
+    `email.ilike.%${w}%`,
+    `internal_ref.ilike.%${w}%`,
+  ];
+  if (phoneDigits.length >= 4) {
+    orParts.push(`phone.ilike.%${phoneDigits}%`);
+  }
+  return q.or(orParts.join(','), { foreignTable: 'patients' });
+}
+
+// PostgREST OR-string escapes — commas and parens are syntactic.
+function escapeOr(s: string): string {
+  return s.replace(/,/g, '\\,').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
