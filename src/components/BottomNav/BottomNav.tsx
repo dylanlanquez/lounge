@@ -1,12 +1,9 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { UserPlus, Users } from 'lucide-react';
+import { History, UserPlus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { useKeyboardOpen } from '../../lib/useKeyboardOpen.ts';
-import { Avatar } from '../Avatar/Avatar.tsx';
-import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
-import { Button } from '../Button/Button.tsx';
 import { CalendarIcon } from '../Icons/CalendarIcon.tsx';
 import { ToothIcon } from '../Icons/ToothIcon.tsx';
 import { useActiveVisitCount } from '../../lib/queries/clinicBoard.ts';
@@ -35,22 +32,23 @@ const PILL_MAX_WIDTH = 600;
 
 // Floating-pill bottom nav: 5 equal nav tabs.
 //
-//   Schedule | Patients | Walk-in | In clinic | Profile
+//   Schedule | Patients | Walk-in | In clinic | History
 //
 // Walk-in is just another tab. An earlier design lifted Walk-in
 // into a raised circular FAB; staff feedback was that it dominated
 // the surface, so it's been folded back into the regular grid.
 //
-// Sign out lives inside the Profile sheet — the receptionist signs out
-// from there, freeing a slot on the bar. Admin moves to the kiosk top
-// bar (next to WiFi / battery) so it's still one tap away without
-// crowding the primary surface.
+// Profile / sign-out moved to the kiosk top bar (next to Admin) so
+// the bottom row of primary destinations stays focused on what staff
+// actually navigate between every shift. History takes the freed
+// slot — Appointment History is referenced often enough ("what
+// happened with this patient last month?") that buring it in a sub-
+// menu would slow staff down.
 
 export function BottomNav() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-  const [profileOpen, setProfileOpen] = useState(false);
+  const { user } = useAuth();
   const navVisible = shouldShowBottomNav(location.pathname, !!user);
   const inClinicCount = useActiveVisitCount(navVisible);
 
@@ -66,15 +64,13 @@ export function BottomNav() {
   const onPatients = () => navigate('/patients');
   const onWalkIn = () => navigate('/walk-in/new');
   const onInClinic = () => navigate('/in-clinic');
-  const onSignOut = () => {
-    void signOut();
-  };
-  const onProfile = () => setProfileOpen(true);
+  const onHistory = () => navigate('/appointments');
 
   const isSchedule = location.pathname === '/' || location.pathname.startsWith('/schedule');
   const isPatients = location.pathname.startsWith('/patients');
   const isWalkIn = location.pathname.startsWith('/walk-in');
   const isInClinic = location.pathname.startsWith('/in-clinic');
+  const isHistory = location.pathname.startsWith('/appointments');
 
   return (
     <>
@@ -165,69 +161,16 @@ export function BottomNav() {
             </li>
             <li style={{ display: 'flex' }}>
               <NavTab
-                label="Profile"
-                icon={<Avatar name={user?.email ?? 'You'} size="sm" badge="online" />}
-                active={false}
-                onClick={onProfile}
+                label="History"
+                icon={<History size={22} />}
+                active={isHistory}
+                onClick={onHistory}
               />
             </li>
           </ul>
           <BottomNavStyles />
         </nav>
       </div>
-
-      {/* Profile sheet — minimal v1: who's signed in + sign-out shortcut. */}
-      <BottomSheet
-        open={profileOpen}
-        onClose={() => setProfileOpen(false)}
-        title="Signed in"
-        description={
-          <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-            <span>{user?.email ?? 'No account'}</span>
-            <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
-              Tap Sign out below to end the session.
-            </span>
-          </span>
-        }
-        footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setProfileOpen(false);
-                onSignOut();
-              }}
-            >
-              Sign out
-            </Button>
-          </div>
-        }
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[4],
-            padding: `${theme.space[4]}px 0`,
-          }}
-        >
-          <Avatar name={user?.email ?? 'You'} size="lg" badge="online" />
-          <div>
-            <p style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-              {user?.email ?? 'No account'}
-            </p>
-            <p
-              style={{
-                margin: `${theme.space[1]}px 0 0`,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-              }}
-            >
-              Receptionist
-            </p>
-          </div>
-        </div>
-      </BottomSheet>
     </>
   );
 }

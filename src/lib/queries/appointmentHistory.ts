@@ -1,0 +1,217 @@
+import { useEffect, useState } from 'react';
+import { supabase } from '../supabase.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
+import type { AppointmentSource } from './appointments.ts';
+import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
+
+// Appointment History — single-screen view of every booking the
+// clinic has ever taken, regardless of outcome (booked, arrived,
+// in-progress, complete, no-show, cancelled, rescheduled). Mirrors
+// the Patients list pattern: paged, filterable, search-by-name.
+//
+// Reads from lng_appointments (Calendly + native + manually-added
+// rows). Walk-ins are deliberately excluded for v1 — they live as
+// visit rows and don't have the same booked→cancelled lifecycle a
+// scheduled appointment does. Walk-ins can be folded in later if
+// the receptionist team wants the unified view.
+
+export const APPOINTMENT_HISTORY_PAGE_SIZE = 50;
+
+export interface AppointmentHistoryFilters {
+  // Empty array = no status filter (all statuses returned).
+  statuses: readonly AppointmentStatus[];
+  // Empty array = no source filter.
+  sources: readonly AppointmentSource[];
+  // YYYY-MM-DD strings; nullable. Both null = no date filter. Inclusive
+  // on both ends — toDate is widened to end-of-day server-side.
+  fromDate: string | null;
+  toDate: string | null;
+  // Free-text patient name search; trimmed in the query.
+  search: string;
+}
+
+export interface AppointmentHistoryRow {
+  id: string;
+  start_at: string;
+  end_at: string;
+  status: AppointmentStatus;
+  source: AppointmentSource;
+  event_type_label: string | null;
+  appointment_ref: string | null;
+  cancel_reason: string | null;
+  notes: string | null;
+  patient_id: string;
+  patient_first_name: string | null;
+  patient_last_name: string | null;
+  patient_avatar_data: string | null;
+  visit_id: string | null;
+}
+
+interface Result {
+  data: AppointmentHistoryRow[];
+  loading: boolean;
+  error: string | null;
+  hasMore: boolean;
+}
+
+interface RawPatient {
+  first_name: string | null;
+  last_name: string | null;
+  avatar_data: string | null;
+}
+
+interface RawAppointmentRow {
+  id: string;
+  start_at: string;
+  end_at: string;
+  status: AppointmentStatus;
+  source: AppointmentSource;
+  event_type_label: string | null;
+  appointment_ref: string | null;
+  cancel_reason: string | null;
+  notes: string | null;
+  patient_id: string;
+  // PostgREST returns embedded relations as either an object or an
+  // array depending on the join shape; normalise at the cast site.
+  patient: RawPatient | RawPatient[] | null;
+}
+
+export function useAppointmentHistory(
+  filters: AppointmentHistoryFilters,
+  page: number = 0,
+  limit: number = APPOINTMENT_HISTORY_PAGE_SIZE,
+): Result {
+  const [data, setData] = useState<AppointmentHistoryRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  // Page-as-key keeps prior results visible while the next request
+  // runs — mirrors the Patients list. Filter changes share the same
+  // key so re-typing search doesn't blank the surface.
+  const { loading, settle } = useStaleQueryLoading(`appt-history|${page}|${limit}`);
+
+  const filterKey = filtersToKey(filters);
+
+  useEffect(() => {
+    let cancelled = false;
+    const trimmed = filters.search.trim();
+    const timer = setTimeout(async () => {
+      try {
+        const startIdx = page * limit;
+        const endIdx = startIdx + limit; // limit + 1 rows
+
+        let q = supabase
+          .from('lng_appointments')
+          .select(
+            'id, start_at, end_at, status, source, event_type_label, appointment_ref, cancel_reason, notes, patient_id, patient:patients!inner ( first_name, last_name, avatar_data )',
+          );
+
+        if (filters.statuses.length > 0) {
+          q = q.in('status', [...filters.statuses]);
+        }
+        if (filters.sources.length > 0) {
+          q = q.in('source', [...filters.sources]);
+        }
+        if (filters.fromDate) {
+          q = q.gte('start_at', `${filters.fromDate}T00:00:00`);
+        }
+        if (filters.toDate) {
+          q = q.lte('start_at', `${filters.toDate}T23:59:59.999`);
+        }
+        if (trimmed.length >= 2) {
+          // Patient name search — splits on whitespace so "John Smi"
+          // matches first_name=John AND last_name=Smith. Each token
+          // requires at least one of first/last to match (ilike), so
+          // staff can search by either side.
+          const tokens = trimmed.split(/\s+/).slice(0, 4);
+          for (const t of tokens) {
+            const escaped = t.replace(/,/g, '\\,').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+            q = q.or(
+              `first_name.ilike.%${escaped}%,last_name.ilike.%${escaped}%`,
+              { foreignTable: 'patients' },
+            );
+          }
+        }
+
+        const { data: rows, error: err } = await q
+          .order('start_at', { ascending: false })
+          .range(startIdx, endIdx);
+
+        if (cancelled) return;
+        if (err) {
+          setError(err.message);
+          settle();
+          return;
+        }
+
+        const apptRows = (rows ?? []) as unknown as RawAppointmentRow[];
+
+        // Look up linked visits in one round-trip so the row click can
+        // route to /visit/:id when the appointment was actually
+        // attended. Appointments without a visit (cancelled before
+        // arrival, no-show) get visit_id = null.
+        const apptIds = apptRows.map((r) => r.id);
+        const visitMap = new Map<string, string>();
+        if (apptIds.length > 0) {
+          const { data: visits } = await supabase
+            .from('lng_visits')
+            .select('id, appointment_id')
+            .in('appointment_id', apptIds);
+          if (cancelled) return;
+          for (const v of (visits ?? []) as Array<{ id: string; appointment_id: string }>) {
+            visitMap.set(v.appointment_id, v.id);
+          }
+        }
+
+        const mapped: AppointmentHistoryRow[] = apptRows.slice(0, limit).map((r) => {
+          const p = Array.isArray(r.patient) ? r.patient[0] ?? null : r.patient;
+          return {
+            id: r.id,
+            start_at: r.start_at,
+            end_at: r.end_at,
+            status: r.status,
+            source: r.source,
+            event_type_label: r.event_type_label,
+            appointment_ref: r.appointment_ref,
+            cancel_reason: r.cancel_reason,
+            notes: r.notes,
+            patient_id: r.patient_id,
+            patient_first_name: p?.first_name ?? null,
+            patient_last_name: p?.last_name ?? null,
+            patient_avatar_data: p?.avatar_data ?? null,
+            visit_id: visitMap.get(r.id) ?? null,
+          };
+        });
+
+        setHasMore(apptRows.length > limit);
+        setData(mapped);
+        setError(null);
+        settle();
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Could not load appointment history');
+        settle();
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, limit, filterKey]);
+
+  return { data, loading, error, hasMore };
+}
+
+// Stable string key for the filters object so the effect dep list
+// stays primitive. Re-rendering with the same filter values does not
+// re-run the query — only a real change does.
+function filtersToKey(f: AppointmentHistoryFilters): string {
+  return [
+    f.statuses.join(','),
+    f.sources.join(','),
+    f.fromDate ?? '',
+    f.toDate ?? '',
+    f.search.trim(),
+  ].join('|');
+}
