@@ -16,13 +16,16 @@ import {
   ShieldCheck,
   Video,
   X,
+  XCircle,
 } from 'lucide-react';
 import {
   BottomSheet,
   Button,
   Card,
   DatePicker,
+  Dialog,
   EmptyState,
+  Input,
   NewBookingSheet,
   RescheduleSheet,
   SegmentedControl,
@@ -82,6 +85,7 @@ import {
   reverseNoShow,
 } from '../lib/queries/visits.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
+import { cancelAppointment } from '../lib/queries/cancelAppointment.ts';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
 
 type Layout = 'calendar' | 'list';
@@ -124,6 +128,11 @@ export function Schedule() {
   // ISO datetime of the empty slot the operator just tapped. When
   // non-null the NewBookingSheet renders pre-filled with this time.
   const [newBookingSlot, setNewBookingSlot] = useState<string | null>(null);
+  // The row currently being cancelled, if any. When set, a confirm
+  // dialog renders on top of the detail sheet asking for an optional
+  // reason and an explicit "Yes, cancel" tap. Discrete from
+  // reschedulingRow because the two flows shouldn't share state.
+  const [cancellingRow, setCancellingRow] = useState<AppointmentRow | null>(null);
   const currentLocation = useCurrentLocation();
   // "Jump to date" picker — anchored to the month-label pill so the
   // operator can leap to any date without flicking through weeks.
@@ -882,6 +891,7 @@ export function Schedule() {
                   });
                 }}
                 onReschedule={() => setReschedulingRow(selected)}
+                onCancel={() => setCancellingRow(selected)}
                 onResendConfirmation={async () => {
                   const target = selected;
                   setResendingConfirmationId(target.id);
@@ -953,6 +963,49 @@ export function Schedule() {
             setSelected(null);
             day.refresh();
             weekCounts.refresh();
+          }}
+        />
+      ) : null}
+
+      {cancellingRow ? (
+        <CancelAppointmentDialog
+          appointment={cancellingRow}
+          onClose={() => setCancellingRow(null)}
+          onCancelled={(info) => {
+            setCancellingRow(null);
+            setSelected(null);
+            day.refresh();
+            weekCounts.refresh();
+            if (info.emailSent) {
+              setConfirmationToast({
+                tone: 'success',
+                title: 'Appointment cancelled',
+                description: 'Cancellation email sent to the patient.',
+              });
+            } else if (info.emailReason === 'no_email_on_patient') {
+              setConfirmationToast({
+                tone: 'info',
+                title: 'Appointment cancelled',
+                description: 'No email on file, so no cancellation was sent.',
+              });
+            } else if (info.emailReason === 'delivery_not_configured') {
+              setConfirmationToast({
+                tone: 'info',
+                title: 'Appointment cancelled',
+                description: 'Email delivery is not configured on the server.',
+              });
+            } else if (info.emailReason) {
+              setConfirmationToast({
+                tone: 'info',
+                title: 'Appointment cancelled',
+                description: `Cancellation email did not send: ${info.emailReason}.`,
+              });
+            } else {
+              setConfirmationToast({
+                tone: 'success',
+                title: 'Appointment cancelled',
+              });
+            }
           }}
         />
       ) : null}
@@ -1169,17 +1222,125 @@ function SkeletonRows() {
 //                          patient_email
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CancelAppointmentDialog — confirmation dialog for the destructive
+// "cancel this appointment" path. Renders on top of the detail
+// BottomSheet (zIndex 1000). Optional reason field is stored on
+// lng_appointments.cancel_reason and surfaced on the patient
+// timeline event. The patient gets a cancellation email with a
+// CANCEL .ics so their calendar removes the slot — best-effort,
+// the cancel still commits if the email fails.
+//
+// Two-step UX (open → explicit confirm) is the right pattern for
+// destructive actions; an inline tap on the action row would let
+// staff cancel by accident.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CancelAppointmentDialog({
+  appointment,
+  onClose,
+  onCancelled,
+}: {
+  appointment: AppointmentRow;
+  onClose: () => void;
+  onCancelled: (info: { emailSent: boolean; emailReason: string | null }) => void;
+}) {
+  const [reason, setReason] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const patientName = patientFullDisplayName(appointment);
+  const hasEmail = !!appointment.patient_email;
+
+  const handleConfirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await cancelAppointment({
+        appointmentId: appointment.id,
+        reason,
+        notifyPatient: hasEmail,
+      });
+      onCancelled({ emailSent: result.emailSent, emailReason: result.emailReason });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not cancel');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={busy ? () => undefined : onClose}
+      width={460}
+      title="Cancel this appointment?"
+      description={
+        <span>
+          {patientName}'s appointment on{' '}
+          <strong>{formatStart(appointment.start_at)}</strong> will be cancelled.
+          {hasEmail
+            ? ` We'll email ${appointment.patient_email} a calendar update so the slot drops off their calendar.`
+            : ` There's no email on file for this patient, so no cancellation email will be sent.`}{' '}
+          The slot will return to available immediately.
+        </span>
+      }
+      footer={
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: theme.space[2],
+          }}
+        >
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Keep appointment
+          </Button>
+          <Button variant="primary" onClick={handleConfirm} loading={busy}>
+            {busy ? 'Cancelling…' : 'Cancel appointment'}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+        <Input
+          label="Reason (optional)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. patient phoned to cancel; clinic equipment fault."
+          disabled={busy}
+        />
+        {error ? (
+          <p
+            role="alert"
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.alert,
+              fontWeight: theme.type.weight.medium,
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Dialog>
+  );
+}
+
 function DetailQuickActions({
   appointment,
   resendingConfirmationId,
   onPatientProfile,
   onReschedule,
+  onCancel,
   onResendConfirmation,
 }: {
   appointment: AppointmentRow;
   resendingConfirmationId: string | null;
   onPatientProfile: () => void;
   onReschedule: () => void;
+  onCancel: () => void;
   onResendConfirmation: () => void;
 }) {
   const showReschedule =
@@ -1190,6 +1351,12 @@ function DetailQuickActions({
     appointment.status === 'booked' &&
     appointment.source !== 'calendly' &&
     !!appointment.patient_email;
+  // Cancel is allowed on booked or arrived (rare — patient changed
+  // their mind on the way to the chair). Native source only;
+  // Calendly-source bookings cancel on Calendly itself.
+  const showCancel =
+    (appointment.status === 'booked' || appointment.status === 'arrived') &&
+    appointment.source !== 'calendly';
   const sendingThis = resendingConfirmationId === appointment.id;
 
   return (
@@ -1255,6 +1422,14 @@ function DetailQuickActions({
           disabled={sendingThis}
         />
       ) : null}
+      {showCancel ? (
+        <QuickActionRow
+          icon={<XCircle size={16} aria-hidden />}
+          label="Cancel appointment"
+          tone="alert"
+          onClick={onCancel}
+        />
+      ) : null}
       {calendlyHintInline ? (
         <div
           style={{
@@ -1280,6 +1455,7 @@ function QuickActionRow({
   onClick,
   first = false,
   disabled = false,
+  tone = 'default',
 }: {
   icon: React.ReactNode;
   label: string;
@@ -1287,7 +1463,12 @@ function QuickActionRow({
   onClick: () => void;
   first?: boolean;
   disabled?: boolean;
+  // 'alert' tints the icon + label red so destructive actions like
+  // Cancel appointment read distinctly from navigation rows.
+  tone?: 'default' | 'alert';
 }) {
+  const labelColour = tone === 'alert' ? theme.color.alert : theme.color.ink;
+  const iconColour = tone === 'alert' ? theme.color.alert : theme.color.inkMuted;
   return (
     <button
       type="button"
@@ -1320,7 +1501,7 @@ function QuickActionRow({
       <span
         aria-hidden
         style={{
-          color: theme.color.inkMuted,
+          color: iconColour,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -1335,7 +1516,7 @@ function QuickActionRow({
           flex: 1,
           fontSize: theme.type.size.md,
           fontWeight: theme.type.weight.medium,
-          color: theme.color.ink,
+          color: labelColour,
           minWidth: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
