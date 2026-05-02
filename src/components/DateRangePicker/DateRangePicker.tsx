@@ -73,10 +73,15 @@ export function DateRangePicker({
     right?: number;
   } | null>(null);
 
-  // Pending selection — independent of `value` until Apply / preset.
+  // Pending selection — independent of `value` until Apply.
   // `selFrom` / `selTo` are ISO local YYYY-MM-DD or null.
+  // `selPreset` tracks whether the pending selection matches a preset
+  // (drives sidebar highlight + Apply's resulting DateRange.preset).
+  // Set to a preset id on preset click; flipped to 'custom' on any
+  // calendar click so the user sees their selection switch to custom.
   const [selFrom, setSelFrom] = useState<string | null>(null);
   const [selTo, setSelTo] = useState<string | null>(null);
+  const [selPreset, setSelPreset] = useState<DateRangePresetId>('custom');
 
   // Calendar viewport state. lYear/lMonth = left calendar, rYear/rMonth
   // = right calendar (desktop only). Independent so users can navigate
@@ -97,6 +102,7 @@ export function DateRangePicker({
     // opens already showing the chosen range.
     setSelFrom(value.start);
     setSelTo(value.end);
+    setSelPreset(value.preset);
     // Land the calendars on the months that contain the range.
     const startD = new Date(`${value.start}T00:00:00`);
     const endD = new Date(`${value.end}T00:00:00`);
@@ -146,6 +152,10 @@ export function DateRangePicker({
 
   // ─── Calendar interactions ───────────────────────────────────────
   const handleDateClick = (dateIso: string) => {
+    // A calendar click means the user is composing a custom range,
+    // even if they got here via a preset; flip the pending preset so
+    // the sidebar highlight follows.
+    setSelPreset('custom');
     if (!selFrom || (selFrom && selTo)) {
       // Either nothing selected yet, or a complete range already exists.
       // Either way, start a fresh range on this click.
@@ -167,11 +177,15 @@ export function DateRangePicker({
   };
 
   const handlePresetClick = (id: DateRangePresetId) => {
+    // Preset click only stages the pending selection — no commit, no
+    // close. Apply is the single commit point. This avoids triggering
+    // a parent refetch on every preset-shopping click and keeps the
+    // popover steady so the user can compare presets visually before
+    // committing.
     const next = resolvePreset(id);
+    setSelPreset(id);
     setSelFrom(next.start);
     setSelTo(next.end);
-    // Land the calendars on the picked range so the user sees their
-    // selection visually after a preset click.
     const startD = new Date(`${next.start}T00:00:00`);
     const endD = new Date(`${next.end}T00:00:00`);
     setLYear(startD.getFullYear());
@@ -187,17 +201,20 @@ export function DateRangePicker({
       setRYear(endD.getFullYear());
       setRMonth(endD.getMonth());
     }
-    // Fire onChange straight away — preset click is "preset Apply", same
-    // as Meridian's spec. No Apply button needed.
-    onChange(next);
-    closePicker();
   };
 
   const canApply = !!selFrom && !!selTo;
   const handleApply = () => {
     if (!canApply || !selFrom || !selTo) return;
     try {
-      const next = makeCustomRange(selFrom, selTo);
+      // Preserve the pending preset id when the selection still matches
+      // a preset (so the trigger label keeps reading "Last 30 days"
+      // rather than "12 Apr to 11 May"). On any custom calendar click
+      // selPreset was already flipped to 'custom' — see handleDateClick.
+      const next: DateRange =
+        selPreset === 'custom'
+          ? makeCustomRange(selFrom, selTo)
+          : { start: selFrom, end: selTo, preset: selPreset };
       onChange(next);
       closePicker();
     } catch {
@@ -227,7 +244,7 @@ export function DateRangePicker({
       {open && !isMobile ? (
         <DesktopPopover
           pos={popoverPos}
-          activePreset={value.preset}
+          activePreset={selPreset}
           selFrom={selFrom}
           selTo={selTo}
           today={today}
@@ -249,7 +266,7 @@ export function DateRangePicker({
 
       {open && isMobile ? (
         <MobileSheet
-          activePreset={value.preset}
+          activePreset={selPreset}
           selFrom={selFrom}
           selTo={selTo}
           today={today}
