@@ -2,6 +2,7 @@ import {
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -24,22 +25,56 @@ import { theme } from '../../theme/index.ts';
 
 export interface TooltipProps {
   content: ReactNode;
-  side?: 'top' | 'bottom';
+  // 'auto' (default) measures available space at open time and picks
+  // the side with more room — keeps the panel from getting clipped
+  // when the trigger is near the bottom of a BottomSheet or the top
+  // of the viewport.
+  side?: 'top' | 'bottom' | 'auto';
   align?: 'start' | 'center' | 'end';
   maxWidth?: number;
+  // 'dark' (default) renders a black panel with surface-coloured text
+  // for inline annotations. 'light' uses the same white-card treatment
+  // we use for hover cards elsewhere in the app — soft shadow,
+  // hairline border, ink text — for help / explanation content.
+  variant?: 'dark' | 'light';
   children: ReactNode;
 }
 
 export function Tooltip({
   content,
-  side = 'bottom',
+  side = 'auto',
   align = 'start',
   maxWidth = 320,
+  variant = 'dark',
   children,
 }: TooltipProps) {
   const [open, setOpen] = useState(false);
+  const [resolvedSide, setResolvedSide] = useState<'top' | 'bottom'>(
+    side === 'top' ? 'top' : 'bottom',
+  );
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const tooltipId = useId();
+
+  // When side='auto', flip on open if there isn't enough room below.
+  // Approximated panel height — the actual content varies, but a
+  // 200px buffer covers the typical 2 to 3-line tooltip without
+  // measuring the rendered panel (which would need a second pass).
+  useLayoutEffect(() => {
+    if (!open) return;
+    if (side === 'top' || side === 'bottom') {
+      setResolvedSide(side);
+      return;
+    }
+    if (!wrapperRef.current) return;
+    const APPROX_HEIGHT = 200;
+    const VIEWPORT_PAD = 16;
+    const r = wrapperRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - VIEWPORT_PAD;
+    const spaceAbove = r.top - VIEWPORT_PAD;
+    setResolvedSide(
+      spaceBelow >= APPROX_HEIGHT || spaceBelow >= spaceAbove ? 'bottom' : 'top',
+    );
+  }, [open, side]);
 
   useEffect(() => {
     if (!open) return;
@@ -65,7 +100,7 @@ export function Tooltip({
         : { left: 0 };
 
   const vertical =
-    side === 'top' ? { bottom: 'calc(100% + 8px)' } : { top: 'calc(100% + 8px)' };
+    resolvedSide === 'top' ? { bottom: 'calc(100% + 8px)' } : { top: 'calc(100% + 8px)' };
 
   return (
     <span
@@ -97,8 +132,9 @@ export function Tooltip({
             ...horizontal,
             ...vertical,
             zIndex: 100,
-            background: theme.color.ink,
-            color: theme.color.surface,
+            background: variant === 'light' ? theme.color.surface : theme.color.ink,
+            color: variant === 'light' ? theme.color.ink : theme.color.surface,
+            border: variant === 'light' ? `1px solid ${theme.color.border}` : 'none',
             padding: `${theme.space[3]}px ${theme.space[4]}px`,
             borderRadius: theme.radius.input,
             fontSize: theme.type.size.sm,
@@ -108,7 +144,7 @@ export function Tooltip({
             maxWidth,
             width: 'max-content',
             boxShadow: theme.shadow.overlay,
-            animation: `lng-tooltip-${side}-enter ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+            animation: `lng-tooltip-${resolvedSide}-enter ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
             pointerEvents: 'auto',
           }}
         >
