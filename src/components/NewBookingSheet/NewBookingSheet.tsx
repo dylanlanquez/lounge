@@ -36,6 +36,7 @@ import {
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { type PatientRow, patientFullName } from '../../lib/queries/patients.ts';
+import { supabase } from '../../lib/supabase.ts';
 
 // NewBookingSheet — bottom-sheet UI for creating a brand-new
 // native (non-Calendly) appointment. Opened from the Schedule when
@@ -84,6 +85,15 @@ export function NewBookingSheet({
   const [date, setDate] = useState<string>(initial.date);
   const [time, setTime] = useState<string>(initial.time);
   const [patient, setPatient] = useState<PatientRow | null>(null);
+  // Create-new-patient sub-flow inside the patient section. When
+  // patientCreate is non-null the search box is replaced with a
+  // form pre-seeded from the search term (matches NewWalkIn's
+  // 'find' → 'create' step pattern, but kept inside this sheet so
+  // staff don't lose their booking context). Cancelled or saved →
+  // back to search / picked.
+  const [patientCreate, setPatientCreate] = useState<NewPatientDraft | null>(null);
+  const [creatingPatient, setCreatingPatient] = useState(false);
+  const [createPatientError, setCreatePatientError] = useState<string | null>(null);
   const [serviceType, setServiceType] = useState<BookingServiceType | ''>('');
   const [notes, setNotes] = useState<string>('');
   // Default sendEmail to true, then re-derive once a patient is
@@ -119,6 +129,8 @@ export function NewBookingSheet({
     setDate(i.date);
     setTime(i.time);
     setPatient(null);
+    setPatientCreate(null);
+    setCreatePatientError(null);
     setServiceType('');
     setNotes('');
     setSendEmail(true);
@@ -309,13 +321,49 @@ export function NewBookingSheet({
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
           <Section
             title="Patient"
-            info="Search existing patients by phone, name, or email. Also includes Venneir.com customers who haven't been seen at this clinic yet."
+            info="Search existing patients by phone, name, or email. Also includes Venneir.com customers who haven't been seen at this clinic yet. If there's no match, you can create the patient inline without leaving this sheet."
           >
             {patient ? (
               <PickedPatient patient={patient} onClear={() => setPatient(null)} />
+            ) : patientCreate ? (
+              <NewPatientForm
+                draft={patientCreate}
+                onChange={setPatientCreate}
+                seedTerm={patientCreate.seedTerm}
+                busy={creatingPatient}
+                error={createPatientError}
+                onCancel={() => {
+                  setPatientCreate(null);
+                  setCreatePatientError(null);
+                }}
+                onSave={async () => {
+                  setCreatePatientError(null);
+                  setCreatingPatient(true);
+                  try {
+                    const created = await createPatient({
+                      locationId,
+                      first_name: patientCreate.first_name,
+                      last_name: patientCreate.last_name,
+                      email: patientCreate.email,
+                      phone: patientCreate.phone,
+                    });
+                    setPatient(created);
+                    setPatientCreate(null);
+                  } catch (e) {
+                    setCreatePatientError(
+                      e instanceof Error ? e.message : 'Could not create patient',
+                    );
+                  } finally {
+                    setCreatingPatient(false);
+                  }
+                }}
+              />
             ) : (
               <PatientSearch
                 onPick={setPatient}
+                onCreateNew={(term) => {
+                  setPatientCreate(seedDraftFromTerm(term));
+                }}
                 placeholder="Phone, name, or email"
                 enableShopifyLookup={Boolean(locationId)}
                 registerLocationId={locationId}
@@ -477,6 +525,102 @@ export function NewBookingSheet({
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface NewPatientDraft {
+  first_name: string;
+  last_name: string;
+  phone: string;
+  email: string;
+  // The original search term — kept around so we can show "Seeded
+  // from your search for …" microcopy and so undo would be easy if
+  // we ever wanted that.
+  seedTerm: string;
+}
+
+// Inline create-new-patient form rendered inside the Patient
+// Section when no match exists for the search. Same field set as
+// NewWalkIn's create step (first / last / phone / email), seeded
+// intelligently from the search term so the receptionist isn't
+// re-typing what they already typed.
+function NewPatientForm({
+  draft,
+  onChange,
+  seedTerm,
+  busy,
+  error,
+  onCancel,
+  onSave,
+}: {
+  draft: NewPatientDraft;
+  onChange: (next: NewPatientDraft) => void;
+  seedTerm: string;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      {seedTerm ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+          }}
+        >
+          Seeded from your search for &ldquo;{seedTerm}&rdquo;.
+        </p>
+      ) : null}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        <Input
+          label="First name"
+          required
+          autoFocus={!draft.first_name}
+          value={draft.first_name}
+          onChange={(e) => onChange({ ...draft, first_name: e.target.value })}
+          disabled={busy}
+        />
+        <Input
+          label="Last name"
+          required
+          value={draft.last_name}
+          onChange={(e) => onChange({ ...draft, last_name: e.target.value })}
+          disabled={busy}
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+        <Input
+          label="Phone"
+          type="tel"
+          value={draft.phone}
+          onChange={(e) => onChange({ ...draft, phone: e.target.value })}
+          disabled={busy}
+        />
+        <Input
+          label="Email"
+          type="email"
+          value={draft.email}
+          onChange={(e) => onChange({ ...draft, email: e.target.value })}
+          disabled={busy}
+        />
+      </div>
+      {error ? (
+        <StatusBanner tone="error" title="Couldn't create patient">
+          {error}
+        </StatusBanner>
+      ) : null}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[2] }}>
+        <Button type="button" variant="tertiary" onClick={onCancel} disabled={busy}>
+          Back to search
+        </Button>
+        <Button type="button" variant="primary" onClick={onSave} loading={busy} disabled={busy}>
+          {busy ? 'Creating…' : 'Create patient'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function PickedPatient({
   patient,
   onClear,
@@ -634,4 +778,93 @@ function clampHour(hhmm: string, endRoundUp = false): number {
   if (Number.isNaN(h)) return endRoundUp ? 22 : 6;
   if (endRoundUp && m > 0) return Math.min(23, h + 1);
   return h;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Patient creation (mirrors NewWalkIn's two-step pattern)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Classify a search term so the create form gets seeded into the
+// right field. Anything with @ → email; phone-like digits → phone;
+// otherwise treat as a name and split on whitespace.
+function classifySearchTerm(term: string): 'email' | 'phone' | 'name' {
+  const trimmed = term.trim();
+  if (trimmed.includes('@')) return 'email';
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length >= 7 && digits.length <= 15 && /^[\d\s+()\-]+$/.test(trimmed)) {
+    return 'phone';
+  }
+  return 'name';
+}
+
+function seedDraftFromTerm(term: string): NewPatientDraft {
+  const trimmed = term.trim();
+  const draft: NewPatientDraft = {
+    first_name: '',
+    last_name: '',
+    phone: '',
+    email: '',
+    seedTerm: term,
+  };
+  const kind = classifySearchTerm(trimmed);
+  if (kind === 'email') {
+    draft.email = trimmed;
+  } else if (kind === 'phone') {
+    draft.phone = trimmed;
+  } else {
+    const parts = trimmed.split(/\s+/);
+    draft.first_name = parts[0] ?? '';
+    draft.last_name = parts.slice(1).join(' ');
+  }
+  return draft;
+}
+
+function humanizePatientSaveError(err: { message?: string; code?: string } | null): string {
+  const msg = err?.message ?? '';
+  const code = err?.code;
+  if (code === '23505' || /duplicate key|unique constraint/i.test(msg)) {
+    if (/email/i.test(msg)) {
+      return 'A patient with this email is already on file at this location. Use the search to find them.';
+    }
+    if (/phone/i.test(msg)) {
+      return 'A patient with this phone number is already on file at this location. Use the search to find them.';
+    }
+    return 'This person is already on file at this location. Use the search to find them.';
+  }
+  return msg || 'Could not create patient.';
+}
+
+async function createPatient(args: {
+  locationId: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+}): Promise<PatientRow> {
+  if (!args.first_name.trim() || !args.last_name.trim()) {
+    throw new Error('First name and last name are required.');
+  }
+  // patients.account_id is a legacy NOT NULL column — resolve from
+  // the signed-in user. Same path NewWalkIn uses.
+  const { data: accountId, error: accErr } = await supabase.rpc('auth_account_id');
+  if (accErr || !accountId) {
+    throw new Error(
+      accErr?.message ??
+        'Could not resolve your account. Make sure your accounts row is set up in Meridian.',
+    );
+  }
+  const { data, error } = await supabase
+    .from('patients')
+    .insert({
+      account_id: accountId,
+      location_id: args.locationId,
+      first_name: args.first_name.trim(),
+      last_name: args.last_name.trim(),
+      email: args.email.trim() || null,
+      phone: args.phone.trim() || null,
+    })
+    .select('*')
+    .single();
+  if (error || !data) throw new Error(humanizePatientSaveError(error));
+  return data as PatientRow;
 }
