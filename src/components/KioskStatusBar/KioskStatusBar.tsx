@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarChart3, Receipt, Settings } from 'lucide-react';
+import { BarChart3, PoundSterling, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
@@ -97,7 +97,7 @@ export function KioskStatusBar() {
         ) : null}
         {showFinancialsButton ? (
           <KioskIconButton label="Financials" onClick={() => navigate('/financials')}>
-            <Receipt size={15} />
+            <PoundSterling size={15} />
           </KioskIconButton>
         ) : null}
         {showAdminButton ? (
