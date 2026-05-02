@@ -44,7 +44,7 @@ import {
 import type { AppointmentStatus } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
 import { formatPence } from '../lib/queries/carts.ts';
-import { markAppointmentArrived, markNoShow, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { markNoShow, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
 import {
@@ -129,23 +129,7 @@ export function AppointmentDetail() {
             }}
           />
         ) : (
-          <Loaded
-            appt={result.data}
-            onChanged={refresh}
-            onNavigateAfterArrived={(visitId, openedAt) => {
-              navigate(`/visit/${visitId}`, {
-                state: {
-                  from: entry.from === 'ledger' ? 'ledger' : 'schedule',
-                  patientId: result.data!.patient_id,
-                  patientName: patientFullDisplayName({
-                    patient_first_name: result.data!.patient.first_name,
-                    patient_last_name: result.data!.patient.last_name,
-                  } as never),
-                  visitOpenedAt: openedAt,
-                },
-              });
-            }}
-          />
+          <Loaded appt={result.data} onChanged={refresh} />
         )}
       </div>
     </main>
@@ -253,11 +237,9 @@ function DateSkeleton() {
 function Loaded({
   appt,
   onChanged,
-  onNavigateAfterArrived,
 }: {
   appt: AppointmentDetailRow;
   onChanged: () => void;
-  onNavigateAfterArrived: (visitId: string, openedAt: string) => void;
 }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
@@ -268,7 +250,6 @@ function Loaded({
   const [confirmNoShowOpen, setConfirmNoShowOpen] = useState(false);
   const [confirmReverseCancelOpen, setConfirmReverseCancelOpen] = useState(false);
   const [confirmReverseNoShowOpen, setConfirmReverseNoShowOpen] = useState(false);
-  const [arriving, setArriving] = useState(false);
   const [resending, setResending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -295,24 +276,15 @@ function Loaded({
     ],
   );
 
-  const handleArrived = async () => {
-    if (arriving) return;
-    setActionError(null);
-    setArriving(true);
-    try {
-      const { visit_id, opened_at } = await markAppointmentArrived(appt.id);
-      onNavigateAfterArrived(visit_id, opened_at);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Could not mark arrived';
-      await logFailure({
-        source: 'AppointmentDetail.markArrived',
-        severity: 'error',
-        message,
-        context: { appointmentId: appt.id, patientId: appt.patient_id },
-      });
-      setActionError(message);
-      setArriving(false);
-    }
+  // "Mark patient as arrived" hands off to the four-step arrival
+  // wizard at /arrival/appointment/:id. The wizard is responsible
+  // for intake answers, waiver capture, JB assignment, then it
+  // creates the visit and bounces to /visit/:id at the end. Marking
+  // arrived from this surface MUST go through that flow — short-
+  // circuiting straight to a visit row would skip the intake / waiver
+  // capture every booked appointment requires before chair time.
+  const handleArrived = () => {
+    navigate(`/arrival/appointment/${appt.id}`);
   };
 
   const handleResendConfirmation = async () => {
@@ -438,7 +410,6 @@ function Loaded({
       <Actions
         appt={appt}
         actions={actions}
-        arriving={arriving}
         resending={resending}
         onPatientProfile={() =>
           navigate(`/patient/${appt.patient_id}`, {
@@ -929,7 +900,6 @@ function Row({
 function Actions({
   appt,
   actions,
-  arriving,
   resending,
   onPatientProfile,
   onMarkArrived,
@@ -944,7 +914,6 @@ function Actions({
 }: {
   appt: AppointmentDetailRow;
   actions: AppointmentAction[];
-  arriving: boolean;
   resending: boolean;
   onPatientProfile: () => void;
   onMarkArrived: () => void;
@@ -975,10 +944,9 @@ function Actions({
         <ActionRow
           first
           icon={<UserCheck size={16} aria-hidden />}
-          label={arriving ? 'Marking as arrived…' : 'Mark patient as arrived'}
-          description="Creates a visit and opens the in-clinic flow"
-          onClick={arriving ? () => undefined : onMarkArrived}
-          disabled={arriving}
+          label="Mark patient as arrived"
+          description="Opens the arrival form (intake, waivers, JB assignment)"
+          onClick={onMarkArrived}
           accent
         />
       ) : null}
