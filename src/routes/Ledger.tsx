@@ -19,82 +19,87 @@ import {
 } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
-import type { AppointmentStatus } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import {
-  humaniseStatus,
-  patientFullDisplayName,
-  properCase,
-  type AppointmentSource,
-} from '../lib/queries/appointments.ts';
+import { properCase } from '../lib/queries/appointments.ts';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
 import {
-  APPOINTMENT_HISTORY_PAGE_SIZE,
-  useAppointmentHistory,
-  type AppointmentHistoryFilters,
-  type AppointmentHistoryRow,
-} from '../lib/queries/appointmentHistory.ts';
+  LEDGER_PAGE_SIZE,
+  humaniseLedgerSource,
+  humaniseLedgerStatus,
+  useLedger,
+  type LedgerFilters,
+  type LedgerRow,
+  type LedgerSource,
+  type LedgerStatus,
+} from '../lib/queries/ledger.ts';
 import type { DateRange } from '../lib/dateRange.ts';
 
-// Appointments route — every booking the clinic has ever taken or
-// scheduled, past and future. The list mirrors Patients in shape
-// (avatar, name, ref, sticky filters at the top, page-50 pagination
-// at the bottom) so receptionists don't relearn a new pattern. What
-// makes it different is the filter row: status + source + date
-// range + name search compose freely, and any active filter can be
-// dismissed inline so a chain like "show me every cancelled booking
-// in May" takes two clicks to set up and one to clear.
+// Ledger route — the lab's audit-style record of every patient
+// interaction, scheduled or otherwise. Booked appointments,
+// cancellations, no-shows, walk-ins, in-chair sessions, completed
+// visits — all unified into one searchable feed via the lng_ledger
+// SQL view.
 //
-// Click-through routes by visit linkage: an attended appointment has
-// a visit row, so the click goes to /visit/:id; a cancelled or
-// not-yet-arrived appointment has none, so the click goes to the
-// patient profile (where the timeline lists the same booking with
-// every other event around it). The router state we set here drives
-// the destination's breadcrumb so the back-trail says "Appointments
-// › ..." instead of the default "Schedule › ...".
+// Distinct from Schedule: Schedule is the operational "what's on
+// today" surface; Ledger is the after-the-fact "show me every
+// cancelled booking last month" surface. The naming makes the role
+// obvious so staff don't reach for Ledger when they meant Schedule.
+//
+// Click-through: rows with a linked visit open /visit/:id; rows
+// without (e.g. cancelled before arrival) open the patient profile.
+// Either destination's breadcrumb reads "Ledger › ..." via the
+// `from: 'ledger'` router state we attach below.
 
-const STATUS_OPTIONS: ReadonlyArray<{ value: AppointmentStatus; label: string }> = [
+const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
   { value: 'arrived', label: 'Arrived' },
   { value: 'in_progress', label: 'In progress' },
+  { value: 'in_chair', label: 'In chair' },
   { value: 'complete', label: 'Complete' },
   { value: 'no_show', label: 'No-show' },
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'rescheduled', label: 'Rescheduled' },
+  { value: 'unsuitable', label: 'Unsuitable' },
+  { value: 'ended_early', label: 'Ended early' },
 ];
 
-const SOURCE_OPTIONS: ReadonlyArray<{ value: AppointmentSource; label: string }> = [
-  { value: 'native', label: 'Native (Lounge)' },
+const SOURCE_OPTIONS: ReadonlyArray<{ value: LedgerSource; label: string }> = [
   { value: 'calendly', label: 'Calendly' },
+  { value: 'native', label: 'Native (Lounge)' },
   { value: 'manual', label: 'Manually added' },
+  { value: 'walk_in', label: 'Walk-in' },
 ];
 
-// Booked rows show a soft outlined pill (the same `pending` tone the
-// In-Clinic board uses for "not yet"). Every other status maps to its
-// own tone so the column reads like a dashboard at a glance.
-const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
+// Status pill tone mapping. Every status surfaces explicitly — no
+// fallback — so a future status added on either origin table forces
+// the developer to choose a tone here rather than silently rendering
+// in the default 'neutral' grey.
+const STATUS_TO_TONE: Record<LedgerStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
   in_progress: 'in_progress',
+  in_chair: 'in_progress',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',
   rescheduled: 'cancelled',
+  unsuitable: 'unsuitable',
+  ended_early: 'unsuitable',
 };
 
-export function AppointmentHistory() {
+export function Ledger() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const [search, setSearch] = useState('');
-  const [statuses, setStatuses] = useState<AppointmentStatus[]>([]);
-  const [sources, setSources] = useState<AppointmentSource[]>([]);
+  const [statuses, setStatuses] = useState<LedgerStatus[]>([]);
+  const [sources, setSources] = useState<LedgerSource[]>([]);
   const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
 
-  const filters: AppointmentHistoryFilters = useMemo(
+  const filters: LedgerFilters = useMemo(
     () => ({
       statuses,
       sources,
@@ -105,7 +110,7 @@ export function AppointmentHistory() {
     [statuses, sources, dateRange, search],
   );
 
-  const { data, loading, error, hasMore } = useAppointmentHistory(filters, page);
+  const { data, loading, error, hasMore } = useLedger(filters, page);
 
   // Filter changes reset to page 0 — the receptionist is starting a
   // new search, not flicking through the previous result set.
@@ -113,10 +118,6 @@ export function AppointmentHistory() {
     setPage(0);
   }, [statuses, sources, dateRange, search]);
 
-  // Page changes scroll to top of the list. The route doesn't change
-  // so App's ScrollToTop doesn't fire here; the page scroll lives on
-  // #root (body is pinned for iOS rubber-band) so window.scrollTo is
-  // a no-op.
   useEffect(() => {
     document.getElementById('root')?.scrollTo(0, 0);
   }, [page]);
@@ -148,7 +149,7 @@ export function AppointmentHistory() {
     >
       <div style={{ maxWidth: innerMaxWidth, margin: '0 auto' }}>
         <StickyPageHeader
-          title="Appointments"
+          title="Ledger"
           meta={
             <Counter
               loading={loading}
@@ -184,11 +185,11 @@ export function AppointmentHistory() {
         ) : data.length === 0 ? (
           <div style={{ paddingTop: theme.space[6] }}>
             <EmptyState
-              title={filtersActive ? 'No appointments match' : 'No appointments yet'}
+              title={filtersActive ? 'Nothing matches' : 'Nothing in the ledger yet'}
               description={
                 filtersActive
-                  ? 'Try a different status, source, date range, or name.'
-                  : 'Bookings made via Schedule, Calendly or the public booking page will appear here.'
+                  ? 'Try a different status, source, date range, or search.'
+                  : 'Booked appointments, cancellations, walk-ins and completed visits will appear here.'
               }
             />
           </div>
@@ -197,14 +198,11 @@ export function AppointmentHistory() {
             <RowList
               data={data}
               onPick={(row) => {
-                const fullName = patientFullDisplayName({
-                  patient_first_name: row.patient_first_name,
-                  patient_last_name: row.patient_last_name,
-                } as never);
+                const fullName = ledgerName(row);
                 if (row.visit_id) {
                   navigate(`/visit/${row.visit_id}`, {
                     state: {
-                      from: 'appointments',
+                      from: 'ledger',
                       patientId: row.patient_id,
                       patientName: fullName,
                     },
@@ -213,7 +211,7 @@ export function AppointmentHistory() {
                 }
                 navigate(`/patient/${row.patient_id}`, {
                   state: {
-                    from: 'appointments',
+                    from: 'ledger',
                     patientName: fullName,
                   },
                 });
@@ -234,7 +232,7 @@ export function AppointmentHistory() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Filters row
+// Filters row + search input
 // ─────────────────────────────────────────────────────────────────────────────
 
 function FiltersRow({
@@ -251,23 +249,17 @@ function FiltersRow({
 }: {
   search: string;
   onSearchChange: (v: string) => void;
-  statuses: AppointmentStatus[];
-  onStatusesChange: (next: AppointmentStatus[]) => void;
-  sources: AppointmentSource[];
-  onSourcesChange: (next: AppointmentSource[]) => void;
+  statuses: LedgerStatus[];
+  onStatusesChange: (next: LedgerStatus[]) => void;
+  sources: LedgerSource[];
+  onSourcesChange: (next: LedgerSource[]) => void;
   dateRange: DateRange | null;
   onDateRangeChange: (next: DateRange | null) => void;
   filtersActive: boolean;
   onClearAll: () => void;
 }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-      }}
-    >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
       <SearchInput value={search} onChange={onSearchChange} />
       <div
         style={{
@@ -277,7 +269,7 @@ function FiltersRow({
           alignItems: 'center',
         }}
       >
-        <FilterPill<AppointmentStatus>
+        <FilterPill<LedgerStatus>
           label="Status"
           placeholder="All statuses"
           values={statuses}
@@ -285,7 +277,7 @@ function FiltersRow({
           onChange={onStatusesChange}
           totalNoun="statuses"
         />
-        <FilterPill<AppointmentSource>
+        <FilterPill<LedgerSource>
           label="Source"
           placeholder="All sources"
           values={sources}
@@ -347,7 +339,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
       <input
         type="search"
         placeholder="Search by name, LAP ref, MP ref, email or phone"
-        aria-label="Search appointments"
+        aria-label="Search the ledger"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         autoComplete="off"
@@ -388,7 +380,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Counter / error / list / row
+// Counter / error / list / row / skeleton / pagination
 // ─────────────────────────────────────────────────────────────────────────────
 
 function Counter({
@@ -409,8 +401,8 @@ function Counter({
   if (filtersActive) {
     label = count === 0 ? '0' : `${formatThousands(count)}${hasMore ? '+' : ''}`;
   } else {
-    const start = page * APPOINTMENT_HISTORY_PAGE_SIZE + 1;
-    const end = page * APPOINTMENT_HISTORY_PAGE_SIZE + count;
+    const start = page * LEDGER_PAGE_SIZE + 1;
+    const end = page * LEDGER_PAGE_SIZE + count;
     label = count === 0 ? '0' : `${formatThousands(start)}–${formatThousands(end)}`;
   }
   return (
@@ -429,10 +421,6 @@ function Counter({
 }
 
 function ErrorPanel({ message }: { message: string }) {
-  // Failures already log to lng_system_failures via the hook; this
-  // panel is the user-visible side. Honest, non-technical, with the
-  // raw message available for the receptionist to read aloud to a
-  // dev if needed.
   return (
     <div
       role="alert"
@@ -452,7 +440,7 @@ function ErrorPanel({ message }: { message: string }) {
           color: theme.color.alert,
         }}
       >
-        Could not load appointments
+        Could not load the ledger
       </p>
       <p
         style={{
@@ -472,22 +460,16 @@ function RowList({
   data,
   onPick,
 }: {
-  data: AppointmentHistoryRow[];
-  onPick: (row: AppointmentHistoryRow) => void;
+  data: LedgerRow[];
+  onPick: (row: LedgerRow) => void;
 }) {
   return (
     <ul
       role="list"
-      style={{
-        listStyle: 'none',
-        margin: 0,
-        padding: 0,
-        display: 'flex',
-        flexDirection: 'column',
-      }}
+      style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}
     >
       {data.map((r) => (
-        <li key={r.id}>
+        <li key={`${r.kind}:${r.id}`}>
           <Row row={r} onPick={() => onPick(r)} />
         </li>
       ))}
@@ -495,13 +477,14 @@ function RowList({
   );
 }
 
-function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }) {
+function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
   const [hover, setHover] = useState(false);
-  const fullName = patientName(row);
-  const dateLabel = formatRowDate(row.start_at);
-  const timeLabel = formatRowTime(row.start_at);
-  const serviceLabel = humaniseEventTypeLabel(row.event_type_label) ?? 'Appointment';
+  const fullName = ledgerName(row);
+  const dateLabel = formatRowDate(row.event_at);
+  const timeLabel = formatRowTime(row.event_at);
+  const serviceLabel = humaniseEventTypeLabel(row.service_label) ?? defaultServiceLabel(row);
   const tone = STATUS_TO_TONE[row.status];
+  const sourceLabel = humaniseLedgerSource(row.source);
 
   return (
     <button
@@ -562,7 +545,7 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
               whiteSpace: 'nowrap',
             }}
           >
-            {sourceMeta(row.source).label}
+            {sourceLabel}
             {row.appointment_ref ? ` · ${row.appointment_ref}` : ''}
           </p>
         </div>
@@ -593,7 +576,7 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
           <span style={{ color: theme.color.inkSubtle, marginLeft: theme.space[2] }}>{timeLabel}</span>
         </p>
         <StatusPill tone={tone} size="sm">
-          {humaniseStatus(row.status)}
+          {humaniseLedgerStatus(row.status)}
         </StatusPill>
       </div>
       <ChevronRight
@@ -609,42 +592,115 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Source label helper — lives next to the patient name as part of
-// the row's secondary line ("Calendly · LAP-00042"). Earlier revs
-// rendered this as a circular icon next to the avatar; that read as
-// a duplicate avatar. Plain text in the existing meta line is the
-// less visually noisy answer.
-// ─────────────────────────────────────────────────────────────────────────────
+function SkeletonList() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {Array.from({ length: LEDGER_PAGE_SIZE }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            padding: `${theme.space[3]}px ${theme.space[3]}px`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[4],
+            borderBottom: `1px solid ${theme.color.border}`,
+          }}
+        >
+          <Skeleton width={40} height={40} radius={999} />
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) 90px',
+              gap: theme.space[3],
+              alignItems: 'center',
+            }}
+          >
+            <Skeleton width="60%" height={16} radius={4} />
+            <Skeleton width="70%" height={14} radius={4} />
+            <Skeleton width="80%" height={14} radius={4} />
+            <Skeleton width="100%" height={20} radius={999} />
+          </div>
+          <Skeleton width={18} height={18} radius={4} />
+        </div>
+      ))}
+    </div>
+  );
+}
 
-function sourceMeta(source: AppointmentSource): { label: string } {
-  switch (source) {
-    case 'native':
-      return { label: 'Native' };
-    case 'calendly':
-      return { label: 'Calendly' };
-    case 'manual':
-      return { label: 'Manually added' };
-    default:
-      // Unrecognised source: surface the raw value rather than guess.
-      // The schema constrains this so the branch shouldn't fire — if
-      // it does, the data model has changed and this map should
-      // change with it.
-      return { label: source };
-  }
+function Pagination({
+  page,
+  hasMore,
+  loading,
+  onPrev,
+  onNext,
+}: {
+  page: number;
+  hasMore: boolean;
+  loading: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const prevDisabled = page === 0 || loading;
+  const nextDisabled = !hasMore || loading;
+  return (
+    <nav
+      aria-label="Ledger pagination"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        padding: `${theme.space[5]}px 0 ${theme.space[3]}px`,
+      }}
+    >
+      <button type="button" onClick={onPrev} disabled={prevDisabled} style={pageButton(prevDisabled)}>
+        <ChevronLeft size={16} />
+        <span>Previous</span>
+      </button>
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          fontVariantNumeric: 'tabular-nums',
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        Page {formatThousands(page + 1)}
+      </span>
+      <button type="button" onClick={onNext} disabled={nextDisabled} style={pageButton(nextDisabled)}>
+        <span>Next</span>
+        <ChevronRight size={16} />
+      </button>
+    </nav>
+  );
+}
+
+function pageButton(disabled: boolean): CSSProperties {
+  return {
+    appearance: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: theme.space[1],
+    padding: `${theme.space[2]}px ${theme.space[4]}px`,
+    borderRadius: theme.radius.pill,
+    border: `1px solid ${theme.color.border}`,
+    background: theme.color.surface,
+    color: disabled ? theme.color.inkSubtle : theme.color.ink,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    fontFamily: 'inherit',
+    fontSize: theme.type.size.sm,
+    fontWeight: theme.type.weight.medium,
+    opacity: disabled ? 0.55 : 1,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FilterPill — compact multi-select trigger styled to match the
-// DateRangePicker's tertiary button. Shows label + active selection
-// count; opens a portal-positioned panel of checkbox rows. When at
-// least one value is selected, an inline X next to the trigger lets
-// the receptionist clear that filter without opening the panel.
-//
-// This is local to the Appointments page on purpose: the existing
-// MultiSelectDropdown is a full form field (label-above-value, ~72px
-// tall) which dominates the filter row visually. If a second filter
-// surface needs the same shape, lift this into a primitive then.
+// FilterPill — compact inline multi-select that matches the
+// DateRangePicker's tertiary-button shape (36px tall, label + active
+// count, X-clear when at least one option is selected). Local to the
+// Ledger route until a second surface needs the same shape.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function FilterPill<T extends string>({
@@ -682,9 +738,6 @@ function FilterPill<T extends string>({
 
   const hasValue = selected.length > 0 && selected.length < options.length;
 
-  // Outside-click + Escape dismiss while open. Close fires before any
-  // click outside the wrapper resolves so the panel doesn't flash on
-  // the very next interaction.
   useEffect(() => {
     if (!open) return;
     const onPointer = (e: MouseEvent) => {
@@ -701,8 +754,6 @@ function FilterPill<T extends string>({
     };
   }, [open]);
 
-  // Position the panel under the trigger. Re-runs on scroll/resize
-  // while open so the panel tracks if the page reflows.
   useEffect(() => {
     if (!open || !triggerRef.current) return;
     const update = () => {
@@ -806,7 +857,7 @@ function FilterPill<T extends string>({
               top: panelPos.top,
               left: panelPos.left,
               width: panelPos.width,
-              maxHeight: 320,
+              maxHeight: 360,
               overflowY: 'auto',
               background: theme.color.surface,
               border: `1px solid ${theme.color.border}`,
@@ -881,121 +932,20 @@ function FilterPill<T extends string>({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Skeleton + pagination
-// ─────────────────────────────────────────────────────────────────────────────
-
-function SkeletonList() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {Array.from({ length: APPOINTMENT_HISTORY_PAGE_SIZE }).map((_, i) => (
-        <div
-          key={i}
-          style={{
-            padding: `${theme.space[3]}px ${theme.space[3]}px`,
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[4],
-            borderBottom: `1px solid ${theme.color.border}`,
-          }}
-        >
-          <Skeleton width={40} height={40} radius={999} />
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) 90px',
-              gap: theme.space[3],
-              alignItems: 'center',
-            }}
-          >
-            <Skeleton width="60%" height={16} radius={4} />
-            <Skeleton width="70%" height={14} radius={4} />
-            <Skeleton width="80%" height={14} radius={4} />
-            <Skeleton width="100%" height={20} radius={999} />
-          </div>
-          <Skeleton width={18} height={18} radius={4} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Pagination({
-  page,
-  hasMore,
-  loading,
-  onPrev,
-  onNext,
-}: {
-  page: number;
-  hasMore: boolean;
-  loading: boolean;
-  onPrev: () => void;
-  onNext: () => void;
-}) {
-  const prevDisabled = page === 0 || loading;
-  const nextDisabled = !hasMore || loading;
-  return (
-    <nav
-      aria-label="Appointments pagination"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: theme.space[3],
-        padding: `${theme.space[5]}px 0 ${theme.space[3]}px`,
-      }}
-    >
-      <button type="button" onClick={onPrev} disabled={prevDisabled} style={pageButton(prevDisabled)}>
-        <ChevronLeft size={16} />
-        <span>Previous</span>
-      </button>
-      <span
-        style={{
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          fontVariantNumeric: 'tabular-nums',
-          fontWeight: theme.type.weight.medium,
-        }}
-      >
-        Page {formatThousands(page + 1)}
-      </span>
-      <button type="button" onClick={onNext} disabled={nextDisabled} style={pageButton(nextDisabled)}>
-        <span>Next</span>
-        <ChevronRight size={16} />
-      </button>
-    </nav>
-  );
-}
-
-function pageButton(disabled: boolean): CSSProperties {
-  return {
-    appearance: 'none',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: theme.space[1],
-    padding: `${theme.space[2]}px ${theme.space[4]}px`,
-    borderRadius: theme.radius.pill,
-    border: `1px solid ${theme.color.border}`,
-    background: theme.color.surface,
-    color: disabled ? theme.color.inkSubtle : theme.color.ink,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    fontFamily: 'inherit',
-    fontSize: theme.type.size.sm,
-    fontWeight: theme.type.weight.medium,
-    opacity: disabled ? 0.55 : 1,
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function patientName(r: AppointmentHistoryRow): string {
+function ledgerName(r: LedgerRow): string {
   const first = properCase(r.patient_first_name);
   const last = properCase(r.patient_last_name);
   return `${first} ${last}`.trim() || 'Unnamed patient';
+}
+
+function defaultServiceLabel(r: LedgerRow): string {
+  // Used when the service_label column is empty. Walk-ins land here
+  // when service_type wasn't captured at intake; appointments land
+  // here when the source (Calendly / native) didn't ship a label.
+  return r.kind === 'walk_in' ? 'Walk-in' : 'Appointment';
 }
 
 function formatRowDate(iso: string): string {
