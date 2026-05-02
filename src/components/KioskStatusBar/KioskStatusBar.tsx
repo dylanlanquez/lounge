@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { BarChart3, Receipt, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
@@ -6,6 +7,9 @@ import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.
 import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';
 import { theme } from '../../theme/index.ts';
+import { Avatar } from '../Avatar/Avatar.tsx';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
+import { Button } from '../Button/Button.tsx';
 
 // Reserved height pages add as paddingTop so content doesn't slip
 // underneath the fixed bar.
@@ -23,12 +27,13 @@ export const KIOSK_STATUS_BAR_HEIGHT = 32;
 // through. SignIn drops the matching paddingTop so the layout
 // doesn't carry a phantom 32px gap.
 export function KioskStatusBar() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, signOut } = useAuth();
   const { account } = useCurrentAccount();
   const now = useNow(60_000);
   const { level, charging, supported: batterySupported } = useBattery();
   const network = useNetwork();
   const navigate = useNavigate();
+  const [profileOpen, setProfileOpen] = useState(false);
 
   if (authLoading || !user) return null;
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
@@ -41,6 +46,7 @@ export function KioskStatusBar() {
   const tone = batteryTone(percent);
 
   return (
+    <>
     <div
       role="status"
       aria-label="Kiosk status"
@@ -99,6 +105,10 @@ export function KioskStatusBar() {
             <Settings size={15} />
           </KioskIconButton>
         ) : null}
+        <ProfileButton
+          name={account?.display_name ?? user.email ?? 'You'}
+          onClick={() => setProfileOpen(true)}
+        />
         {showReportsButton || showFinancialsButton || showAdminButton ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
@@ -126,6 +136,111 @@ export function KioskStatusBar() {
 
       <StatusBarKeyframes />
     </div>
+    <ProfileSheet
+      open={profileOpen}
+      onClose={() => setProfileOpen(false)}
+      email={user.email ?? null}
+      displayName={account?.display_name ?? null}
+      onSignOut={() => {
+        setProfileOpen(false);
+        void signOut();
+      }}
+    />
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profile button + sheet — moved here from BottomNav so the bottom
+// row can give its slot to Appointment History. Sign-out lives inside
+// the sheet so the action stays one tap from any surface.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProfileButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Profile"
+      title={name}
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        WebkitTapHighlightColor: 'transparent',
+        outline: 'none',
+      }}
+    >
+      <Avatar name={name} size="sm" />
+    </button>
+  );
+}
+
+function ProfileSheet({
+  open,
+  onClose,
+  email,
+  displayName,
+  onSignOut,
+}: {
+  open: boolean;
+  onClose: () => void;
+  email: string | null;
+  displayName: string | null;
+  onSignOut: () => void;
+}) {
+  const label = displayName ?? email ?? 'No account';
+  return (
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="Signed in"
+      description={
+        <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <span>{email ?? 'No account'}</span>
+          <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
+            Tap Sign out below to end the session.
+          </span>
+        </span>
+      }
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="secondary" onClick={onSignOut}>
+            Sign out
+          </Button>
+        </div>
+      }
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[4],
+          padding: `${theme.space[4]}px 0`,
+        }}
+      >
+        <Avatar name={label} size="lg" badge="online" />
+        <div>
+          <p style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+            {label}
+          </p>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+            }}
+          >
+            Receptionist
+          </p>
+        </div>
+      </div>
+    </BottomSheet>
   );
 }
 
