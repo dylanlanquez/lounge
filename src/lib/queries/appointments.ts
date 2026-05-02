@@ -20,6 +20,7 @@ export interface AppointmentRow {
   source: AppointmentSource;
   event_type_label: string | null;
   staff_account_id: string | null;
+  notes: string | null;
   intake: IntakeAnswer[] | null;
   join_url: string | null;
   // Deposit captured at booking time via Calendly (PayPal / Stripe).

@@ -12,6 +12,7 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   source: 'calendly',
   event_type_label: 'Denture Repairs',
   staff_account_id: null,
+  notes: null,
   intake,
   join_url: null,
   deposit_pence: null,

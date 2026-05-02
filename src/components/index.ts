@@ -124,6 +124,9 @@ export type { RescheduleSheetProps } from './RescheduleSheet/RescheduleSheet.tsx
 export { NewBookingSheet } from './NewBookingSheet/NewBookingSheet.tsx';
 export type { NewBookingSheetProps } from './NewBookingSheet/NewBookingSheet.tsx';
 
+export { EditBookingSheet } from './EditBookingSheet/EditBookingSheet.tsx';
+export type { EditBookingSheetProps } from './EditBookingSheet/EditBookingSheet.tsx';
+
 export { ErrorBoundary } from './ErrorBoundary/ErrorBoundary.tsx';
 
 export { CollapsibleCard } from './CollapsibleCard/CollapsibleCard.tsx';
