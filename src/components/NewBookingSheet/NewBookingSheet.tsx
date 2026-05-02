@@ -286,10 +286,12 @@ export function NewBookingSheet({
               <PatientSearch
                 onPick={setPatient}
                 placeholder="Phone, name, or email"
+                enableShopifyLookup={Boolean(locationId)}
+                registerLocationId={locationId}
                 emptyHint={
                   <span>
-                    Search by phone, name, or email. Patients are scoped to this clinic
-                    automatically.
+                    Search by phone, name, or email. Includes Venneir.com customers
+                    who haven't been seen at this clinic yet, scoped via this location.
                   </span>
                 }
               />

@@ -384,11 +384,10 @@ export function Schedule() {
                 currentLocation.data ? (
                   <Button
                     variant="primary"
-                    size="sm"
                     onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
                   >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                      <Plus size={14} aria-hidden /> Book new appointment
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <Plus size={16} aria-hidden /> Book new appointment
                     </span>
                   </Button>
                 ) : undefined
