@@ -114,7 +114,10 @@ export function KioskStatusBar() {
           supported={network.supported}
         />
         {batterySupported && percent !== null ? (
-          <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
+          <>
+            <Divider />
+            <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
+          </>
         ) : null}
         <Divider />
         <span
@@ -491,8 +494,8 @@ function BatteryGlyph({
   );
 }
 
-// 1px hairline divider used to separate the three groups inside the
-// system tray (Settings · Wi-Fi+Battery · Date+Time). Renders at the
+// 1px hairline divider used to separate the system-tray groups
+// (Settings · Wi-Fi · Battery · Date+Time · Profile). Renders at the
 // same colour as the bottom border of the bar so it reads as part of
 // the chrome, not a content element.
 function Divider() {
