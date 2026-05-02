@@ -1,0 +1,502 @@
+// send-appointment-reminders
+//
+// Cron-driven sweep that sends 24-hours-before reminder emails for
+// native (manual / native-source) Lounge appointments. Idempotent
+// against repeated firings: stamps reminder_sent_at on send, so the
+// next hour's run skips anything already done.
+//
+// Auth: a shared CRON_SECRET, OR a service-role JWT in Authorization:
+// Bearer. The pg_cron job passes the service-role key from the
+// vault. Manual triggers (e.g. via curl during QA) can pass either.
+// User-JWT auth is intentionally NOT supported — this function
+// touches every clinic's bookings, no individual user has a
+// legitimate reason to invoke it.
+//
+// Sweep: lng_appointments WHERE status='booked' AND reminder_sent_at
+// IS NULL AND source != 'calendly' AND start_at BETWEEN now+23h AND
+// now+25h. The ±1h window covers the hourly cron cadence with
+// minute-level slack on either side; missing the window means the
+// next hour's run picks it up because reminder_sent_at is still
+// NULL.
+//
+// Per row: load the appointment_reminder template, hydrate variables
+// from patient + location + appointment fields, render to HTML via
+// the same parser as src/lib/emailRenderer.ts, send via Resend,
+// stamp reminder_sent_at. patient_events row written for the
+// timeline; lng_event_log row written for ops audit. Failures land
+// in lng_system_failures.
+
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
+const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
+const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
+
+// Optional shared secret. When set, callers must pass
+// X-Cron-Secret: <value> OR Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>.
+// Either is accepted so the cron job (which uses service-role) and
+// any manual ops trigger can both work.
+const CRON_SECRET = Deno.env.get('LNG_REMINDERS_CRON_SECRET') ?? '';
+
+// Reminder window. Default 23-25h covers an hourly cron with
+// generous slack. Configurable via env in case ops wants to tune
+// without redeploying.
+const REMINDER_WINDOW_START_HOURS = Number(
+  Deno.env.get('LNG_REMINDERS_WINDOW_START_HOURS') ?? '23',
+);
+const REMINDER_WINDOW_END_HOURS = Number(
+  Deno.env.get('LNG_REMINDERS_WINDOW_END_HOURS') ?? '25',
+);
+
+Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    return jsonResponse(200, {
+      ok: false,
+      error: `send-appointment-reminders crashed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+    });
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders() });
+  }
+  if (req.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405 });
+  }
+
+  // Auth check — accept service-role bearer OR cron secret header.
+  const auth = req.headers.get('authorization') ?? '';
+  const secret = req.headers.get('x-cron-secret') ?? '';
+  const bearerOk = auth === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+  const secretOk = !!CRON_SECRET && secret === CRON_SECRET;
+  if (!bearerOk && !secretOk) {
+    return jsonResponse(401, { ok: false, error: 'Unauthorised' });
+  }
+
+  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // ── Load template ──────────────────────────────────────────────
+  const { data: tplRaw, error: tplErr } = await admin
+    .from('lng_email_templates')
+    .select('subject, body_syntax, enabled')
+    .eq('key', 'appointment_reminder')
+    .maybeSingle();
+  if (tplErr) {
+    return jsonResponse(200, { ok: false, error: `Template read failed: ${tplErr.message}` });
+  }
+  if (!tplRaw) {
+    return jsonResponse(200, { ok: false, error: 'No appointment_reminder template configured' });
+  }
+  const template = tplRaw as { subject: string; body_syntax: string; enabled: boolean };
+  if (!template.enabled) {
+    return jsonResponse(200, { ok: true, sent: 0, skipped: 0, failed: 0, paused: true });
+  }
+
+  // ── Compute sweep window ───────────────────────────────────────
+  const now = new Date();
+  const windowStart = new Date(now.getTime() + REMINDER_WINDOW_START_HOURS * 3600 * 1000);
+  const windowEnd = new Date(now.getTime() + REMINDER_WINDOW_END_HOURS * 3600 * 1000);
+
+  // ── Sweep ─────────────────────────────────────────────────────
+  const { data: rowsRaw, error: sweepErr } = await admin
+    .from('lng_appointments')
+    .select(
+      'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref',
+    )
+    .eq('status', 'booked')
+    .neq('source', 'calendly')
+    .is('reminder_sent_at', null)
+    .gte('start_at', windowStart.toISOString())
+    .lt('start_at', windowEnd.toISOString());
+  if (sweepErr) {
+    return jsonResponse(200, { ok: false, error: `Sweep failed: ${sweepErr.message}` });
+  }
+  const rows = (rowsRaw ?? []) as AppointmentRow[];
+
+  let sent = 0;
+  let skipped = 0;
+  let failed = 0;
+  const errors: Array<{ appointmentId: string; reason: string }> = [];
+
+  for (const apt of rows) {
+    try {
+      const result = await processOne(admin, template, apt);
+      if (result.outcome === 'sent') sent += 1;
+      else if (result.outcome === 'skipped') skipped += 1;
+      else {
+        failed += 1;
+        errors.push({ appointmentId: apt.id, reason: result.reason });
+      }
+    } catch (e) {
+      failed += 1;
+      errors.push({
+        appointmentId: apt.id,
+        reason: e instanceof Error ? e.message : String(e),
+      });
+      await logFailure(admin, {
+        message: `Unhandled exception in reminder send: ${e instanceof Error ? e.message : String(e)}`,
+        context: { appointmentId: apt.id },
+      });
+    }
+  }
+
+  // Operational summary so the cron's response logs tell ops what
+  // actually happened in plain English.
+  await admin.from('lng_event_log').insert({
+    source: 'send-appointment-reminders',
+    event_type: 'sweep_complete',
+    payload: {
+      window_start: windowStart.toISOString(),
+      window_end: windowEnd.toISOString(),
+      eligible: rows.length,
+      sent,
+      skipped,
+      failed,
+      errors: errors.slice(0, 10), // cap so we don't bloat the log on a runaway
+    },
+  });
+
+  return jsonResponse(200, {
+    ok: true,
+    eligible: rows.length,
+    sent,
+    skipped,
+    failed,
+  });
+}
+
+interface ProcessResult {
+  outcome: 'sent' | 'skipped' | 'failed';
+  reason?: string;
+}
+
+async function processOne(
+  admin: SupabaseClient,
+  template: { subject: string; body_syntax: string },
+  apt: AppointmentRow,
+): Promise<ProcessResult> {
+  // Hydrate patient + location.
+  const [{ data: patientRaw }, { data: locationRaw }] = await Promise.all([
+    admin
+      .from('patients')
+      .select('first_name, last_name, email')
+      .eq('id', apt.patient_id)
+      .maybeSingle(),
+    admin
+      .from('locations')
+      .select('id, name, city, address')
+      .eq('id', apt.location_id)
+      .maybeSingle(),
+  ]);
+  const patient = patientRaw as PatientRow | null;
+  const location = locationRaw as LocationRow | null;
+
+  if (!patient?.email) {
+    // No email — silently skip, but still stamp reminder_sent_at so
+    // the sweep doesn't keep retrying. The patient-events row makes
+    // the skip visible in the timeline if anyone checks.
+    await admin
+      .from('lng_appointments')
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .eq('id', apt.id);
+    await admin.from('patient_events').insert({
+      patient_id: apt.patient_id,
+      event_type: 'appointment_reminder_skipped',
+      payload: { appointment_id: apt.id, reason: 'no_email_on_patient' },
+    });
+    return { outcome: 'skipped', reason: 'no_email_on_patient' };
+  }
+
+  if (!RESEND_API_KEY) {
+    return { outcome: 'failed', reason: 'RESEND_API_KEY not configured' };
+  }
+
+  // Build variables. Keep names matching what the admin UI exposes
+  // so the editor's autocomplete + the renderer never disagree.
+  const variables = buildVariables(apt, patient, location);
+
+  // Render via the inline parser (same pipeline as src/lib/emailRenderer.ts).
+  const subject = substituteVariables(template.subject, variables);
+  const bodyAfterVars = substituteVariables(template.body_syntax, variables);
+  const bodyHtml = parseFormatting(toBr(bodyAfterVars));
+  const html = wrapInLoungeShell(bodyHtml);
+  const text = bodyToText(bodyAfterVars);
+
+  // Send.
+  const sendResult = await sendEmail({ to: patient.email, subject, html, text });
+  if (!sendResult.ok) {
+    await logFailure(admin, {
+      message: `Resend send failed for reminder: ${sendResult.error}`,
+      context: { appointmentId: apt.id, recipient: patient.email },
+    });
+    return { outcome: 'failed', reason: sendResult.error };
+  }
+
+  // Stamp + log.
+  await admin
+    .from('lng_appointments')
+    .update({ reminder_sent_at: new Date().toISOString() })
+    .eq('id', apt.id);
+
+  await admin.from('patient_events').insert({
+    patient_id: apt.patient_id,
+    event_type: 'appointment_reminder_sent',
+    payload: {
+      appointment_id: apt.id,
+      recipient: patient.email,
+      provider: 'resend',
+      message_id: sendResult.messageId ?? null,
+    },
+  });
+
+  return { outcome: 'sent' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Variable hydration
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildVariables(
+  apt: AppointmentRow,
+  patient: PatientRow,
+  location: LocationRow | null,
+): Record<string, string> {
+  const start = new Date(apt.start_at);
+  const fmt = (opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', ...opts }).format(start);
+  const time = fmt({ hour: '2-digit', minute: '2-digit', hour12: false });
+  const dayShort = fmt({ weekday: 'short', day: 'numeric', month: 'short' });
+  const dateTime = `${dayShort} at ${time}`;
+  const dateLong = fmt({
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  return {
+    patientFirstName: patient.first_name?.trim() || 'there',
+    patientLastName: patient.last_name?.trim() || '',
+    appointmentTime: time,
+    appointmentDate: dayShort,
+    appointmentDateLong: dateLong,
+    appointmentDateTime: dateTime,
+    serviceLabel: labelForService(apt),
+    locationName: location?.name?.trim() || 'Venneir Lounge',
+    locationCity: location?.city?.trim() || '',
+    locationAddress: locationFreeform(location),
+    appointmentRef: apt.appointment_ref ?? '',
+  };
+}
+
+function labelForService(apt: AppointmentRow): string {
+  if (apt.event_type_label && apt.event_type_label.trim()) return apt.event_type_label.trim();
+  switch (apt.service_type) {
+    case 'denture_repair':
+      return 'Denture repair';
+    case 'click_in_veneers':
+      return 'Click-in veneers';
+    case 'same_day_appliance':
+      return 'Same-day appliance';
+    case 'impression_appointment':
+      return 'Impression appointment';
+    default:
+      return 'Appointment';
+  }
+}
+
+function locationFreeform(location: LocationRow | null): string {
+  if (!location) return 'Venneir Lounge';
+  const pieces = [location.name, location.address, location.city].filter(
+    (p): p is string => !!p && p.trim().length > 0,
+  );
+  return pieces.length ? pieces.join(', ') : 'Venneir Lounge';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Email parser — Deno copy of src/lib/emailRenderer.ts. Kept in sync
+// by hand because Deno can't import from src/ directly. If you change
+// one, change the other AND extend src/lib/emailRenderer.test.ts to
+// cover the new behaviour.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function substituteVariables(template: string, variables: Record<string, string>): string {
+  if (!template) return '';
+  return template.replace(/\{\{(\w+)\}\}/g, (full, key: string) => {
+    if (Object.prototype.hasOwnProperty.call(variables, key)) {
+      return variables[key] ?? '';
+    }
+    return full;
+  });
+}
+
+function toBr(text: string): string {
+  if (!text) return '';
+  return text.trim().replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+}
+
+function parseFormatting(html: string): string {
+  if (!html) return '';
+  let out = html;
+  out = out.replace(/---/g, '<hr style="border:none;border-top:1px solid #E5E2DC;margin:20px 0">');
+  out = out.replace(/### (.+?)(<br>|$)/g, '<h3 style="font-size:16px;font-weight:600;margin:14px 0 6px;color:#0E1414;letter-spacing:-0.01em">$1</h3>');
+  out = out.replace(/## (.+?)(<br>|$)/g, '<h2 style="font-size:20px;font-weight:600;margin:18px 0 8px;color:#0E1414;letter-spacing:-0.01em">$1</h2>');
+  out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  out = out.replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>');
+  out = out.replace(/!\[([^\]]*)\]\((.+?)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:10px 0;display:block">');
+  out = out.replace(
+    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
+    (_: string, label: string, bg: string | undefined, tc: string | undefined, rad: string | undefined, mt: string | undefined, mb: string | undefined, url: string) => {
+      const bgC = bg || '#0E1414';
+      const tcC = tc || '#FFFFFF';
+      const radC = rad || '999';
+      const mtC = mt || '12';
+      const mbC = mb || '12';
+      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em">${label}</a>`;
+    },
+  );
+  out = out.replace(
+    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
+    (_: string, label: string, bg: string | undefined, tc: string | undefined, rad: string | undefined, url: string) => {
+      const bgC = bg || '#0E1414';
+      const tcC = tc || '#FFFFFF';
+      const radC = rad || '999';
+      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:12px 0;letter-spacing:-0.005em">${label}</a>`;
+    },
+  );
+  out = out.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" style="color:#0E1414;text-decoration:underline">$1</a>');
+  out = out.replace(/^- (.+?)(<br>)/gm, '<span style="display:block;padding-left:16px;position:relative;margin:4px 0"><span style="position:absolute;left:0;top:0;color:#0E1414">•</span>$1</span>');
+  return out;
+}
+
+function bodyToText(syntax: string): string {
+  if (!syntax) return '';
+  return syntax
+    .replace(/### (.+)/g, '$1')
+    .replace(/## (.+)/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
+    .replace(/\{color:[^}]+\}([^{]+)\{\/color\}/g, '$1')
+    .replace(/!\[([^\]]*)\]\((.+?)\)/g, '[image: $1 — $2]')
+    .replace(/\[button:([^|\]]+)(?:\|[^\]]*)?\]\((.+?)\)/g, '$1: $2')
+    .replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)')
+    .replace(/^---$/gm, '────────────')
+    .trim();
+}
+
+function wrapInLoungeShell(bodyHtml: string): string {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
+  <div style="max-width:600px;margin:0 auto;padding:32px 24px">
+    <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
+      ${bodyHtml}
+    </div>
+    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">Venneir Limited</p>
+  </div>
+</body></html>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resend
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sendEmail(args: {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+  let r: Response;
+  try {
+    r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: [args.to],
+        reply_to: RESEND_REPLY_TO,
+        subject: args.subject,
+        html: args.html,
+        text: args.text,
+      }),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Resend network error: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) return { ok: false, error: `Resend ${r.status}: ${JSON.stringify(body)}` };
+  return { ok: true, messageId: (body as { id?: string }).id };
+}
+
+async function logFailure(
+  admin: SupabaseClient,
+  args: { message: string; context: Record<string, unknown> },
+): Promise<void> {
+  try {
+    await admin.from('lng_system_failures').insert({
+      source: 'send-appointment-reminders',
+      severity: 'error',
+      message: args.message,
+      context: args.context,
+    });
+  } catch {
+    // intentionally swallowed — failure-logging failure shouldn't crash the response
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface AppointmentRow {
+  id: string;
+  patient_id: string;
+  location_id: string;
+  start_at: string;
+  end_at: string;
+  source: 'calendly' | 'manual' | 'native';
+  status: string;
+  service_type: string | null;
+  event_type_label: string | null;
+  appointment_ref: string | null;
+}
+
+interface PatientRow {
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+}
+
+interface LocationRow {
+  id: string;
+  name: string | null;
+  city: string | null;
+  address: string | null;
+}
+
+function corsHeaders(): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': '*',
+  };
+}
+
+function jsonResponse(status: number, payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
+  });
+}
