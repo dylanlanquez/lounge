@@ -16,6 +16,7 @@ const Pay = lazy(() => import('./routes/Pay.tsx').then((m) => ({ default: m.Pay 
 const PatientProfile = lazy(() => import('./routes/PatientProfile.tsx').then((m) => ({ default: m.PatientProfile })));
 const Patients = lazy(() => import('./routes/Patients.tsx').then((m) => ({ default: m.Patients })));
 const Ledger = lazy(() => import('./routes/Ledger.tsx').then((m) => ({ default: m.Ledger })));
+const AppointmentDetail = lazy(() => import('./routes/AppointmentDetail.tsx').then((m) => ({ default: m.AppointmentDetail })));
 const InClinic = lazy(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })));
 const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })));
 const Reports = lazy(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })));
@@ -142,6 +143,7 @@ function RoutedErrorBoundary() {
           <Route path="/patient/:id" element={<RequireStaff><PatientProfile /></RequireStaff>} />
           <Route path="/patients" element={<RequireStaff><Patients /></RequireStaff>} />
           <Route path="/ledger" element={<RequireStaff><Ledger /></RequireStaff>} />
+          <Route path="/appointment/:id" element={<RequireStaff><AppointmentDetail /></RequireStaff>} />
           {/* Old path from before the rename — keep redirecting so any deep links staff bookmarked still land somewhere sensible. */}
           <Route path="/appointments" element={<Navigate to="/ledger" replace />} />
           <Route path="/in-clinic" element={<RequireStaff><InClinic /></RequireStaff>} />

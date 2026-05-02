@@ -199,6 +199,13 @@ export function Ledger() {
               data={data}
               onPick={(row) => {
                 const fullName = ledgerName(row);
+                // Walk-ins always have a visit (Arrival flow inserts
+                // both atomically). Appointments only have a visit
+                // once the patient checks in. So:
+                //   • Walk-in            → /visit/:visit_id
+                //   • Appointment +visit → /visit/:visit_id
+                //   • Appointment –visit → /appointment/:id (new
+                //                          full-page detail surface)
                 if (row.visit_id) {
                   navigate(`/visit/${row.visit_id}`, {
                     state: {
@@ -209,11 +216,24 @@ export function Ledger() {
                   });
                   return;
                 }
+                if (row.kind === 'appointment') {
+                  navigate(`/appointment/${row.id}`, {
+                    state: {
+                      from: 'ledger',
+                      patientId: row.patient_id,
+                      patientName: fullName,
+                    },
+                  });
+                  return;
+                }
+                // A walk-in row without a visit is a data-integrity
+                // edge that shouldn't happen — the Arrival flow
+                // creates both. Fall back to the patient profile so
+                // the receptionist still gets somewhere useful, and
+                // the warning was already logged when the ledger row
+                // was hydrated (visit lookup misses).
                 navigate(`/patient/${row.patient_id}`, {
-                  state: {
-                    from: 'ledger',
-                    patientName: fullName,
-                  },
+                  state: { from: 'ledger', patientName: fullName },
                 });
               }}
             />

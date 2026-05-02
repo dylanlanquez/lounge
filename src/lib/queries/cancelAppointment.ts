@@ -120,3 +120,69 @@ export async function cancelAppointment(input: {
 
   return { ok: true, emailSent, emailReason };
 }
+
+// Reverses a cancellation. Used by AppointmentDetail when staff
+// realise they cancelled the wrong row, or the patient changed their
+// mind in time. Clears cancel_reason and flips status back to
+// 'booked'. Symmetrical with reverseNoShow in visits.ts.
+//
+// Notify-patient is opt-in via notifyPatient=true (default off): we
+// don't want to spam confirmation emails by default for an internal
+// correction. When the caller asks for it, we route through the
+// same confirmation path used at booking time.
+export async function reverseCancellation(input: {
+  appointmentId: string;
+  notifyPatient?: boolean;
+}): Promise<{ ok: true; emailSent: boolean; emailReason: string | null }> {
+  const { data: existingRaw, error: readErr } = await supabase
+    .from('lng_appointments')
+    .select('id, patient_id, status')
+    .eq('id', input.appointmentId)
+    .maybeSingle();
+  if (readErr) throw new Error(`Couldn't read appointment: ${readErr.message}`);
+  if (!existingRaw) throw new Error('Appointment not found.');
+  const existing = existingRaw as { id: string; patient_id: string; status: string };
+  if (existing.status !== 'cancelled') {
+    throw new Error(`Only cancelled appointments can be reversed (current status: ${existing.status}).`);
+  }
+
+  const { error: updateErr } = await supabase
+    .from('lng_appointments')
+    .update({ status: 'booked', cancel_reason: null })
+    .eq('id', existing.id);
+  if (updateErr) {
+    throw new Error(`Couldn't reverse cancellation: ${updateErr.message}`);
+  }
+
+  // Audit row so the timeline shows the reversal explicitly. Best-
+  // effort — the cancel-reverse stands even if the audit insert fails
+  // (the lng_appointments status update is the source of truth).
+  const { data: actorAccountIdRaw } = await supabase.rpc('auth_account_id');
+  const actorAccountId = (actorAccountIdRaw as string | null) ?? null;
+  await supabase.from('patient_events').insert({
+    patient_id: existing.patient_id,
+    event_type: 'appointment_cancellation_reversed',
+    actor_account_id: actorAccountId,
+    payload: { appointment_id: existing.id },
+  });
+
+  let emailSent = false;
+  let emailReason: string | null = null;
+  if (input.notifyPatient === true) {
+    try {
+      const result = await sendAppointmentConfirmation({
+        appointmentId: existing.id,
+        intent: 'confirmation',
+      });
+      if (result.ok) {
+        emailSent = true;
+      } else {
+        emailReason = result.reason ?? result.error;
+      }
+    } catch (e) {
+      emailReason = e instanceof Error ? e.message : 'send_failed';
+    }
+  }
+
+  return { ok: true, emailSent, emailReason };
+}
