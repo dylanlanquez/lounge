@@ -36,12 +36,27 @@ export type TimelineEventType =
 
 export type TimelineTone = 'accent' | 'warn' | 'alert' | 'neutral';
 
+export interface TimelineFact {
+  /** Short label rendered above the value, e.g. "Service" or
+   * "Repair type". Already humanised by the producer. */
+  label: string;
+  /** Free-text value. Pre-humanised — the renderer treats it as
+   * trusted display text (no escaping beyond what React does). */
+  value: string;
+}
+
 export interface TimelineEvent {
   id: string;
   type: TimelineEventType;
   timestamp: string; // ISO
   title: string;
   detail?: string;
+  /** Optional structured facts rendered as a small label/value list
+   * under the inline detail line. Used by the appointment-booked
+   * row to surface intake answers (repair type, contact number,
+   * appliance, arch, etc.) so the timeline doubles as an audit
+   * record of what the patient actually told us at booking time. */
+  facts?: ReadonlyArray<TimelineFact>;
   // Display name of the staff member responsible for the event, when
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
@@ -78,6 +93,7 @@ interface VisitRow {
   id: string;
   patient_id: string;
   appointment_id: string | null;
+  walk_in_id: string | null;
   arrival_type: 'walk_in' | 'scheduled';
   receptionist_id: string | null;
   opened_at: string;
@@ -210,6 +226,96 @@ function accountDisplayName(a: AccountRow): string {
   return a.name?.trim() ?? '';
 }
 
+// Builds the structured fact list for a scheduled-booking timeline
+// row. Service first, then any Calendly intake question/answer
+// pairs the booking captured, then any free-text booking notes the
+// operator typed when creating it.
+function bookingFactsForScheduled(appt: {
+  event_type_label: string | null;
+  intake: ReadonlyArray<{ question: string; answer: string }> | null;
+  notes: string | null;
+}): TimelineFact[] {
+  const facts: TimelineFact[] = [];
+  const service = humaniseLikelySlug(appt.event_type_label);
+  if (service) facts.push({ label: 'Service', value: service });
+  if (appt.intake) {
+    for (const item of appt.intake) {
+      const value = item.answer?.trim();
+      if (!value) continue;
+      facts.push({ label: humaniseIntakeQuestion(item.question), value });
+    }
+  }
+  if (appt.notes?.trim()) {
+    facts.push({ label: 'Booking notes', value: appt.notes.trim() });
+  }
+  return facts;
+}
+
+// Same idea for walk-ins. The lng_walk_ins row carries structured
+// columns (service_type / appliance_type / arch / repair_notes)
+// rather than a Q/A array, so each becomes its own fact directly.
+function bookingFactsForWalkIn(wk: {
+  service_type: string | null;
+  appliance_type: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  repair_notes: string | null;
+}): TimelineFact[] {
+  const facts: TimelineFact[] = [];
+  const service = humaniseLikelySlug(wk.service_type);
+  if (service) facts.push({ label: 'Service', value: service });
+  if (wk.appliance_type?.trim()) {
+    facts.push({ label: 'Appliance type', value: wk.appliance_type.trim() });
+  }
+  if (wk.arch) {
+    facts.push({
+      label: 'Arch',
+      value: wk.arch === 'upper' ? 'Upper' : wk.arch === 'lower' ? 'Lower' : 'Upper and lower',
+    });
+  }
+  if (wk.repair_notes?.trim()) {
+    facts.push({ label: 'Repair notes', value: wk.repair_notes.trim() });
+  }
+  return facts;
+}
+
+function humaniseLikelySlug(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^[a-z0-9_]+$/.test(trimmed)) {
+    return trimmed.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  return trimmed;
+}
+
+// Mirrors AppointmentDetail's intake humaniser. Two surfaces share
+// the same Calendly-flavoured questions; keep the rewrites in sync
+// when adding new ones.
+function humaniseIntakeQuestion(question: string): string {
+  const trimmed = question.trim().replace(/[?:]+$/, '');
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  switch (lower) {
+    case 'what is the type of repair you would like done':
+    case 'what type of repair would you like done':
+    case 'type of repair':
+      return 'Repair type';
+    case 'contact number':
+    case 'phone number':
+    case "what's your contact number":
+      return 'Contact number';
+    case 'what is the name of the dentures':
+    case 'what is the brand of the dentures':
+      return 'Denture brand';
+    case 'where did you buy the dentures':
+      return 'Where the dentures were bought';
+    case 'how old are the dentures':
+      return 'Age of the dentures';
+    default:
+      return trimmed;
+  }
+}
+
 function joinDetail(...bits: Array<string | null | undefined>): string | undefined {
   const filtered = bits.filter((b): b is string => !!b && b.trim().length > 0);
   return filtered.length > 0 ? filtered.join(' · ') : undefined;
@@ -255,7 +361,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
         const { data: visitRaw, error: visitErr } = await supabase
           .from('lng_visits')
           .select(
-            'id, patient_id, appointment_id, arrival_type, receptionist_id, opened_at, closed_at, jb_ref'
+            'id, patient_id, appointment_id, walk_in_id, arrival_type, receptionist_id, opened_at, closed_at, jb_ref'
           )
           .eq('id', visitId)
           .maybeSingle();
@@ -434,45 +540,94 @@ async function fetchAccountNames(ids: string[]): Promise<Map<string, string>> {
 async function fetchAppointmentEvents(
   visit: VisitRow
 ): Promise<RawTimelineEvent[]> {
-  if (!visit.appointment_id) return [];
-  const { data, error: err } = await supabase
-    .from('lng_appointments')
-    .select(
-      'id, source, created_at, start_at, calendly_event_uri, deposit_pence, deposit_provider, deposit_paid_at, event_type_label, appointment_ref'
-    )
-    .eq('id', visit.appointment_id)
-    .maybeSingle();
-  if (err) throw new Error(err.message);
-  if (!data) return [];
-  const appt = data as AppointmentRow;
+  // Booking creation surfaces for two visit shapes:
+  //   • Scheduled — visit.appointment_id resolves; pull the booking
+  //     row + its intake / notes for the structured facts.
+  //   • Walk-in — visit.walk_in_id resolves; pull the walk-in row
+  //     for service_type / appliance_type / arch / repair_notes so
+  //     the timeline shows what was captured at intake.
+  // Either way the synthesised "Booking placed" row carries a `facts`
+  // list mirroring the appointment-detail timeline's enrichment.
   const out: RawTimelineEvent[] = [];
-  out.push({
-    id: `appt-${appt.id}-created`,
-    type: 'appointment_created',
-    timestamp: appt.created_at,
-    title: appt.calendly_event_uri
-      ? 'Appointment booked on Calendly'
-      : 'Appointment created',
-    detail: joinDetail(
-      appt.event_type_label,
-      `scheduled ${formatAppointmentSlot(appt.start_at)}`,
-      appt.appointment_ref
-    ),
-    hint: 'calendar',
-  });
-  if (appt.deposit_paid_at && appt.deposit_pence) {
+
+  if (visit.appointment_id) {
+    const { data, error: err } = await supabase
+      .from('lng_appointments')
+      .select(
+        'id, source, created_at, start_at, calendly_event_uri, deposit_pence, deposit_provider, deposit_paid_at, event_type_label, appointment_ref, intake, notes'
+      )
+      .eq('id', visit.appointment_id)
+      .maybeSingle();
+    if (err) throw new Error(err.message);
+    if (!data) return [];
+    const appt = data as AppointmentRow & {
+      intake: ReadonlyArray<{ question: string; answer: string }> | null;
+      notes: string | null;
+    };
     out.push({
-      id: `appt-${appt.id}-deposit`,
-      type: 'deposit_paid',
-      timestamp: appt.deposit_paid_at,
-      title: 'Deposit paid',
+      id: `appt-${appt.id}-created`,
+      type: 'appointment_created',
+      timestamp: appt.created_at,
+      title: appt.calendly_event_uri
+        ? 'Appointment booked on Calendly'
+        : 'Appointment created',
       detail: joinDetail(
-        PENCE(appt.deposit_pence),
-        appt.deposit_provider ? `via ${HUMAN_PROVIDER(appt.deposit_provider)}` : null
+        appt.event_type_label,
+        `scheduled ${formatAppointmentSlot(appt.start_at)}`,
+        appt.appointment_ref
       ),
-      hint: 'card',
+      facts: bookingFactsForScheduled(appt),
+      hint: 'calendar',
     });
+    if (appt.deposit_paid_at && appt.deposit_pence) {
+      out.push({
+        id: `appt-${appt.id}-deposit`,
+        type: 'deposit_paid',
+        timestamp: appt.deposit_paid_at,
+        title: 'Deposit paid',
+        detail: joinDetail(
+          PENCE(appt.deposit_pence),
+          appt.deposit_provider ? `via ${HUMAN_PROVIDER(appt.deposit_provider)}` : null
+        ),
+        hint: 'card',
+      });
+    }
   }
+
+  if (visit.walk_in_id) {
+    const { data, error: wkErr } = await supabase
+      .from('lng_walk_ins')
+      .select(
+        'id, created_at, service_type, appliance_type, arch, repair_notes, appointment_ref'
+      )
+      .eq('id', visit.walk_in_id)
+      .maybeSingle();
+    if (wkErr) throw new Error(wkErr.message);
+    if (data) {
+      const wk = data as {
+        id: string;
+        created_at: string;
+        service_type: string | null;
+        appliance_type: string | null;
+        arch: 'upper' | 'lower' | 'both' | null;
+        repair_notes: string | null;
+        appointment_ref: string | null;
+      };
+      out.push({
+        id: `walk-${wk.id}-created`,
+        type: 'appointment_created',
+        timestamp: wk.created_at,
+        title: 'Walk-in created',
+        detail: joinDetail(
+          wk.service_type ? humaniseLikelySlug(wk.service_type) : null,
+          wk.appointment_ref
+        ),
+        facts: bookingFactsForWalkIn(wk),
+        hint: 'calendar',
+      });
+    }
+  }
+
   return out;
 }
 

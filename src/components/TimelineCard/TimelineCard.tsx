@@ -210,6 +210,54 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             ) : null}
           </p>
         ) : null}
+        {event.facts && event.facts.length > 0 ? (
+          // Structured fact list under the detail line. Each label is
+          // muted-uppercase to match the section eyebrows used
+          // elsewhere (BookingFactsCard / IntakeCard) so the timeline
+          // reads as a peer surface for the same data, not a parallel
+          // dialect.
+          <dl
+            style={{
+              margin: `${theme.space[3]}px 0 0`,
+              padding: `${theme.space[3]}px ${theme.space[3]}px`,
+              background: theme.color.bg,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
+            {event.facts.map((f, i) => (
+              <div key={`${f.label}|${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <dt
+                  style={{
+                    margin: 0,
+                    fontSize: 11,
+                    color: theme.color.inkMuted,
+                    fontWeight: theme.type.weight.semibold,
+                    textTransform: 'uppercase',
+                    letterSpacing: theme.type.tracking.wide,
+                  }}
+                >
+                  {f.label}
+                </dt>
+                <dd
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.sm,
+                    color: theme.color.ink,
+                    lineHeight: theme.type.leading.relaxed,
+                    whiteSpace: 'pre-wrap',
+                    fontWeight: theme.type.weight.medium,
+                  }}
+                >
+                  {f.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
       </div>
     </li>
   );
