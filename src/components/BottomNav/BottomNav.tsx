@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CalendarRange, UserPlus, Users } from 'lucide-react';
+import { BookMarked, UserPlus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { useKeyboardOpen } from '../../lib/useKeyboardOpen.ts';
@@ -32,7 +32,7 @@ const PILL_MAX_WIDTH = 600;
 
 // Floating-pill bottom nav: 5 equal nav tabs.
 //
-//   Schedule | Patients | Walk-in | In clinic | Appointments
+//   Schedule | Patients | Walk-in | In clinic | Ledger
 //
 // Walk-in is just another tab. An earlier design lifted Walk-in
 // into a raised circular FAB; staff feedback was that it dominated
@@ -40,11 +40,10 @@ const PILL_MAX_WIDTH = 600;
 //
 // Profile / sign-out moved to the kiosk top bar (next to Admin) so
 // the bottom row of primary destinations stays focused on what staff
-// actually navigate between every shift. Appointments takes the
-// freed slot — the full booking ledger (past + future, every status)
-// is referenced often enough ("what happened with this patient last
-// month?", "show me every cancelled booking this week") that buring
-// it in a sub-menu would slow staff down.
+// actually navigate between every shift. Ledger takes the freed
+// slot — every patient interaction (booked, cancelled, no-show,
+// walk-in, completed visit) lives there, kept distinct from
+// Schedule so staff don't reach for it when they want today's diary.
 
 export function BottomNav() {
   const location = useLocation();
@@ -65,13 +64,17 @@ export function BottomNav() {
   const onPatients = () => navigate('/patients');
   const onWalkIn = () => navigate('/walk-in/new');
   const onInClinic = () => navigate('/in-clinic');
-  const onAppointments = () => navigate('/appointments');
+  const onLedger = () => navigate('/ledger');
 
   const isSchedule = location.pathname === '/' || location.pathname.startsWith('/schedule');
   const isPatients = location.pathname.startsWith('/patients');
   const isWalkIn = location.pathname.startsWith('/walk-in');
   const isInClinic = location.pathname.startsWith('/in-clinic');
-  const isAppointments = location.pathname.startsWith('/appointments');
+  // /appointments redirects to /ledger but the active state should
+  // light up either path so the brief overlap during a deploy roll
+  // doesn't drop the highlight.
+  const isLedger =
+    location.pathname.startsWith('/ledger') || location.pathname.startsWith('/appointments');
 
   return (
     <>
@@ -162,10 +165,10 @@ export function BottomNav() {
             </li>
             <li style={{ display: 'flex' }}>
               <NavTab
-                label="Appointments"
-                icon={<CalendarRange size={22} />}
-                active={isAppointments}
-                onClick={onAppointments}
+                label="Ledger"
+                icon={<BookMarked size={22} />}
+                active={isLedger}
+                onClick={onLedger}
               />
             </li>
           </ul>
