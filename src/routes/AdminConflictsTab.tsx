@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Box, ChevronDown, ChevronRight, Layers, Plus, Settings2, Sparkles, Trash2, Zap } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Box, Check, ChevronDown, ChevronRight, Layers, Plus, Settings2, Sparkles, Trash2, UserCircle2, Zap } from 'lucide-react';
 import {
   Button,
   Card,
@@ -29,6 +29,11 @@ import {
   useResourcePools,
   useServicePools,
 } from '../lib/queries/bookingTypes.ts';
+import { useStaff, type StaffRow } from '../lib/queries/staff.ts';
+import {
+  setStaffPoolAssignments,
+  useAllStaffPoolAssignments,
+} from '../lib/queries/staffPoolAssignments.ts';
 
 // Conflicts & capacity tab — operator-facing settings page that
 // drives the reschedule conflict checker. Three sections in operator
@@ -502,6 +507,11 @@ function ResourcesSection({
   onToast: (t: { tone: 'success' | 'error'; title: string }) => void;
 }) {
   const [editing, setEditing] = useState<EditPoolTarget | null>(null);
+  // Staff registry + the staff↔pool assignment matrix. Both live one
+  // up-tree from PoolRow because every staff_role pool needs to render
+  // its assigned-staff chips and we don't want N hooks for N pools.
+  const staff = useStaff();
+  const staffAssignments = useAllStaffPoolAssignments();
 
   const usageByPool = useMemo(() => {
     const map = new Map<string, BookingServiceType[]>();
@@ -512,6 +522,13 @@ function ResourcesSection({
     }
     return map;
   }, [servicePools]);
+
+  // Staff lookup keyed by id for fast name resolution inside rows.
+  const staffById = useMemo(() => {
+    const m = new Map<string, StaffRow>();
+    for (const s of staff.data) m.set(s.staff_member_id, s);
+    return m;
+  }, [staff.data]);
 
   // Split pools into the two visual groups. Same conflict semantics
   // apply to both — this is purely a presentation split so the
@@ -579,14 +596,18 @@ function ResourcesSection({
             emptyText="No physical resources yet."
             pools={resourcePools}
             usageByPool={usageByPool}
+            staffAssignmentsByPool={staffAssignments.byPoolId}
+            staffById={staffById}
             onEdit={(pool) => setEditing({ kind: 'edit', pool })}
             onRemove={handleRemove}
           />
           <PoolGroup
             title="Staff roles"
-            emptyText="No staff roles yet. Add one if a service needs a specific kind of staff member, like an impression taker."
+            emptyText="No staff roles yet. Add one when a service needs a specific kind of staff member, like an impression taker. Capacity is the count of active staff you assign."
             pools={staffRolePools}
             usageByPool={usageByPool}
+            staffAssignmentsByPool={staffAssignments.byPoolId}
+            staffById={staffById}
             onEdit={(pool) => setEditing({ kind: 'edit', pool })}
             onRemove={handleRemove}
           />
@@ -597,11 +618,18 @@ function ResourcesSection({
         <PoolEditorDialog
           target={editing}
           existing={pools}
+          activeStaff={staff.data.filter((s) => s.status === 'active')}
+          initialStaffIds={
+            editing.kind === 'edit'
+              ? staffAssignments.byPoolId[editing.pool.id] ?? []
+              : []
+          }
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
             onToast({ tone: 'success', title: 'Saved' });
             onChanged();
+            staffAssignments.refresh();
           }}
           onError={(msg) => onToast({ tone: 'error', title: msg })}
         />
@@ -619,6 +647,8 @@ function PoolGroup({
   emptyText,
   pools,
   usageByPool,
+  staffAssignmentsByPool,
+  staffById,
   onEdit,
   onRemove,
 }: {
@@ -626,6 +656,8 @@ function PoolGroup({
   emptyText: string;
   pools: ResourcePoolRow[];
   usageByPool: Map<string, BookingServiceType[]>;
+  staffAssignmentsByPool: Record<string, string[]>;
+  staffById: Map<string, StaffRow>;
   onEdit: (pool: ResourcePoolRow) => void;
   onRemove: (poolId: string) => void;
 }) {
@@ -673,6 +705,13 @@ function PoolGroup({
               isFirst={i === 0}
               pool={p}
               consumers={usageByPool.get(p.id) ?? []}
+              assignedStaff={
+                p.kind === 'staff_role'
+                  ? (staffAssignmentsByPool[p.id] ?? [])
+                      .map((sid) => staffById.get(sid))
+                      .filter((s): s is StaffRow => !!s)
+                  : []
+              }
               onEdit={() => onEdit(p)}
               onRemove={() => onRemove(p.id)}
             />
@@ -687,15 +726,49 @@ function PoolRow({
   isFirst,
   pool,
   consumers,
+  assignedStaff,
   onEdit,
   onRemove,
 }: {
   isFirst: boolean;
   pool: ResourcePoolRow;
   consumers: BookingServiceType[];
+  /** Active staff assigned to this pool. Empty for non-staff-role pools. */
+  assignedStaff: StaffRow[];
   onEdit: () => void;
   onRemove: () => void;
 }) {
+  const isStaffRole = pool.kind === 'staff_role';
+  // Staff-role rows lead with the people in the role and treat
+  // capacity as a derived consequence ("Sarah & Tom · 2 in this
+  // role"), since that's how an admin scans the list. Resource rows
+  // keep the original "We have N" copy because there's no list of
+  // human names to render.
+  const summaryLine = isStaffRole
+    ? assignedStaff.length === 0
+      ? 'No staff assigned yet · the booking checker will block any service that needs this role'
+      : `${formatStaffList(assignedStaff)} · ${assignedStaff.length} in this role`
+    : `We have ${pool.capacity}${
+        consumers.length > 0
+          ? ` · used by ${consumers.length} booking type${consumers.length === 1 ? '' : 's'}`
+          : ' · not in use yet'
+      }`;
+  // Pill copy: staff_role at 0 reads "0 assigned" (alarming on
+  // purpose); resource rows keep the original "Only 1" / "N of these".
+  const pillCopy = isStaffRole
+    ? assignedStaff.length === 0
+      ? '0 assigned'
+      : `${assignedStaff.length} assigned`
+    : pool.capacity === 1
+    ? 'Only 1'
+    : `${pool.capacity} of these`;
+  // For staff-role rows with no assignments yet we tone the pill
+  // soft-orange so the "you need to assign somebody" signal lands —
+  // a 0-staff role silently blocks every booking that consumes it
+  // until the admin assigns somebody, and that needs to be visible.
+  const pillTone: 'neutral' | 'unsuitable' =
+    isStaffRole && assignedStaff.length === 0 ? 'unsuitable' : 'neutral';
+
   return (
     <li
       style={{
@@ -720,7 +793,7 @@ function PoolRow({
           flexShrink: 0,
         }}
       >
-        <Box size={16} aria-hidden />
+        {isStaffRole ? <UserCircle2 size={16} aria-hidden /> : <Box size={16} aria-hidden />}
       </span>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span
@@ -737,19 +810,18 @@ function PoolRow({
           style={{
             fontSize: theme.type.size.xs,
             color: theme.color.inkMuted,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
-          We have <strong style={{ color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
-            {pool.capacity}
-          </strong>
-          {consumers.length > 0
-            ? ` · used by ${consumers.length} booking type${consumers.length === 1 ? '' : 's'}`
-            : ' · not in use yet'}
+          {summaryLine}
+          {!isStaffRole && consumers.length === 0 ? '' : null}
           {pool.notes ? ` · ${pool.notes}` : ''}
         </span>
       </div>
-      <StatusPill tone="neutral" size="sm">
-        {pool.capacity === 1 ? 'Only 1' : `${pool.capacity} of these`}
+      <StatusPill tone={pillTone} size="sm">
+        {pillCopy}
       </StatusPill>
       <IconAction
         ariaLabel={`Edit ${pool.display_name}`}
@@ -766,15 +838,35 @@ function PoolRow({
   );
 }
 
+// Two names join with "and"; three or more get the Oxford-comma + "and"
+// treatment so the row reads naturally at a glance: "Sarah, Tom and Mira"
+// instead of "Sarah, Tom, Mira" (which reads like a list mid-sentence)
+// or "Sarah, Tom, and Mira" (heavier punctuation). Single name renders
+// alone.
+function formatStaffList(staff: StaffRow[]): string {
+  const names = staff.map((s) => s.display_name);
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  const head = names.slice(0, -1).join(', ');
+  return `${head} and ${names[names.length - 1]}`;
+}
+
 function PoolEditorDialog({
   target,
   existing,
+  activeStaff,
+  initialStaffIds,
   onClose,
   onSaved,
   onError,
 }: {
   target: EditPoolTarget;
   existing: ResourcePoolRow[];
+  /** Active staff members the admin can assign to this role. */
+  activeStaff: StaffRow[];
+  /** Staff currently assigned to this pool (only meaningful on edit). */
+  initialStaffIds: string[];
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
@@ -790,12 +882,21 @@ function PoolEditorDialog({
     seed?.capacity != null ? String(seed.capacity) : '1',
   );
   const [notes, setNotes] = useState(seed?.notes ?? '');
+  // Staff selection. Re-seeded whenever the row changes — same
+  // pattern as the email-template editor: any external version bump
+  // refreshes the form.
+  const [selectedStaffIds, setSelectedStaffIds] = useState<string[]>(initialStaffIds);
+  useEffect(() => {
+    setSelectedStaffIds(initialStaffIds);
+  }, [initialStaffIds]);
   const [busy, setBusy] = useState(false);
 
   const handleNameChange = (v: string) => {
     setDisplayName(v);
     if (isNew) setPoolId(poolIdFromDisplayName(v));
   };
+
+  const isStaffRole = poolKind === 'staff_role';
 
   const save = async () => {
     setBusy(true);
@@ -804,9 +905,20 @@ function PoolEditorDialog({
       if (!isValidPoolId(poolId)) {
         throw new Error('Short name must start with a letter and use only lowercase letters, digits, and hyphens.');
       }
-      const cap = parseInt(capacity, 10);
-      if (!Number.isFinite(cap) || cap <= 0) {
-        throw new Error('How many do you have? Enter a positive whole number.');
+      // Capacity validation only applies to resource pools — for
+      // staff_role pools the DB trigger will set capacity from the
+      // active staff count, so we ignore the input. We pass the
+      // current row's capacity straight through on edit, or 0 on
+      // create (the trigger will recompute it on the first
+      // assignment write).
+      let cap: number;
+      if (isStaffRole) {
+        cap = seed?.capacity ?? 0;
+      } else {
+        cap = parseInt(capacity, 10);
+        if (!Number.isFinite(cap) || cap <= 0) {
+          throw new Error('How many do you have? Enter a positive whole number.');
+        }
       }
       if (isNew && existing.some((e) => e.id === poolId)) {
         throw new Error(`Already have a "${poolId}". Pick a different short name.`);
@@ -818,6 +930,12 @@ function PoolEditorDialog({
         kind: poolKind,
         notes: notes.trim() === '' ? null : notes.trim(),
       });
+      // For staff_role pools, replace the assignment set in the same
+      // save action so capacity lands correctly without a second
+      // round-trip. The RPC handles diffing internally.
+      if (isStaffRole) {
+        await setStaffPoolAssignments(poolId, selectedStaffIds);
+      }
       onSaved();
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not save');
@@ -826,14 +944,7 @@ function PoolEditorDialog({
     }
   };
 
-  // Copy adapts to the chosen kind so the helper text reads
-  // naturally for both "How many chairs do you have?" and "How many
-  // impression takers do you have on a typical day?".
-  const isStaffRole = poolKind === 'staff_role';
   const namePlaceholder = isStaffRole ? 'e.g. Impression takers' : 'e.g. Chairs';
-  const capacityHelper = isStaffRole
-    ? 'How many people in this role can be working at once. The booking that needs this role can run that many side-by-side.'
-    : 'Bookings that need this can run side-by-side up to this number.';
 
   return (
     <Dialog
@@ -876,15 +987,23 @@ function PoolEditorDialog({
               : 'Set when this was created. Stays stable to keep mappings intact.'
           }
         />
-        <Input
-          label={isStaffRole ? 'How many in this role?' : 'How many do you have?'}
-          required
-          type="number"
-          value={capacity}
-          onChange={(e) => setCapacity(e.target.value)}
-          placeholder="1"
-          helper={capacityHelper}
-        />
+        {isStaffRole ? (
+          <StaffPicker
+            allStaff={activeStaff}
+            selectedIds={selectedStaffIds}
+            onChange={setSelectedStaffIds}
+          />
+        ) : (
+          <Input
+            label="How many do you have?"
+            required
+            type="number"
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            placeholder="1"
+            helper="Bookings that need this can run side-by-side up to this number."
+          />
+        )}
         <Input
           label="Note (optional)"
           value={notes}
@@ -893,6 +1012,165 @@ function PoolEditorDialog({
         />
       </div>
     </Dialog>
+  );
+}
+
+// Checkbox list of active staff members. Replaces the manual capacity
+// input for staff_role pools — capacity is the count of ticked rows.
+// Empty-active-staff state hands the admin a pointer to the Staff tab
+// rather than a useless empty box.
+function StaffPicker({
+  allStaff,
+  selectedIds,
+  onChange,
+}: {
+  allStaff: StaffRow[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const toggle = (id: string) => {
+    if (selectedSet.has(id)) onChange(selectedIds.filter((x) => x !== id));
+    else onChange([...selectedIds, id]);
+  };
+  const empty = allStaff.length === 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.ink,
+          }}
+        >
+          Who is in this role?
+          <span style={{ color: theme.color.alert, marginLeft: 4 }}>*</span>
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {selectedIds.length} of {allStaff.length} selected
+        </span>
+      </div>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        Capacity is the count of active staff in this role. Toggling someone off here drops the booking checker's cap accordingly. Deactivating them on the Staff tab does the same automatically.
+      </p>
+      {empty ? (
+        <div
+          style={{
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            border: `1px dashed ${theme.color.border}`,
+            borderRadius: theme.radius.input,
+            background: theme.color.bg,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          No active staff yet. Add staff on the Staff tab and they'll appear here.
+        </div>
+      ) : (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.input,
+            maxHeight: 240,
+            overflowY: 'auto',
+          }}
+        >
+          {allStaff.map((s, i) => {
+            const checked = selectedSet.has(s.staff_member_id);
+            return (
+              <li
+                key={s.staff_member_id}
+                style={{
+                  borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}`,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggle(s.staff_member_id)}
+                  aria-pressed={checked}
+                  style={{
+                    appearance: 'none',
+                    width: '100%',
+                    background: checked ? theme.color.accentBg : 'transparent',
+                    border: 'none',
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      border: `1.5px solid ${checked ? theme.color.accent : theme.color.border}`,
+                      background: checked ? theme.color.accent : theme.color.surface,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                    }}
+                  >
+                    {checked ? <Check size={12} color={theme.color.surface} aria-hidden /> : null}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: theme.type.size.sm,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.ink,
+                      }}
+                    >
+                      {s.display_name}
+                    </span>
+                    {s.login_email ? (
+                      <span
+                        style={{
+                          display: 'block',
+                          marginTop: 2,
+                          fontSize: theme.type.size.xs,
+                          color: theme.color.inkMuted,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {s.login_email}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
