@@ -254,7 +254,9 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
           ? { label: 'Patients', onClick: () => navigate('/patients') }
           : visitFrom === 'in_clinic'
             ? { label: 'In clinic', onClick: () => navigate('/in-clinic') }
-            : { label: 'Schedule', onClick: () => navigate('/schedule') };
+            : visitFrom === 'ledger'
+              ? { label: 'Ledger', onClick: () => navigate('/ledger') }
+              : { label: 'Schedule', onClick: () => navigate('/schedule') };
       return [
         baseCrumb,
         {

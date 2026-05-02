@@ -2162,23 +2162,14 @@ function VisitBreadcrumbs({
       ];
     }
     if (entry.from === 'ledger') {
-      // Ledger › Ewa Deb › Appt. 29 Apr — same shape as the
-      // patient-list trail since the Ledger is its own top-level
-      // destination. Patient crumb sits between origin and the visit
-      // so the chain reads naturally.
-      if (patient) {
-        return [
-          { label: 'Ledger', onClick: () => navigate('/ledger') },
-          {
-            label: patientNameLabel,
-            onClick: () =>
-              navigate(`/patient/${patient.id}`, {
-                state: { patientName: livePatientName },
-              }),
-          },
-          { label: buildVisitLabel(false) },
-        ];
-      }
+      // Ledger › Ewa Deb's Appt. 29 Apr — two crumbs, name baked
+      // into the visit crumb. Mirrors the In-clinic shape: each Ledger
+      // row already shows the patient + service + status before the
+      // click, so a third crumb just for the patient name is clutter.
+      // Drilling into the patient profile from here happens via the
+      // "View patient profile" button on the page itself, which
+      // forwards the Ledger origin so the chain stays "Ledger ›
+      // Visit › Patient name" on that page.
       return [
         { label: 'Ledger', onClick: () => navigate('/ledger') },
         { label: buildVisitLabel(true) },
