@@ -208,24 +208,40 @@ export function useAppointmentTimeline(
           return matchesAppointment(f.context, appt);
         });
 
-        // Resolve actor names in one round-trip so each row can show
-        // "by Sarah Henderson" instead of a UUID.
-        const actorIds = Array.from(
-          new Set(rows.map((r) => r.actor_account_id).filter((x): x is string => !!x)),
-        );
-        const actorById = new Map<string, string>();
-        if (actorIds.length > 0) {
+        // Resolve account names in one round-trip so each row can
+        // show "by Sarah Henderson" instead of a UUID, AND the
+        // appointment_edited diff lines can show "assigned staff:
+        // John → Sarah" instead of leaking the underlying account
+        // ids. Combine the actor ids and any account ids referenced
+        // in the changes payload of edit events into a single fetch.
+        const accountIdsToResolve = new Set<string>();
+        for (const r of rows) {
+          if (r.actor_account_id) accountIdsToResolve.add(r.actor_account_id);
+          if (r.event_type === 'appointment_edited') {
+            const changes = readObject(r.payload, 'changes');
+            if (changes) {
+              for (const value of Object.values(changes)) {
+                if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+                const diff = value as { from?: unknown; to?: unknown };
+                if (typeof diff.from === 'string' && isUuid(diff.from)) accountIdsToResolve.add(diff.from);
+                if (typeof diff.to === 'string' && isUuid(diff.to)) accountIdsToResolve.add(diff.to);
+              }
+            }
+          }
+        }
+        const accountById = new Map<string, string>();
+        if (accountIdsToResolve.size > 0) {
           const { data: accounts, error: accErr } = await supabase
             .from('accounts')
             .select('id, first_name, last_name, name')
-            .in('id', actorIds);
+            .in('id', Array.from(accountIdsToResolve));
           if (cancelled) return;
           if (accErr) {
             await logFailure({
-              source: 'useAppointmentTimeline.actors',
+              source: 'useAppointmentTimeline.accounts',
               severity: 'warning',
               message: accErr.message,
-              context: { actorIdCount: actorIds.length },
+              context: { idCount: accountIdsToResolve.size },
             });
           } else {
             for (const a of (accounts ?? []) as Array<{
@@ -234,10 +250,13 @@ export function useAppointmentTimeline(
               last_name: string | null;
               name: string | null;
             }>) {
-              actorById.set(a.id, accountDisplayName(a));
+              accountById.set(a.id, accountDisplayName(a));
             }
           }
         }
+        // Backwards-compatible alias used below in mapEvent. The
+        // single accountById map now serves both roles.
+        const actorById = accountById;
 
         // Resolve referenced sibling appointments (the "from" or "to"
         // side of any reschedule that mentions us). We need their
@@ -296,7 +315,7 @@ export function useAppointmentTimeline(
         }
 
         for (const r of rows) {
-          const mapped = mapEvent(r, appt, actorById, siblingById);
+          const mapped = mapEvent(r, appt, actorById, siblingById, accountById);
           if (mapped) out.push(mapped);
         }
 
@@ -352,6 +371,7 @@ function mapEvent(
   appt: RawAppointmentRow,
   actorById: Map<string, string>,
   siblingById: Map<string, { start_at: string }>,
+  accountById: Map<string, string>,
 ): TimelineEvent | null {
   const actor = row.actor_account_id ? actorById.get(row.actor_account_id) : undefined;
   const base = { id: row.id, timestamp: row.created_at, actor };
@@ -371,7 +391,12 @@ function mapEvent(
 
     case 'appointment_edited': {
       const changes = readObject(row.payload, 'changes');
-      const detail = describeChanges(changes);
+      const detail = describeChanges(changes, accountById);
+      // No real change worth surfacing — older audit rows wrote a
+      // diff even when from === to. Drop the timeline row entirely
+      // so the receptionist doesn't see a "Booking edited" event
+      // they didn't make.
+      if (!detail) return null;
       return {
         ...base,
         type: 'patient_event',
@@ -701,38 +726,61 @@ function humaniseSource(source: string): string {
   return source;
 }
 
-function describeChanges(changes: Record<string, unknown> | null): string | undefined {
+function describeChanges(
+  changes: Record<string, unknown> | null,
+  accountById: Map<string, string>,
+): string | undefined {
   if (!changes) return undefined;
   const lines: string[] = [];
   for (const [key, raw] of Object.entries(changes)) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const diff = raw as { from?: unknown; to?: unknown };
-    const fromS = formatChangeValue(key, diff.from);
-    const toS = formatChangeValue(key, diff.to);
+    const fromS = formatChangeValue(key, diff.from, accountById);
+    const toS = formatChangeValue(key, diff.to, accountById);
+    // Skip non-changes — older audit rows wrote a diff even when
+    // from and to were the same value. Would render as "notes:
+    // hey bby → hey bby" which is jargon-feeling and useless.
+    if (fromS === toS) continue;
     if (fromS == null && toS == null) continue;
     const label = humaniseField(key);
-    // Compact "label: from → to" so multiple changes on one row stay
-    // on one line. Empty-to-set or set-to-empty are both legible.
-    lines.push(`${label}: ${fromS ?? '—'} → ${toS ?? '—'}`);
+    lines.push(`${label}: ${fromS ?? 'none'} → ${toS ?? 'none'}`);
   }
   return lines.length > 0 ? lines.join(' · ') : undefined;
 }
 
-function formatChangeValue(field: string, value: unknown): string | null {
+// Render a single change-value into receptionist-friendly text.
+// Never returns backend jargon — UUIDs resolve to display names where
+// possible, unknown ids fall through to "another staff member" rather
+// than leaking the raw id, JSON values get a generic "(updated)"
+// label so a stranger field type doesn't print a JSON.stringify blob.
+function formatChangeValue(
+  field: string,
+  value: unknown,
+  accountById: Map<string, string>,
+): string | null {
   if (value == null || value === '') return null;
   if (typeof value === 'string') {
     if (field === 'staff_account_id') {
-      // Account ids aren't useful to a receptionist; collapse to a
-      // less-noisy "(staff)" placeholder. Future improvement: fetch
-      // the account name. Out of scope here so the timeline doesn't
-      // balloon into a 5-table join.
-      return '(staff member)';
+      // Resolve the account id to a display name. Falls back to
+      // "another staff member" rather than "(staff member)" or the
+      // raw uuid — the former reads as a generic noun, the latter
+      // two are jargon.
+      return accountById.get(value) ?? 'another staff member';
     }
     return truncate(value, 60);
   }
   if (typeof value === 'number') return String(value);
   if (typeof value === 'boolean') return value ? 'yes' : 'no';
-  return JSON.stringify(value);
+  // Last-resort fallback for any unexpected JSON value. Receptionist
+  // sees "(updated)" rather than a stringified blob.
+  return '(updated)';
+}
+
+// Quick UUID shape check used to decide whether a string change-value
+// should go through the account resolver. Doesn't validate strictness
+// (we only need to filter out free-text strings).
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
 function truncate(s: string, max: number): string {
@@ -818,7 +866,11 @@ function humaniseFailureSource(source: string): string {
     case 'calendly-webhook':
       return 'Calendly sync failure';
     default:
-      return `System failure (${source})`;
+      // Never leak the raw edge-function slug into the receptionist's
+      // timeline. A generic line + the structured failure message
+      // below is enough; ops can read the raw source from
+      // lng_system_failures directly.
+      return 'System failure';
   }
 }
 
