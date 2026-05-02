@@ -1,24 +1,24 @@
-import { type CSSProperties, type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   CalendarClock,
   CalendarPlus,
-  Check,
-  ChevronDown,
   Clock,
-  Info,
   User,
 } from 'lucide-react';
 import {
   BottomSheet,
   Button,
   Checkbox,
+  ConflictBlock,
   DatePicker,
   DropdownSelect,
+  FieldTrigger,
+  InlineHint,
   Input,
+  Section,
+  StatusBanner,
   TimePicker,
   Toast,
-  Tooltip,
 } from '../index.ts';
 import { PatientSearch } from '../PatientSearch/PatientSearch.tsx';
 import { theme } from '../../theme/index.ts';
@@ -337,7 +337,9 @@ export function NewBookingSheet({
             />
             {configError ? (
               <div style={{ marginTop: theme.space[3] }}>
-                <ErrorBanner title="Couldn't load booking config" body={configError} />
+                <StatusBanner tone="error" title="Couldn't load booking config">
+                  {configError}
+                </StatusBanner>
               </div>
             ) : null}
           </Section>
@@ -404,11 +406,9 @@ export function NewBookingSheet({
             ) : null}
             {!inWorkingHours && date && time && hoursForDate ? (
               <div style={{ marginTop: theme.space[3] }}>
-                <ErrorBanner
-                  title="Outside working hours"
-                  body={`This service runs ${hoursForDate.open} to ${hoursForDate.close} on the day you picked.`}
-                  subtle
-                />
+                <StatusBanner tone="warning" title="Outside working hours">
+                  This service runs {hoursForDate.open} to {hoursForDate.close} on the day you picked.
+                </StatusBanner>
               </div>
             ) : null}
             <div style={{ marginTop: theme.space[3] }}>
@@ -418,6 +418,7 @@ export function NewBookingSheet({
                 error={conflictError}
                 slotIsValid={slotIsValid}
                 durationMinutes={config?.duration_default ?? null}
+                freeBody="Slot is free. Saving will add it to the schedule."
               />
             </div>
           </Section>
@@ -475,104 +476,6 @@ export function NewBookingSheet({
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Section header pattern lifted from the arrival/intake form
-// (src/routes/Arrival.tsx) but trimmed: bold black H2 title, optional
-// (i) info tooltip — same affordance PatientSearch uses for the
-// venneir.com section header. Static guidance lives behind the
-// tooltip; dynamic per-section state (e.g. duration once a service
-// is picked) renders as a small inline caption inside the section
-// content, not as a header subtitle.
-function Section({
-  title,
-  info,
-  required = false,
-  children,
-}: {
-  title: string;
-  info?: React.ReactNode;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-      }}
-    >
-      <header style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <h2
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
-            color: theme.color.ink,
-          }}
-        >
-          {title}
-          {required ? (
-            <span
-              aria-hidden
-              style={{
-                color: theme.color.alert,
-                fontWeight: theme.type.weight.semibold,
-                marginLeft: 4,
-              }}
-            >
-              *
-            </span>
-          ) : null}
-        </h2>
-        {info ? (
-          <Tooltip align="start" maxWidth={300} variant="light" content={info}>
-            <button
-              type="button"
-              aria-label={`More about: ${title}`}
-              style={{
-                appearance: 'none',
-                border: 'none',
-                background: 'transparent',
-                padding: theme.space[1],
-                margin: 0,
-                borderRadius: theme.radius.pill,
-                color: theme.color.inkSubtle,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Info size={14} aria-hidden />
-            </button>
-          </Tooltip>
-        ) : null}
-      </header>
-      <div>{children}</div>
-    </section>
-  );
-}
-
-// Small inline caption used inside Section content for dynamic
-// per-section state (e.g. duration + working hours once a service
-// is picked). Distinct from the Section header — sits just under
-// the input, in muted ink at the size we use for helper text.
-function InlineHint({ children, tone = 'muted' }: { children: React.ReactNode; tone?: 'muted' | 'alert' }) {
-  return (
-    <p
-      style={{
-        margin: `${theme.space[2]}px 0 0`,
-        fontSize: theme.type.size.xs,
-        color: tone === 'alert' ? theme.color.alert : theme.color.inkMuted,
-        lineHeight: theme.type.leading.snug,
-      }}
-    >
-      {children}
-    </p>
-  );
-}
 
 function PickedPatient({
   patient,
@@ -669,159 +572,6 @@ function ConfirmationToggle({
   );
 }
 
-function ConflictBlock({
-  checking,
-  conflicts,
-  error,
-  slotIsValid,
-  durationMinutes,
-}: {
-  checking: boolean;
-  conflicts: RescheduleConflict[];
-  error: string | null;
-  slotIsValid: boolean;
-  durationMinutes: number | null;
-}) {
-  if (error) return <ErrorBanner title="Couldn't check the slot" body={error} />;
-  if (!slotIsValid) return null;
-  if (checking) {
-    return (
-      <Banner tone="info">
-        Checking availability… ({durationMinutes ?? '–'} min slot)
-      </Banner>
-    );
-  }
-  if (conflicts.length === 0) {
-    return (
-      <Banner tone="success">
-        Slot is free. Saving will add it to the schedule.
-      </Banner>
-    );
-  }
-  return (
-    <ErrorBanner
-      title="Slot conflicts"
-      body={
-        <ul
-          style={{
-            margin: 0,
-            padding: 0,
-            listStyle: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[1],
-          }}
-        >
-          {conflicts.map((c, i) => (
-            <li key={i} style={{ fontSize: theme.type.size.sm, lineHeight: 1.5 }}>
-              {c.conflict_kind === 'pool_at_capacity'
-                ? `${c.pool_id} is at capacity (${c.current_count}/${c.pool_capacity}).`
-                : `Service hits its max-concurrent cap (${c.current_count}/${c.pool_capacity}).`}
-            </li>
-          ))}
-        </ul>
-      }
-    />
-  );
-}
-
-function ErrorBanner({
-  title,
-  body,
-  subtle = false,
-}: {
-  title: string;
-  body: React.ReactNode;
-  subtle?: boolean;
-}) {
-  const tone = subtle ? theme.color.warn : theme.color.alert;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: subtle ? theme.color.bg : theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderLeft: `3px solid ${tone}`,
-      }}
-    >
-      <AlertTriangle
-        size={16}
-        aria-hidden
-        style={{ color: tone, flexShrink: 0, marginTop: 2 }}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-          }}
-        >
-          {title}
-        </p>
-        <div
-          style={{
-            marginTop: 2,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            lineHeight: 1.5,
-          }}
-        >
-          {body}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Banner({ tone, children }: { tone: 'success' | 'info'; children: React.ReactNode }) {
-  const colour = tone === 'success' ? theme.color.accent : theme.color.inkMuted;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: tone === 'success' ? theme.color.accentBg : theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          color: colour,
-          marginTop: 2,
-          flexShrink: 0,
-          display: 'inline-flex',
-        }}
-      >
-        {tone === 'success' ? (
-          <Check size={16} aria-hidden />
-        ) : (
-          <CalendarClock size={16} aria-hidden />
-        )}
-      </span>
-      <p
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          color: theme.color.ink,
-          lineHeight: 1.5,
-        }}
-      >
-        {children}
-      </p>
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (local copies of the small ISO splitters used by RescheduleSheet —
 // duplicated rather than extracted because the two sheets evolve independently
@@ -861,81 +611,6 @@ function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
   return map[d.getDay()] ?? null;
 }
 
-// Inline label-on-top trigger button styled to match the Input
-// component visually (border, padding, label) but behaves as a
-// picker opener instead of a real input. Used for Date and Start
-// time so neither falls back to the native browser picker.
-function FieldTrigger({
-  ref,
-  label,
-  icon,
-  value,
-  placeholder,
-  open,
-  onClick,
-}: {
-  ref: Ref<HTMLButtonElement>;
-  label: string;
-  icon: ReactNode;
-  value: string;
-  placeholder: string;
-  open: boolean;
-  onClick: () => void;
-}) {
-  const wrapper: CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: theme.space[1],
-  };
-  const labelStyle: CSSProperties = {
-    fontSize: theme.type.size.sm,
-    color: theme.color.ink,
-    fontWeight: theme.type.weight.medium,
-  };
-  const buttonStyle: CSSProperties = {
-    appearance: 'none',
-    width: '100%',
-    textAlign: 'left',
-    fontFamily: 'inherit',
-    cursor: 'pointer',
-    background: theme.color.surface,
-    border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
-    borderRadius: theme.radius.input,
-    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: theme.space[3],
-    transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-  };
-  const valueStyle: CSSProperties = {
-    flex: 1,
-    fontSize: theme.type.size.md,
-    color: value ? theme.color.ink : theme.color.inkSubtle,
-    fontVariantNumeric: 'tabular-nums',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  };
-  return (
-    <div style={wrapper}>
-      <span style={labelStyle}>{label}</span>
-      <button
-        ref={ref}
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={onClick}
-        style={buttonStyle}
-      >
-        <span aria-hidden style={{ color: theme.color.inkMuted, display: 'inline-flex' }}>
-          {icon}
-        </span>
-        <span style={valueStyle}>{value || placeholder}</span>
-        <ChevronDown size={14} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
-      </button>
-    </div>
-  );
-}
 
 // Working hours come back as 'HH:MM' strings; bound them to whole
 // hours for the TimePicker's startHour / endHour scrollable range.
