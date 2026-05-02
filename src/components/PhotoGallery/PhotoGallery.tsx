@@ -85,7 +85,7 @@ export function BeforeAfterGallery({
   return (
     <GalleryCard
       icon={<Sparkles size={18} color={theme.color.ink} aria-hidden />}
-      title="Before & afters"
+      title="Before & after"
       description="Capture the transformation. Tap a photo to view full-size."
       patient={patient}
       items={items}
