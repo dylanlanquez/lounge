@@ -8,6 +8,7 @@ import {
   CalendarClock,
   ChevronRight,
   CircleSlash,
+  ClipboardList,
   CreditCard,
   Mail,
   MapPin,
@@ -626,25 +627,34 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
     ? [properCase(appt.staff.first_name), properCase(appt.staff.last_name)].filter(Boolean).join(' ').trim()
     : null;
 
-  // Service + when moved into the Hero so this card carries the
-  // supplementary facts only — location, staff, contact. If the
-  // booking has none of those (rare), the card is skipped entirely
-  // by the parent so we don't render an empty box.
   const hasContent = !!locationLine || !!staffLine || !!appt.patient.email;
   if (!hasContent) return null;
 
+  const rows: Array<{ icon: ReactNode; label: string; value: ReactNode }> = [];
+  if (locationLine) {
+    rows.push({ icon: <MapPin size={13} aria-hidden />, label: 'Location', value: locationLine });
+  }
+  if (staffLine) {
+    rows.push({ icon: <UserCheck size={13} aria-hidden />, label: 'Staff', value: staffLine });
+  }
+  if (appt.patient.email) {
+    rows.push({ icon: <Mail size={13} aria-hidden />, label: 'Email', value: appt.patient.email });
+  }
+
   return (
-    <Card padding="md">
-      <SectionLabel>Booking</SectionLabel>
-      {locationLine ? (
-        <Row icon={<MapPin size={14} aria-hidden />} label="Location" value={locationLine} />
-      ) : null}
-      {staffLine ? (
-        <Row icon={<UserCheck size={14} aria-hidden />} label="Staff" value={staffLine} />
-      ) : null}
-      {appt.patient.email ? (
-        <Row icon={<Mail size={14} aria-hidden />} label="Email" value={appt.patient.email} />
-      ) : null}
+    <Card padding="lg">
+      <DetailSectionHeader icon={<CalendarCheck size={15} aria-hidden />} title="Booking details" />
+      <div>
+        {rows.map((r, i) => (
+          <KeyValueRow
+            key={r.label}
+            icon={r.icon}
+            label={r.label}
+            value={r.value}
+            isFirst={i === 0}
+          />
+        ))}
+      </div>
     </Card>
   );
 }
@@ -655,70 +665,24 @@ function IntakeCard({
   intake: ReadonlyArray<{ question: string; answer: string }>;
 }) {
   return (
-    <Card padding="md">
-      <SectionLabel>Intake answers</SectionLabel>
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-        {intake.map((item, i) => (
-          <IntakeRow
-            key={`${item.question}|${i}`}
-            question={item.question}
-            answer={item.answer}
-            isFirst={i === 0}
-          />
-        ))}
-      </ul>
+    <Card padding="lg">
+      <DetailSectionHeader icon={<ClipboardList size={15} aria-hidden />} title="Intake answers" />
+      <div>
+        {intake.map((item, i) => {
+          const label = humaniseIntakeQuestion(item.question);
+          const value = humaniseIntakeAnswer(label, item.answer);
+          return (
+            <KeyValueRow
+              key={`${item.question}|${i}`}
+              label={label}
+              value={value}
+              isFirst={i === 0}
+              wrapValue
+            />
+          );
+        })}
+      </div>
     </Card>
-  );
-}
-
-// Two-column intake row: label on the left (muted, sentence case),
-// value on the right (ink, semibold). Same shape used by the
-// timeline's fact strip and the DepositCard so the three surfaces
-// share one visual rhythm. The previous "uppercase eyebrow above the
-// value" stack read as bleak next to the rest of the page.
-function IntakeRow({
-  question,
-  answer,
-  isFirst,
-}: {
-  question: string;
-  answer: string;
-  isFirst: boolean;
-}) {
-  const label = humaniseIntakeQuestion(question);
-  const value = humaniseIntakeAnswer(label, answer);
-  return (
-    <li
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 140px) minmax(0, 1fr)',
-        gap: theme.space[3],
-        alignItems: 'baseline',
-        padding: `${theme.space[3]}px 0`,
-        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
-      }}
-    >
-      <span
-        style={{
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          fontWeight: theme.type.weight.medium,
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontSize: theme.type.size.sm,
-          color: theme.color.ink,
-          lineHeight: theme.type.leading.relaxed,
-          whiteSpace: 'pre-wrap',
-          fontWeight: theme.type.weight.semibold,
-        }}
-      >
-        {value}
-      </span>
-    </li>
   );
 }
 
@@ -804,33 +768,101 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   const amount = formatPence(appt.deposit_pence);
   const provider =
     appt.deposit_provider === 'paypal' ? 'PayPal' : appt.deposit_provider === 'stripe' ? 'Stripe' : 'Unknown';
-  const status = appt.deposit_status === 'paid' ? 'Paid' : appt.deposit_status === 'failed' ? 'Failed' : 'Unknown';
+  const paid = appt.deposit_status === 'paid';
   const failed = appt.deposit_status === 'failed';
+  const statusLabel = paid ? 'Paid' : failed ? 'Failed' : 'Unknown';
+  const statusPill = (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        padding: '4px 10px',
+        borderRadius: theme.radius.pill,
+        background: paid
+          ? theme.color.accentBg
+          : failed
+            ? 'rgba(184, 58, 42, 0.10)'
+            : 'rgba(14, 20, 20, 0.05)',
+        color: paid ? theme.color.accent : failed ? theme.color.alert : theme.color.inkMuted,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: theme.type.tracking.tight,
+      }}
+    >
+      {statusLabel}
+    </span>
+  );
+
   return (
-    <Card padding="md">
-      <SectionLabel>Deposit</SectionLabel>
-      <Row icon={<CreditCard size={14} aria-hidden />} label="Amount" value={amount} />
-      <Row icon={<CreditCard size={14} aria-hidden />} label="Provider" value={provider} />
-      <Row
-        icon={<CreditCard size={14} aria-hidden />}
-        label="Status"
-        value={
-          <span style={{ color: failed ? theme.color.alert : theme.color.ink, fontWeight: theme.type.weight.semibold }}>
-            {status}
-          </span>
-        }
+    <Card padding="lg">
+      <DetailSectionHeader
+        icon={<CreditCard size={15} aria-hidden />}
+        title="Deposit"
+        trailing={statusPill}
       />
-      {failed ? (
-        <p
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: theme.space[3],
+          marginTop: theme.space[1],
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
           style={{
-            margin: `${theme.space[2]}px 0 0`,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            lineHeight: theme.type.leading.snug,
+            fontSize: 32,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
           }}
         >
-          Deposit attempt failed. Do not credit at checkout. Chase the patient before the slot.
-        </p>
+          {amount}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+          }}
+        >
+          via {provider}
+        </span>
+      </div>
+      {failed ? (
+        <div
+          style={{
+            marginTop: theme.space[4],
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            background: 'rgba(184, 58, 42, 0.08)',
+            border: '1px solid rgba(184, 58, 42, 0.18)',
+            display: 'flex',
+            gap: theme.space[3],
+            alignItems: 'flex-start',
+          }}
+        >
+          <AlertTriangle
+            size={15}
+            aria-hidden
+            style={{ color: theme.color.alert, flexShrink: 0, marginTop: 2 }}
+          />
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.ink,
+              lineHeight: theme.type.leading.relaxed,
+            }}
+          >
+            <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+              Deposit attempt failed.
+            </span>{' '}
+            Do not credit at checkout. Chase the patient before the slot.
+          </p>
+        </div>
       ) : null}
     </Card>
   );
@@ -907,52 +939,48 @@ function NotesCard({
     setEditing(false);
   };
 
-  return (
-    <Card padding="md">
-      <div
+  const editButton =
+    canEdit && !editing ? (
+      <button
+        type="button"
+        aria-label={trimmed.length > 0 ? 'Edit notes' : 'Add notes'}
+        title={trimmed.length > 0 ? 'Edit notes' : 'Add notes'}
+        onClick={() => setEditing(true)}
         style={{
-          display: 'flex',
+          appearance: 'none',
+          border: `1px solid ${theme.color.border}`,
+          background: theme.color.surface,
+          color: theme.color.inkMuted,
+          cursor: 'pointer',
+          padding: 0,
+          width: 30,
+          height: 30,
+          borderRadius: theme.radius.pill,
+          display: 'inline-flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: theme.space[3],
-          marginBottom: theme.space[3],
+          justifyContent: 'center',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = theme.color.ink;
+          e.currentTarget.style.color = theme.color.ink;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = theme.color.border;
+          e.currentTarget.style.color = theme.color.inkMuted;
         }}
       >
-        <SectionLabel icon={<StickyNote size={14} aria-hidden />}>Notes</SectionLabel>
-        {canEdit && !editing ? (
-          <button
-            type="button"
-            aria-label={trimmed.length > 0 ? 'Edit notes' : 'Add notes'}
-            title={trimmed.length > 0 ? 'Edit notes' : 'Add notes'}
-            onClick={() => setEditing(true)}
-            style={{
-              appearance: 'none',
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.surface,
-              color: theme.color.inkMuted,
-              cursor: 'pointer',
-              padding: 0,
-              width: 28,
-              height: 28,
-              borderRadius: theme.radius.pill,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = theme.color.ink;
-              e.currentTarget.style.color = theme.color.ink;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = theme.color.border;
-              e.currentTarget.style.color = theme.color.inkMuted;
-            }}
-          >
-            <Pencil size={13} aria-hidden />
-          </button>
-        ) : null}
-      </div>
+        <Pencil size={13} aria-hidden />
+      </button>
+    ) : null;
+
+  return (
+    <Card padding="lg">
+      <DetailSectionHeader
+        icon={<StickyNote size={15} aria-hidden />}
+        title="Notes"
+        trailing={editButton}
+      />
 
       {editing ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -1034,15 +1062,24 @@ function ReasonCard({
   text: string;
 }) {
   const accent = tone === 'cancelled' ? theme.color.alert : theme.color.warn;
+  const iconBg =
+    tone === 'cancelled' ? 'rgba(184, 58, 42, 0.10)' : 'rgba(179, 104, 21, 0.10)';
+  const Icon = tone === 'cancelled' ? XCircle : CircleSlash;
   return (
-    <Card padding="md" style={{ borderLeft: `3px solid ${accent}` }}>
-      <SectionLabel>{label}</SectionLabel>
+    <Card padding="lg" style={{ borderLeft: `3px solid ${accent}` }}>
+      <DetailSectionHeader
+        icon={<Icon size={15} aria-hidden />}
+        title={label}
+        iconBg={iconBg}
+        iconFg={accent}
+      />
       <p
         style={{
           margin: 0,
           fontSize: theme.type.size.sm,
           color: theme.color.ink,
           lineHeight: theme.type.leading.relaxed,
+          whiteSpace: 'pre-wrap',
         }}
       >
         {text}
@@ -1059,8 +1096,8 @@ function humaniseNoShowReason(reason: string): string {
 function RescheduledTo({ apptId }: { apptId: string }) {
   const navigate = useNavigate();
   return (
-    <Card padding="md">
-      <SectionLabel>Rescheduled to</SectionLabel>
+    <Card padding="lg">
+      <DetailSectionHeader icon={<CalendarClock size={15} aria-hidden />} title="Rescheduled to" />
       <button
         type="button"
         onClick={() => navigate(`/appointment/${apptId}`)}
@@ -1086,59 +1123,136 @@ function RescheduledTo({ apptId }: { apptId: string }) {
   );
 }
 
-function SectionLabel({ children, icon }: { children: ReactNode; icon?: ReactNode }) {
+// Card section header used by every info card on this page. The icon
+// sits in a softly tinted pill, paired with a sentence-case h3 title;
+// optional trailing slot carries a status pill or an inline edit
+// affordance. Mirrors the visual language of the AppointmentHero so
+// the cards underneath read as part of the same surface, not a
+// looser collage.
+function DetailSectionHeader({
+  icon,
+  title,
+  trailing,
+  iconBg,
+  iconFg,
+}: {
+  icon: ReactNode;
+  title: string;
+  trailing?: ReactNode;
+  iconBg?: string;
+  iconFg?: string;
+}) {
   return (
-    <p
+    <div
       style={{
-        margin: `0 0 ${theme.space[3]}px`,
-        fontSize: 11,
-        color: theme.color.inkMuted,
-        fontWeight: theme.type.weight.semibold,
-        textTransform: 'uppercase',
-        letterSpacing: theme.type.tracking.wide,
-        display: 'inline-flex',
+        display: 'flex',
         alignItems: 'center',
-        gap: theme.space[2],
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        marginBottom: theme.space[4],
       }}
     >
-      {icon}
-      {children}
-    </p>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          minWidth: 0,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: theme.radius.pill,
+            background: iconBg ?? theme.color.accentBg,
+            color: iconFg ?? theme.color.accent,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          {icon}
+        </span>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1.25,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {title}
+        </h3>
+      </span>
+      {trailing ? <span style={{ flexShrink: 0 }}>{trailing}</span> : null}
+    </div>
   );
 }
 
-function Row({
+// Two-column key/value row shared by Booking and Intake cards. Label
+// reads as a quiet caption, value as the answer in ink semibold.
+// `wrapValue` switches the value from single-line ellipsed (good for
+// emails / addresses) to wrapping prose (good for free-text intake
+// answers). `icon` is optional — when supplied it sits left of the
+// label as a quiet visual anchor.
+function KeyValueRow({
   icon,
   label,
   value,
+  isFirst,
+  wrapValue,
 }: {
-  icon: ReactNode;
+  icon?: ReactNode;
   label: string;
   value: ReactNode;
+  isFirst?: boolean;
+  wrapValue?: boolean;
 }) {
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '20px minmax(0, 90px) minmax(0, 1fr)',
-        alignItems: 'center',
+        gridTemplateColumns: icon
+          ? '14px minmax(0, 130px) minmax(0, 1fr)'
+          : 'minmax(0, 140px) minmax(0, 1fr)',
         gap: theme.space[3],
-        padding: `${theme.space[2]}px 0`,
-        borderTop: `1px solid ${theme.color.border}`,
+        alignItems: 'baseline',
+        padding: `${theme.space[3]}px 0`,
+        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      <span style={{ color: theme.color.inkSubtle, display: 'inline-flex' }}>{icon}</span>
-      <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+      {icon ? (
+        <span style={{ color: theme.color.inkSubtle, display: 'inline-flex', alignSelf: 'center' }}>
+          {icon}
+        </span>
+      ) : null}
+      <span
+        style={{
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
         {label}
       </span>
       <span
         style={{
           fontSize: theme.type.size.sm,
           color: theme.color.ink,
+          fontWeight: theme.type.weight.semibold,
+          lineHeight: theme.type.leading.relaxed,
           minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          ...(wrapValue
+            ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+            : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }),
         }}
       >
         {value}
