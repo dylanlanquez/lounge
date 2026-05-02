@@ -772,46 +772,42 @@ function humaniseSource(source: string): string {
 }
 
 // Builds the structured fact list rendered under the "Booking
-// placed" event. Captures everything the patient (or the operator)
-// told us at booking time so the timeline doubles as the audit
-// record of intake answers, repair type, appliance, arch and notes.
+// placed" event. Captures intake-style answers (repair type,
+// appliance, arch, notes) so the timeline doubles as the audit
+// record of what was on the booking form.
 //
-// Three sources merge here:
+// Service is intentionally NOT in this list. The event's inline
+// detail line already carries the booking summary ("Imported from
+// Calendly · Denture Repair"); pushing it into facts on top
+// produces a single-row card that reads as redundant. When the
+// only fact would be Service, we'd rather render no card at all.
 //
-//   1. Service / event-type label from the appointment row. Always
-//      first so the fact list opens with what was booked.
-//   2. Calendly-style intake question/answer pairs from
+// Two sources merge here:
+//
+//   1. Calendly-style intake question/answer pairs from
 //      lng_appointments.intake. Each row becomes its own fact with
-//      a humanised question label and the patient's answer.
-//   3. Walk-in extras from lng_walk_ins (appliance type, arch,
-//      repair notes) when this booking is a walk-in marker. The
-//      walk-in flow doesn't write Calendly-shaped intake rows; the
-//      structured columns ARE the intake.
+//      a humanised question label and a normalised answer value
+//      (e.g. "Top" → "Upper" for arch answers).
+//   2. Walk-in extras from lng_walk_ins (appliance type, arch,
+//      repair notes) when this booking is a walk-in marker.
 //
-// Notes from the appointment itself are folded in last so the
-// receptionist sees any free-text caveat alongside the structured
-// answers.
+// Booking notes — free-text the operator typed when creating the
+// booking — are folded in last as a final fact.
 function bookingFacts(
   appt: RawAppointmentRow,
   walkIn: RawWalkInRow | null,
 ): TimelineFact[] {
   const facts: TimelineFact[] = [];
 
-  const service = humaniseEventTypeLabelLocal(appt.event_type_label);
-  if (service) facts.push({ label: 'Service', value: service });
-
-  // Calendly intake: array of { question, answer } pairs. Skip
-  // empty answers so the fact list doesn't list a question with no
-  // value (Calendly returns '' for skipped optional questions).
   if (appt.intake) {
     for (const item of appt.intake) {
-      const value = item.answer?.trim();
-      if (!value) continue;
-      facts.push({ label: humaniseIntakeQuestion(item.question), value });
+      const rawValue = item.answer?.trim();
+      if (!rawValue) continue;
+      const label = humaniseIntakeQuestion(item.question);
+      facts.push({ label, value: humaniseIntakeAnswer(label, rawValue) });
     }
   }
 
-  // Walk-in structured fields. Only emit non-empty.
   if (walkIn) {
     if (walkIn.appliance_type?.trim()) {
       facts.push({ label: 'Appliance type', value: walkIn.appliance_type.trim() });
@@ -824,13 +820,6 @@ function bookingFacts(
     }
   }
 
-  // Booking notes — free-text the operator typed when creating the
-  // booking. Distinct from the live "Notes" card on the page (which
-  // edits the same column); shown here as a snapshot of the value
-  // at booking time. NOT the on-the-day notes — that's a deliberate
-  // design choice: the timeline is a log of what was true then.
-  // Future improvement: snapshot the value on every edit so the
-  // history shows drift.
   if (appt.notes?.trim()) {
     facts.push({ label: 'Booking notes', value: appt.notes.trim() });
   }
@@ -838,24 +827,11 @@ function bookingFacts(
   return facts;
 }
 
-// Local copy of the patientProfile-side humaniser. Kept here to
-// avoid bouncing through the patientProfile module from a query
-// that has nothing else in common with it. Same logic: pass
-// already-friendly labels through; only humanise when the input
-// looks like a slug (a-z, 0-9, underscores only).
-function humaniseEventTypeLabelLocal(label: string | null): string | null {
-  if (!label) return null;
-  if (/^[a-z0-9_]+$/.test(label)) {
-    return label
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase());
-  }
-  return label;
-}
-
-// Mirror the AppointmentDetail intake-question humaniser so the
-// timeline labels read identically to the IntakeCard's labels.
-// Kept in sync by hand — small surface, low drift risk.
+// Mirror the visitTimeline intake-question humaniser so the
+// appointment timeline labels read identically to the visit
+// timeline + AppointmentDetail's IntakeCard. Kept in sync by hand;
+// low drift risk because the rewrite list is tied to Calendly's
+// form-builder phrasing, which staff control directly.
 function humaniseIntakeQuestion(question: string): string {
   const trimmed = question.trim().replace(/[?:]+$/, '');
   if (!trimmed) return '';
@@ -876,9 +852,48 @@ function humaniseIntakeQuestion(question: string): string {
       return 'Where the dentures were bought';
     case 'how old are the dentures':
       return 'Age of the dentures';
+    case 'which arch':
+    case 'what arch':
+    case 'arch':
+    case 'which arch is affected':
+      return 'Arch';
+    case 'shade':
+    case 'tooth shade':
+    case 'desired shade':
+      return 'Shade';
     default:
       return trimmed;
   }
+}
+
+// Normalise free-text answer values where the form-builder offers
+// colloquial choices ("Top" / "Bottom" for arches, etc.). Defaults
+// to pass-through so non-rewriteable answers print as the patient
+// typed them.
+function humaniseIntakeAnswer(label: string, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
+  if (label === 'Arch') {
+    switch (lower) {
+      case 'top':
+      case 'upper':
+        return 'Upper';
+      case 'bottom':
+      case 'lower':
+        return 'Lower';
+      case 'both':
+      case 'both arches':
+      case 'top and bottom':
+      case 'upper and lower':
+        return 'Upper and lower';
+      default:
+        return trimmed;
+    }
+  }
+  if (lower === 'yes' || lower === 'y' || lower === 'true') return 'Yes';
+  if (lower === 'no' || lower === 'n' || lower === 'false') return 'No';
+  return trimmed;
 }
 
 function humaniseArch(arch: 'upper' | 'lower' | 'both'): string {

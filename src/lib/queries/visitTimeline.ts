@@ -227,22 +227,24 @@ function accountDisplayName(a: AccountRow): string {
 }
 
 // Builds the structured fact list for a scheduled-booking timeline
-// row. Service first, then any Calendly intake question/answer
-// pairs the booking captured, then any free-text booking notes the
-// operator typed when creating it.
+// row. Service is intentionally NOT included — it already lives on
+// the event's inline detail line ("Denture Repair · scheduled Mon
+// 9 May · LAP-00001"), so duplicating it in the facts block
+// produces a single-row card that reads as redundant. Facts here
+// are the intake-style answers (repair type, contact number,
+// appliance, etc.) and any free-text booking notes.
 function bookingFactsForScheduled(appt: {
   event_type_label: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   notes: string | null;
 }): TimelineFact[] {
   const facts: TimelineFact[] = [];
-  const service = humaniseLikelySlug(appt.event_type_label);
-  if (service) facts.push({ label: 'Service', value: service });
   if (appt.intake) {
     for (const item of appt.intake) {
-      const value = item.answer?.trim();
-      if (!value) continue;
-      facts.push({ label: humaniseIntakeQuestion(item.question), value });
+      const rawValue = item.answer?.trim();
+      if (!rawValue) continue;
+      const label = humaniseIntakeQuestion(item.question);
+      facts.push({ label, value: humaniseIntakeAnswer(label, rawValue) });
     }
   }
   if (appt.notes?.trim()) {
@@ -251,9 +253,10 @@ function bookingFactsForScheduled(appt: {
   return facts;
 }
 
-// Same idea for walk-ins. The lng_walk_ins row carries structured
-// columns (service_type / appliance_type / arch / repair_notes)
-// rather than a Q/A array, so each becomes its own fact directly.
+// Same idea for walk-ins, minus the service field — already in the
+// detail line. Pulls structured columns from lng_walk_ins one at a
+// time so the timeline shows what the receptionist captured at
+// intake.
 function bookingFactsForWalkIn(wk: {
   service_type: string | null;
   appliance_type: string | null;
@@ -261,8 +264,6 @@ function bookingFactsForWalkIn(wk: {
   repair_notes: string | null;
 }): TimelineFact[] {
   const facts: TimelineFact[] = [];
-  const service = humaniseLikelySlug(wk.service_type);
-  if (service) facts.push({ label: 'Service', value: service });
   if (wk.appliance_type?.trim()) {
     facts.push({ label: 'Appliance type', value: wk.appliance_type.trim() });
   }
@@ -311,9 +312,62 @@ function humaniseIntakeQuestion(question: string): string {
       return 'Where the dentures were bought';
     case 'how old are the dentures':
       return 'Age of the dentures';
+    case 'which arch':
+    case 'what arch':
+    case 'arch':
+    case 'which arch is affected':
+      return 'Arch';
+    case 'shade':
+    case 'tooth shade':
+    case 'desired shade':
+      return 'Shade';
     default:
+      // Pass-through so already-friendly Calendly questions render
+      // as the operator typed them. Add a rewrite case above when
+      // a recurring question reads badly through the eyebrow's
+      // uppercase styling.
       return trimmed;
   }
+}
+
+// Normalise common intake answer values so receptionists see the
+// terms used elsewhere in the app. Most answers pass through; only
+// the ones with a colloquial form ("Top" / "Bottom" for arches,
+// "yes"/"no" for booleans) get rewritten.
+function humaniseIntakeAnswer(label: string, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
+
+  // Arch answers — Calendly forms commonly offer Top / Bottom /
+  // Both as the picker options. Map to Upper / Lower / Upper and
+  // lower so the value matches the lng_walk_ins.arch enum and the
+  // language used in the IntakeCard.
+  if (label === 'Arch') {
+    switch (lower) {
+      case 'top':
+      case 'upper':
+        return 'Upper';
+      case 'bottom':
+      case 'lower':
+        return 'Lower';
+      case 'both':
+      case 'both arches':
+      case 'top and bottom':
+      case 'upper and lower':
+        return 'Upper and lower';
+      default:
+        return trimmed;
+    }
+  }
+
+  // Yes / no normalisation. Calendly checkbox answers come through
+  // as a literal "Yes" / "No" already in most cases; this catches
+  // the edge cases of "y" / "n" / lowercase / mixed.
+  if (lower === 'yes' || lower === 'y' || lower === 'true') return 'Yes';
+  if (lower === 'no' || lower === 'n' || lower === 'false') return 'No';
+
+  return trimmed;
 }
 
 function joinDetail(...bits: Array<string | null | undefined>): string | undefined {

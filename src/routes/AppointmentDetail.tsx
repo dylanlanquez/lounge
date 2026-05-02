@@ -673,6 +673,8 @@ function IntakeCard({
 // muted treatment as the section label so the question/answer
 // hierarchy reads cleanly without competing with the answer body.
 function IntakeRow({ question, answer }: { question: string; answer: string }) {
+  const label = humaniseIntakeQuestion(question);
+  const value = humaniseIntakeAnswer(label, answer);
   return (
     <li
       style={{
@@ -692,7 +694,7 @@ function IntakeRow({ question, answer }: { question: string; answer: string }) {
           letterSpacing: theme.type.tracking.wide,
         }}
       >
-        {humaniseIntakeQuestion(question)}
+        {label}
       </span>
       <span
         style={{
@@ -703,7 +705,7 @@ function IntakeRow({ question, answer }: { question: string; answer: string }) {
           fontWeight: theme.type.weight.medium,
         }}
       >
-        {answer}
+        {value}
       </span>
     </li>
   );
@@ -721,7 +723,10 @@ function humaniseIntakeQuestion(question: string): string {
   if (!trimmed) return '';
   // Common phrasings we shorten so the upper-case label stays
   // scannable. Match case-insensitively; other questions pass through
-  // verbatim with a Title-Case nudge on all-lowercase strings.
+  // verbatim. Mirror this list in src/lib/queries/visitTimeline.ts and
+  // src/lib/queries/appointmentTimeline.ts when adding rewrites — the
+  // three surfaces share the same Calendly questions and need
+  // identical labels.
   const lower = trimmed.toLowerCase();
   switch (lower) {
     case 'what is the type of repair you would like done':
@@ -739,9 +744,48 @@ function humaniseIntakeQuestion(question: string): string {
       return 'Where the dentures were bought';
     case 'how old are the dentures':
       return 'Age of the dentures';
+    case 'which arch':
+    case 'what arch':
+    case 'arch':
+    case 'which arch is affected':
+      return 'Arch';
+    case 'shade':
+    case 'tooth shade':
+    case 'desired shade':
+      return 'Shade';
     default:
       return trimmed;
   }
+}
+
+// Same answer-normaliser the timelines use, so colloquial Calendly
+// values ("Top" / "Bottom" for arches, "y"/"n" for booleans) read
+// consistently across the IntakeCard, the appointment timeline and
+// the visit timeline.
+function humaniseIntakeAnswer(label: string, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
+  if (label === 'Arch') {
+    switch (lower) {
+      case 'top':
+      case 'upper':
+        return 'Upper';
+      case 'bottom':
+      case 'lower':
+        return 'Lower';
+      case 'both':
+      case 'both arches':
+      case 'top and bottom':
+      case 'upper and lower':
+        return 'Upper and lower';
+      default:
+        return trimmed;
+    }
+  }
+  if (lower === 'yes' || lower === 'y' || lower === 'true') return 'Yes';
+  if (lower === 'no' || lower === 'n' || lower === 'false') return 'No';
+  return trimmed;
 }
 
 function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
