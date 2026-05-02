@@ -1220,12 +1220,14 @@ function BodyPreview({
               margin: 0,
               fontSize: 11,
               fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
+              color: historicalVersion ? theme.color.accent : theme.color.inkMuted,
               textTransform: 'uppercase',
               letterSpacing: theme.type.tracking.wide,
             }}
           >
-            Subject preview
+            {historicalVersion
+              ? `Subject in version ${historicalVersion.version}`
+              : 'Subject preview'}
           </p>
           <p
             style={{
