@@ -9,10 +9,14 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   leadingIcon?: ReactNode;
   trailingIcon?: ReactNode;
   fullWidth?: boolean;
+  // When true, renders a red asterisk beside the label and forwards
+  // `required` to the underlying <input>. The asterisk is the in-app
+  // convention for "this field can't be left blank".
+  required?: boolean;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { label, helper, error, leadingIcon, trailingIcon, fullWidth = true, type = 'text', id, style, ...rest },
+  { label, helper, error, leadingIcon, trailingIcon, fullWidth = true, required, type = 'text', id, style, ...rest },
   ref
 ) {
   const reactId = useId();
@@ -83,6 +87,14 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           }}
         >
           {label}
+          {required ? (
+            <span
+              aria-hidden
+              style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}
+            >
+              {' *'}
+            </span>
+          ) : null}
         </label>
       ) : null}
       <div style={fieldRow}>
@@ -91,6 +103,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           {...rest}
           id={inputId}
           ref={ref}
+          required={required}
           type={effectiveType}
           style={inputStyle}
           onFocus={(e) => {

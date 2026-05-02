@@ -1393,14 +1393,21 @@ function CancelAppointmentDialog({
 
   const patientName = patientFullDisplayName(appointment);
   const hasEmail = !!appointment.patient_email;
+  const trimmedReason = reason.trim();
+  const reasonValid = trimmedReason.length > 0;
 
   const handleConfirm = async () => {
+    if (busy) return;
+    if (!reasonValid) {
+      setError('Tell us why this is being cancelled, it surfaces on the timeline and reports.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const result = await cancelAppointment({
         appointmentId: appointment.id,
-        reason,
+        reason: trimmedReason,
         notifyPatient: hasEmail,
       });
       onCancelled({ emailSent: result.emailSent, emailReason: result.emailReason });
@@ -1438,7 +1445,12 @@ function CancelAppointmentDialog({
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
             Keep appointment
           </Button>
-          <Button variant="primary" onClick={handleConfirm} loading={busy}>
+          <Button
+            variant="primary"
+            onClick={handleConfirm}
+            loading={busy}
+            disabled={busy || !reasonValid}
+          >
             {busy ? 'Cancelling…' : 'Cancel appointment'}
           </Button>
         </div>
@@ -1446,11 +1458,13 @@ function CancelAppointmentDialog({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
         <Input
-          label="Reason (optional)"
+          label="Reason"
+          required
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="e.g. patient phoned to cancel; clinic equipment fault."
           disabled={busy}
+          helper="Surfaces in the timeline and reports."
         />
         {error ? (
           <p
