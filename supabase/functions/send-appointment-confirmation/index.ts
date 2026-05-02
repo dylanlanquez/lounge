@@ -78,7 +78,11 @@ async function handle(req: Request): Promise<Response> {
   if (!who?.user) return jsonResponse(401, { ok: false, error: 'Not signed in' });
   const callerAccountAuthId = who.user.id;
 
-  let body: { appointmentId?: string; oldAppointmentIdToCancel?: string };
+  let body: {
+    appointmentId?: string;
+    oldAppointmentIdToCancel?: string;
+    intent?: 'confirmation' | 'cancellation';
+  };
   try {
     body = await req.json();
   } catch {
@@ -86,6 +90,7 @@ async function handle(req: Request): Promise<Response> {
   }
   const appointmentId = body.appointmentId;
   const oldAppointmentIdToCancel = body.oldAppointmentIdToCancel ?? null;
+  const intent: 'confirmation' | 'cancellation' = body.intent ?? 'confirmation';
   if (!appointmentId) {
     return jsonResponse(400, { ok: false, error: 'appointmentId required' });
   }
@@ -136,34 +141,68 @@ async function handle(req: Request): Promise<Response> {
     .maybeSingle();
   const location = locationRow as LocationRow | null;
 
-  // ── Build .ics attachments ─────────────────────────────────────
-  const isReschedule = !!oldApt;
-  const sequence = await currentSequenceForUid(admin, apt.id);
-  const newIcs = buildIcs({
-    method: 'REQUEST',
-    uid: icsUid(apt.id),
-    sequence,
-    summary: emailSubjectLine(apt, location),
-    description: icsDescription(apt, location),
-    location: locationFreeform(location),
-    startAt: apt.start_at,
-    endAt: apt.end_at,
-    organizerEmail: RESEND_REPLY_TO,
-    organizerName: 'Venneir Lounge',
-    attendeeEmail: patient.email,
-    attendeeName: fullName(patient),
-    url: apt.join_url ?? null,
-    status: 'CONFIRMED',
-  });
+  // ── Resolve intent → kind ──────────────────────────────────────
+  // Three modes:
+  //   cancellation  — build CANCEL .ics for the given appointment,
+  //                   send "your appointment has been cancelled"
+  //                   email. No paired REQUEST.
+  //   reschedule    — confirmation intent + oldApt set. REQUEST for
+  //                   the new slot + CANCEL for the old, paired in
+  //                   one email so calendars update cleanly.
+  //   booking       — confirmation intent, no oldApt. REQUEST only.
+  const kind: 'booking' | 'reschedule' | 'cancellation' =
+    intent === 'cancellation'
+      ? 'cancellation'
+      : oldApt
+      ? 'reschedule'
+      : 'booking';
 
-  const cancelIcs = oldApt
-    ? buildIcs({
+  // ── Build .ics attachment(s) ───────────────────────────────────
+  let primaryIcs: string;
+  let secondaryIcs: string | null = null;
+
+  if (kind === 'cancellation') {
+    // Bumping the sequence is what tells the patient's calendar to
+    // actually remove the event — Apple Mail and Outlook ignore
+    // CANCEL with a stale sequence.
+    primaryIcs = buildIcs({
+      method: 'CANCEL',
+      uid: icsUid(apt.id),
+      sequence: (await currentSequenceForUid(admin, apt.id)) + 1,
+      summary: emailSubjectLine(apt, location),
+      description: 'This appointment has been cancelled.',
+      location: locationFreeform(location),
+      startAt: apt.start_at,
+      endAt: apt.end_at,
+      organizerEmail: RESEND_REPLY_TO,
+      organizerName: 'Venneir Lounge',
+      attendeeEmail: patient.email,
+      attendeeName: fullName(patient),
+      url: apt.join_url ?? null,
+      status: 'CANCELLED',
+    });
+  } else {
+    const sequence = await currentSequenceForUid(admin, apt.id);
+    primaryIcs = buildIcs({
+      method: 'REQUEST',
+      uid: icsUid(apt.id),
+      sequence,
+      summary: emailSubjectLine(apt, location),
+      description: icsDescription(apt, location),
+      location: locationFreeform(location),
+      startAt: apt.start_at,
+      endAt: apt.end_at,
+      organizerEmail: RESEND_REPLY_TO,
+      organizerName: 'Venneir Lounge',
+      attendeeEmail: patient.email,
+      attendeeName: fullName(patient),
+      url: apt.join_url ?? null,
+      status: 'CONFIRMED',
+    });
+    if (oldApt) {
+      secondaryIcs = buildIcs({
         method: 'CANCEL',
         uid: icsUid(oldApt.id),
-        // Bumping the sequence on the old UID is what tells the
-        // patient's calendar app to actually remove the event;
-        // most clients (Apple Mail, Outlook) ignore CANCEL with a
-        // stale sequence.
         sequence: (await currentSequenceForUid(admin, oldApt.id)) + 1,
         summary: emailSubjectLine(oldApt, location),
         description: 'This appointment has been moved. See the new invite.',
@@ -176,16 +215,20 @@ async function handle(req: Request): Promise<Response> {
         attendeeName: fullName(patient),
         url: oldApt.join_url ?? null,
         status: 'CANCELLED',
-      })
-    : null;
+      });
+    }
+  }
 
   // ── Render email ────────────────────────────────────────────────
-  const subject = isReschedule
-    ? `Your appointment has moved · ${formatHumanDateTime(apt.start_at)}`
-    : `You're booked in · ${formatHumanDateTime(apt.start_at)}`;
+  const subject =
+    kind === 'cancellation'
+      ? `Your appointment has been cancelled · ${formatHumanDateTime(apt.start_at)}`
+      : kind === 'reschedule'
+      ? `Your appointment has moved · ${formatHumanDateTime(apt.start_at)}`
+      : `You're booked in · ${formatHumanDateTime(apt.start_at)}`;
 
-  const html = renderHtml({ apt, oldApt, patient, location });
-  const text = renderText({ apt, oldApt, patient, location });
+  const html = renderHtml({ apt, oldApt, patient, location, kind });
+  const text = renderText({ apt, oldApt, patient, location, kind });
 
   // ── Deliver via Resend ─────────────────────────────────────────
   if (!RESEND_API_KEY) {
@@ -204,14 +247,14 @@ async function handle(req: Request): Promise<Response> {
 
   const attachments = [
     {
-      filename: 'invite.ics',
-      content: btoa(unicodeEscape(newIcs)),
+      filename: kind === 'cancellation' ? 'cancel.ics' : 'invite.ics',
+      content: btoa(unicodeEscape(primaryIcs)),
     },
   ];
-  if (cancelIcs) {
+  if (secondaryIcs) {
     attachments.push({
       filename: 'cancel.ics',
-      content: btoa(unicodeEscape(cancelIcs)),
+      content: btoa(unicodeEscape(secondaryIcs)),
     });
   }
 
@@ -240,15 +283,17 @@ async function handle(req: Request): Promise<Response> {
   // ── Persist success ────────────────────────────────────────────
   await admin.from('patient_events').insert({
     patient_id: apt.patient_id,
-    event_type: 'appointment_confirmation_sent',
+    event_type:
+      kind === 'cancellation'
+        ? 'appointment_cancellation_sent'
+        : 'appointment_confirmation_sent',
     payload: {
       appointment_id: apt.id,
       old_appointment_id_cancelled: oldAppointmentIdToCancel,
-      kind: isReschedule ? 'reschedule' : 'booking',
+      kind,
       recipient: patient.email,
       provider: 'resend',
       message_id: sendResult.messageId ?? null,
-      sequence,
     },
   });
 
@@ -259,14 +304,14 @@ async function handle(req: Request): Promise<Response> {
     payload: {
       appointment_id: apt.id,
       old_appointment_id_cancelled: oldAppointmentIdToCancel,
-      kind: isReschedule ? 'reschedule' : 'booking',
+      kind,
       message_id: sendResult.messageId ?? null,
     },
   });
 
   return jsonResponse(200, {
     ok: true,
-    kind: isReschedule ? 'reschedule' : 'booking',
+    kind,
     recipient: patient.email,
     provider: 'resend',
     messageId: sendResult.messageId ?? null,
@@ -467,19 +512,25 @@ interface RenderContext {
   oldApt: AppointmentRow | null;
   patient: PatientRow;
   location: LocationRow | null;
+  kind: 'booking' | 'reschedule' | 'cancellation';
 }
 
-function renderHtml({ apt, oldApt, patient, location }: RenderContext): string {
-  const isReschedule = !!oldApt;
+function renderHtml({ apt, oldApt, patient, location, kind }: RenderContext): string {
   const greeting = patient.first_name
     ? `Hi ${escapeHtml(patient.first_name)},`
     : 'Hi,';
-  const headline = isReschedule
-    ? 'Your appointment has moved'
-    : "You're booked in";
-  const lead = isReschedule
-    ? `We've updated your booking to <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong>.`
-    : `See you on <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong>.`;
+  const headline =
+    kind === 'cancellation'
+      ? 'Your appointment has been cancelled'
+      : kind === 'reschedule'
+      ? 'Your appointment has moved'
+      : "You're booked in";
+  const lead =
+    kind === 'cancellation'
+      ? `Your booking on <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong> has been cancelled. Your calendar will be updated automatically.`
+      : kind === 'reschedule'
+      ? `We've updated your booking to <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong>.`
+      : `See you on <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong>.`;
   const oldRow = oldApt
     ? `
       <tr>
@@ -494,15 +545,16 @@ function renderHtml({ apt, oldApt, patient, location }: RenderContext): string {
   const locationLine = location
     ? `${escapeHtml(location.name ?? 'Venneir Lounge')}${location.city ? `, ${escapeHtml(location.city)}` : ''}`
     : 'Venneir Lounge';
-  const joinRow = apt.join_url
-    ? `
+  const joinRow =
+    kind !== 'cancellation' && apt.join_url
+      ? `
       <tr>
         <td style="padding:8px 0;color:#5A6266;font-size:14px;">Join link</td>
         <td style="padding:8px 0;text-align:right;font-size:14px;">
           <a href="${escapeHtml(apt.join_url)}" style="color:#0E1414;">Open meeting</a>
         </td>
       </tr>`
-    : '';
+      : '';
   const refRow = apt.appointment_ref
     ? `
       <tr>
@@ -512,6 +564,31 @@ function renderHtml({ apt, oldApt, patient, location }: RenderContext): string {
         </td>
       </tr>`
     : '';
+
+  // The Add-to-Google-Calendar CTA is only meaningful when there's
+  // a future event to add. For cancellations we replace it with a
+  // muted "if this was a mistake, get in touch" line.
+  const ctaBlock =
+    kind === 'cancellation'
+      ? `<div style="margin:24px 0 0;text-align:center;">
+           <p style="margin:0;color:#7B8285;font-size:13px;line-height:1.55;">
+             If this cancellation was a mistake, just reply to this email and we'll get you back on the schedule.
+           </p>
+         </div>`
+      : `<div style="margin:24px 0 0;text-align:center;">
+           <a href="${escapeHtml(gcalUrl)}"
+              style="display:inline-block;padding:12px 20px;background:#0E1414;color:#FFFFFF;text-decoration:none;border-radius:999px;font-weight:600;font-size:14px;">
+             Add to Google Calendar
+           </a>
+           <p style="margin:12px 0 0;color:#7B8285;font-size:12px;">
+             Apple Mail and Outlook will pick up the attached .ics automatically.
+           </p>
+         </div>`;
+
+  const replyLine =
+    kind === 'cancellation'
+      ? "Want to rebook? Just reply to this email and we'll sort it out."
+      : "Need to change something? Just reply to this email and we'll sort it out.";
 
   return `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,system-ui,sans-serif;color:#0E1414;">
@@ -525,8 +602,8 @@ function renderHtml({ apt, oldApt, patient, location }: RenderContext): string {
           <td style="padding:8px 0;text-align:right;font-size:14px;">${escapeHtml(serviceLabel)}</td>
         </tr>
         <tr>
-          <td style="padding:8px 0;color:#5A6266;font-size:14px;">When</td>
-          <td style="padding:8px 0;text-align:right;font-weight:600;font-size:14px;">${escapeHtml(formatHumanDateTime(apt.start_at))}</td>
+          <td style="padding:8px 0;color:#5A6266;font-size:14px;">${kind === 'cancellation' ? 'Was due' : 'When'}</td>
+          <td style="padding:8px 0;text-align:right;font-weight:600;font-size:14px;${kind === 'cancellation' ? 'text-decoration:line-through;color:#7B8285;' : ''}">${escapeHtml(formatHumanDateTime(apt.start_at))}</td>
         </tr>
         ${oldRow}
         <tr>
@@ -537,50 +614,60 @@ function renderHtml({ apt, oldApt, patient, location }: RenderContext): string {
         ${refRow}
       </table>
     </div>
-    <div style="margin:24px 0 0;text-align:center;">
-      <a href="${escapeHtml(gcalUrl)}"
-         style="display:inline-block;padding:12px 20px;background:#0E1414;color:#FFFFFF;text-decoration:none;border-radius:999px;font-weight:600;font-size:14px;">
-        Add to Google Calendar
-      </a>
-      <p style="margin:12px 0 0;color:#7B8285;font-size:12px;">
-        Apple Mail and Outlook will pick up the attached .ics automatically.
-      </p>
-    </div>
+    ${ctaBlock}
     <p style="margin:32px 0 0;color:#5A6266;font-size:14px;line-height:1.55;">
-      Need to change something? Just reply to this email and we'll sort it out.
+      ${replyLine}
     </p>
     <p style="margin:24px 0 0;color:#7B8285;font-size:12px;">Venneir Limited</p>
   </div>
 </body></html>`;
 }
 
-function renderText({ apt, oldApt, patient, location }: RenderContext): string {
-  const isReschedule = !!oldApt;
+function renderText({ apt, oldApt, patient, location, kind }: RenderContext): string {
   const greeting = patient.first_name ? `Hi ${patient.first_name},` : 'Hi,';
-  const headline = isReschedule ? 'Your appointment has moved' : "You're booked in";
+  const headline =
+    kind === 'cancellation'
+      ? 'Your appointment has been cancelled'
+      : kind === 'reschedule'
+      ? 'Your appointment has moved'
+      : "You're booked in";
   const serviceLabel = labelForService(apt);
   const locationLine = location
     ? `${location.name ?? 'Venneir Lounge'}${location.city ? `, ${location.city}` : ''}`
     : 'Venneir Lounge';
+  const lead =
+    kind === 'cancellation'
+      ? `Your booking on ${formatHumanDateTime(apt.start_at)} has been cancelled.`
+      : kind === 'reschedule'
+      ? `We've updated your booking to ${formatHumanDateTime(apt.start_at)}.`
+      : `See you on ${formatHumanDateTime(apt.start_at)}.`;
   const lines = [
     headline,
     '',
     greeting,
-    isReschedule
-      ? `We've updated your booking to ${formatHumanDateTime(apt.start_at)}.`
-      : `See you on ${formatHumanDateTime(apt.start_at)}.`,
+    lead,
     '',
     `Service: ${serviceLabel}`,
-    `When: ${formatHumanDateTime(apt.start_at)}`,
+    `${kind === 'cancellation' ? 'Was due' : 'When'}: ${formatHumanDateTime(apt.start_at)}`,
   ];
   if (oldApt) lines.push(`Was: ${formatHumanDateTime(oldApt.start_at)}`);
   lines.push(`Where: ${locationLine}`);
-  if (apt.join_url) lines.push(`Join link: ${apt.join_url}`);
+  if (kind !== 'cancellation' && apt.join_url) lines.push(`Join link: ${apt.join_url}`);
   if (apt.appointment_ref) lines.push(`Reference: ${apt.appointment_ref}`);
   lines.push('');
-  lines.push(`Add to Google Calendar: ${googleCalendarUrl(apt, location)}`);
+  if (kind === 'cancellation') {
+    lines.push(
+      "If this cancellation was a mistake, just reply to this email and we'll get you back on the schedule.",
+    );
+  } else {
+    lines.push(`Add to Google Calendar: ${googleCalendarUrl(apt, location)}`);
+  }
   lines.push('');
-  lines.push("Need to change something? Just reply to this email and we'll sort it out.");
+  lines.push(
+    kind === 'cancellation'
+      ? "Want to rebook? Just reply to this email and we'll sort it out."
+      : "Need to change something? Just reply to this email and we'll sort it out.",
+  );
   lines.push('');
   lines.push('Venneir Limited');
   return lines.join('\n');
