@@ -19,6 +19,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  AppointmentTimeline,
   Avatar,
   Breadcrumb,
   Button,
@@ -428,6 +429,10 @@ function Loaded({
           appt.reschedule_to_id ? navigate(`/appointment/${appt.reschedule_to_id}`) : undefined
         }
       />
+
+      <section style={{ marginTop: theme.space[5] }}>
+        <AppointmentTimeline appointmentId={appt.id} />
+      </section>
 
       {editing ? (
         <EditBookingSheet
