@@ -52,10 +52,13 @@ const TONE_STYLES: Record<StatusTone, CSSProperties> = {
     boxShadow: `inset 0 0 0 1.5px ${theme.color.alert}`,
   },
   cancelled: {
-    background: 'transparent',
-    color: theme.color.inkSubtle,
-    textDecoration: 'line-through',
-    boxShadow: `inset 0 0 0 1px ${theme.color.border}`,
+    // Soft alert-tinted card with red text. The earlier strikethrough
+    // treatment (struck-through "Cancelled") read like the cancellation
+    // itself had been undone, which is the opposite of the actual
+    // state. Mirrors the unsuitable orange pattern but in red.
+    background: 'rgba(184, 58, 42, 0.10)',
+    color: theme.color.alert,
+    boxShadow: `inset 0 0 0 1px rgba(184, 58, 42, 0.25)`,
   },
   pending: {
     background: 'transparent',
