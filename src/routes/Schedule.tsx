@@ -870,7 +870,7 @@ export function Schedule() {
                 })()
               ) : null}
 
-              {selected.notes && selected.notes.trim() ? (
+              {hasMeaningfulNotes(selected.notes) ? (
                 <div
                   style={{
                     padding: `${theme.space[3]}px ${theme.space[4]}px`,
@@ -1829,5 +1829,17 @@ function formatDayHeading(dateIso: string): string {
 function defaultBookingIso(dateIso: string, startHour: number): string {
   const d = new Date(`${dateIso}T${String(startHour).padStart(2, '0')}:00:00`);
   return d.toISOString();
+}
+
+// Notes column is `text` and historically nullable; some legacy
+// rows have the literal string "None" stored where null would now
+// land. Treat that as empty so the detail card doesn't render a
+// "NOTES / None" block for what is effectively no notes.
+function hasMeaningfulNotes(notes: string | null): boolean {
+  if (!notes) return false;
+  const trimmed = notes.trim();
+  if (!trimmed) return false;
+  if (/^none$/i.test(trimmed)) return false;
+  return true;
 }
 

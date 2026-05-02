@@ -350,9 +350,16 @@ export function DropdownSelect<T extends string>({
                   120,
                   Math.min(DESIRED_MAX, openDown ? spaceBelow : spaceAbove),
                 );
+                // Flip-up position uses the panel's *actual* rendered
+                // height — not maxHeight, which is the *cap* and is
+                // typically much larger than what a short list actually
+                // takes. Earlier this used maxHeight here, which placed
+                // a 4-item dropdown ~130px above its trigger because
+                // the calc assumed a 320px-tall panel.
+                const flipUpHeight = Math.min(maxHeight, naturalHeight);
                 const top = openDown
                   ? triggerRect.bottom + GAP
-                  : triggerRect.top - GAP - maxHeight;
+                  : triggerRect.top - GAP - flipUpHeight;
                 return {
                   position: 'fixed',
                   top,
