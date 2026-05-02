@@ -2091,7 +2091,7 @@ export function VisitDetail() {
 // — direct URL paste, browser refresh — we fall back to the schedule
 // trail so the leftmost crumb still navigates somewhere sensible.
 interface VisitEntryState {
-  from?: 'patient' | 'schedule' | 'in_clinic';
+  from?: 'patient' | 'schedule' | 'in_clinic' | 'appointments';
   patientId?: string;
   patientName?: string;
   // Optional preview of the visit's opened-at timestamp. When the
@@ -2158,6 +2158,29 @@ function VisitBreadcrumbs({
       // crumb, so the visit crumb takes ownership of the identity.
       return [
         { label: 'In clinic', onClick: () => navigate('/in-clinic') },
+        { label: buildVisitLabel(true) },
+      ];
+    }
+    if (entry.from === 'appointments') {
+      // Appointments › Ewa Deb › Appt. 29 Apr — same shape as the
+      // patient-list trail since the appointments page is its own
+      // top-level destination. Patient crumb sits between origin
+      // and the visit so the chain reads naturally.
+      if (patient) {
+        return [
+          { label: 'Appointments', onClick: () => navigate('/appointments') },
+          {
+            label: patientNameLabel,
+            onClick: () =>
+              navigate(`/patient/${patient.id}`, {
+                state: { patientName: livePatientName },
+              }),
+          },
+          { label: buildVisitLabel(false) },
+        ];
+      }
+      return [
+        { label: 'Appointments', onClick: () => navigate('/appointments') },
         { label: buildVisitLabel(true) },
       ];
     }

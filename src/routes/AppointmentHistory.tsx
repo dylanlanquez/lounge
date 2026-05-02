@@ -1,6 +1,14 @@
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import {
+  CalendarPlus2,
+  ChevronLeft,
+  ChevronRight,
+  PenLine,
+  Search,
+  User,
+  X,
+} from 'lucide-react';
 import {
   Avatar,
   DateRangePicker,
@@ -17,7 +25,13 @@ import type { AppointmentStatus } from '../components/AppointmentCard/Appointmen
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { humaniseStatus, properCase, type AppointmentSource } from '../lib/queries/appointments.ts';
+import {
+  humaniseStatus,
+  patientFullDisplayName,
+  properCase,
+  type AppointmentSource,
+} from '../lib/queries/appointments.ts';
+import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
 import {
   APPOINTMENT_HISTORY_PAGE_SIZE,
   useAppointmentHistory,
@@ -26,14 +40,22 @@ import {
 } from '../lib/queries/appointmentHistory.ts';
 import type { DateRange } from '../lib/dateRange.ts';
 
-// Appointment History route — every booking the clinic has ever
-// taken, paged + filterable.
+// Appointments route — every booking the clinic has ever taken or
+// scheduled, past and future. The list mirrors Patients in shape
+// (avatar, name, ref, sticky filters at the top, page-50 pagination
+// at the bottom) so receptionists don't relearn a new pattern. What
+// makes it different is the filter row: status + source + date
+// range + name search compose freely, and any active filter can be
+// dismissed inline so a chain like "show me every cancelled booking
+// in May" takes two clicks to set up and one to clear.
 //
-// Design ladder mirrors Patients: sticky header (title + meta + filter
-// row), full-bleed list, pagination at the bottom. Click a row → opens
-// the linked visit (`/visit/:id`) when the appointment was attended;
-// for cancelled / no-show / not-yet-arrived rows, jumps to the
-// patient profile so the receptionist sees the surrounding history.
+// Click-through routes by visit linkage: an attended appointment has
+// a visit row, so the click goes to /visit/:id; a cancelled or
+// not-yet-arrived appointment has none, so the click goes to the
+// patient profile (where the timeline lists the same booking with
+// every other event around it). The router state we set here drives
+// the destination's breadcrumb so the back-trail says "Appointments
+// › ..." instead of the default "Schedule › ...".
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: AppointmentStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
@@ -51,6 +73,9 @@ const SOURCE_OPTIONS: ReadonlyArray<{ value: AppointmentSource; label: string }>
   { value: 'manual', label: 'Manually added' },
 ];
 
+// Booked rows show a soft outlined pill (the same `pending` tone the
+// In-Clinic board uses for "not yet"). Every other status maps to its
+// own tone so the column reads like a dashboard at a glance.
 const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
@@ -61,15 +86,6 @@ const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   rescheduled: 'cancelled',
 };
 
-const ALL_TIME_RANGE: DateRange = {
-  // The "all time" sentinel — when both dates land on the epoch the
-  // query helper treats it as "no date filter" via the explicit null
-  // check we apply below before passing to the hook.
-  start: '2020-01-01',
-  end: '2099-12-31',
-  preset: 'custom',
-};
-
 export function AppointmentHistory() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -77,34 +93,32 @@ export function AppointmentHistory() {
   const [search, setSearch] = useState('');
   const [statuses, setStatuses] = useState<AppointmentStatus[]>([]);
   const [sources, setSources] = useState<AppointmentSource[]>([]);
-  const [dateRange, setDateRange] = useState<DateRange>(ALL_TIME_RANGE);
+  const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
-
-  // Treat the sentinel "all time" range as "no date filter" so the
-  // query gets nulls instead of a 79-year window. Lets the user clear
-  // the range with the picker's preset list and end up filterless.
-  const isAllTime =
-    dateRange.start === ALL_TIME_RANGE.start && dateRange.end === ALL_TIME_RANGE.end;
 
   const filters: AppointmentHistoryFilters = useMemo(
     () => ({
       statuses,
       sources,
-      fromDate: isAllTime ? null : dateRange.start,
-      toDate: isAllTime ? null : dateRange.end,
+      fromDate: dateRange?.start ?? null,
+      toDate: dateRange?.end ?? null,
       search,
     }),
-    [statuses, sources, dateRange, isAllTime, search],
+    [statuses, sources, dateRange, search],
   );
 
   const { data, loading, error, hasMore } = useAppointmentHistory(filters, page);
 
-  // Any filter change pages back to 0 — staff are starting a new
-  // search, not flicking through the previous result set.
+  // Filter changes reset to page 0 — the receptionist is starting a
+  // new search, not flicking through the previous result set.
   useEffect(() => {
     setPage(0);
   }, [statuses, sources, dateRange, search]);
 
+  // Page changes scroll to top of the list. The route doesn't change
+  // so App's ScrollToTop doesn't fire here; the page scroll lives on
+  // #root (body is pinned for iOS rubber-band) so window.scrollTo is
+  // a no-op.
   useEffect(() => {
     document.getElementById('root')?.scrollTo(0, 0);
   }, [page]);
@@ -116,7 +130,13 @@ export function AppointmentHistory() {
   const outerPaddingX = isMobile ? theme.space[4] : theme.space[6];
   const innerMaxWidth = theme.layout.pageMaxWidth;
   const filtersActive =
-    statuses.length > 0 || sources.length > 0 || !isAllTime || trimmed.length > 0;
+    statuses.length > 0 || sources.length > 0 || dateRange !== null || trimmed.length > 0;
+  const clearAll = () => {
+    setStatuses([]);
+    setSources([]);
+    setDateRange(null);
+    setSearch('');
+  };
 
   return (
     <main
@@ -130,7 +150,7 @@ export function AppointmentHistory() {
     >
       <div style={{ maxWidth: innerMaxWidth, margin: '0 auto' }}>
         <StickyPageHeader
-          title="Appointment history"
+          title="Appointments"
           meta={
             <Counter
               loading={loading}
@@ -150,8 +170,8 @@ export function AppointmentHistory() {
               onSourcesChange={setSources}
               dateRange={dateRange}
               onDateRangeChange={setDateRange}
-              isAllTime={isAllTime}
-              onClearDateRange={() => setDateRange(ALL_TIME_RANGE)}
+              filtersActive={filtersActive}
+              onClearAll={clearAll}
             />
           }
           outerPaddingX={outerPaddingX}
@@ -160,9 +180,7 @@ export function AppointmentHistory() {
         />
 
         {error ? (
-          <p style={{ color: theme.color.alert, margin: 0 }}>
-            Could not load appointment history: {error}
-          </p>
+          <ErrorPanel message={error} />
         ) : loading && data.length === 0 ? (
           <SkeletonList />
         ) : data.length === 0 ? (
@@ -171,8 +189,8 @@ export function AppointmentHistory() {
               title={filtersActive ? 'No appointments match' : 'No appointments yet'}
               description={
                 filtersActive
-                  ? 'Try a different status, date range, or search term.'
-                  : 'Bookings made through Schedule, Calendly or the public booking page will appear here.'
+                  ? 'Try a different status, source, date range, or name.'
+                  : 'Bookings made via Schedule, Calendly or the public booking page will appear here.'
               }
             />
           </div>
@@ -180,12 +198,27 @@ export function AppointmentHistory() {
           <>
             <RowList
               data={data}
-              onPick={(r) => {
-                if (r.visit_id) {
-                  navigate(`/visit/${r.visit_id}`);
+              onPick={(row) => {
+                const fullName = patientFullDisplayName({
+                  patient_first_name: row.patient_first_name,
+                  patient_last_name: row.patient_last_name,
+                } as never);
+                if (row.visit_id) {
+                  navigate(`/visit/${row.visit_id}`, {
+                    state: {
+                      from: 'appointments',
+                      patientId: row.patient_id,
+                      patientName: fullName,
+                    },
+                  });
                   return;
                 }
-                navigate(`/patient/${r.patient_id}`);
+                navigate(`/patient/${row.patient_id}`, {
+                  state: {
+                    from: 'appointments',
+                    patientName: fullName,
+                  },
+                });
               }}
             />
             <Pagination
@@ -215,8 +248,8 @@ function FiltersRow({
   onSourcesChange,
   dateRange,
   onDateRangeChange,
-  isAllTime,
-  onClearDateRange,
+  filtersActive,
+  onClearAll,
 }: {
   search: string;
   onSearchChange: (v: string) => void;
@@ -224,10 +257,10 @@ function FiltersRow({
   onStatusesChange: (next: AppointmentStatus[]) => void;
   sources: AppointmentSource[];
   onSourcesChange: (next: AppointmentSource[]) => void;
-  dateRange: DateRange;
-  onDateRangeChange: (next: DateRange) => void;
-  isAllTime: boolean;
-  onClearDateRange: () => void;
+  dateRange: DateRange | null;
+  onDateRangeChange: (next: DateRange | null) => void;
+  filtersActive: boolean;
+  onClearAll: () => void;
 }) {
   return (
     <div
@@ -246,7 +279,7 @@ function FiltersRow({
           alignItems: 'center',
         }}
       >
-        <div style={{ minWidth: 160 }}>
+        <div style={{ minWidth: 180 }}>
           <MultiSelectDropdown<AppointmentStatus>
             label="Status"
             placeholder="All statuses"
@@ -256,7 +289,7 @@ function FiltersRow({
             totalNoun="statuses"
           />
         </div>
-        <div style={{ minWidth: 160 }}>
+        <div style={{ minWidth: 180 }}>
           <MultiSelectDropdown<AppointmentSource>
             label="Source"
             placeholder="All sources"
@@ -266,11 +299,17 @@ function FiltersRow({
             totalNoun="sources"
           />
         </div>
-        <DateRangePicker value={dateRange} onChange={onDateRangeChange} size="sm" />
-        {!isAllTime ? (
+        <DateRangePicker
+          value={dateRange}
+          onChange={(r) => onDateRangeChange(r)}
+          onClear={() => onDateRangeChange(null)}
+          placeholder="Any date"
+          size="sm"
+        />
+        {filtersActive ? (
           <button
             type="button"
-            onClick={onClearDateRange}
+            onClick={onClearAll}
             style={{
               appearance: 'none',
               background: 'transparent',
@@ -279,12 +318,14 @@ function FiltersRow({
               padding: 0,
               fontFamily: 'inherit',
               fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.medium,
               color: theme.color.inkMuted,
               textDecoration: 'underline',
               textUnderlineOffset: 3,
+              marginLeft: theme.space[1],
             }}
           >
-            Clear dates
+            Clear all filters
           </button>
         ) : null}
       </div>
@@ -312,7 +353,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
       <input
         type="search"
         placeholder="Search by patient name"
-        aria-label="Search appointment history"
+        aria-label="Search appointments"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         autoComplete="off"
@@ -353,7 +394,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (v: string)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// List + row
+// Counter / error / list / row
 // ─────────────────────────────────────────────────────────────────────────────
 
 function Counter({
@@ -372,7 +413,7 @@ function Counter({
   if (loading && count === 0) return <span aria-hidden style={{ minWidth: 56 }} />;
   let label: string;
   if (filtersActive) {
-    label = `${count}${hasMore ? '+' : ''}`;
+    label = count === 0 ? '0' : `${formatThousands(count)}${hasMore ? '+' : ''}`;
   } else {
     const start = page * APPOINTMENT_HISTORY_PAGE_SIZE + 1;
     const end = page * APPOINTMENT_HISTORY_PAGE_SIZE + count;
@@ -390,6 +431,46 @@ function Counter({
     >
       {label}
     </span>
+  );
+}
+
+function ErrorPanel({ message }: { message: string }) {
+  // Failures already log to lng_system_failures via the hook; this
+  // panel is the user-visible side. Honest, non-technical, with the
+  // raw message available for the receptionist to read aloud to a
+  // dev if needed.
+  return (
+    <div
+      role="alert"
+      style={{
+        marginTop: theme.space[5],
+        padding: `${theme.space[5]}px ${theme.space[5]}px`,
+        borderRadius: theme.radius.card,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.alert}`,
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.alert,
+        }}
+      >
+        Could not load appointments
+      </p>
+      <p
+        style={{
+          margin: `${theme.space[2]}px 0 0`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        {message}
+      </p>
+    </div>
   );
 }
 
@@ -425,7 +506,7 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
   const fullName = patientName(row);
   const dateLabel = formatRowDate(row.start_at);
   const timeLabel = formatRowTime(row.start_at);
-  const serviceLabel = row.event_type_label?.trim() || 'Appointment';
+  const serviceLabel = humaniseEventTypeLabel(row.event_type_label) ?? 'Appointment';
   const tone = STATUS_TO_TONE[row.status];
 
   return (
@@ -462,32 +543,35 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
           gap: theme.space[3],
         }}
       >
-        <div style={{ minWidth: 0 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {fullName}
-          </p>
-          {row.appointment_ref ? (
+        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+          <SourceIcon source={row.source} />
+          <div style={{ minWidth: 0 }}>
             <p
               style={{
-                margin: '2px 0 0',
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
+                margin: 0,
+                fontSize: theme.type.size.base,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
-              {row.appointment_ref}
+              {fullName}
             </p>
-          ) : null}
+            {row.appointment_ref ? (
+              <p
+                style={{
+                  margin: '2px 0 0',
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {row.appointment_ref}
+              </p>
+            ) : null}
+          </div>
         </div>
         <p
           style={{
@@ -531,6 +615,57 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
     </button>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source icon — small visual cue at the start of the patient column
+// for where the booking came from. Calendly bookings, native bookings,
+// and manually-added rows each get their own glyph so the receptionist
+// can tell at a glance which origin they're scanning.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SourceIcon({ source }: { source: AppointmentSource }) {
+  const { icon, label } = (() => {
+    switch (source) {
+      case 'native':
+        return { icon: <CalendarPlus2 size={14} />, label: 'Native (Lounge)' };
+      case 'calendly':
+        return { icon: <User size={14} />, label: 'Calendly' };
+      case 'manual':
+        return { icon: <PenLine size={14} />, label: 'Manually added' };
+      default:
+        // Unrecognised source: render nothing rather than fabricate
+        // a glyph. The constraint in the schema means this branch
+        // shouldn't fire — if it ever does, the data model's
+        // changed and the icon set should change with it.
+        return { icon: null, label: source };
+    }
+  })();
+  if (!icon) return null;
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 26,
+        height: 26,
+        borderRadius: theme.radius.pill,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        color: theme.color.inkMuted,
+        flexShrink: 0,
+      }}
+    >
+      {icon}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skeleton + pagination
+// ─────────────────────────────────────────────────────────────────────────────
 
 function SkeletonList() {
   return (
@@ -586,7 +721,7 @@ function Pagination({
   const nextDisabled = !hasMore || loading;
   return (
     <nav
-      aria-label="Appointment history pagination"
+      aria-label="Appointments pagination"
       style={{
         display: 'flex',
         alignItems: 'center',
