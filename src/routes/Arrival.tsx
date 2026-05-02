@@ -451,6 +451,20 @@ export function Arrival() {
     setForm((f) => ({ ...f, [key]: value }));
 
   const onExit = () => {
+    // Pop one history entry so the user lands back on whichever page
+    // launched the wizard (Schedule, AppointmentDetail, the Ledger
+    // row's detail page, /walk-in/new — any of them). The previous
+    // hard-coded /schedule / /walk-in/new fallback meant a discard
+    // from /appointment/:id booted the user to Schedule even though
+    // they never opened it.
+    //
+    // navigate(-1) is a no-op when there's no entry to go back to
+    // (deep-link refresh, opened tab); fall back to the mode-specific
+    // default so the cancel button always lands somewhere useful.
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
     navigate(mode === 'appointment' ? '/schedule' : '/walk-in/new');
   };
 
