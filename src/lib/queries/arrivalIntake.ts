@@ -247,10 +247,11 @@ export async function submitArrivalIntake(
   return { appointment_ref: appointmentRef };
 }
 
-// JB conflict check against Checkpoint via the checkpoint-jb-check edge
-// function. The function authenticates the receptionist's session and
-// fans out to Checkpoint with its service role key, so we never expose
-// Checkpoint credentials client-side.
+// Unified job-box conflict check via the checkpoint-jb-check edge
+// function. The function authenticates the staff session and fans out
+// across all three apps that allocate physical boxes (Checkpoint,
+// Meridian, Lounge), so we never expose cross-project credentials
+// client-side.
 export interface JbAvailabilityResult {
   available: boolean;
   formatted: string; // e.g. "JB33"
@@ -260,14 +261,43 @@ export interface JbAvailabilityResult {
     customer_name: string | null;
     status: string | null;
     checked_in_at: string | null;
-    // Where the conflict comes from. Checkpoint sources are 'lab_order'
-    // (live order_arch_slots) and 'walk_in' (live walk_ins). Lounge's
-    // own sources are 'lounge_appointment' / 'lounge_walk_in', set
-    // when a JB is pinned to an in-flight appointment or walk-in here
-    // — those refs only clear once the visit completes (see
-    // Pay.closeVisit).
-    source: 'lab_order' | 'walk_in' | 'lounge_appointment' | 'lounge_walk_in';
+    // Where the conflict was found:
+    //   'lab_order'           Checkpoint  order_arch_slots (status=in_lab)
+    //   'walk_in'             Checkpoint  walk_ins (active)
+    //   'meridian_production' Meridian    production_cases (active stage,
+    //                                     not cancelled / archived /
+    //                                     deleted)
+    //   'lounge_appointment'  Lounge      lng_appointments (jb_ref pinned;
+    //                                     cleared by Pay.closeVisit)
+    //   'lounge_walk_in'      Lounge      lng_walk_ins (same lifecycle)
+    source:
+      | 'lab_order'
+      | 'walk_in'
+      | 'meridian_production'
+      | 'lounge_appointment'
+      | 'lounge_walk_in';
   } | null;
+}
+
+// Label for the source-of-conflict, used in the receptionist's
+// conflict banner. Tells them which app currently holds the box
+// (Checkpoint = lab order or walk-in there, Meridian = production
+// case in print, Lounge = pinned to an in-flight appointment/walk-in
+// here). Three app names rather than five sources keeps the banner
+// short and matches how staff think about the lab pipeline.
+export function jbConflictAppLabel(
+  source: NonNullable<JbAvailabilityResult['conflict']>['source'],
+): 'Checkpoint' | 'Meridian' | 'Lounge' {
+  switch (source) {
+    case 'lab_order':
+    case 'walk_in':
+      return 'Checkpoint';
+    case 'meridian_production':
+      return 'Meridian';
+    case 'lounge_appointment':
+    case 'lounge_walk_in':
+      return 'Lounge';
+  }
 }
 
 export async function checkJbAvailability(jbRef: string): Promise<JbAvailabilityResult> {

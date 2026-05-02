@@ -1,23 +1,35 @@
 // checkpoint-jb-check
 //
-// Receptionist-side JB conflict check for the Lounge arrival intake sheet.
-// Given a job box number (digits only, e.g. "33"), this asks Checkpoint
-// whether the box is currently occupied by an active lab order or
-// active walk-in. If it is, we surface enough context (order name,
-// customer name) so the receptionist can either reuse the box if it's
-// the same person or pick a different one.
+// Unified job-box conflict check across all three apps that allocate
+// physical numbered boxes: Checkpoint (lab orders + walk-ins),
+// Lounge (appointments + walk-ins) and Meridian (production cases).
+// Given a job box number (digits only, e.g. "33"), the function
+// returns the first active occupant it finds, or available:true if
+// every source is clear. The composed read is the single source of
+// truth — each app keeps its own table as the local truth for its
+// own allocations, and this function is the canonical reader.
 //
-// Source-of-truth tables (mirrors Meridian's checkpoint-lookup):
-//   - order_arch_slots — live lab orders. Active = status='in_lab'.
-//   - walk_ins         — live walk-in impressions. Active = status not in
-//                        ('complete', 'cancelled').
+// Source-of-truth tables (in lookup order — first match wins):
+//   1. Checkpoint  order_arch_slots     status='in_lab'
+//   2. Checkpoint  walk_ins             status not in ('complete','cancelled')
+//   3. Meridian    production_cases     job_box_number set, deleted_at null,
+//                                        archived_at null, stage_key not
+//                                        'cancelled'. Note 'complete' still
+//                                        counts as in-use because the print
+//                                        sits in the box until shipped — the
+//                                        case is archived after shipping.
+//   4. Lounge      lng_appointments     jb_ref non-null (cleared by
+//                                        Pay.closeVisit)
+//   5. Lounge      lng_walk_ins         jb_ref non-null (same lifecycle)
 //
 // Note: Checkpoint's check_ins table is the AUDIT LOG, not live state.
 // Querying it would surface every historical occupant of the box.
 // Meridian's checkpoint-lookup carries the same warning.
 //
-// Auth model: anon-key Bearer JWT for the caller (per Lounge brief
-// §8.5). The caller must have a Lounge account row.
+// Auth model: anon-key Bearer JWT for the caller. Any user with a row
+// in `accounts` (shared between Lounge and Meridian on the npu
+// project) can call it — the response only carries first-name +
+// case/order ref, no PII beyond what staff already see in their app.
 //
 // Required env (Lounge Supabase project):
 //   SUPABASE_URL                       — Meridian / Lounge project URL
@@ -66,12 +78,21 @@ interface Conflict {
   customer_name: string | null;
   status: string | null;
   checked_in_at: string | null;
-  // 'lab_order' / 'walk_in' come from Checkpoint.
-  // 'lounge_appointment' / 'lounge_walk_in' come from Lounge's own
-  // active assignments — a JB pinned to an in-flight appointment or
-  // walk-in here is just as much "in use" as a Checkpoint lab box,
-  // so we have to check both source-of-truth surfaces.
-  source: 'lab_order' | 'walk_in' | 'lounge_appointment' | 'lounge_walk_in';
+  // Where the conflict was found:
+  //   'lab_order'           Checkpoint   order_arch_slots (status=in_lab)
+  //   'walk_in'             Checkpoint   walk_ins (active)
+  //   'meridian_production' Meridian     production_cases (active)
+  //   'lounge_appointment'  Lounge       lng_appointments (jb_ref pinned)
+  //   'lounge_walk_in'      Lounge       lng_walk_ins (jb_ref pinned)
+  // The receptionist's UI uses this to label the conflict ("in
+  // Meridian production", "in Checkpoint", "in Lounge") so they know
+  // who currently holds the box.
+  source:
+    | 'lab_order'
+    | 'walk_in'
+    | 'meridian_production'
+    | 'lounge_appointment'
+    | 'lounge_walk_in';
 }
 
 Deno.serve(async (req) => {
@@ -190,7 +211,63 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 3. Lounge active appointments — direct jb_ref pin. The column is
+  // 3. Meridian active production cases — production_cases.job_box_number.
+  //    Stored as digits-only (Meridian's JobBoxSafeguard strips non-
+  //    digits from the input before saving), matching Lounge's jb_ref
+  //    shape — so we query with `digits`, not `jbFormatted`.
+  //    Filters:
+  //      • deleted_at is null  (soft-deleted cases freed the box)
+  //      • archived_at is null (archived = case parked, box freed
+  //                             when physical handling finished)
+  //      • stage_key != 'cancelled' (cancellation frees the box)
+  //    Note 'complete' is INCLUDED — once a print is complete, the
+  //    box still sits in the lab until physical shipping. We only
+  //    treat the box as freed when the case is archived/deleted.
+  //    Joins through patients (shared with Lounge on the same project)
+  //    to surface a customer name in the conflict banner.
+  if (!conflict) {
+    const { data: caseRows, error: caseErr } = await sbAdmin
+      .from('production_cases')
+      .select(
+        'reference, stage_key, stage_entered_at, patient:patients(first_name, last_name)'
+      )
+      .eq('job_box_number', digits)
+      .is('deleted_at', null)
+      .is('archived_at', null)
+      .neq('stage_key', 'cancelled')
+      .order('stage_entered_at', { ascending: false })
+      .limit(1);
+    if (caseErr) {
+      return json(
+        { error: 'meridian_query_failed', source: 'production_cases', detail: caseErr.message },
+        502
+      );
+    }
+    if (caseRows && caseRows.length > 0) {
+      const r = caseRows[0] as {
+        reference: string | null;
+        stage_key: string | null;
+        stage_entered_at: string | null;
+        patient:
+          | { first_name: string | null; last_name: string | null }
+          | { first_name: string | null; last_name: string | null }[]
+          | null;
+      };
+      const p = Array.isArray(r.patient) ? r.patient[0] ?? null : r.patient;
+      const name = p
+        ? [p.first_name, p.last_name].filter(Boolean).join(' ').trim() || null
+        : null;
+      conflict = {
+        order_name: r.reference,
+        customer_name: name,
+        status: r.stage_key,
+        checked_in_at: r.stage_entered_at,
+        source: 'meridian_production',
+      };
+    }
+  }
+
+  // 4. Lounge active appointments — direct jb_ref pin. The column is
   //    nulled by Pay.closeVisit when the visit completes, so a
   //    non-null match means "currently held by a live appointment".
   if (!conflict) {
