@@ -34,6 +34,8 @@ export type TimelineEventType =
   | 'payment_failed'
   | 'patient_event';
 
+export type TimelineTone = 'accent' | 'warn' | 'alert' | 'neutral';
+
 export interface TimelineEvent {
   id: string;
   type: TimelineEventType;
@@ -44,7 +46,12 @@ export interface TimelineEvent {
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
   actor?: string;
-  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box';
+  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box' | 'mail';
+  // Optional tone override. When set, the icon dot uses this tone
+  // directly instead of the type-derived fallback. Lets producers
+  // (e.g. AppointmentTimeline) opt out of the visit-centric heuristics
+  // and label the semantic weight of each event explicitly.
+  tone?: TimelineTone;
 }
 
 // Internal shape used by the fetchers — same as TimelineEvent but
