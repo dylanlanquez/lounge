@@ -233,6 +233,45 @@ export async function staffUpdatePatient(args: {
   };
 }
 
+// Lookup the patient at a given location that already owns this
+// email. Used by the Edit-profile modal to translate the raw "duplicate
+// key value violates unique constraint" Postgres error into a usable
+// "this email belongs to <name> (LWO-12345)" message — so the
+// receptionist can find and merge the duplicate instead of guessing.
+//
+// Returns null when nothing is found (which means the dup row was
+// deleted between the failed write and the lookup, or the email is
+// stored case-differently — both are rare; the caller falls back to
+// a generic message).
+export async function findPatientByEmailAtLocation(args: {
+  email: string;
+  locationId: string;
+  excludePatientId: string;
+}): Promise<{
+  id: string;
+  first_name: string;
+  last_name: string;
+  internal_ref: string;
+  lwo_ref: string | null;
+} | null> {
+  const { data, error } = await supabase
+    .from('patients')
+    .select('id, first_name, last_name, internal_ref, lwo_ref')
+    .eq('location_id', args.locationId)
+    .ilike('email', args.email)
+    .neq('id', args.excludePatientId)
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return (data as {
+    id: string;
+    first_name: string;
+    last_name: string;
+    internal_ref: string;
+    lwo_ref: string | null;
+  } | null) ?? null;
+}
+
 // Apply phone-first / multi-word patient search filters to a Supabase
 // query builder. Single source-of-truth shared between the picker
 // (usePatientSearch) and the Patients page list (usePatientList) so a

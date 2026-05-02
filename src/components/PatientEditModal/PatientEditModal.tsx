@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Mail } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Dialog } from '../Dialog/Dialog.tsx';
 import { Input } from '../Input/Input.tsx';
 import { Button } from '../Button/Button.tsx';
 import { theme } from '../../theme/index.ts';
-import { staffUpdatePatient } from '../../lib/queries/patients.ts';
+import {
+  findPatientByEmailAtLocation,
+  staffUpdatePatient,
+} from '../../lib/queries/patients.ts';
 
 // Bag of every field the form touches, plus the patient id for the
 // edit endpoint. Lounge keeps clinical fields editable here too — they
@@ -12,6 +16,12 @@ import { staffUpdatePatient } from '../../lib/queries/patients.ts';
 // state, since Shopify doesn't model them.
 export interface PatientEditModalPatient {
   id: string;
+  // Drives the duplicate-email error path: when the unique
+  // (location_id, email) constraint trips we look up the OTHER patient
+  // at this location and surface their name + LWO ref so a
+  // receptionist can find the duplicate instead of staring at the raw
+  // Postgres message.
+  location_id?: string | null;
   first_name: string;
   last_name: string;
   email: string | null;
@@ -112,6 +122,15 @@ export function PatientEditModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<string | null>(null);
+  // Set when the save tripped the (location_id, email) unique
+  // constraint AND the lookup found the conflicting patient. Renders
+  // a clickable name + LWO ref in the error banner so the
+  // receptionist can jump to the duplicate to merge / clean up.
+  const [duplicateEmailPatient, setDuplicateEmailPatient] = useState<{
+    id: string;
+    name: string;
+    ref: string;
+  } | null>(null);
   // Scroll the error banner into view when it appears so the
   // receptionist can't miss a save failure even if they were focused
   // on a field at the bottom of the form.
@@ -144,6 +163,7 @@ export function PatientEditModal({
     }
     setError(null);
     setErrorKind(null);
+    setDuplicateEmailPatient(null);
     setSaving(true);
     try {
       // Country isn't surfaced in the form anymore (Shopify sync
@@ -205,8 +225,39 @@ export function PatientEditModal({
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Could not save changes. Try again.';
       const kind = (e as { errorKind?: string } | null)?.errorKind ?? null;
+
+      // Translate the unique-constraint trip into something a
+      // receptionist can act on. The Postgres message includes the
+      // constraint name; matching on it is brittle but our schema
+      // owns the constraint so the name is stable.
+      const isEmailDup = /patients_email_per_location_unique/i.test(message);
+      const trimmedEmail = identity.email.trim();
+      if (isEmailDup && trimmedEmail && patient.location_id) {
+        const dup = await findPatientByEmailAtLocation({
+          email: trimmedEmail,
+          locationId: patient.location_id,
+          excludePatientId: patient.id,
+        });
+        if (dup) {
+          const name = `${dup.first_name} ${dup.last_name}`.trim() || 'another patient';
+          const ref = dup.lwo_ref ?? dup.internal_ref;
+          setDuplicateEmailPatient({ id: dup.id, name, ref });
+          setError(
+            `That email is already on another patient at this clinic. Each patient must have a unique email.`,
+          );
+          setErrorKind(null);
+          return;
+        }
+        setError(
+          `That email is already on another patient at this clinic. Each patient must have a unique email.`,
+        );
+        setErrorKind(null);
+        return;
+      }
+
       setError(message);
       setErrorKind(kind);
+      setDuplicateEmailPatient(null);
     } finally {
       setSaving(false);
     }
@@ -381,7 +432,29 @@ export function PatientEditModal({
                 Save failed
               </p>
               <p style={{ margin: `${theme.space[1]}px 0 0` }}>{error}</p>
-              {errorKind ? (
+              {duplicateEmailPatient ? (
+                <p
+                  style={{
+                    margin: `${theme.space[2]}px 0 0`,
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.medium,
+                  }}
+                >
+                  In use by{' '}
+                  <Link
+                    to={`/patient/${duplicateEmailPatient.id}`}
+                    onClick={onClose}
+                    style={{
+                      color: theme.color.surface,
+                      textDecoration: 'underline',
+                      textUnderlineOffset: 3,
+                    }}
+                  >
+                    {duplicateEmailPatient.name}
+                  </Link>{' '}
+                  ({duplicateEmailPatient.ref}).
+                </p>
+              ) : errorKind ? (
                 <p
                   style={{
                     margin: `${theme.space[2]}px 0 0`,
