@@ -192,7 +192,7 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             {compactTimestamp(event.timestamp)}
           </span>
         </div>
-        {event.detail || event.actor || (event.facts && event.facts.length > 0) ? (
+        {event.detail || event.actor ? (
           <p
             style={{
               margin: `${theme.space[1]}px 0 0`,
@@ -202,19 +202,16 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
             }}
           >
             {event.detail}
-            {event.detail && event.facts && event.facts.length > 0 ? (
-              <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
-            ) : null}
-            {event.facts && event.facts.length > 0 ? (
-              <FactsLine facts={event.facts} />
-            ) : null}
-            {(event.detail || (event.facts && event.facts.length > 0)) && event.actor ? (
+            {event.detail && event.actor ? (
               <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
             ) : null}
             {event.actor ? (
               <span style={{ color: theme.color.inkSubtle }}>by {event.actor}</span>
             ) : null}
           </p>
+        ) : null}
+        {event.facts && event.facts.length > 0 ? (
+          <FactsLine facts={event.facts} />
         ) : null}
       </div>
     </li>
@@ -233,28 +230,65 @@ const TONE: Record<'accent' | 'warn' | 'alert' | 'neutral', EventTone> = {
   neutral: { bg: 'rgba(14, 20, 20, 0.05)', fg: theme.color.inkMuted },
 };
 
-// Renders a structured fact list inline as descriptive text rather
-// than a separate panel. Each fact reads "label value" with the
-// label muted-italic and the value in ink, joined with " · " so the
-// resulting line scans as a sentence under the event detail.
+// Renders structured facts as small inline chip pills under the
+// event detail line. Each chip shows "label value" with label muted
+// and value in ink semibold, on a soft tinted surface with a 1px
+// border. Wraps onto multiple rows when needed.
 //
-// Previous version put the facts in a tinted box. The box was
-// visually heavy for a couple of values and felt disconnected from
-// the timeline event's title/detail line. Inline text keeps the
-// timeline reading top-down with no awkward containers.
+// Previous versions went through both a tinted box (too heavy) and
+// flat inline prose (every word same weight, no visual depth). Chips
+// give the structured facts their own visual rhythm while staying
+// quieter than the event title.
 function FactsLine({ facts }: { facts: ReadonlyArray<{ label: string; value: string }> }) {
   return (
-    <>
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: theme.space[2],
+        marginTop: theme.space[2],
+      }}
+    >
       {facts.map((f, i) => (
-        <span key={`${f.label}|${i}`}>
-          {i > 0 ? <span style={{ color: theme.color.inkSubtle }}>{' · '}</span> : null}
-          <span style={{ color: theme.color.inkSubtle }}>{f.label} </span>
-          <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
+        <span
+          key={`${f.label}|${i}`}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'baseline',
+            gap: 6,
+            padding: '4px 10px',
+            borderRadius: theme.radius.pill,
+            background: theme.color.bg,
+            border: `1px solid ${theme.color.border}`,
+            fontSize: theme.type.size.xs,
+            lineHeight: 1.3,
+            maxWidth: '100%',
+          }}
+        >
+          <span
+            style={{
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              flexShrink: 0,
+            }}
+          >
+            {f.label}
+          </span>
+          <span
+            style={{
+              color: theme.color.ink,
+              fontWeight: theme.type.weight.semibold,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {f.value}
           </span>
         </span>
       ))}
-    </>
+    </div>
   );
 }
 
