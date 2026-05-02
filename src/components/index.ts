@@ -88,6 +88,9 @@ export type { DatePickerProps } from './DatePicker/DatePicker.tsx';
 export { TimePicker } from './TimePicker/TimePicker.tsx';
 export type { TimePickerProps } from './TimePicker/TimePicker.tsx';
 
+export { SnippetEditor, syntaxToHtml, htmlToSyntax } from './SnippetEditor/SnippetEditor.tsx';
+export type { SnippetEditorProps } from './SnippetEditor/SnippetEditor.tsx';
+
 export { Section } from './Section/Section.tsx';
 export type { SectionProps } from './Section/Section.tsx';
 
