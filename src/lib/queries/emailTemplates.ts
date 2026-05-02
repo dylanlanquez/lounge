@@ -267,8 +267,10 @@ export interface EmailTemplateVariable {
 }
 
 // Variables shared across appointment-related templates. Pulled out
-// so the same list can be reused when reminder / confirmation /
-// reschedule / cancellation templates land — no drift.
+// so the same list can be reused across confirmation / reschedule /
+// cancellation / reminder templates without drift. Order in the
+// picker mirrors the order a copywriter naturally reaches for:
+// patient identity → what + when → where + how to find us → links.
 const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   {
     name: 'patientFirstName',
@@ -332,17 +334,89 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     sample: 'Venneir Lounge, 123 High Street, Glasgow',
   },
   {
+    name: 'locationPhone',
+    label: 'Clinic phone',
+    description:
+      'The clinic phone number from the locations table. Empty when not set. Use inside copy like "Call us on {{locationPhone}}".',
+    sample: '+44 141 555 0123',
+  },
+  {
     name: 'appointmentRef',
     label: 'LAP reference',
     description: 'The LAP-NNNNN appointment reference. Empty until intake stamps it.',
     sample: 'LAP-00042',
   },
+  {
+    name: 'googleCalendarUrl',
+    label: 'Add-to-calendar URL',
+    description:
+      'Pre-built Google Calendar link with the appointment details. Drop it inside [button:Label](url) for a tappable CTA.',
+    sample:
+      'https://www.google.com/calendar/render?action=TEMPLATE&text=Click-in+veneers&dates=20260509T100000Z/20260509T110000Z',
+  },
 ];
+
+// Reschedule-specific variables. Layered on top of the shared list
+// so the picker shows the full set including the "old" trio. Kept
+// alphabetised among the old-* trio for predictability.
+const RESCHEDULE_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  ...APPOINTMENT_VARIABLES,
+  {
+    name: 'oldAppointmentDateTime',
+    label: 'Previous date and time',
+    description:
+      'The slot the appointment was moved from, e.g. "Fri 8 May at 09:30". Use to show the change explicitly: "Was Fri 8 May at 09:30."',
+    sample: 'Fri 8 May at 09:30',
+  },
+  {
+    name: 'oldAppointmentDate',
+    label: 'Previous date',
+    description: 'Short day-of-week + date for the old slot, e.g. "Fri 8 May".',
+    sample: 'Fri 8 May',
+  },
+  {
+    name: 'oldAppointmentTime',
+    label: 'Previous time',
+    description: '24-hour HH:MM of the old slot, e.g. "09:30".',
+    sample: '09:30',
+  },
+];
+
+// Cancellation templates don't get the calendar-link variable — the
+// .ics attachment is the cancel signal, and a "Add to calendar" CTA
+// for an event that's been cancelled is contradictory copy.
+const CANCELLATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = APPOINTMENT_VARIABLES.filter(
+  (v) => v.name !== 'googleCalendarUrl',
+);
 
 export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> = [
   {
+    key: 'booking_confirmation',
+    label: 'Booking confirmation',
+    group: 'Appointments',
+    description:
+      'Sent the moment a patient is booked into a slot. Includes a calendar invite (.ics) so the appointment lands in their calendar with one click.',
+    variables: APPOINTMENT_VARIABLES,
+  },
+  {
+    key: 'booking_reschedule',
+    label: 'Appointment moved',
+    group: 'Appointments',
+    description:
+      'Sent when staff move an appointment to a new time or date. The calendar invite swaps the old slot for the new one in one step.',
+    variables: RESCHEDULE_VARIABLES,
+  },
+  {
+    key: 'booking_cancellation',
+    label: 'Appointment cancelled',
+    group: 'Appointments',
+    description:
+      'Sent when an appointment is cancelled. Pairs with a CANCEL calendar file so the slot disappears from the patient\'s calendar.',
+    variables: CANCELLATION_VARIABLES,
+  },
+  {
     key: 'appointment_reminder',
-    label: 'Appointment reminder (24h before)',
+    label: 'Reminder · 24 hours before',
     group: 'Appointments',
     description:
       'Sent automatically 24 hours before each native booking. Patient gets a friendly nudge with the slot details.',

@@ -219,16 +219,64 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
-  // ── Render email ────────────────────────────────────────────────
-  const subject =
+  // ── Render email via the editable template ────────────────────
+  // Three sibling templates, one per kind. Each is loaded from
+  // lng_email_templates so admin edits in the UI go live on the
+  // next send. If the row is missing or paused we fail fast with a
+  // structured reason — surfacing as a toast in the caller is the
+  // right behaviour because the operator likely paused the template
+  // deliberately and the receptionist needs to know "no email left
+  // the building" rather than guess.
+  const templateKey =
     kind === 'cancellation'
-      ? `Your appointment has been cancelled · ${formatHumanDateTime(apt.start_at)}`
+      ? 'booking_cancellation'
       : kind === 'reschedule'
-      ? `Your appointment has moved · ${formatHumanDateTime(apt.start_at)}`
-      : `You're booked in · ${formatHumanDateTime(apt.start_at)}`;
+      ? 'booking_reschedule'
+      : 'booking_confirmation';
 
-  const html = renderHtml({ apt, oldApt, patient, location, kind });
-  const text = renderText({ apt, oldApt, patient, location, kind });
+  const { data: tplRaw, error: tplErr } = await admin
+    .from('lng_email_templates')
+    .select('subject, body_syntax, enabled')
+    .eq('key', templateKey)
+    .maybeSingle();
+  if (tplErr) {
+    await logFailure(admin, {
+      severity: 'error',
+      message: `Template read failed for ${templateKey}: ${tplErr.message}`,
+      context: { appointmentId, templateKey },
+      callerAccountAuthId,
+    });
+    return jsonResponse(200, { ok: false, error: tplErr.message });
+  }
+  const template = tplRaw as
+    | { subject: string; body_syntax: string; enabled: boolean }
+    | null;
+  if (!template) {
+    await logFailure(admin, {
+      severity: 'error',
+      message: `Template ${templateKey} not configured`,
+      context: { appointmentId, templateKey },
+      callerAccountAuthId,
+    });
+    return jsonResponse(200, {
+      ok: false,
+      error: `Email template "${templateKey}" not configured. Seed it from the admin panel.`,
+      reason: 'template_not_found',
+    });
+  }
+  if (!template.enabled) {
+    return jsonResponse(200, {
+      ok: false,
+      error: 'Email template paused. Re-enable it in Admin → Email templates to send.',
+      reason: 'template_disabled',
+    });
+  }
+
+  const variables = buildVariables({ apt, oldApt, patient, location });
+  const subject = substituteVariables(template.subject, variables);
+  const bodyAfterVars = substituteVariables(template.body_syntax, variables);
+  const html = wrapInLoungeShell(parseFormatting(toBr(bodyAfterVars)));
+  const text = bodyToText(bodyAfterVars);
 
   // ── Deliver via Resend ─────────────────────────────────────────
   if (!RESEND_API_KEY) {
@@ -504,174 +552,184 @@ function unicodeEscape(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Email rendering
+// Variable hydration
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Builds the {{var}} → value map the template renderer interpolates
+// against. Every variable surfaced in EMAIL_TEMPLATE_DEFINITIONS is
+// hydrated here — both the shared appointment set and the
+// reschedule-only "old" trio. Anything missing renders literally as
+// {{var}} in the email so QA spots a bad mapping in a test send,
+// rather than a silently-empty paragraph reaching a real patient.
 
-interface RenderContext {
+interface VariableContext {
   apt: AppointmentRow;
   oldApt: AppointmentRow | null;
   patient: PatientRow;
   location: LocationRow | null;
-  kind: 'booking' | 'reschedule' | 'cancellation';
 }
 
-function renderHtml({ apt, oldApt, patient, location, kind }: RenderContext): string {
-  const greeting = patient.first_name
-    ? `Hi ${escapeHtml(patient.first_name)},`
-    : 'Hi,';
-  const headline =
-    kind === 'cancellation'
-      ? 'Your appointment has been cancelled'
-      : kind === 'reschedule'
-      ? 'Your appointment has moved'
-      : "You're booked in";
-  const lead =
-    kind === 'cancellation'
-      ? `Your booking on <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong> has been cancelled. Your calendar will be updated automatically.`
-      : kind === 'reschedule'
-      ? `We've updated your booking to <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong>.`
-      : `See you on <strong>${escapeHtml(formatHumanDateTime(apt.start_at))}</strong>.`;
-  const oldRow = oldApt
-    ? `
-      <tr>
-        <td style="padding:8px 0;color:#7B8285;font-size:14px;">Was</td>
-        <td style="padding:8px 0;text-align:right;color:#7B8285;font-size:14px;text-decoration:line-through;">
-          ${escapeHtml(formatHumanDateTime(oldApt.start_at))}
-        </td>
-      </tr>`
-    : '';
-  const serviceLabel = labelForService(apt);
-  const gcalUrl = googleCalendarUrl(apt, location);
-  const locationLine = location
-    ? `${escapeHtml(location.name ?? 'Venneir Lounge')}${location.city ? `, ${escapeHtml(location.city)}` : ''}`
-    : 'Venneir Lounge';
-  const joinRow =
-    kind !== 'cancellation' && apt.join_url
-      ? `
-      <tr>
-        <td style="padding:8px 0;color:#5A6266;font-size:14px;">Join link</td>
-        <td style="padding:8px 0;text-align:right;font-size:14px;">
-          <a href="${escapeHtml(apt.join_url)}" style="color:#0E1414;">Open meeting</a>
-        </td>
-      </tr>`
-      : '';
-  const refRow = apt.appointment_ref
-    ? `
-      <tr>
-        <td style="padding:8px 0;color:#7B8285;font-size:12px;">Reference</td>
-        <td style="padding:8px 0;text-align:right;color:#7B8285;font-size:12px;font-variant-numeric:tabular-nums;">
-          ${escapeHtml(apt.appointment_ref)}
-        </td>
-      </tr>`
-    : '';
+function buildVariables(ctx: VariableContext): Record<string, string> {
+  const apt = ctx.apt;
+  const oldApt = ctx.oldApt;
+  const patient = ctx.patient;
+  const location = ctx.location;
 
-  // The Add-to-Google-Calendar CTA is only meaningful when there's
-  // a future event to add. For cancellations we replace it with a
-  // muted "if this was a mistake, get in touch" line.
-  const ctaBlock =
-    kind === 'cancellation'
-      ? `<div style="margin:24px 0 0;text-align:center;">
-           <p style="margin:0;color:#7B8285;font-size:13px;line-height:1.55;">
-             If this cancellation was a mistake, just reply to this email and we'll get you back on the schedule.
-           </p>
-         </div>`
-      : `<div style="margin:24px 0 0;text-align:center;">
-           <a href="${escapeHtml(gcalUrl)}"
-              style="display:inline-block;padding:12px 20px;background:#0E1414;color:#FFFFFF;text-decoration:none;border-radius:999px;font-weight:600;font-size:14px;">
-             Add to Google Calendar
-           </a>
-           <p style="margin:12px 0 0;color:#7B8285;font-size:12px;">
-             Apple Mail and Outlook will pick up the attached .ics automatically.
-           </p>
-         </div>`;
+  const fmtRange = (iso: string, opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', ...opts }).format(
+      new Date(iso),
+    );
+  const dayShort = (iso: string) =>
+    fmtRange(iso, { weekday: 'short', day: 'numeric', month: 'short' });
+  const time24 = (iso: string) =>
+    fmtRange(iso, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const dayLong = (iso: string) =>
+    fmtRange(iso, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const dateTime = (iso: string) => `${dayShort(iso)} at ${time24(iso)}`;
 
-  const replyLine =
-    kind === 'cancellation'
-      ? "Want to rebook? Just reply to this email and we'll sort it out."
-      : "Need to change something? Just reply to this email and we'll sort it out.";
+  const vars: Record<string, string> = {
+    patientFirstName: patient.first_name?.trim() || 'there',
+    patientLastName: patient.last_name?.trim() || '',
+    serviceLabel: labelForService(apt),
+    appointmentDateTime: dateTime(apt.start_at),
+    appointmentDate: dayShort(apt.start_at),
+    appointmentDateLong: dayLong(apt.start_at),
+    appointmentTime: time24(apt.start_at),
+    locationName: location?.name?.trim() || 'Venneir Lounge',
+    locationCity: location?.city?.trim() || '',
+    locationAddress: locationFreeform(location),
+    locationPhone: location?.phone?.trim() || '',
+    appointmentRef: apt.appointment_ref ?? '',
+    googleCalendarUrl: googleCalendarUrl(apt, location),
+  };
 
+  if (oldApt) {
+    vars.oldAppointmentDateTime = dateTime(oldApt.start_at);
+    vars.oldAppointmentDate = dayShort(oldApt.start_at);
+    vars.oldAppointmentTime = time24(oldApt.start_at);
+  }
+
+  return vars;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Renderer pipeline — Deno copy of src/lib/emailRenderer.ts. Kept in
+// sync by hand because Deno can't import from src/ directly. The
+// reminder edge function carries the same copy; if you change one,
+// change all three AND extend src/lib/emailRenderer.test.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function substituteVariables(template: string, variables: Record<string, string>): string {
+  if (!template) return '';
+  return template.replace(/\{\{(\w+)\}\}/g, (full, key: string) => {
+    if (Object.prototype.hasOwnProperty.call(variables, key)) {
+      return variables[key] ?? '';
+    }
+    return full;
+  });
+}
+
+function toBr(text: string): string {
+  if (!text) return '';
+  return text.trim().replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+}
+
+function parseFormatting(html: string): string {
+  if (!html) return '';
+  let out = html;
+  out = out.replace(/---/g, '<hr style="border:none;border-top:1px solid #E5E2DC;margin:20px 0">');
+  out = out.replace(
+    /### (.+?)(<br>|$)/g,
+    '<h3 style="font-size:16px;font-weight:600;margin:14px 0 6px;color:#0E1414;letter-spacing:-0.01em">$1</h3>',
+  );
+  out = out.replace(
+    /## (.+?)(<br>|$)/g,
+    '<h2 style="font-size:20px;font-weight:600;margin:18px 0 8px;color:#0E1414;letter-spacing:-0.01em">$1</h2>',
+  );
+  out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  out = out.replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>');
+  out = out.replace(
+    /!\[([^\]]*)\]\((.+?)\)/g,
+    '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:10px 0;display:block">',
+  );
+  out = out.replace(
+    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
+    (
+      _: string,
+      label: string,
+      bg: string | undefined,
+      tc: string | undefined,
+      rad: string | undefined,
+      mt: string | undefined,
+      mb: string | undefined,
+      url: string,
+    ) => {
+      const bgC = bg || '#0E1414';
+      const tcC = tc || '#FFFFFF';
+      const radC = rad || '999';
+      const mtC = mt || '12';
+      const mbC = mb || '12';
+      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em">${label}</a>`;
+    },
+  );
+  out = out.replace(
+    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
+    (
+      _: string,
+      label: string,
+      bg: string | undefined,
+      tc: string | undefined,
+      rad: string | undefined,
+      url: string,
+    ) => {
+      const bgC = bg || '#0E1414';
+      const tcC = tc || '#FFFFFF';
+      const radC = rad || '999';
+      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:12px 0;letter-spacing:-0.005em">${label}</a>`;
+    },
+  );
+  out = out.replace(
+    /\[(.+?)\]\((.+?)\)/g,
+    '<a href="$2" style="color:#0E1414;text-decoration:underline">$1</a>',
+  );
+  out = out.replace(
+    /^- (.+?)(<br>)/gm,
+    '<span style="display:block;padding-left:16px;position:relative;margin:4px 0"><span style="position:absolute;left:0;top:0;color:#0E1414">•</span>$1</span>',
+  );
+  return out;
+}
+
+function bodyToText(syntax: string): string {
+  if (!syntax) return '';
+  return syntax
+    .replace(/### (.+)/g, '$1')
+    .replace(/## (.+)/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
+    .replace(/\{color:[^}]+\}([^{]+)\{\/color\}/g, '$1')
+    .replace(/!\[([^\]]*)\]\((.+?)\)/g, '[image: $1 — $2]')
+    .replace(/\[button:([^|\]]+)(?:\|[^\]]*)?\]\((.+?)\)/g, '$1: $2')
+    .replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)')
+    .replace(/^---$/gm, '────────────')
+    .trim();
+}
+
+function wrapInLoungeShell(bodyHtml: string): string {
   return `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,system-ui,sans-serif;color:#0E1414;">
-  <div style="max-width:520px;margin:0 auto;padding:32px 24px;">
-    <h1 style="margin:0 0 8px;font-size:22px;font-weight:600;letter-spacing:-0.01em;">${escapeHtml(headline)}</h1>
-    <p style="margin:0 0 24px;color:#5A6266;line-height:1.5;">${greeting} ${lead}</p>
-    <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:12px;padding:20px 24px;">
-      <table style="width:100%;border-collapse:collapse;">
-        <tr>
-          <td style="padding:8px 0;color:#5A6266;font-size:14px;">Service</td>
-          <td style="padding:8px 0;text-align:right;font-size:14px;">${escapeHtml(serviceLabel)}</td>
-        </tr>
-        <tr>
-          <td style="padding:8px 0;color:#5A6266;font-size:14px;">${kind === 'cancellation' ? 'Was due' : 'When'}</td>
-          <td style="padding:8px 0;text-align:right;font-weight:600;font-size:14px;${kind === 'cancellation' ? 'text-decoration:line-through;color:#7B8285;' : ''}">${escapeHtml(formatHumanDateTime(apt.start_at))}</td>
-        </tr>
-        ${oldRow}
-        <tr>
-          <td style="padding:8px 0;color:#5A6266;font-size:14px;">Where</td>
-          <td style="padding:8px 0;text-align:right;font-size:14px;">${locationLine}</td>
-        </tr>
-        ${joinRow}
-        ${refRow}
-      </table>
+<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
+  <div style="max-width:600px;margin:0 auto;padding:32px 24px">
+    <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
+      ${bodyHtml}
     </div>
-    ${ctaBlock}
-    <p style="margin:32px 0 0;color:#5A6266;font-size:14px;line-height:1.55;">
-      ${replyLine}
-    </p>
-    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;">Venneir Limited</p>
+    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">Venneir Limited</p>
   </div>
 </body></html>`;
 }
 
-function renderText({ apt, oldApt, patient, location, kind }: RenderContext): string {
-  const greeting = patient.first_name ? `Hi ${patient.first_name},` : 'Hi,';
-  const headline =
-    kind === 'cancellation'
-      ? 'Your appointment has been cancelled'
-      : kind === 'reschedule'
-      ? 'Your appointment has moved'
-      : "You're booked in";
-  const serviceLabel = labelForService(apt);
-  const locationLine = location
-    ? `${location.name ?? 'Venneir Lounge'}${location.city ? `, ${location.city}` : ''}`
-    : 'Venneir Lounge';
-  const lead =
-    kind === 'cancellation'
-      ? `Your booking on ${formatHumanDateTime(apt.start_at)} has been cancelled.`
-      : kind === 'reschedule'
-      ? `We've updated your booking to ${formatHumanDateTime(apt.start_at)}.`
-      : `See you on ${formatHumanDateTime(apt.start_at)}.`;
-  const lines = [
-    headline,
-    '',
-    greeting,
-    lead,
-    '',
-    `Service: ${serviceLabel}`,
-    `${kind === 'cancellation' ? 'Was due' : 'When'}: ${formatHumanDateTime(apt.start_at)}`,
-  ];
-  if (oldApt) lines.push(`Was: ${formatHumanDateTime(oldApt.start_at)}`);
-  lines.push(`Where: ${locationLine}`);
-  if (kind !== 'cancellation' && apt.join_url) lines.push(`Join link: ${apt.join_url}`);
-  if (apt.appointment_ref) lines.push(`Reference: ${apt.appointment_ref}`);
-  lines.push('');
-  if (kind === 'cancellation') {
-    lines.push(
-      "If this cancellation was a mistake, just reply to this email and we'll get you back on the schedule.",
-    );
-  } else {
-    lines.push(`Add to Google Calendar: ${googleCalendarUrl(apt, location)}`);
-  }
-  lines.push('');
-  lines.push(
-    kind === 'cancellation'
-      ? "Want to rebook? Just reply to this email and we'll sort it out."
-      : "Need to change something? Just reply to this email and we'll sort it out.",
-  );
-  lines.push('');
-  lines.push('Venneir Limited');
-  return lines.join('\n');
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// .ics helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 function emailSubjectLine(apt: AppointmentRow, location: LocationRow | null): string {
   const service = labelForService(apt);
@@ -730,26 +788,6 @@ function fullName(p: PatientRow): string {
   return n || 'Patient';
 }
 
-function formatHumanDateTime(iso: string): string {
-  // Sat 9 May at 11:00 (London time, 24-hour). Built explicitly so
-  // we don't depend on the runtime's locale and so the format
-  // matches the rest of the Lounge UI.
-  const d = new Date(iso);
-  const fmt = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/London',
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  // Intl returns "Sat, 9 May, 11:00" — re-stitch to "Sat 9 May at 11:00".
-  const parts = fmt.formatToParts(d);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
-  return `${get('weekday')} ${get('day')} ${get('month')} at ${get('hour')}:${get('minute')}`;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Resend
 // ─────────────────────────────────────────────────────────────────────────────
@@ -793,12 +831,6 @@ async function sendEmail(args: {
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  );
-}
 
 function corsHeaders(): Record<string, string> {
   return {

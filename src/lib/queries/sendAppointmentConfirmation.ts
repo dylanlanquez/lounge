@@ -19,7 +19,9 @@ import { supabase } from '../supabase.ts';
 export type SendConfirmationReason =
   | 'delivery_not_configured'
   | 'no_email_on_patient'
-  | 'appointment_not_found';
+  | 'appointment_not_found'
+  | 'template_not_found'
+  | 'template_disabled';
 
 export type SendConfirmationKind = 'booking' | 'reschedule' | 'cancellation';
 
