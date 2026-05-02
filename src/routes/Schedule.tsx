@@ -220,20 +220,11 @@ export function Schedule() {
     setSelectedDate(todayIso);
   };
 
-  // Navigate to the right detail page when an appointment block is
-  // tapped. AppointmentDetail handles the redirect to /visit/:id when
-  // a visit row exists, so a single destination is enough — no need
-  // to dispatch on status here. State carries patient context so the
-  // detail page's breadcrumb chains back through Schedule.
-  const openAppointment = (row: AppointmentRow) => {
-    navigate(`/appointment/${row.id}`, {
-      state: {
-        from: 'schedule',
-        patientId: row.patient_id,
-        patientName: patientFullDisplayName(row),
-      },
-    });
-  };
+  // (openAppointment was removed when the Schedule's bottom sheet
+  // was restored — clicks open the in-place sheet again. The
+  // AppointmentDetail page is reached via the Ledger; Schedule's
+  // job is the daily-ops view, where a sheet over the calendar is
+  // a faster gesture than a full route change.)
 
   const onToday = selectedDate === todayIso;
   const dayHeading = formatDayHeading(selectedDate);
@@ -465,7 +456,7 @@ export function Schedule() {
               }
             />
           ) : layout === 'list' ? (
-            <ScheduleListView rows={day.data} onPick={openAppointment} />
+            <ScheduleListView rows={day.data} onPick={setSelected} />
           ) : (
             <div style={{ paddingTop: theme.space[2] }}>
               <CalendarGrid
@@ -504,7 +495,7 @@ export function Schedule() {
                           : null
                       }
                       dimmed={isAppointmentDimmed(item.data, now)}
-                      onClick={() => openAppointment(item.data)}
+                      onClick={() => setSelected(item.data)}
                     />
                   ) : (
                     <ClusterCard
@@ -750,10 +741,10 @@ export function Schedule() {
                   key={r.id}
                   row={r}
                   now={now}
-                  // From the cluster picker, navigate to the detail
-                  // page directly — same destination as a single-block
-                  // tap. The bottom sheet unmounts on route change.
-                  onPick={() => openAppointment(r)}
+                  // Keep clusterRows set so the BottomSheet stays mounted
+                  // and morphs into detail mode in place — no second
+                  // popup.
+                  onPick={() => setSelected(r)}
                 />
               ))}
             </ul>
