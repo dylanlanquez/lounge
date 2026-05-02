@@ -313,7 +313,6 @@ export function NewBookingSheet({
           </Section>
 
           <Section
-            divider
             title="Service"
             required
             info="The service drives the booking's duration and which resources (chair, lab bench, room) it consumes. Working hours and conflict rules come from Admin, Booking types and Conflicts."
@@ -333,7 +332,6 @@ export function NewBookingSheet({
           </Section>
 
           <Section
-            divider
             title="When"
             info="The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the slot is in hours and conflict-free."
           >
@@ -384,7 +382,6 @@ export function NewBookingSheet({
           </Section>
 
           <Section
-            divider
             title="Notes"
             info="Optional. Anything the team should know going in. Visible on the schedule card and on the patient profile."
           >
@@ -397,7 +394,6 @@ export function NewBookingSheet({
           </Section>
 
           <Section
-            divider
             title="Confirmation email"
             info="Sends a Lounge-branded confirmation with a calendar invite (.ics) attached. Reschedules send a CANCEL for the old slot too so calendars update instead of duplicating."
           >
@@ -450,16 +446,11 @@ function Section({
   title,
   info,
   required = false,
-  divider = false,
   children,
 }: {
   title: string;
   info?: React.ReactNode;
   required?: boolean;
-  // Hairline rule above the section header. Use on every section
-  // after the first — the line is what tells the eye one section
-  // ended and another began.
-  divider?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -468,8 +459,6 @@ function Section({
         display: 'flex',
         flexDirection: 'column',
         gap: theme.space[2],
-        borderTop: divider ? `1px solid ${theme.color.border}` : 'none',
-        paddingTop: divider ? theme.space[5] : 0,
       }}
     >
       <header style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
