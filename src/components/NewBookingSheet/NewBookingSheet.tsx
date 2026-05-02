@@ -2,13 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CalendarClock,
+  CalendarPlus,
   Check,
   Info,
-  Mail,
-  Sparkles,
-  StickyNote,
   User,
-  UserSearch,
 } from 'lucide-react';
 import {
   BottomSheet,
@@ -259,7 +256,27 @@ export function NewBookingSheet({
       <BottomSheet
         open={open}
         onClose={onClose}
-        title="New booking"
+        title={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
+            <span
+              aria-hidden
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                borderRadius: theme.radius.pill,
+                background: theme.color.accentBg,
+                color: theme.color.accent,
+                flexShrink: 0,
+              }}
+            >
+              <CalendarPlus size={18} aria-hidden />
+            </span>
+            New booking
+          </span>
+        }
         footer={
           <div
             style={{
@@ -280,7 +297,6 @@ export function NewBookingSheet({
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
           <Section
-            icon={<UserSearch size={16} aria-hidden />}
             title="Patient"
             info="Search existing patients by phone, name, or email. Also includes Venneir.com customers who haven't been seen at this clinic yet."
           >
@@ -298,7 +314,6 @@ export function NewBookingSheet({
 
           <Section
             divider
-            icon={<Sparkles size={16} aria-hidden />}
             title="Service"
             required
             info="The service drives the booking's duration and which resources (chair, lab bench, room) it consumes. Working hours and conflict rules come from Admin, Booking types and Conflicts."
@@ -319,7 +334,6 @@ export function NewBookingSheet({
 
           <Section
             divider
-            icon={<CalendarClock size={16} aria-hidden />}
             title="When"
             info="The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the slot is in hours and conflict-free."
           >
@@ -371,7 +385,6 @@ export function NewBookingSheet({
 
           <Section
             divider
-            icon={<StickyNote size={16} aria-hidden />}
             title="Notes"
             info="Optional. Anything the team should know going in. Visible on the schedule card and on the patient profile."
           >
@@ -385,7 +398,6 @@ export function NewBookingSheet({
 
           <Section
             divider
-            icon={<Mail size={16} aria-hidden />}
             title="Confirmation email"
             info="Sends a Lounge-branded confirmation with a calendar invite (.ics) attached. Reschedules send a CANCEL for the old slot too so calendars update instead of duplicating."
           >
@@ -435,26 +447,18 @@ export function NewBookingSheet({
 // is picked) renders as a small inline caption inside the section
 // content, not as a header subtitle.
 function Section({
-  icon,
   title,
   info,
   required = false,
   divider = false,
   children,
 }: {
-  // Required leading icon — every section gets one to give the form
-  // visual character. Rendered in a soft accent-tinted pill to the
-  // left of the title (matches the affordance the arrival/intake
-  // form uses for its empty-items CTA).
-  icon: React.ReactNode;
   title: string;
   info?: React.ReactNode;
   required?: boolean;
   // Hairline rule above the section header. Use on every section
   // after the first — the line is what tells the eye one section
-  // ended and another began. Gap alone wasn't enough; the helper
-  // text under controls (e.g. PatientSearch's "Type at least two
-  // characters…") blurred the section boundary.
+  // ended and another began.
   divider?: boolean;
   children: React.ReactNode;
 }) {
@@ -463,28 +467,12 @@ function Section({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: theme.space[3],
+        gap: theme.space[2],
         borderTop: divider ? `1px solid ${theme.color.border}` : 'none',
         paddingTop: divider ? theme.space[5] : 0,
       }}
     >
-      <header style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 32,
-            height: 32,
-            borderRadius: theme.radius.pill,
-            background: theme.color.accentBg,
-            color: theme.color.accent,
-            flexShrink: 0,
-          }}
-        >
-          {icon}
-        </span>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <h2
           style={{
             margin: 0,
@@ -518,18 +506,16 @@ function Section({
                 border: 'none',
                 background: 'transparent',
                 padding: theme.space[1],
-                margin: `0 0 0 -${theme.space[1]}px`,
+                margin: 0,
                 borderRadius: theme.radius.pill,
                 color: theme.color.inkSubtle,
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                minWidth: 32,
-                minHeight: 32,
               }}
             >
-              <Info size={16} aria-hidden />
+              <Info size={14} aria-hidden />
             </button>
           </Tooltip>
         ) : null}
