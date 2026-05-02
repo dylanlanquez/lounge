@@ -19,8 +19,9 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  AppointmentHero,
+  type AppointmentHeroTone,
   AppointmentTimeline,
-  Avatar,
   BottomSheet,
   Breadcrumb,
   Button,
@@ -29,7 +30,6 @@ import {
   EmptyState,
   RescheduleSheet,
   Skeleton,
-  StatusPill,
   type StatusTone,
 } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -557,153 +557,34 @@ function Hero({
   const timeRange = formatTimeRange(appt.start_at, appt.end_at);
   const relative = appt.status === 'booked' ? relativeDay(appt.start_at) : null;
 
-  // Booked future appointments lean into the upcoming framing — soft
-  // accent-tinted ribbon with the date front and centre. Past /
-  // terminal states drop the accent to match the status's tone so a
-  // cancelled or no-show booking doesn't read as a thing happening
-  // soon.
+  // Tone routes:
+  //   booked-future  → accent (upcoming, lean in)
+  //   booked-past    → neutral (overdue but not terminated)
+  //   cancelled      → alert
+  //   no_show / rescheduled → warn
+  //   anything else  → neutral fallback
   const upcoming = appt.status === 'booked' && new Date(appt.start_at).getTime() > Date.now();
+  const heroTone: AppointmentHeroTone = upcoming
+    ? 'accent'
+    : appt.status === 'cancelled'
+      ? 'alert'
+      : appt.status === 'no_show' || appt.status === 'rescheduled'
+        ? 'warn'
+        : 'neutral';
 
   return (
-    <Card padding="none" elevation="raised">
-      {/* Top zone: identity */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[4],
-          padding: `${theme.space[5]}px ${theme.space[5]}px`,
-          minWidth: 0,
-        }}
-      >
-        <Avatar name={fullName} src={appt.patient.avatar_data} size="lg" />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexWrap: 'wrap' }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.xl,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                letterSpacing: theme.type.tracking.tight,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                lineHeight: 1.15,
-              }}
-            >
-              {fullName}
-            </p>
-            <StatusPill tone={tone} size="sm">
-              {humaniseAppointmentStatus(appt.status)}
-            </StatusPill>
-          </div>
-          {refLine ? (
-            <p
-              style={{
-                margin: `${theme.space[1]}px 0 0`,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {refLine}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Bottom zone: when + what. Tinted when the booking is upcoming
-          so it pops as the headline info — receptionists scanning the
-          page should see the date before anything else. */}
-      <div
-        style={{
-          padding: `${theme.space[4]}px ${theme.space[5]}px ${theme.space[5]}px`,
-          background: upcoming ? theme.color.accentBg : theme.color.bg,
-          borderTop: `1px solid ${theme.color.border}`,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: theme.space[2],
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            flexWrap: 'wrap',
-          }}
-        >
-          <span
-            aria-hidden
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 32,
-              height: 32,
-              borderRadius: theme.radius.pill,
-              background: upcoming ? theme.color.surface : theme.color.bg,
-              border: `1px solid ${theme.color.border}`,
-              color: upcoming ? theme.color.accent : theme.color.inkMuted,
-              flexShrink: 0,
-            }}
-          >
-            <CalendarClock size={16} aria-hidden />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                letterSpacing: theme.type.tracking.tight,
-                lineHeight: 1.2,
-              }}
-            >
-              {dateLong}
-            </p>
-            <p
-              style={{
-                margin: '2px 0 0',
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {timeRange}
-              {relative ? (
-                <>
-                  <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
-                  <span
-                    style={{
-                      color: upcoming ? theme.color.accent : theme.color.inkMuted,
-                      fontWeight: theme.type.weight.semibold,
-                    }}
-                  >
-                    {relative}
-                  </span>
-                </>
-              ) : null}
-            </p>
-          </div>
-        </div>
-        <p
-          style={{
-            margin: 0,
-            paddingLeft: 44,
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            fontWeight: theme.type.weight.medium,
-          }}
-        >
-          {service}
-        </p>
-      </div>
-    </Card>
+    <AppointmentHero
+      patient={{ name: fullName, avatarSrc: appt.patient.avatar_data }}
+      pills={[{ tone, label: humaniseAppointmentStatus(appt.status) }]}
+      subtitle={refLine}
+      when={{
+        dateLong,
+        timeLine: timeRange,
+        relative,
+        service,
+        tone: heroTone,
+      }}
+    />
   );
 }
 

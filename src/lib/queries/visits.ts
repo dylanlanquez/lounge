@@ -536,11 +536,15 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
         const { data: p } = await supabase
           .from('patients')
           .select(
-            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
+            // avatar_data joins the standard PatientRow fields so the
+            // visit hero can show a real avatar instead of always
+            // falling back to initials. Mirrors the AppointmentDetail
+            // patient fetch shape.
+            'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id, avatar_data'
           )
           .eq('id', visitRow.patient_id)
           .maybeSingle();
-        if (!cancelled) setPatient(p as PatientRow | null);
+        if (!cancelled) setPatient(p as (PatientRow & { avatar_data?: string | null }) | null);
 
         // Pull the deposit + intake refs off the linked appointment (if
         // any). For walk-ins, pull the same shape from lng_walk_ins so

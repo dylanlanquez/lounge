@@ -3,26 +3,22 @@ import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
   Ban,
-  Box,
-  CalendarCheck,
   CheckCircle2,
   CheckCircle,
   ChevronRight,
-  Circle,
-  CircleSlash,
-  CreditCard,
   FileText,
-  Hash,
-  Loader2,
   Plus,
   Printer,
   RotateCcw,
   ShoppingCart,
   StickyNote,
-  UserPlus,
   X,
 } from 'lucide-react';
 import {
+  AppointmentHero,
+  type AppointmentHeroPill,
+  type AppointmentHeroProps,
+  type AppointmentHeroTone,
   BeforeAfterGallery,
   BottomSheet,
   Breadcrumb,
@@ -34,7 +30,6 @@ import {
   MarketingGallery,
   MultiSelectDropdown,
   Skeleton,
-  StatusPill,
   Toast,
   VisitTimeline,
   WaiverSheet,
@@ -73,6 +68,7 @@ import type {
   VisitEndReason,
   VisitRow,
 } from '../lib/queries/visits.ts';
+import type { PatientRow } from '../lib/queries/patients.ts';
 import {
   amendCartDiscount,
   applyCartDiscount,
@@ -884,156 +880,45 @@ export function VisitDetail() {
           <EmptyState title="Appointment not found" description="That appointment no longer exists or you do not have access." />
         ) : (
           <>
-            {/* Visit header. The previous version stacked
-                  breadcrumb → "Walk-in · opened 17:48" → h1 → pills,
-                which read as one cramped block with no air between
-                breadcrumb and title and a redundant time line (the
-                breadcrumb crumb already shows the timestamp). Now:
-                title sits clean below the breadcrumb; arrival type
-                joins the pills row alongside status and cart, so
-                every meta atom lives in one consistent rhythm. */}
+            {/* Unified hero — same shape AppointmentDetail uses, fed
+                visit-specific data. Identity row carries the patient
+                + visit status pill + optional cart status pill +
+                a compact subtitle of refs / arrival type / staff;
+                the tinted "When" ribbon below carries the slot date,
+                relative state ("Arrived 23 minutes ago") and the
+                service. The previous title + meta pills + lifecycle
+                strip are folded into this one card so the page reads
+                with the same rhythm as the appointment surface — no
+                drift between the two. Chronological detail lives on
+                the visit timeline at the bottom. */}
             <div style={{ marginBottom: theme.space[6] }}>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: theme.space[3],
-                  flexWrap: 'wrap',
-                  margin: `0 0 ${theme.space[3]}px`,
-                }}
-              >
-                <h1
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.xxl,
-                    fontWeight: theme.type.weight.semibold,
-                    letterSpacing: theme.type.tracking.tight,
-                  }}
-                >
-                  {/* Title is the patient's name, full stop. The
-                      visit's identity (booked / scheduled / arrived /
-                      completed timestamps, refs, JB) lives in the
-                      lifecycle strip + meta pills below — much
-                      richer than packing the word "Appointment" into
-                      the heading. Falls back to plain "Patient" when
-                      the row hasn't resolved. */}
-                  {patient ? patientFullName(patient) : 'Patient'}
-                </h1>
-                {patient ? (
-                  <Button
-                    variant="tertiary"
-                    size="sm"
-                    onClick={() =>
-                      navigate(`/patient/${patient.id}`, {
-                        state: {
-                          from: 'visit',
-                          visitId: visit.id,
-                          visitOpenedAt: visit.opened_at,
-                          // Preview name lets the profile's breadcrumb
-                          // render the correct rightmost crumb on first
-                          // paint, before its own patient query has
-                          // resolved — kills the "Patient" → "Ewa Deb"
-                          // flicker.
-                          patientName: patientFullName(patient),
-                          // Pass the visit's own entry state through so
-                          // the profile breadcrumb can preserve the chain
-                          // (Schedule / Patients / In clinic) and the
-                          // visit-link can navigate back with that
-                          // context intact.
-                          visitEntry: location.state,
-                        },
-                      })
-                    }
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                      View profile
-                      <ChevronRight size={16} />
-                    </span>
-                  </Button>
-                ) : null}
-              </div>
-              {/* Identity pills sit directly under the patient name —
-                  refs, JB, walk-in vs scheduled, visit status, cart
-                  status. Glanceable across the row before the eye
-                  drops to the dates. All except the visit-status
-                  pill dim when the visit is unsuitable; the status
-                  pill keeps full opacity so it reads as live. */}
-              <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', marginTop: theme.space[3] }}>
-                {showableRef(patient?.internal_ref) ? (
-                  <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-                    <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
-                      {patient!.internal_ref}
-                    </MetaPill>
-                  </span>
-                ) : null}
-                {appointment?.appointment_ref ? (
-                  <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-                    <MetaPill icon={<Hash size={12} />} tone="neutral" size="sm">
-                      {appointment.appointment_ref}
-                    </MetaPill>
-                  </span>
-                ) : null}
-                {appointment?.jb_ref ? (
-                  <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-                    <MetaPill icon={<Box size={12} />} tone="neutral" size="sm">
-                      JB{appointment.jb_ref}
-                    </MetaPill>
-                  </span>
-                ) : null}
-                <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-                  <MetaPill
-                    icon={visit.arrival_type === 'walk_in' ? <UserPlus size={12} /> : <CalendarCheck size={12} />}
-                    tone="neutral"
-                    size="sm"
-                  >
-                    {visit.arrival_type === 'walk_in' ? 'Walk-in' : 'Scheduled'}
-                  </MetaPill>
-                </span>
-                <MetaPill icon={visitStatusIcon(visit.status)} tone={visitStatusTone(visit.status)} size="sm">
-                  {visitStatusLabel(visit.status)}
-                </MetaPill>
-                {cart && !isUnsuitable ? (
-                  // Hide the "Cart open" pill when the visit is
-                  // unsuitable. The visit-level status pill already
-                  // says "Unsuitable" and the cart is locked behind
-                  // the scenes; an "open" cart label would just
-                  // contradict the lock state.
-                  <MetaPill
-                    icon={cartStatusIcon(cart.status)}
-                    tone={cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show'}
-                    size="sm"
-                  >
-                    {cartStatusLabel(cart.status)}
-                  </MetaPill>
-                ) : null}
-              </div>
-              {/* "When" ribbon — same prominent date treatment used
-                  on AppointmentDetail. Tinted accent while the patient
-                  is active in clinic (arrived / in chair), neutral
-                  once complete, warn when terminated unsuitable / early.
-                  Sits above the LifecycleStrip so the headline
-                  ("Arrived 23 minutes ago") lands first; the strip's
-                  fine-grained chronological detail still anchors the
-                  bottom of the section. */}
-              <div style={{ marginTop: theme.space[4] }}>
-                <VisitWhenRibbon visit={visit} appointment={appointment} />
-              </div>
-              <div style={{ marginTop: theme.space[4] }}>
-                <LifecycleStrip
-                  arrivalType={visit.arrival_type}
-                  bookedAt={appointment?.created_at ?? null}
-                  bookingSource={appointment?.source ?? null}
-                  scheduledAt={appointment?.start_at ?? null}
-                  arrivedAt={visit.opened_at}
-                  completedAt={visit.closed_at}
-                  visitStatus={visit.status}
-                  unsuitableAt={latestUnsuitable?.recorded_at ?? null}
-                  unsuitableBy={latestUnsuitable?.recorded_by_name ?? null}
-                  unsuitableCategory={latestUnsuitable?.category ?? null}
-                  unsuitableEndReason={latestUnsuitable?.end_reason ?? null}
-                />
-              </div>
+              <AppointmentHero
+                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable)}
+                trailing={
+                  patient ? (
+                    <Button
+                      variant="tertiary"
+                      size="sm"
+                      onClick={() =>
+                        navigate(`/patient/${patient.id}`, {
+                          state: {
+                            from: 'visit',
+                            visitId: visit.id,
+                            visitOpenedAt: visit.opened_at,
+                            patientName: patientFullName(patient),
+                            visitEntry: location.state,
+                          },
+                        })
+                      }
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                        View profile
+                        <ChevronRight size={16} />
+                      </span>
+                    </Button>
+                  ) : undefined
+                }
+              />
             </div>
 
             {/* Whole banner dims when the visit is unsuitable so it
@@ -2487,219 +2372,51 @@ function WaiverBadge({ tone, icon }: { tone: WaiverBadgeTone; icon: React.ReactN
   );
 }
 
-// LifecycleStrip — chronological breadcrumb of the appointment's
-// real-world milestones (when it was booked → scheduled to start →
-// patient arrived → all done). Lives directly under the patient h1
-// so the visit page reads top-down as a record of the appointment,
-// not just an EPOS surface.
-//
-// Lines render only when the underlying timestamp exists:
-//   • Booked / Scheduled — only for `arrival_type === 'scheduled'`.
-//     Walk-ins have no booking lifecycle; surfacing those rows
-//     would just point at the arrival timestamp twice.
-//   • Arrived — always (visit.opened_at is non-null by definition).
-//   • Completed — only when the visit is closed.
-//
-// Each line is label + datetime, dot-aligned via a fixed-width
-// label column. Reads cleanly in either order: scan labels on the
-// left or scan times on the right.
-function LifecycleStrip({
-  arrivalType,
-  bookedAt,
-  bookingSource,
-  scheduledAt,
-  arrivedAt,
-  completedAt,
-  visitStatus,
-  unsuitableAt,
-  unsuitableBy,
-  unsuitableEndReason,
-}: {
-  arrivalType: 'walk_in' | 'scheduled';
-  bookedAt: string | null;
-  bookingSource: string | null;
-  scheduledAt: string | null;
-  arrivedAt: string;
-  completedAt: string | null;
-  visitStatus: VisitRow['status'];
-  // Latest end-of-visit details. Drive the "Marked Unsuitable" /
-  // "Visit Ended Early" line that replaces "Completed" when the
-  // visit terminates pre-payment.
-  unsuitableAt: string | null;
-  unsuitableBy: string | null;
-  unsuitableCategory: 'unsuitable' | 'ended_early' | null;
-  unsuitableEndReason: VisitEndReason | null;
-}) {
-  const isScheduled = arrivalType === 'scheduled';
-  const bookedLabel =
-    bookingSource === 'calendly' ? 'Booked on Calendly' : 'Booked';
-  const isEnded = visitStatus === 'unsuitable' || visitStatus === 'ended_early';
-  const endLabel = (() => {
-    if (visitStatus === 'unsuitable') return 'Marked Unsuitable';
-    // ended_early — adapt label to the sub-reason
-    switch (unsuitableEndReason) {
-      case 'patient_declined':
-        return 'Visit Ended, Patient Declined';
-      case 'patient_walked_out':
-        return 'Visit Ended, Patient Walked Out';
-      case 'wrong_booking':
-        return 'Visit Ended, Wrong Booking';
-      case 'other':
-      default:
-        return 'Visit Ended Early';
-    }
-  })();
-  return (
-    <dl
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'max-content 1fr',
-        columnGap: theme.space[4],
-        rowGap: theme.space[1],
-        margin: 0,
-      }}
-    >
-      {isScheduled && bookedAt ? (
-        <LifecycleLine label={bookedLabel} iso={bookedAt} />
-      ) : null}
-      {isScheduled && scheduledAt ? (
-        <LifecycleLine label="Scheduled" iso={scheduledAt} />
-      ) : null}
-      <LifecycleLine label="Arrived" iso={arrivedAt} />
-      {isEnded && unsuitableAt ? (
-        <LifecycleLine
-          label={endLabel}
-          iso={unsuitableAt}
-          subline={unsuitableBy ? `By ${unsuitableBy}` : null}
-        />
-      ) : completedAt ? (
-        <LifecycleLine label="Completed" iso={completedAt} />
-      ) : null}
-    </dl>
-  );
-}
 
-function LifecycleLine({ label, iso, subline }: { label: string; iso: string; subline?: string | null }) {
-  return (
-    <>
-      <dt
-        style={{
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          alignSelf: 'baseline',
-          paddingTop: 2,
-        }}
-      >
-        {label}
-      </dt>
-      <dd
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          color: theme.color.ink,
-          fontVariantNumeric: 'tabular-nums',
-        }}
-      >
-        <div>{formatLifecycle(iso)}</div>
-        {subline ? (
-          <div
-            style={{
-              marginTop: 2,
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'normal',
-            }}
-          >
-            {subline}
-          </div>
-        ) : null}
-      </dd>
-    </>
-  );
-}
-
-function formatLifecycle(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const date = d.toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  });
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} at ${time}`;
-}
-
-// MetaPill — visit-header chip with a leading icon. Wraps StatusPill
-// so the colour tones stay consistent with every other status pill in
-// the app, but the icon turns enum keys ("Walk-in", "Opened",
-// "Cart open") into glanceable badges instead of bare text.
-function MetaPill({
-  icon,
-  tone,
-  size,
-  children,
-}: {
-  icon: React.ReactNode;
-  tone: 'neutral' | 'arrived' | 'in_progress' | 'complete' | 'no_show' | 'cancelled' | 'unsuitable';
-  size?: 'sm' | 'md';
-  children: React.ReactNode;
-}) {
-  return (
-    <StatusPill tone={tone} size={size}>
-      <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>
-        {icon}
-      </span>
-      {children}
-    </StatusPill>
-  );
-}
-
-// "When" ribbon for the visit page — the live-state companion to the
-// upcoming-appointment ribbon on AppointmentDetail. Shows:
-//
-//   • Big date in ordinal form ("Monday 8th June 2026") — the slot
-//     date for scheduled visits, the arrival date for walk-ins.
-//   • A second line with the slot time / arrival time + a relative
-//     phrase tied to the live state ("Arrived 23 minutes ago",
-//     "In chair · 14 minutes", "Completed an hour ago",
-//     "Marked unsuitable 2 hours ago", "Ended early just now").
-//   • Service name on its own line.
-//
-// Tinted to read at a glance:
-//   active (arrived / in_chair) → accent. The patient is in the lab
-//                                 right now; this should pop the same
-//                                 way upcoming bookings do.
-//   complete                    → neutral. Done, no action needed.
-//   unsuitable / ended_early    → warn. Terminated, don't bury it.
-function VisitWhenRibbon({
-  visit,
-  appointment,
-}: {
-  visit: VisitRow;
-  appointment: VisitAppointmentContext | null;
-}) {
+// Builds the AppointmentHero props for a visit. Wraps the visit-
+// specific facts (visit.status, cart.status, refs, arrival type)
+// into the shape the shared hero expects so the page reads with the
+// same rhythm AppointmentDetail does. The chronological detail —
+// booked / scheduled / arrived / closed timestamps — moved out of a
+// dedicated lifecycle strip and into the visit timeline at the
+// bottom of the page; the hero captures the headline state alone.
+function buildVisitHeroProps(
+  visit: VisitRow,
+  appointment: VisitAppointmentContext | null,
+  patient: (PatientRow & { avatar_data?: string | null }) | null,
+  cart: { status: 'open' | 'paid' | 'voided' } | null,
+  latestUnsuitable: { recorded_at: string | null } | null,
+): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
-  // Date treatment differs by origin:
-  //   • Scheduled with appointment context → the slot date
-  //   • Walk-in (or scheduled with no appointment context, very rare)
-  //     → the arrival moment instead. Walk-ins never had a booked
-  //     slot, so the "appointment date" framing would be a lie.
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
   const dateLong = formatDateLongOrdinal(headlineIso);
-
-  // The status-derived second line: time anchor + relative phrase.
   const lineParts = visitWhenStatusLine(visit, appointment, isWalkIn);
-
   const service =
     humaniseEventTypeLabel(appointment?.event_type_label ?? null) ?? (isWalkIn ? 'Walk-in' : 'Appointment');
 
-  // Tone: accent while the patient is active in clinic, neutral once
-  // complete, warn on either of the terminated states.
-  const tone: 'accent' | 'neutral' | 'warn' = (() => {
+  // Pills row — visit status always; cart status when one exists and
+  // the visit isn't terminated (a "Cart open" pill on an unsuitable
+  // visit is misleading because the cart's locked anyway).
+  const pills: AppointmentHeroPill[] = [
+    { tone: visitStatusTone(visit.status), label: visitStatusLabel(visit.status) },
+  ];
+  const isTerminated = visit.status === 'unsuitable' || visit.status === 'ended_early';
+  if (cart && !isTerminated) {
+    pills.push({
+      tone: cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show',
+      label: cartStatusLabel(cart.status),
+    });
+  }
+
+  // Subtitle — refs first (MP, LAP, JB), then arrival type. Compact
+  // dot-separated form so the line stays scannable at a glance.
+  const subtitleParts: string[] = [];
+  if (showableRef(patient?.internal_ref)) subtitleParts.push(patient!.internal_ref);
+  if (appointment?.appointment_ref) subtitleParts.push(appointment.appointment_ref);
+  if (appointment?.jb_ref) subtitleParts.push(`JB${appointment.jb_ref}`);
+  subtitleParts.push(isWalkIn ? 'Walk-in' : 'Scheduled');
+
+  const tone: AppointmentHeroTone = (() => {
     switch (visit.status) {
       case 'arrived':
       case 'in_chair':
@@ -2712,96 +2429,23 @@ function VisitWhenRibbon({
     }
   })();
 
-  const ribbonBg =
-    tone === 'accent' ? theme.color.accentBg : tone === 'warn' ? 'rgba(179, 104, 21, 0.10)' : theme.color.bg;
-  const iconColor =
-    tone === 'accent' ? theme.color.accent : tone === 'warn' ? theme.color.warn : theme.color.inkMuted;
-  const relativeColor = iconColor;
+  // Suppress unused-arg warning until we surface the unsuitable-at
+  // moment in the ribbon copy. Keeping the arg in the signature so
+  // future enrichment doesn't need a callsite churn.
+  void latestUnsuitable;
 
-  return (
-    <Card padding="none">
-      <div
-        style={{
-          padding: `${theme.space[4]}px ${theme.space[5]}px ${theme.space[5]}px`,
-          background: ribbonBg,
-          borderRadius: theme.radius.card,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: theme.space[2],
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            flexWrap: 'wrap',
-          }}
-        >
-          <span
-            aria-hidden
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 32,
-              height: 32,
-              borderRadius: theme.radius.pill,
-              background: theme.color.surface,
-              border: `1px solid ${theme.color.border}`,
-              color: iconColor,
-              flexShrink: 0,
-            }}
-          >
-            <CalendarCheck size={16} aria-hidden />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                letterSpacing: theme.type.tracking.tight,
-                lineHeight: 1.2,
-              }}
-            >
-              {dateLong}
-            </p>
-            <p
-              style={{
-                margin: '2px 0 0',
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {lineParts.anchor}
-              {lineParts.relative ? (
-                <>
-                  <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
-                  <span style={{ color: relativeColor, fontWeight: theme.type.weight.semibold }}>
-                    {lineParts.relative}
-                  </span>
-                </>
-              ) : null}
-            </p>
-          </div>
-        </div>
-        <p
-          style={{
-            margin: 0,
-            paddingLeft: 44,
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            fontWeight: theme.type.weight.medium,
-          }}
-        >
-          {service}
-        </p>
-      </div>
-    </Card>
-  );
+  return {
+    patient: { name: patient ? patientFullName(patient) : 'Patient', avatarSrc: patient?.avatar_data ?? null },
+    pills,
+    subtitle: subtitleParts.join(' · '),
+    when: {
+      dateLong,
+      timeLine: lineParts.anchor,
+      relative: lineParts.relative,
+      service,
+      tone,
+    },
+  };
 }
 
 // Build the second-line "anchor + relative" pair for the ribbon.
@@ -2883,31 +2527,6 @@ function showableRef(value: string | null | undefined): value is string {
   if (trimmed.length === 0) return false;
   if (trimmed.startsWith('__')) return false;
   return true;
-}
-
-function visitStatusIcon(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early') {
-  switch (s) {
-    case 'arrived':
-      return <Circle size={12} />;
-    case 'in_chair':
-      return <Loader2 size={12} />;
-    case 'complete':
-      return <CheckCircle size={12} />;
-    case 'unsuitable':
-    case 'ended_early':
-      return <Ban size={12} />;
-  }
-}
-
-function cartStatusIcon(s: 'open' | 'paid' | 'voided') {
-  switch (s) {
-    case 'open':
-      return <ShoppingCart size={12} />;
-    case 'paid':
-      return <CreditCard size={12} />;
-    case 'voided':
-      return <CircleSlash size={12} />;
-  }
 }
 
 // Visit-status helpers. The DB stores the raw enum (opened /
