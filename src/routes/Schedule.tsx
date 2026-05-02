@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   CalendarCheck,
@@ -102,7 +102,43 @@ export function Schedule() {
   const now = useNow();
   const todayIso = computeTodayIso(now);
 
-  const [selectedDate, setSelectedDate] = useState<string>(todayIso);
+  // `selectedDate` is the source-of-truth for which day is showing.
+  // We mirror it into a `?date=YYYY-MM-DD` URL search param so:
+  //   • the browser back button restores the day the receptionist was
+  //     viewing when they navigated into an appointment / visit page,
+  //   • breadcrumb back-from-detail can include the date and land on
+  //     the same day,
+  //   • a refresh or shared link still opens on the right day.
+  // Today is the default; we keep the URL clean (no ?date=) when on
+  // today so /schedule remains the canonical "now" link.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlDate = searchParams.get('date');
+  const validUrlDate = urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate) ? urlDate : null;
+  const selectedDate = validUrlDate ?? todayIso;
+  const setSelectedDate = useCallback(
+    (next: string | ((prev: string) => string)) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          const current = params.get('date');
+          const validCurrent =
+            current && /^\d{4}-\d{2}-\d{2}$/.test(current) ? current : todayIso;
+          const resolved = typeof next === 'function' ? next(validCurrent) : next;
+          if (resolved === todayIso) {
+            params.delete('date');
+          } else {
+            params.set('date', resolved);
+          }
+          return params;
+        },
+        // Replace, not push, so flicking through the strip doesn't
+        // pile a history entry per day. Browser back should hop back
+        // to the page-before-Schedule, not to the previous date.
+        { replace: true },
+      );
+    },
+    [setSearchParams, todayIso],
+  );
   const [layout, setLayout] = useState<Layout>(() => {
     if (typeof window === 'undefined') return 'calendar';
     const saved = window.localStorage.getItem(LAYOUT_KEY);
@@ -949,6 +985,10 @@ export function Schedule() {
                       from: 'schedule',
                       patientId: selected.patient_id,
                       patientName: patientFullDisplayName(selected),
+                      // Forward the day the receptionist was viewing
+                      // so the breadcrumb back-link lands on it instead
+                      // of bouncing them to today.
+                      scheduleDate: selectedDate,
                     },
                   });
                 }}
