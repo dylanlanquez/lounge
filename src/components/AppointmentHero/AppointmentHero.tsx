@@ -74,7 +74,10 @@ export function AppointmentHero({
   const ribbonAccent = ribbonAccentColor(when.tone);
 
   return (
-    <Card padding="none" elevation="raised">
+    // overflow:hidden so the tinted "When" ribbon's background is
+    // clipped to the card's rounded corners. Without it, the ribbon's
+    // bottom corners render square and bleed past the card's curve.
+    <Card padding="none" elevation="raised" style={{ overflow: 'hidden' }}>
       {/* Identity row */}
       <div
         style={{
