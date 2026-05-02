@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarClock, Check, User } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Check, Info, User } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -7,6 +7,7 @@ import {
   DropdownSelect,
   Input,
   Toast,
+  Tooltip,
 } from '../index.ts';
 import { PatientSearch } from '../PatientSearch/PatientSearch.tsx';
 import { theme } from '../../theme/index.ts';
@@ -254,12 +255,6 @@ export function NewBookingSheet({
         open={open}
         onClose={onClose}
         title="New booking"
-        description={
-          <span>
-            Pick the patient and service. We'll check the slot is free, then add it
-            to the schedule.
-          </span>
-        }
         footer={
           <div
             style={{
@@ -281,7 +276,7 @@ export function NewBookingSheet({
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
           <Section
             title="Patient"
-            sub="Search by phone, name, or email. Includes Venneir.com customers who haven't been seen at this clinic yet."
+            info="Search existing patients by phone, name, or email. Also includes Venneir.com customers who haven't been seen at this clinic yet."
           >
             {patient ? (
               <PickedPatient patient={patient} onClear={() => setPatient(null)} />
@@ -298,7 +293,7 @@ export function NewBookingSheet({
           <Section
             title="Service"
             required
-            sub="Drives the duration and which resources the booking consumes."
+            info="The service drives the booking's duration and which resources (chair, lab bench, room) it consumes. Working hours and conflict rules come from Admin, Booking types and Conflicts."
           >
             <DropdownSelect<BookingServiceType>
               ariaLabel="Service"
@@ -316,17 +311,7 @@ export function NewBookingSheet({
 
           <Section
             title="When"
-            sub={
-              config
-                ? `${config.duration_default}-minute slot${
-                    hoursForDate
-                      ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}.`
-                      : date
-                      ? '. The clinic is closed on this day.'
-                      : '.'
-                  }`
-                : 'Pick a service to see the duration and working hours.'
-            }
+            info="The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the slot is in hours and conflict-free."
           >
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
               <Input
@@ -342,6 +327,18 @@ export function NewBookingSheet({
                 onChange={(e) => setTime(e.target.value)}
               />
             </div>
+            {config ? (
+              <InlineHint
+                tone={hoursForDate || !date ? 'muted' : 'alert'}
+              >
+                {config.duration_default}-minute slot
+                {hoursForDate
+                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}.`
+                  : date
+                  ? '. The clinic is closed on this day.'
+                  : '.'}
+              </InlineHint>
+            ) : null}
             {!inWorkingHours && date && time && hoursForDate ? (
               <div style={{ marginTop: theme.space[3] }}>
                 <ErrorBanner
@@ -362,7 +359,7 @@ export function NewBookingSheet({
             </div>
           </Section>
 
-          <Section title="Staff" sub="Optional. Who'll be taking this appointment.">
+          <Section title="Staff" info="Optional. Pick the team member taking this appointment, or leave it open and assign later.">
             <DropdownSelect<string>
               ariaLabel="Staff member"
               value={staffAccountId}
@@ -377,7 +374,7 @@ export function NewBookingSheet({
             />
           </Section>
 
-          <Section title="Notes" sub="Optional. Anything the team should know going in.">
+          <Section title="Notes" info="Optional. Anything the team should know going in. Visible on the schedule card and on the patient profile.">
             <Input
               aria-label="Notes"
               value={notes}
@@ -388,13 +385,7 @@ export function NewBookingSheet({
 
           <Section
             title="Confirmation email"
-            sub={
-              patient
-                ? patient.email
-                  ? `We'll send the booking confirmation to ${patient.email} with a calendar invite attached.`
-                  : `${patientFullName(patient)} has no email on file. Add one on the patient profile to enable confirmations.`
-                : 'Pick a patient first to see the email status.'
-            }
+            info="Sends a Lounge-branded confirmation with a calendar invite (.ics) attached. Reschedules send a CANCEL for the old slot too so calendars update instead of duplicating."
           >
             <ConfirmationToggle
               patient={patient}
@@ -404,6 +395,17 @@ export function NewBookingSheet({
                 setSendEmailUserOverride(true);
               }}
             />
+            {patient ? (
+              patient.email ? (
+                <InlineHint>Goes to {patient.email}.</InlineHint>
+              ) : (
+                <InlineHint>
+                  {patientFullName(patient)} has no email on file. Add one on the patient profile to enable confirmations.
+                </InlineHint>
+              )
+            ) : (
+              <InlineHint>Pick a patient first to see the email status.</InlineHint>
+            )}
           </Section>
         </div>
       </BottomSheet>
@@ -424,26 +426,26 @@ export function NewBookingSheet({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Section header pattern lifted from the arrival/intake form
-// (src/routes/Arrival.tsx). Bold black H2 title, optional muted
-// subtitle below, then the control. Required asterisk renders inline
-// after the title — same affordance the intake form uses for fields
-// that gate progress.
+// (src/routes/Arrival.tsx) but trimmed: bold black H2 title, optional
+// (i) info tooltip — same affordance PatientSearch uses for the
+// venneir.com section header. Static guidance lives behind the
+// tooltip; dynamic per-section state (e.g. duration once a service
+// is picked) renders as a small inline caption inside the section
+// content, not as a header subtitle.
 function Section({
   title,
-  sub,
+  info,
   required = false,
   children,
 }: {
   title: string;
-  sub?: string;
+  info?: React.ReactNode;
   required?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <header
-        style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}
-      >
+      <header style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
         <h2
           style={{
             margin: 0,
@@ -467,21 +469,53 @@ function Section({
             </span>
           ) : null}
         </h2>
-        {sub ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.snug,
-            }}
-          >
-            {sub}
-          </p>
+        {info ? (
+          <Tooltip align="start" maxWidth={300} content={info}>
+            <button
+              type="button"
+              aria-label={`More about: ${title}`}
+              style={{
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                padding: theme.space[1],
+                margin: `0 0 0 -${theme.space[1]}px`,
+                borderRadius: theme.radius.pill,
+                color: theme.color.inkSubtle,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: 32,
+                minHeight: 32,
+              }}
+            >
+              <Info size={16} aria-hidden />
+            </button>
+          </Tooltip>
         ) : null}
       </header>
       <div>{children}</div>
     </section>
+  );
+}
+
+// Small inline caption used inside Section content for dynamic
+// per-section state (e.g. duration + working hours once a service
+// is picked). Distinct from the Section header — sits just under
+// the input, in muted ink at the size we use for helper text.
+function InlineHint({ children, tone = 'muted' }: { children: React.ReactNode; tone?: 'muted' | 'alert' }) {
+  return (
+    <p
+      style={{
+        margin: `${theme.space[2]}px 0 0`,
+        fontSize: theme.type.size.xs,
+        color: tone === 'alert' ? theme.color.alert : theme.color.inkMuted,
+        lineHeight: theme.type.leading.snug,
+      }}
+    >
+      {children}
+    </p>
   );
 }
 
