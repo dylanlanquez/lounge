@@ -870,6 +870,42 @@ export function Schedule() {
                 })()
               ) : null}
 
+              {selected.notes && selected.notes.trim() ? (
+                <div
+                  style={{
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: theme.color.surface,
+                    border: `1px solid ${theme.color.border}`,
+                    borderRadius: 12,
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                      fontWeight: theme.type.weight.medium,
+                      textTransform: 'uppercase',
+                      letterSpacing: theme.type.tracking.wide,
+                      marginBottom: theme.space[1],
+                    }}
+                  >
+                    Notes
+                  </p>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.ink,
+                      lineHeight: theme.type.leading.relaxed,
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {selected.notes}
+                  </p>
+                </div>
+              ) : null}
+
               <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
                 {selected.status === 'booked'
                   ? selected.join_url
