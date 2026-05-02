@@ -304,7 +304,11 @@ export function useAppointmentTimeline(
           out.push(mapFailure(f));
         }
 
-        out.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        // Newest first across every timeline in the app — the
+        // receptionist scanning for "what's the latest on this
+        // booking?" should see today's events at the top, not have
+        // to scroll past the booking-placed row from a month ago.
+        out.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
         setEvents(out);
         setError(null);
         settle();

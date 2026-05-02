@@ -204,7 +204,7 @@ export function PatientProfile() {
 // flash a literal placeholder ("Patient") or pop in late once the
 // query lands — the exact flicker we're avoiding.
 interface PatientEntryState {
-  from?: 'visit' | 'ledger';
+  from?: 'visit' | 'ledger' | 'appointment';
   visitId?: string;
   visitOpenedAt?: string;
   // Mirror of VisitDetail's VisitEntryState. Carrying visitOpenedAt
@@ -217,6 +217,12 @@ interface PatientEntryState {
     patientName?: string;
     visitOpenedAt?: string;
   } | null;
+  // When entering from /appointment/:id (visit-less booking detail
+  // page), forward enough context to render the chain
+  // "Ledger › <Patient>'s Appt N May › <Patient>" and let the appt
+  // crumb navigate back without a shimmer.
+  appointmentId?: string;
+  appointmentStartAt?: string;
   patientName?: string;
 }
 
@@ -272,6 +278,35 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
     if (entry.from === 'ledger') {
       return [
         { label: 'Ledger', onClick: () => navigate('/ledger') },
+        { label: nameLabel },
+      ];
+    }
+    if (entry.from === 'appointment' && entry.appointmentId && entry.appointmentStartAt) {
+      // Ledger › <Patient>'s Appt 9 May › <Patient> — same shape as
+      // the visit-mid-trail. Clicking the appt crumb hops back to
+      // /appointment/:id (which itself shows "Ledger › Appt 9 May").
+      const apptDate = new Date(entry.appointmentStartAt);
+      const dateLabel = Number.isNaN(apptDate.getTime())
+        ? 'Appt.'
+        : `Appt. ${apptDate.toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'short',
+          })}`;
+      const trimmedName = (liveName || previewName || '').trim();
+      const apptCrumbLabel = trimmedName ? `${trimmedName}'s ${dateLabel}` : dateLabel;
+      return [
+        { label: 'Ledger', onClick: () => navigate('/ledger') },
+        {
+          label: apptCrumbLabel,
+          onClick: () =>
+            navigate(`/appointment/${entry.appointmentId}`, {
+              state: {
+                from: 'ledger',
+                patientId: patient?.id,
+                patientName: trimmedName,
+              },
+            }),
+        },
         { label: nameLabel },
       ];
     }

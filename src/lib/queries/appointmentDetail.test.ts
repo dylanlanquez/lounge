@@ -32,13 +32,12 @@ describe('availableActions', () => {
   });
 
   describe('booked', () => {
-    it('native + email: arrival/no-show + edit/reschedule/cancel + resend', () => {
+    it('native + email: arrival/no-show + reschedule/cancel + resend (no edit — notes edit inline)', () => {
       const out = availableActions({ ...base, status: 'booked', source: 'native', hasPatientEmail: true });
       expect(out).toEqual([
         'view_patient_profile',
         'mark_arrived',
         'mark_no_show',
-        'edit',
         'reschedule',
         'cancel',
         'resend_confirmation',
@@ -48,19 +47,17 @@ describe('availableActions', () => {
     it('native without email: drops resend only', () => {
       const out = availableActions({ ...base, status: 'booked', source: 'native', hasPatientEmail: false });
       expect(out).not.toContain('resend_confirmation');
-      expect(out).toContain('edit');
       expect(out).toContain('reschedule');
       expect(out).toContain('cancel');
     });
 
-    it('calendly: arrival/no-show only — edit/reschedule/cancel live on Calendly', () => {
+    it('calendly: arrival/no-show only — reschedule/cancel live on Calendly', () => {
       const out = availableActions({ ...base, status: 'booked', source: 'calendly' });
       expect(out).toEqual(['view_patient_profile', 'mark_arrived', 'mark_no_show']);
     });
 
     it('manual is treated as native (non-Calendly)', () => {
       const out = availableActions({ ...base, status: 'booked', source: 'manual' });
-      expect(out).toContain('edit');
       expect(out).toContain('reschedule');
       expect(out).toContain('cancel');
     });

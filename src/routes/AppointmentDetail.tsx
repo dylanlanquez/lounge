@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -28,7 +28,6 @@ import {
   Dialog,
   EmptyState,
   RescheduleSheet,
-  EditBookingSheet,
   Skeleton,
   StatusPill,
   type StatusTone,
@@ -48,6 +47,7 @@ import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
 import { formatPence } from '../lib/queries/carts.ts';
 import { markNoShow, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
+import { editAppointment } from '../lib/queries/editAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
 import {
   availableActions,
@@ -244,7 +244,6 @@ function Loaded({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
-  const [editing, setEditing] = useState(false);
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
@@ -371,7 +370,7 @@ function Loaded({
         <BookingFactsCard appt={appt} />
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
-        {appt.notes?.trim() ? <NotesCard notes={appt.notes} /> : null}
+        <NotesCard appt={appt} onChanged={onChanged} />
         {appt.status === 'cancelled' && appt.cancel_reason ? (
           <ReasonCard
             tone="cancelled"
@@ -383,6 +382,10 @@ function Loaded({
           <ReasonCard
             tone="no_show"
             label="No-show reason"
+            // cancel_reason is either one of the enum strings or the
+            // free-text note picked under "Other". humaniseNoShowReason
+            // returns the friendly label for known enums; non-enums
+            // are returned verbatim by its default branch.
             text={humaniseNoShowReason(appt.cancel_reason)}
           />
         ) : null}
@@ -414,13 +417,22 @@ function Loaded({
         actions={actions}
         resending={resending}
         onPatientProfile={() =>
+          // Forward `from: 'appointment'` so the patient profile's
+          // breadcrumb reads "Ledger › <Name>'s Appt N May › <Name>"
+          // and clicking the appt crumb returns here. Without this
+          // the chain falls back to "Ledger › <Name>" and the page
+          // we just came from disappears from the trail.
           navigate(`/patient/${appt.patient_id}`, {
-            state: { from: 'ledger', patientName: fullName },
+            state: {
+              from: 'appointment',
+              appointmentId: appt.id,
+              appointmentStartAt: appt.start_at,
+              patientName: fullName,
+            },
           })
         }
         onMarkArrived={handleArrived}
         onMarkNoShow={() => setConfirmNoShowOpen(true)}
-        onEdit={() => setEditing(true)}
         onReschedule={() => setRescheduling(true)}
         onCancel={() => setCancelling(true)}
         onResendConfirmation={handleResendConfirmation}
@@ -434,29 +446,6 @@ function Loaded({
       <section style={{ marginTop: theme.space[5] }}>
         <AppointmentTimeline appointmentId={appt.id} />
       </section>
-
-      {editing ? (
-        <EditBookingSheet
-          open
-          appointment={{
-            id: appt.id,
-            patient_id: appt.patient_id,
-            location_id: appt.location_id,
-            source: appt.source,
-            start_at: appt.start_at,
-            end_at: appt.end_at,
-            notes: appt.notes,
-            staff_account_id: appt.staff_account_id,
-            patient_first_name: appt.patient.first_name,
-            patient_last_name: appt.patient.last_name,
-          }}
-          onClose={() => setEditing(false)}
-          onSaved={() => {
-            setEditing(false);
-            onChanged();
-          }}
-        />
-      ) : null}
 
       {rescheduling ? (
         <RescheduleSheet
@@ -959,21 +948,190 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   );
 }
 
-function NotesCard({ notes }: { notes: string }) {
+// Notes card with inline edit. Replaces the old "Edit appointment"
+// action (which was only ever used to change notes anyway). Shows
+// the pencil affordance when:
+//   • status allows edits (booked / arrived) AND
+//   • source isn't Calendly (Calendly is the source of truth for
+//     those bookings — editing here would silently diverge).
+//
+// On click the body swaps to a textarea + Save / Cancel buttons. Save
+// pipes through editAppointment, which already audits to
+// patient_events so the timeline picks the change up automatically.
+function NotesCard({
+  appt,
+  onChanged,
+}: {
+  appt: AppointmentDetailRow;
+  onChanged: () => void;
+}) {
+  const canEdit =
+    appt.source !== 'calendly' && (appt.status === 'booked' || appt.status === 'arrived');
+  const trimmed = appt.notes?.trim() ?? '';
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(trimmed);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-seed the draft when the underlying notes change (e.g. another
+  // tab edited the row). Only when not actively editing — clobbering
+  // a half-typed edit would be worse than ignoring the upstream change.
+  useEffect(() => {
+    if (!editing) setDraft(trimmed);
+  }, [editing, trimmed]);
+
+  // Hide the card entirely when there's nothing to show AND nothing
+  // editable. Keeping a placeholder card in that case would just be
+  // visual noise.
+  if (!canEdit && trimmed.length === 0) return null;
+
+  const handleSave = async () => {
+    if (saving) return;
+    setError(null);
+    const next = draft.trim();
+    if (next === trimmed) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await editAppointment({ appointmentId: appt.id, notes: next.length > 0 ? next : null });
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not save notes';
+      await logFailure({
+        source: 'AppointmentDetail.editNotes',
+        severity: 'error',
+        message,
+        context: { appointmentId: appt.id },
+      });
+      setError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setDraft(trimmed);
+    setError(null);
+    setEditing(false);
+  };
+
   return (
     <Card padding="md">
-      <SectionLabel icon={<StickyNote size={14} aria-hidden />}>Notes</SectionLabel>
-      <p
+      <div
         style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          color: theme.color.ink,
-          lineHeight: theme.type.leading.relaxed,
-          whiteSpace: 'pre-wrap',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          marginBottom: theme.space[3],
         }}
       >
-        {notes}
-      </p>
+        <SectionLabel icon={<StickyNote size={14} aria-hidden />}>Notes</SectionLabel>
+        {canEdit && !editing ? (
+          <button
+            type="button"
+            aria-label={trimmed.length > 0 ? 'Edit notes' : 'Add notes'}
+            title={trimmed.length > 0 ? 'Edit notes' : 'Add notes'}
+            onClick={() => setEditing(true)}
+            style={{
+              appearance: 'none',
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.inkMuted,
+              cursor: 'pointer',
+              padding: 0,
+              width: 28,
+              height: 28,
+              borderRadius: theme.radius.pill,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = theme.color.ink;
+              e.currentTarget.style.color = theme.color.ink;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = theme.color.border;
+              e.currentTarget.style.color = theme.color.inkMuted;
+            }}
+          >
+            <Pencil size={13} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+
+      {editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={saving}
+            autoFocus
+            rows={4}
+            placeholder="Add notes the next receptionist will see when they open this booking."
+            style={{
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              padding: theme.space[3],
+              color: theme.color.ink,
+              background: theme.color.surface,
+              outline: 'none',
+              resize: 'vertical',
+              lineHeight: theme.type.leading.relaxed,
+            }}
+          />
+          {error ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.alert }}>
+              {error}
+            </p>
+          ) : null}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+            <Button variant="tertiary" size="sm" onClick={handleCancel} disabled={saving}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleSave}
+              loading={saving}
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Save notes'}
+            </Button>
+          </div>
+        </div>
+      ) : trimmed.length > 0 ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.relaxed,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {trimmed}
+        </p>
+      ) : (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            fontStyle: 'italic',
+          }}
+        >
+          No notes yet. Tap the pencil to add some.
+        </p>
+      )}
     </Card>
   );
 }
@@ -1112,7 +1270,6 @@ function Actions({
   onPatientProfile,
   onMarkArrived,
   onMarkNoShow,
-  onEdit,
   onReschedule,
   onCancel,
   onResendConfirmation,
@@ -1126,7 +1283,6 @@ function Actions({
   onPatientProfile: () => void;
   onMarkArrived: () => void;
   onMarkNoShow: () => void;
-  onEdit: () => void;
   onReschedule: () => void;
   onCancel: () => void;
   onResendConfirmation: () => void;
@@ -1170,9 +1326,6 @@ function Actions({
           label="Mark as no-show"
           onClick={onMarkNoShow}
         />
-      ) : null}
-      {has('edit') ? (
-        <ActionRow icon={<Pencil size={16} aria-hidden />} label="Edit appointment" onClick={onEdit} />
       ) : null}
       {has('reschedule') ? (
         <ActionRow icon={<CalendarClock size={16} aria-hidden />} label="Reschedule" onClick={onReschedule} />
@@ -1339,12 +1492,23 @@ function CancelDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const trimmedReason = reason.trim();
+  const reasonValid = trimmedReason.length > 0;
+
   const submit = async () => {
     if (submitting) return;
+    if (!reasonValid) {
+      setError('Tell us why this is being cancelled — it surfaces on the timeline and reports.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await cancelAppointment({ appointmentId: appt.id, reason, notifyPatient: notify });
+      await cancelAppointment({
+        appointmentId: appt.id,
+        reason: trimmedReason,
+        notifyPatient: notify,
+      });
       onCancelled();
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not cancel appointment';
@@ -1371,7 +1535,12 @@ function CancelDialog({
           <Button variant="tertiary" onClick={onClose} disabled={submitting}>
             Keep booking
           </Button>
-          <Button variant="primary" onClick={submit} loading={submitting} disabled={submitting}>
+          <Button
+            variant="primary"
+            onClick={submit}
+            loading={submitting}
+            disabled={submitting || !reasonValid}
+          >
             {submitting ? 'Cancelling…' : 'Cancel appointment'}
           </Button>
         </div>
@@ -1389,13 +1558,17 @@ function CancelDialog({
           }}
         >
           <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
-            Reason (optional, surfaces in the timeline)
+            Reason
+            <RequiredAsterisk />
+            <span style={{ color: theme.color.inkSubtle }}> · surfaces in the timeline and reports</span>
           </span>
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={3}
             disabled={submitting}
+            placeholder="e.g. Patient asked to push to next week"
+            autoFocus
             style={{
               fontFamily: 'inherit',
               fontSize: theme.type.size.sm,
@@ -1444,11 +1617,34 @@ function CancelDialog({
   );
 }
 
-// Mirrors Schedule's no-show flow: a bottom sheet sliding up with the
-// "Why was this a no-show?" copy and four reasons rendered as
-// tappable rows. One tap commits — no separate Confirm button. Same
-// component shape and behaviour staff already use on Schedule, so
-// they don't relearn the gesture coming from the appointment detail.
+// Standalone red asterisk used on form labels to mark required fields.
+// Keeps every "required" indicator visually consistent across this
+// page so the meaning is unambiguous.
+function RequiredAsterisk() {
+  return (
+    <span aria-hidden style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+      {' *'}
+    </span>
+  );
+}
+
+// No-show flow as a bottom sheet sliding up. Two stages:
+//
+//   1. Reason picker — four tappable rows. The first three commit
+//      immediately (the enum value alone is the reason). "Other"
+//      flips to stage 2 instead so the receptionist must type
+//      something — vague "Other" with no explanation is the kind of
+//      data point reports can't act on later.
+//
+//   2. Other-reason text input — required, asterisk-marked, blocks
+//      submit until non-empty. The text is stored verbatim in
+//      lng_appointments.cancel_reason, replacing the "other" enum
+//      so reports surface what actually happened.
+//
+// Schedule still uses the v1 picker that commits "other" without a
+// note; matching it here would let staff bypass the requirement on
+// this surface. The user explicitly asked for the text-required
+// behaviour on this page.
 function NoShowSheet({
   appt,
   onClose,
@@ -1458,10 +1654,21 @@ function NoShowSheet({
   onClose: () => void;
   onMarked: () => void;
 }) {
+  const [stage, setStage] = useState<'pick' | 'other_text'>('pick');
+  const [otherText, setOtherText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async (reason: typeof NO_SHOW_REASONS[number]['value']) => {
+  const otherTextValid = otherText.trim().length > 0;
+
+  // Submit with a typed reason. The third arg becomes
+  // lng_appointments.cancel_reason. For one of the three preset
+  // categories that's the enum string; for 'other' we send the
+  // typed note instead so the report can show what actually happened.
+  const submit = async (
+    reason: typeof NO_SHOW_REASONS[number]['value'],
+    storedReason: string,
+  ) => {
     if (submitting) return;
     setSubmitting(true);
     setError(null);
@@ -1470,6 +1677,7 @@ function NoShowSheet({
         patientId: appt.patient_id,
         wasVirtual: !!appt.join_url,
         joinedBeforeNoShow: false,
+        storedReason,
       });
       onMarked();
     } catch (e) {
@@ -1485,6 +1693,99 @@ function NoShowSheet({
     }
   };
 
+  const handlePick = (value: typeof NO_SHOW_REASONS[number]['value']) => {
+    if (value === 'other') {
+      setStage('other_text');
+      setError(null);
+      return;
+    }
+    void submit(value, value);
+  };
+
+  const handleOtherSubmit = () => {
+    if (!otherTextValid) {
+      setError('Tell us why this is a no-show — it surfaces on the timeline and reports.');
+      return;
+    }
+    void submit('other', otherText.trim());
+  };
+
+  if (stage === 'other_text') {
+    return (
+      <BottomSheet
+        open
+        onClose={submitting ? () => undefined : onClose}
+        onBack={submitting ? undefined : () => {
+          setStage('pick');
+          setError(null);
+        }}
+        title="What happened?"
+        description="A short note so the timeline and reports show why this slot was missed."
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+            <Button
+              variant="tertiary"
+              onClick={() => {
+                setStage('pick');
+                setError(null);
+              }}
+              disabled={submitting}
+            >
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleOtherSubmit}
+              loading={submitting}
+              disabled={submitting || !otherTextValid}
+            >
+              {submitting ? 'Marking…' : 'Mark as no-show'}
+            </Button>
+          </div>
+        }
+      >
+        <label
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[1],
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            fontFamily: 'inherit',
+          }}
+        >
+          <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
+            Reason
+            <RequiredAsterisk />
+          </span>
+          <textarea
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            rows={4}
+            disabled={submitting}
+            placeholder="e.g. Patient called the lab to say they couldn't make it"
+            autoFocus
+            style={{
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              padding: theme.space[3],
+              color: theme.color.ink,
+              background: theme.color.surface,
+              outline: 'none',
+              resize: 'vertical',
+              lineHeight: theme.type.leading.relaxed,
+            }}
+          />
+          {error ? (
+            <span style={{ color: theme.color.alert, fontSize: theme.type.size.xs }}>{error}</span>
+          ) : null}
+        </label>
+      </BottomSheet>
+    );
+  }
+
   return (
     <BottomSheet
       open
@@ -1499,7 +1800,7 @@ function NoShowSheet({
             key={opt.value}
             type="button"
             disabled={submitting}
-            onClick={() => submit(opt.value)}
+            onClick={() => handlePick(opt.value)}
             style={{
               appearance: 'none',
               width: '100%',

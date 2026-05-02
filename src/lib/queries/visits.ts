@@ -170,6 +170,13 @@ export interface MarkNoShowContext {
   patientId: string | null;
   wasVirtual: boolean;
   joinedBeforeNoShow: boolean;
+  // Optional override for what gets written to
+  // lng_appointments.cancel_reason. Used when the receptionist picks
+  // "Other" with a custom note — we store the typed text rather than
+  // the bare 'other' enum so reports surface what actually happened.
+  // The patient_events row keeps `reason: NoShowReason` so the
+  // timeline can still bucket events by enum.
+  storedReason?: string;
 }
 
 // Flips an appointment to no_show, stamping the reason on
@@ -180,9 +187,10 @@ export async function markNoShow(
   reason: NoShowReason,
   context: MarkNoShowContext
 ): Promise<void> {
+  const stored = context.storedReason?.trim() || reason;
   const { error } = await supabase
     .from('lng_appointments')
-    .update({ status: 'no_show', cancel_reason: reason })
+    .update({ status: 'no_show', cancel_reason: stored })
     .eq('id', appointmentId);
   if (error) throw new Error(error.message);
 
@@ -195,6 +203,10 @@ export async function markNoShow(
     payload: {
       appointment_id: appointmentId,
       reason,
+      // The custom text (when present) ships in `note` so the timeline
+      // can show it without parsing cancel_reason for an enum/non-enum
+      // distinction.
+      note: context.storedReason?.trim() && reason === 'other' ? context.storedReason.trim() : undefined,
       was_virtual: context.wasVirtual,
       joined_before_no_show: context.joinedBeforeNoShow,
     },

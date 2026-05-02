@@ -372,7 +372,10 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           return actor ? { ...rest, actor } : rest;
         });
 
-        resolved.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        // Newest first — receptionists scan from the top expecting
+        // "what's the latest on this visit?". Same convention as
+        // the appointment timeline.
+        resolved.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
         if (!cancelled) {
           setEvents(resolved);
