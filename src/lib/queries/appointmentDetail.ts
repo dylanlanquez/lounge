@@ -313,7 +313,6 @@ export type AppointmentAction =
   | 'view_patient_profile'   // every state
   | 'mark_arrived'           // booked, on or near the slot day
   | 'mark_no_show'           // booked, past start time
-  | 'edit'                   // booked + native source (Calendly edits live in Calendly)
   | 'reschedule'             // booked + native source
   | 'cancel'                 // booked + native source
   | 'resend_confirmation'    // booked + native source + patient has email
@@ -321,6 +320,10 @@ export type AppointmentAction =
   | 'reverse_no_show'        // no_show
   | 'view_rescheduled_to'    // rescheduled with a forward link
   | 'view_visit';            // arrived / in_progress / complete with a visit
+//
+// 'edit' was removed — note edits happen inline on the Notes card,
+// and staff reassignment is rare enough that pushing it back to the
+// Schedule edit sheet keeps the appointment detail surface focused.
 
 export interface AvailableActionsInput {
   status: AppointmentStatus;
@@ -339,7 +342,6 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
     out.push('mark_arrived');
     out.push('mark_no_show');
     if (!isCalendly) {
-      out.push('edit');
       out.push('reschedule');
       out.push('cancel');
       if (hasPatientEmail) out.push('resend_confirmation');
