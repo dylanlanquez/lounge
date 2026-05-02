@@ -12,6 +12,7 @@ import {
   List,
   Mail,
   Monitor,
+  Pencil,
   Plus,
   ShieldCheck,
   Video,
@@ -24,6 +25,7 @@ import {
   Card,
   DatePicker,
   Dialog,
+  EditBookingSheet,
   EmptyState,
   Input,
   NewBookingSheet,
@@ -133,6 +135,10 @@ export function Schedule() {
   // reason and an explicit "Yes, cancel" tap. Discrete from
   // reschedulingRow because the two flows shouldn't share state.
   const [cancellingRow, setCancellingRow] = useState<AppointmentRow | null>(null);
+  // The row currently being edited (notes / staff). Discrete from
+  // reschedulingRow because edit-in-place doesn't move the slot —
+  // time changes still go through reschedule.
+  const [editingRow, setEditingRow] = useState<AppointmentRow | null>(null);
   const currentLocation = useCurrentLocation();
   // "Jump to date" picker — anchored to the month-label pill so the
   // operator can leap to any date without flicking through weeks.
@@ -890,6 +896,7 @@ export function Schedule() {
                     state: { patientName: patientDisplayName(selected) },
                   });
                 }}
+                onEdit={() => setEditingRow(selected)}
                 onReschedule={() => setReschedulingRow(selected)}
                 onCancel={() => setCancellingRow(selected)}
                 onResendConfirmation={async () => {
@@ -963,6 +970,34 @@ export function Schedule() {
             setSelected(null);
             day.refresh();
             weekCounts.refresh();
+          }}
+        />
+      ) : null}
+
+      {editingRow ? (
+        <EditBookingSheet
+          open
+          appointment={{
+            id: editingRow.id,
+            patient_id: editingRow.patient_id,
+            location_id: editingRow.location_id,
+            source: editingRow.source,
+            start_at: editingRow.start_at,
+            end_at: editingRow.end_at,
+            notes: editingRow.notes,
+            staff_account_id: editingRow.staff_account_id,
+            patient_first_name: editingRow.patient_first_name,
+            patient_last_name: editingRow.patient_last_name,
+          }}
+          onClose={() => setEditingRow(null)}
+          onSaved={() => {
+            setEditingRow(null);
+            setSelected(null);
+            day.refresh();
+            setConfirmationToast({
+              tone: 'success',
+              title: 'Changes saved',
+            });
           }}
         />
       ) : null}
@@ -1332,6 +1367,7 @@ function DetailQuickActions({
   appointment,
   resendingConfirmationId,
   onPatientProfile,
+  onEdit,
   onReschedule,
   onCancel,
   onResendConfirmation,
@@ -1339,10 +1375,16 @@ function DetailQuickActions({
   appointment: AppointmentRow;
   resendingConfirmationId: string | null;
   onPatientProfile: () => void;
+  onEdit: () => void;
   onReschedule: () => void;
   onCancel: () => void;
   onResendConfirmation: () => void;
 }) {
+  // Edit-in-place: native source + status='booked'. Adjusts notes
+  // and staff without touching the slot — for time changes the
+  // operator uses Reschedule instead.
+  const showEdit =
+    appointment.status === 'booked' && appointment.source !== 'calendly';
   const showReschedule =
     appointment.status === 'booked' && appointment.source !== 'calendly';
   const calendlyHintInline =
@@ -1378,6 +1420,14 @@ function DetailQuickActions({
         onClick={onPatientProfile}
         first
       />
+      {showEdit ? (
+        <QuickActionRow
+          icon={<Pencil size={16} aria-hidden />}
+          label="Edit appointment"
+          trailing={<ChevronRight size={16} aria-hidden style={{ color: theme.color.inkSubtle }} />}
+          onClick={onEdit}
+        />
+      ) : null}
       {showReschedule ? (
         <QuickActionRow
           icon={<CalendarClock size={16} aria-hidden />}

@@ -15,6 +15,7 @@ const makeRow = (
   source: 'calendly',
   event_type_label,
   staff_account_id: null,
+  notes: null,
   intake,
   join_url: null,
   deposit_pence: null,

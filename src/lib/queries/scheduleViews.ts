@@ -32,6 +32,7 @@ interface RawRow {
   source: AppointmentRow['source'];
   event_type_label: string | null;
   staff_account_id: string | null;
+  notes: string | null;
   intake: AppointmentRow['intake'];
   join_url: AppointmentRow['join_url'];
   deposit_pence?: number | null;
@@ -49,13 +50,13 @@ interface RawRow {
 }
 
 const SELECT_WITH_INTAKE = `
-  id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, intake, join_url,
+  id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, notes, intake, join_url,
   deposit_pence, deposit_currency, deposit_provider, deposit_status,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
 `;
 const SELECT_NO_INTAKE = `
-  id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id,
+  id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, notes,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
 `;
@@ -75,6 +76,7 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       source: raw.source,
       event_type_label: raw.event_type_label,
       staff_account_id: raw.staff_account_id,
+      notes: raw.notes ?? null,
       intake: raw.intake ?? null,
       join_url: raw.join_url ?? null,
       deposit_pence: raw.deposit_pence ?? null,
