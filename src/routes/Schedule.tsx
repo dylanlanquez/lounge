@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  CalendarCheck,
   CalendarClock,
   CalendarDays,
   CalendarOff,
@@ -942,6 +943,15 @@ export function Schedule() {
               <DetailQuickActions
                 appointment={selected}
                 resendingConfirmationId={resendingConfirmationId}
+                onViewAppointment={() => {
+                  navigate(`/appointment/${selected.id}`, {
+                    state: {
+                      from: 'schedule',
+                      patientId: selected.patient_id,
+                      patientName: patientFullDisplayName(selected),
+                    },
+                  });
+                }}
                 onPatientProfile={() => {
                   navigate(`/patient/${selected.patient_id}`, {
                     state: { patientName: patientDisplayName(selected) },
@@ -1417,6 +1427,7 @@ function CancelAppointmentDialog({
 function DetailQuickActions({
   appointment,
   resendingConfirmationId,
+  onViewAppointment,
   onPatientProfile,
   onEdit,
   onReschedule,
@@ -1425,6 +1436,7 @@ function DetailQuickActions({
 }: {
   appointment: AppointmentRow;
   resendingConfirmationId: string | null;
+  onViewAppointment: () => void;
   onPatientProfile: () => void;
   onEdit: () => void;
   onReschedule: () => void;
@@ -1464,12 +1476,24 @@ function DetailQuickActions({
         overflow: 'hidden',
       }}
     >
+      {/* View full appointment — opens /appointment/:id, which itself
+          redirects to /visit/:id when a visit exists. Sits at the
+          top of the action list so the receptionist sees the
+          "drill into this booking" affordance before the secondary
+          patient/edit/reschedule rows. */}
+      <QuickActionRow
+        icon={<CalendarCheck size={16} aria-hidden />}
+        label="View full appointment"
+        description="Detail page with timeline, deposit, intake answers"
+        trailing={<ChevronRight size={16} aria-hidden style={{ color: theme.color.inkSubtle }} />}
+        onClick={onViewAppointment}
+        first
+      />
       <QuickActionRow
         icon={<UserIcon />}
         label="Patient profile"
         trailing={<ChevronRight size={16} aria-hidden style={{ color: theme.color.inkSubtle }} />}
         onClick={onPatientProfile}
-        first
       />
       {showEdit ? (
         <QuickActionRow
@@ -1552,6 +1576,7 @@ function DetailQuickActions({
 function QuickActionRow({
   icon,
   label,
+  description,
   trailing,
   onClick,
   first = false,
@@ -1560,6 +1585,9 @@ function QuickActionRow({
 }: {
   icon: React.ReactNode;
   label: string;
+  /** Optional secondary line under the label. Used for the "View
+   * full appointment" row to hint at what's on the destination. */
+  description?: string;
   trailing?: React.ReactNode;
   onClick: () => void;
   first?: boolean;
@@ -1615,16 +1643,37 @@ function QuickActionRow({
       <span
         style={{
           flex: 1,
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.medium,
-          color: labelColour,
           minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
         }}
       >
-        {label}
+        <span
+          style={{
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.medium,
+            color: labelColour,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {label}
+        </span>
+        {description ? (
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {description}
+          </span>
+        ) : null}
       </span>
       {trailing ? (
         <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
