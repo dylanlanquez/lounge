@@ -18,7 +18,13 @@ export interface WeekStripProps {
 // DOM. ~60 each side covers normal clinic planning horizons; the
 // chevron buttons in the parent still let staff jump by full
 // weeks beyond that.
-const WINDOW_RADIUS_DAYS = 60;
+//
+// Exported so the parent's count query can request the same window
+// — without that, dots only appear for the selected week and any
+// scrolling past it shows naked numerals even on days that DO have
+// appointments.
+export const WEEK_STRIP_WINDOW_RADIUS_DAYS = 60;
+const WINDOW_RADIUS_DAYS = WEEK_STRIP_WINDOW_RADIUS_DAYS;
 
 // Each pill is a fixed-width flex item. 88 is large enough for the
 // number + weekday + dot to read on a kiosk and small enough that
