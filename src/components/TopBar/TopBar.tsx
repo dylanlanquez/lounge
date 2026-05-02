@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { ArrowLeft, BarChart3, LogOut, Receipt, Settings } from 'lucide-react';
+import { ArrowLeft, BarChart3, LogOut, PoundSterling, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -100,7 +100,7 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
               onClick={() => navigate('/financials')}
               style={iconButtonStyle}
             >
-              <Receipt size={18} />
+              <PoundSterling size={18} />
             </button>
           ) : null}
           {showAdminButton ? (
@@ -134,7 +134,7 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
           {showFinancialsButton ? (
             <Button variant="tertiary" size="sm" onClick={() => navigate('/financials')}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                <Receipt size={16} /> Financials
+                <PoundSterling size={16} /> Financials
               </span>
             </Button>
           ) : null}
