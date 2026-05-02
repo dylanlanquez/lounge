@@ -1,19 +1,17 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
-  CalendarPlus2,
+  Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  PenLine,
   Search,
-  User,
   X,
 } from 'lucide-react';
 import {
   Avatar,
   DateRangePicker,
   EmptyState,
-  MultiSelectDropdown,
   Skeleton,
   StatusPill,
   StickyPageHeader,
@@ -279,26 +277,22 @@ function FiltersRow({
           alignItems: 'center',
         }}
       >
-        <div style={{ minWidth: 180 }}>
-          <MultiSelectDropdown<AppointmentStatus>
-            label="Status"
-            placeholder="All statuses"
-            values={statuses}
-            options={STATUS_OPTIONS}
-            onChange={onStatusesChange}
-            totalNoun="statuses"
-          />
-        </div>
-        <div style={{ minWidth: 180 }}>
-          <MultiSelectDropdown<AppointmentSource>
-            label="Source"
-            placeholder="All sources"
-            values={sources}
-            options={SOURCE_OPTIONS}
-            onChange={onSourcesChange}
-            totalNoun="sources"
-          />
-        </div>
+        <FilterPill<AppointmentStatus>
+          label="Status"
+          placeholder="All statuses"
+          values={statuses}
+          options={STATUS_OPTIONS}
+          onChange={onStatusesChange}
+          totalNoun="statuses"
+        />
+        <FilterPill<AppointmentSource>
+          label="Source"
+          placeholder="All sources"
+          values={sources}
+          options={SOURCE_OPTIONS}
+          onChange={onSourcesChange}
+          totalNoun="sources"
+        />
         <DateRangePicker
           value={dateRange}
           onChange={(r) => onDateRangeChange(r)}
@@ -543,35 +537,34 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
           gap: theme.space[3],
         }}
       >
-        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-          <SourceIcon source={row.source} />
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.base,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {fullName}
-            </p>
-            {row.appointment_ref ? (
-              <p
-                style={{
-                  margin: '2px 0 0',
-                  fontSize: theme.type.size.xs,
-                  color: theme.color.inkMuted,
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                {row.appointment_ref}
-              </p>
-            ) : null}
-          </div>
+        <div style={{ minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {fullName}
+          </p>
+          <p
+            style={{
+              margin: '2px 0 0',
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {sourceMeta(row.source).label}
+            {row.appointment_ref ? ` · ${row.appointment_ref}` : ''}
+          </p>
         </div>
         <p
           style={{
@@ -617,48 +610,272 @@ function Row({ row, onPick }: { row: AppointmentHistoryRow; onPick: () => void }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Source icon — small visual cue at the start of the patient column
-// for where the booking came from. Calendly bookings, native bookings,
-// and manually-added rows each get their own glyph so the receptionist
-// can tell at a glance which origin they're scanning.
+// Source label helper — lives next to the patient name as part of
+// the row's secondary line ("Calendly · LAP-00042"). Earlier revs
+// rendered this as a circular icon next to the avatar; that read as
+// a duplicate avatar. Plain text in the existing meta line is the
+// less visually noisy answer.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SourceIcon({ source }: { source: AppointmentSource }) {
-  const { icon, label } = (() => {
-    switch (source) {
-      case 'native':
-        return { icon: <CalendarPlus2 size={14} />, label: 'Native (Lounge)' };
-      case 'calendly':
-        return { icon: <User size={14} />, label: 'Calendly' };
-      case 'manual':
-        return { icon: <PenLine size={14} />, label: 'Manually added' };
-      default:
-        // Unrecognised source: render nothing rather than fabricate
-        // a glyph. The constraint in the schema means this branch
-        // shouldn't fire — if it ever does, the data model's
-        // changed and the icon set should change with it.
-        return { icon: null, label: source };
-    }
-  })();
-  if (!icon) return null;
+function sourceMeta(source: AppointmentSource): { label: string } {
+  switch (source) {
+    case 'native':
+      return { label: 'Native' };
+    case 'calendly':
+      return { label: 'Calendly' };
+    case 'manual':
+      return { label: 'Manually added' };
+    default:
+      // Unrecognised source: surface the raw value rather than guess.
+      // The schema constrains this so the branch shouldn't fire — if
+      // it does, the data model has changed and this map should
+      // change with it.
+      return { label: source };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FilterPill — compact multi-select trigger styled to match the
+// DateRangePicker's tertiary button. Shows label + active selection
+// count; opens a portal-positioned panel of checkbox rows. When at
+// least one value is selected, an inline X next to the trigger lets
+// the receptionist clear that filter without opening the panel.
+//
+// This is local to the Appointments page on purpose: the existing
+// MultiSelectDropdown is a full form field (label-above-value, ~72px
+// tall) which dominates the filter row visually. If a second filter
+// surface needs the same shape, lift this into a primitive then.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function FilterPill<T extends string>({
+  label,
+  placeholder,
+  values,
+  options,
+  onChange,
+  totalNoun,
+}: {
+  label: string;
+  placeholder: string;
+  values: T[];
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (next: T[]) => void;
+  totalNoun: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  );
+
+  const valueSet = new Set(values);
+  const selected = options.filter((o) => valueSet.has(o.value));
+  const display =
+    selected.length === 0
+      ? placeholder
+      : selected.length === options.length
+        ? `All ${totalNoun}`
+        : selected.length === 1
+          ? selected[0]!.label
+          : `${selected.length} ${totalNoun}`;
+
+  const hasValue = selected.length > 0 && selected.length < options.length;
+
+  // Outside-click + Escape dismiss while open. Close fires before any
+  // click outside the wrapper resolves so the panel doesn't flash on
+  // the very next interaction.
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Position the panel under the trigger. Re-runs on scroll/resize
+  // while open so the panel tracks if the page reflows.
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const update = () => {
+      if (!triggerRef.current) return;
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPanelPos({
+        top: rect.bottom + 6,
+        left: rect.left,
+        width: Math.max(rect.width, 220),
+      });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
+
+  const toggle = (v: T) => {
+    if (valueSet.has(v)) onChange(values.filter((x) => x !== v));
+    else onChange([...values, v]);
+  };
+
   return (
     <span
-      title={label}
-      aria-label={label}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 26,
-        height: 26,
-        borderRadius: theme.radius.pill,
-        background: theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-        color: theme.color.inkMuted,
-        flexShrink: 0,
-      }}
+      ref={wrapperRef}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}
     >
-      {icon}
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          appearance: 'none',
+          height: 36,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          padding: `0 ${theme.space[3]}px`,
+          borderRadius: theme.radius.input,
+          border: `1px solid ${hasValue ? theme.color.ink : theme.color.border}`,
+          background: theme.color.surface,
+          color: hasValue ? theme.color.ink : theme.color.inkMuted,
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          cursor: 'pointer',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+      >
+        <span style={{ color: theme.color.inkMuted }}>{label}</span>
+        <span
+          style={{
+            color: hasValue ? theme.color.ink : theme.color.inkSubtle,
+            fontWeight: theme.type.weight.semibold,
+            maxWidth: 200,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {display}
+        </span>
+        <ChevronDown size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
+      </button>
+      {hasValue ? (
+        <button
+          type="button"
+          aria-label={`Clear ${label.toLowerCase()} filter`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange([]);
+          }}
+          style={{
+            appearance: 'none',
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
+            color: theme.color.inkSubtle,
+            cursor: 'pointer',
+            padding: 0,
+            width: 26,
+            height: 26,
+            borderRadius: theme.radius.pill,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'inherit',
+          }}
+        >
+          <X size={12} aria-hidden />
+        </button>
+      ) : null}
+      {open && panelPos
+        ? (() => {
+            const panelStyle: CSSProperties = {
+              position: 'fixed',
+              top: panelPos.top,
+              left: panelPos.left,
+              width: panelPos.width,
+              maxHeight: 320,
+              overflowY: 'auto',
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              boxShadow: theme.shadow.overlay,
+              zIndex: 1200,
+              padding: theme.space[1],
+              display: 'flex',
+              flexDirection: 'column',
+            };
+            return (
+              <div role="listbox" aria-multiselectable="true" style={panelStyle}>
+                {options.map((opt) => {
+                  const isChecked = valueSet.has(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="option"
+                      aria-selected={isChecked}
+                      onClick={() => toggle(opt.value)}
+                      style={{
+                        appearance: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: theme.space[3],
+                        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                        background: 'transparent',
+                        border: 'none',
+                        borderRadius: theme.radius.input,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        fontSize: theme.type.size.sm,
+                        color: theme.color.ink,
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = theme.color.bg;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <span>{opt.label}</span>
+                      <span
+                        aria-hidden
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: 18,
+                          height: 18,
+                          borderRadius: 4,
+                          border: `1px solid ${isChecked ? theme.color.ink : theme.color.border}`,
+                          background: isChecked ? theme.color.ink : theme.color.surface,
+                          color: theme.color.surface,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {isChecked ? <Check size={12} aria-hidden /> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()
+        : null}
     </span>
   );
 }
