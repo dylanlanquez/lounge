@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
+import { logFailure } from '../failureLog.ts';
 import type { AppointmentSource } from './appointments.ts';
 import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
 
@@ -138,6 +139,23 @@ export function useAppointmentHistory(
 
         if (cancelled) return;
         if (err) {
+          // Loud + logged. Receptionists see ErrorPanel; ops see the
+          // structured row with the filter shape that broke so they
+          // can reproduce.
+          await logFailure({
+            source: 'useAppointmentHistory.list',
+            severity: 'error',
+            message: err.message,
+            context: {
+              page,
+              limit,
+              statuses: [...filters.statuses],
+              sources: [...filters.sources],
+              fromDate: filters.fromDate,
+              toDate: filters.toDate,
+              search: trimmed,
+            },
+          });
           setError(err.message);
           settle();
           return;
@@ -152,13 +170,27 @@ export function useAppointmentHistory(
         const apptIds = apptRows.map((r) => r.id);
         const visitMap = new Map<string, string>();
         if (apptIds.length > 0) {
-          const { data: visits } = await supabase
+          const { data: visits, error: visitErr } = await supabase
             .from('lng_visits')
             .select('id, appointment_id')
             .in('appointment_id', apptIds);
           if (cancelled) return;
-          for (const v of (visits ?? []) as Array<{ id: string; appointment_id: string }>) {
-            visitMap.set(v.appointment_id, v.id);
+          if (visitErr) {
+            // Visit lookup failure is non-fatal — the page still renders
+            // every appointment, the click-through just falls back to
+            // the patient profile until ops fixes it. Log the failure
+            // so the silent "everything goes to profile" symptom has a
+            // structured trace.
+            await logFailure({
+              source: 'useAppointmentHistory.visits',
+              severity: 'warning',
+              message: visitErr.message,
+              context: { appointmentIdCount: apptIds.length },
+            });
+          } else {
+            for (const v of (visits ?? []) as Array<{ id: string; appointment_id: string }>) {
+              visitMap.set(v.appointment_id, v.id);
+            }
           }
         }
 
@@ -188,7 +220,25 @@ export function useAppointmentHistory(
         settle();
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : 'Could not load appointment history');
+        const message = e instanceof Error ? e.message : 'Could not load appointments';
+        // Catch-all path: a client-side throw (parse failure, network
+        // hiccup that bypasses Supabase's structured error). Same
+        // logging shape as the err branch above so triage works the
+        // same regardless of where the failure surfaced.
+        await logFailure({
+          source: 'useAppointmentHistory.unhandled',
+          severity: 'error',
+          message,
+          context: {
+            page,
+            limit,
+            statuses: [...filters.statuses],
+            sources: [...filters.sources],
+            fromDate: filters.fromDate,
+            toDate: filters.toDate,
+          },
+        });
+        setError(message);
         settle();
       }
     }, 250);

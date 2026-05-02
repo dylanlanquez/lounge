@@ -43,14 +43,26 @@ import { addDaysIso, formatDateIso, todayIso } from '../../lib/calendarMonth.ts'
 // range. The pending selection is internal to the picker and only
 // fires `onChange` on Apply or preset-click.
 //
-// API stays compatible with the previous DateRangePicker so consumers
-// (Reports, Financials) don't need to change: { value, onChange }.
+// API note: value is nullable so a caller can model "no date filter
+// selected" honestly — we don't lie with a sentinel range. When value
+// is null the trigger shows `placeholder`; clicking opens the picker
+// landed on today's month with no pre-selected dates. Pass `onClear`
+// to enable an inline X on the trigger that fires the callback so the
+// caller can flip back to null. Reports and Financials still pass a
+// concrete DateRange and never opt into onClear, so their behaviour
+// is unchanged.
 
 export interface DateRangePickerProps {
-  value: DateRange;
+  value: DateRange | null;
   onChange: (range: DateRange) => void;
   size?: 'sm' | 'md';
   disabled?: boolean;
+  /** Trigger label when value is null. Defaults to 'Choose dates'. */
+  placeholder?: string;
+  /** When set, an inline X on the trigger calls this to clear the
+   * range back to null. Without it, the trigger has no clear affordance
+   * — the caller is signalling that the range is always required. */
+  onClear?: () => void;
 }
 
 const PILL_PADDING_DESKTOP = 8;
@@ -63,6 +75,8 @@ export function DateRangePicker({
   onChange,
   size = 'md',
   disabled = false,
+  placeholder = 'Choose dates',
+  onClear,
 }: DateRangePickerProps) {
   const isMobile = useIsMobile(720);
   const [open, setOpen] = useState(false);
@@ -98,6 +112,22 @@ export function DateRangePicker({
   // ─── Open / close ────────────────────────────────────────────────
   const openPicker = useCallback(() => {
     if (disabled) return;
+    if (value === null) {
+      // No active range: open with no pending selection, calendars
+      // land on the current month + one month ahead so the user has
+      // an immediate two-month view without committing to anything.
+      setSelFrom(null);
+      setSelTo(null);
+      setSelPreset('custom');
+      const now = new Date();
+      setLYear(now.getFullYear());
+      setLMonth(now.getMonth());
+      const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setRYear(next.getFullYear());
+      setRMonth(next.getMonth());
+      setOpen(true);
+      return;
+    }
     // Seed the pending selection from current value so the calendar
     // opens already showing the chosen range.
     setSelFrom(value.start);
@@ -224,9 +254,14 @@ export function DateRangePicker({
   };
 
   // ─── Trigger ─────────────────────────────────────────────────────
+  const triggerLabel = value === null ? placeholder : dateRangeLabel(value);
+  const showClear = onClear !== undefined && value !== null && !disabled;
   return (
     <>
-      <span ref={triggerRef} style={{ display: 'inline-flex' }}>
+      <span
+        ref={triggerRef}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}
+      >
         <Button
           variant="tertiary"
           size={size}
@@ -235,10 +270,37 @@ export function DateRangePicker({
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
             <Calendar size={size === 'sm' ? 14 : 16} aria-hidden />
-            {dateRangeLabel(value)}
+            {triggerLabel}
             <ChevronDown size={size === 'sm' ? 12 : 14} aria-hidden />
           </span>
         </Button>
+        {showClear ? (
+          <button
+            type="button"
+            aria-label="Clear date range"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClear?.();
+            }}
+            style={{
+              appearance: 'none',
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.inkSubtle,
+              cursor: 'pointer',
+              padding: 0,
+              width: size === 'sm' ? 26 : 30,
+              height: size === 'sm' ? 26 : 30,
+              borderRadius: theme.radius.pill,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'inherit',
+            }}
+          >
+            <X size={size === 'sm' ? 12 : 14} aria-hidden />
+          </button>
+        ) : null}
       </span>
 
       {open && !isMobile ? (

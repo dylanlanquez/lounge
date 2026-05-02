@@ -204,7 +204,7 @@ export function PatientProfile() {
 // flash a literal placeholder ("Patient") or pop in late once the
 // query lands — the exact flicker we're avoiding.
 interface PatientEntryState {
-  from?: 'visit';
+  from?: 'visit' | 'appointments';
   visitId?: string;
   visitOpenedAt?: string;
   // Mirror of VisitDetail's VisitEntryState. Carrying visitOpenedAt
@@ -212,7 +212,7 @@ interface PatientEntryState {
   // pops back with enough preview data to render every crumb on
   // first paint without a shimmer transition.
   visitEntry?: {
-    from?: 'patient' | 'schedule' | 'in_clinic';
+    from?: 'patient' | 'schedule' | 'in_clinic' | 'appointments';
     patientId?: string;
     patientName?: string;
     visitOpenedAt?: string;
@@ -264,6 +264,12 @@ function Breadcrumbs({ patient }: { patient: PatientProfileRow | null }) {
               state: visitState ?? undefined,
             }),
         },
+        { label: nameLabel },
+      ];
+    }
+    if (entry.from === 'appointments') {
+      return [
+        { label: 'Appointments', onClick: () => navigate('/appointments') },
         { label: nameLabel },
       ];
     }
