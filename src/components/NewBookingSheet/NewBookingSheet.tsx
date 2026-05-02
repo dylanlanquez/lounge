@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarClock, Check, Mail, User } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Check, User } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -278,105 +278,133 @@ export function NewBookingSheet({
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          {patient ? (
-            <PickedPatient patient={patient} onClear={() => setPatient(null)} />
-          ) : (
-            <PatientSearch
-              onPick={setPatient}
-              placeholder="Phone, name, or email"
-              enableShopifyLookup={Boolean(locationId)}
-              registerLocationId={locationId}
-            />
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+          <Section
+            title="Patient"
+            sub="Search by phone, name, or email. Includes Venneir.com customers who haven't been seen at this clinic yet."
+          >
+            {patient ? (
+              <PickedPatient patient={patient} onClear={() => setPatient(null)} />
+            ) : (
+              <PatientSearch
+                onPick={setPatient}
+                placeholder="Phone, name, or email"
+                enableShopifyLookup={Boolean(locationId)}
+                registerLocationId={locationId}
+              />
+            )}
+          </Section>
 
-          <DropdownSelect<BookingServiceType>
-            label="Service"
+          <Section
+            title="Service"
             required
-            value={serviceType}
-            onChange={(v) => setServiceType(v)}
-            options={BOOKING_SERVICE_TYPES}
-            placeholder="Choose a service"
-          />
-          {configError ? (
-            <ErrorBanner title="Couldn't load booking config" body={configError} />
-          ) : null}
+            sub="Drives the duration and which resources the booking consumes."
+          >
+            <DropdownSelect<BookingServiceType>
+              ariaLabel="Service"
+              value={serviceType}
+              onChange={(v) => setServiceType(v)}
+              options={BOOKING_SERVICE_TYPES}
+              placeholder="Choose a service"
+            />
+            {configError ? (
+              <div style={{ marginTop: theme.space[3] }}>
+                <ErrorBanner title="Couldn't load booking config" body={configError} />
+              </div>
+            ) : null}
+          </Section>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
-            <Input
-              label="Date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
+          <Section
+            title="When"
+            sub={
+              config
+                ? `${config.duration_default}-minute slot${
+                    hoursForDate
+                      ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}.`
+                      : date
+                      ? '. The clinic is closed on this day.'
+                      : '.'
+                  }`
+                : 'Pick a service to see the duration and working hours.'
+            }
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
+              <Input
+                label="Date"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+              <Input
+                label="Start time"
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+              />
+            </div>
+            {!inWorkingHours && date && time && hoursForDate ? (
+              <div style={{ marginTop: theme.space[3] }}>
+                <ErrorBanner
+                  title="Outside working hours"
+                  body={`This service runs ${hoursForDate.open} to ${hoursForDate.close} on the day you picked.`}
+                  subtle
+                />
+              </div>
+            ) : null}
+            <div style={{ marginTop: theme.space[3] }}>
+              <ConflictBlock
+                checking={checkingConflicts}
+                conflicts={conflicts}
+                error={conflictError}
+                slotIsValid={slotIsValid}
+                durationMinutes={config?.duration_default ?? null}
+              />
+            </div>
+          </Section>
+
+          <Section title="Staff" sub="Optional. Who'll be taking this appointment.">
+            <DropdownSelect<string>
+              ariaLabel="Staff member"
+              value={staffAccountId}
+              onChange={(v) => setStaffAccountId(v)}
+              options={[
+                { value: '', label: 'No specific staff' },
+                ...staff.data
+                  .filter((s) => s.status === 'active')
+                  .map((s) => ({ value: s.account_id, label: s.display_name })),
+              ]}
+              placeholder={staff.loading ? 'Loading…' : 'No specific staff'}
             />
+          </Section>
+
+          <Section title="Notes" sub="Optional. Anything the team should know going in.">
             <Input
-              label="Start time"
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
+              aria-label="Notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. wheelchair access; bringing a translator; allergic to latex."
             />
-          </div>
-          {config ? (
-            <p
-              style={{
-                margin: `-${theme.space[3]}px 0 0`,
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                lineHeight: 1.5,
+          </Section>
+
+          <Section
+            title="Confirmation email"
+            sub={
+              patient
+                ? patient.email
+                  ? `We'll send the booking confirmation to ${patient.email} with a calendar invite attached.`
+                  : `${patientFullName(patient)} has no email on file. Add one on the patient profile to enable confirmations.`
+                : 'Pick a patient first to see the email status.'
+            }
+          >
+            <ConfirmationToggle
+              patient={patient}
+              checked={sendEmail}
+              onChange={(v) => {
+                setSendEmail(v);
+                setSendEmailUserOverride(true);
               }}
-            >
-              Duration: <strong style={{ color: theme.color.ink }}>{config.duration_default} minutes</strong>
-              {hoursForDate ? (
-                <> {' · '} Hours that day: {hoursForDate.open}–{hoursForDate.close}</>
-              ) : date ? (
-                <span style={{ color: theme.color.alert }}>{' · '}The clinic is closed on this day.</span>
-              ) : null}
-            </p>
-          ) : null}
-          {!inWorkingHours && date && time && hoursForDate ? (
-            <ErrorBanner
-              title="Outside working hours"
-              body={`This service runs ${hoursForDate.open}–${hoursForDate.close} on the day you picked.`}
-              subtle
             />
-          ) : null}
-
-          <ConflictBlock
-            checking={checkingConflicts}
-            conflicts={conflicts}
-            error={conflictError}
-            slotIsValid={slotIsValid}
-            durationMinutes={config?.duration_default ?? null}
-          />
-
-          <DropdownSelect<string>
-            label="Staff (optional)"
-            value={staffAccountId}
-            onChange={(v) => setStaffAccountId(v)}
-            options={[
-              { value: '', label: 'No specific staff' },
-              ...staff.data
-                .filter((s) => s.status === 'active')
-                .map((s) => ({ value: s.account_id, label: s.display_name })),
-            ]}
-            placeholder={staff.loading ? 'Loading…' : 'No specific staff'}
-          />
-
-          <Input
-            label="Notes (optional)"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Anything the team should know going in."
-          />
-
-          <ConfirmationToggle
-            patient={patient}
-            checked={sendEmail}
-            onChange={(v) => {
-              setSendEmail(v);
-              setSendEmailUserOverride(true);
-            }}
-          />
+          </Section>
         </div>
       </BottomSheet>
       {toast ? (
@@ -394,6 +422,68 @@ export function NewBookingSheet({
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Section header pattern lifted from the arrival/intake form
+// (src/routes/Arrival.tsx). Bold black H2 title, optional muted
+// subtitle below, then the control. Required asterisk renders inline
+// after the title — same affordance the intake form uses for fields
+// that gate progress.
+function Section({
+  title,
+  sub,
+  required = false,
+  children,
+}: {
+  title: string;
+  sub?: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <header
+        style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}
+      >
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+          }}
+        >
+          {title}
+          {required ? (
+            <span
+              aria-hidden
+              style={{
+                color: theme.color.alert,
+                fontWeight: theme.type.weight.semibold,
+                marginLeft: 4,
+              }}
+            >
+              *
+            </span>
+          ) : null}
+        </h2>
+        {sub ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {sub}
+          </p>
+        ) : null}
+      </header>
+      <div>{children}</div>
+    </section>
+  );
+}
 
 function PickedPatient({
   patient,
@@ -476,57 +566,17 @@ function ConfirmationToggle({
   onChange: (checked: boolean) => void;
 }) {
   const hasEmail = !!patient?.email;
-  const disabled = !hasEmail;
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          color: theme.color.inkMuted,
-          marginTop: 2,
-          flexShrink: 0,
-          display: 'inline-flex',
-        }}
-      >
-        <Mail size={16} aria-hidden />
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Checkbox
-          checked={hasEmail && checked}
-          onChange={onChange}
-          disabled={disabled}
-          label={
-            <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
-              Send confirmation email
-            </span>
-          }
-        />
-        <p
-          style={{
-            margin: '4px 0 0',
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            lineHeight: 1.5,
-          }}
-        >
-          {patient
-            ? hasEmail
-              ? `Goes to ${patient.email} with a calendar invite attached.`
-              : `${patientFullName(patient)} has no email on file. Add one on the patient profile to enable confirmations.`
-            : 'Pick a patient first to see the email status.'}
-        </p>
-      </div>
-    </div>
+    <Checkbox
+      checked={hasEmail && checked}
+      onChange={onChange}
+      disabled={!hasEmail}
+      label={
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
+          Send confirmation email
+        </span>
+      }
+    />
   );
 }
 
