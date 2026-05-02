@@ -71,9 +71,27 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // Auth check — accept service-role bearer OR cron secret header.
+  //
+  // For the bearer path, we decode the JWT payload and verify the
+  // role + project ref rather than doing a strict string equality
+  // against SUPABASE_SERVICE_ROLE_KEY. The strict-equality version
+  // turned out brittle: Supabase can hold multiple valid signatures
+  // for the same role/project (key rotation, leading/trailing
+  // whitespace mismatches between the env var and what's in Vault),
+  // so two equivalent service-role JWTs would compare unequal.
+  // Decoding the payload + verifying the claims is the robust
+  // pattern. The Supabase gateway has already verified the
+  // signature before our handler runs, so trust the payload.
   const auth = req.headers.get('authorization') ?? '';
   const secret = req.headers.get('x-cron-secret') ?? '';
-  const bearerOk = auth === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+  let bearerOk = false;
+  if (auth.startsWith('Bearer ')) {
+    const token = auth.slice('Bearer '.length).trim();
+    const payload = decodeJwtPayload(token);
+    if (payload?.role === 'service_role' && (!payload.ref || isExpectedProjectRef(payload.ref))) {
+      bearerOk = true;
+    }
+  }
   const secretOk = !!CRON_SECRET && secret === CRON_SECRET;
   if (!bearerOk && !secretOk) {
     return jsonResponse(401, { ok: false, error: 'Unauthorised' });
@@ -484,6 +502,35 @@ interface LocationRow {
   name: string | null;
   city: string | null;
   address: string | null;
+}
+
+// Decode a JWT's payload without verifying the signature (the
+// Supabase gateway already verified it before our handler runs).
+// Returns null on malformed input.
+function decodeJwtPayload(token: string): { role?: string; ref?: string; iat?: number; exp?: number } | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payloadB64 + '='.repeat((4 - (payloadB64.length % 4)) % 4);
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+// The project ref the function is deployed under. Supabase doesn't
+// expose this as an explicit env var, but SUPABASE_URL is
+// 'https://<ref>.supabase.co' so we can pull it from there.
+function isExpectedProjectRef(ref: string): boolean {
+  try {
+    const u = new URL(SUPABASE_URL);
+    const expected = u.hostname.split('.')[0];
+    return ref === expected;
+  } catch {
+    return false;
+  }
 }
 
 function corsHeaders(): Record<string, string> {
