@@ -362,3 +362,51 @@ export function sampleVariablesFor(
   for (const v of def.variables) map[v.name] = v.sample;
   return map;
 }
+
+// Send a test rendering of a template draft to a recipient — used
+// by the "Send test" button in the editor. Renders subject + body
+// with sample variable values, ships via Resend with a "[TEST]"
+// subject prefix so the recipient knows it's not a real send.
+//
+// Returns ok: true on success or ok: false with a structured error
+// the caller can surface as a toast.
+export interface SendTemplateTestResult {
+  ok: boolean;
+  recipient?: string;
+  messageId?: string | null;
+  error?: string;
+}
+
+export async function sendTemplateTest(args: {
+  subject: string;
+  bodySyntax: string;
+  variables: Record<string, string>;
+  to: string;
+}): Promise<SendTemplateTestResult> {
+  const { data, error } = await supabase.functions.invoke<unknown>(
+    'send-template-test',
+    {
+      body: {
+        subject: args.subject,
+        bodySyntax: args.bodySyntax,
+        variables: args.variables,
+        to: args.to,
+      },
+    },
+  );
+  if (error) return { ok: false, error: error.message };
+  const payload = (data ?? {}) as {
+    ok?: boolean;
+    error?: string;
+    recipient?: string;
+    messageId?: string | null;
+  };
+  if (payload.ok) {
+    return {
+      ok: true,
+      recipient: payload.recipient,
+      messageId: payload.messageId ?? null,
+    };
+  }
+  return { ok: false, error: payload.error ?? 'Unknown error' };
+}
