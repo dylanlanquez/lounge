@@ -46,6 +46,21 @@ const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <loun
 const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
 
 Deno.serve(async (req) => {
+  // Top-level try/catch so any unhandled exception surfaces as a 200
+  // with a specific error message instead of a generic non-2xx that
+  // shows in the UI as "Edge Function returned a non-2xx status code".
+  // The caller's confirmation toast renders the message verbatim.
+  try {
+    return await handle(req);
+  } catch (e) {
+    return jsonResponse(200, {
+      ok: false,
+      error: `send-appointment-confirmation crashed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+    });
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders() });
   }
@@ -109,9 +124,14 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Meridian's locations table stores the street address as a single
+  // `address` text column, not the address_line_1 / postcode split
+  // we'd assumed in the first revision of this function. The original
+  // select 4xx'd because of the unknown columns and surfaced to the
+  // app as "Edge Function returned a non-2xx status code".
   const { data: locationRow } = await admin
     .from('locations')
-    .select('id, name, city, address_line_1, address_line_2, postcode')
+    .select('id, name, city, address, phone')
     .eq('id', apt.location_id)
     .maybeSingle();
   const location = locationRow as LocationRow | null;
@@ -251,7 +271,7 @@ Deno.serve(async (req) => {
     provider: 'resend',
     messageId: sendResult.messageId ?? null,
   });
-});
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hydration helpers
@@ -279,9 +299,8 @@ interface LocationRow {
   id: string;
   name: string | null;
   city: string | null;
-  address_line_1: string | null;
-  address_line_2: string | null;
-  postcode: string | null;
+  address: string | null;
+  phone: string | null;
 }
 
 async function readAppointment(
@@ -584,13 +603,9 @@ function icsDescription(apt: AppointmentRow, location: LocationRow | null): stri
 
 function locationFreeform(location: LocationRow | null): string {
   if (!location) return 'Venneir Lounge';
-  const pieces = [
-    location.name,
-    location.address_line_1,
-    location.address_line_2,
-    location.city,
-    location.postcode,
-  ].filter((p): p is string => !!p && p.trim().length > 0);
+  const pieces = [location.name, location.address, location.city].filter(
+    (p): p is string => !!p && p.trim().length > 0,
+  );
   return pieces.length ? pieces.join(', ') : 'Venneir Lounge';
 }
 
@@ -659,22 +674,30 @@ async function sendEmail(args: {
   text: string;
   attachments: Array<{ filename: string; content: string }>;
 }): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
-  const r = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: RESEND_FROM,
-      to: [args.to],
-      reply_to: RESEND_REPLY_TO,
-      subject: args.subject,
-      html: args.html,
-      text: args.text,
-      attachments: args.attachments,
-    }),
-  });
+  let r: Response;
+  try {
+    r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: [args.to],
+        reply_to: RESEND_REPLY_TO,
+        subject: args.subject,
+        html: args.html,
+        text: args.text,
+        attachments: args.attachments,
+      }),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Resend network error: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
   const body = await r.json().catch(() => ({}));
   if (!r.ok) return { ok: false, error: `Resend ${r.status}: ${JSON.stringify(body)}` };
   return { ok: true, messageId: (body as { id?: string }).id };
