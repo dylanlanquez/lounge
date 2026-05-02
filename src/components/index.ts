@@ -88,6 +88,21 @@ export type { DatePickerProps } from './DatePicker/DatePicker.tsx';
 export { TimePicker } from './TimePicker/TimePicker.tsx';
 export type { TimePickerProps } from './TimePicker/TimePicker.tsx';
 
+export { Section } from './Section/Section.tsx';
+export type { SectionProps } from './Section/Section.tsx';
+
+export { FieldTrigger } from './FieldTrigger/FieldTrigger.tsx';
+export type { FieldTriggerProps } from './FieldTrigger/FieldTrigger.tsx';
+
+export { InlineHint } from './InlineHint/InlineHint.tsx';
+export type { InlineHintProps } from './InlineHint/InlineHint.tsx';
+
+export { ConflictBlock } from './ConflictBlock/ConflictBlock.tsx';
+export type { ConflictBlockProps } from './ConflictBlock/ConflictBlock.tsx';
+
+export { StatusBanner } from './StatusBanner/StatusBanner.tsx';
+export type { StatusBannerProps, StatusBannerTone } from './StatusBanner/StatusBanner.tsx';
+
 export { StatCard } from './StatCard/StatCard.tsx';
 export type { StatCardProps, StatCardTone } from './StatCard/StatCard.tsx';
 

@@ -1,6 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarClock, Check } from 'lucide-react';
-import { Button, BottomSheet, Input, Toast } from '../index.ts';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarClock, Clock } from 'lucide-react';
+import {
+  BottomSheet,
+  Button,
+  ConflictBlock,
+  DatePicker,
+  FieldTrigger,
+  InlineHint,
+  Input,
+  Section,
+  StatusBanner,
+  TimePicker,
+  Toast,
+} from '../index.ts';
 import { theme } from '../../theme/index.ts';
 import {
   type BookingServiceType,
@@ -15,24 +27,35 @@ import {
   rescheduleAppointment,
 } from '../../lib/queries/rescheduleAppointment.ts';
 
-// RescheduleSheet — bottom-sheet UI for rescheduling a native
-// (manual / native) Lounge appointment. Calendly-sourced rows are
-// guarded out by the caller; the helper would refuse anyway with a
-// clear message.
+// RescheduleSheet — bottom-sheet UI for moving a native (manual /
+// native-source) Lounge appointment to a different slot.
 //
-// What it does:
-//   1. Loads the booking type config for the appointment's service
-//      so it knows the working hours window per day-of-week and the
-//      duration to apply to the new slot.
-//   2. Renders a date input + time input. The day/time the user
-//      picks together compose the new start_at; new end_at is
-//      derived from the booking type's duration_default.
-//   3. Live-checks for slot conflicts (pool capacity / max
-//      concurrent) every time the slot or duration changes,
-//      surfacing them inline.
-//   4. On Save, calls rescheduleAppointment(...). On a conflict
-//      error from the server (last-minute race), the inline
-//      conflict block re-renders with what the server saw.
+// What it does, top to bottom:
+//
+//   1. Displays the currently-booked slot in a soft summary card so
+//      the operator can compare against the new one without having
+//      to remember.
+//   2. Loads the booking type's config (working hours per day,
+//      duration_default) so it knows the new slot's window and
+//      length.
+//   3. Date + time field-triggers open the in-app DatePicker and
+//      TimePicker. The TimePicker's range narrows to the booking
+//      type's working hours for the picked day, so off-hours slots
+//      can't even be reached from the picker.
+//   4. Live conflict-check (debounced 250ms) hits
+//      lng_booking_check_conflict, surfacing the result inline via
+//      the shared ConflictBlock.
+//   5. Optional reason — written to lng_appointments.cancel_reason
+//      on the rescheduled-out row, surfaced on the patient's
+//      timeline event.
+//   6. Save calls rescheduleAppointment(...). On a server-side
+//      conflict (last-millisecond race), the inline conflict block
+//      re-renders with what the server actually saw.
+//
+// Visual language matches NewBookingSheet: title icon pill,
+// Section headers with (i) tooltips, FieldTrigger inputs, InlineHint
+// for dynamic state, StatusBanner for warnings / errors. All shared
+// primitives so the two sheets can't drift.
 
 export interface RescheduleSheetProps {
   open: boolean;
@@ -59,10 +82,6 @@ export function RescheduleSheet({
   appointment,
   onRescheduled,
 }: RescheduleSheetProps) {
-  // Initial date + time pulled from the existing slot so the form
-  // opens in a sensible default state — typically the staff member
-  // is shifting it by a day or by an hour, not booking from
-  // scratch.
   const initial = useMemo(() => splitIso(appointment.start_at), [appointment.start_at]);
   const [date, setDate] = useState<string>(initial.date);
   const [time, setTime] = useState<string>(initial.time);
@@ -76,8 +95,17 @@ export function RescheduleSheet({
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
 
-  // ── Load booking type config once when the sheet opens ──────────
+  // In-app pickers replace the native <input type="date"> and
+  // <input type="time"> so the experience matches the rest of the
+  // form and respects the no-system-UI-dropdowns rule.
+  const dateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const timeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [dateOpen, setDateOpen] = useState(false);
+  const [timeOpen, setTimeOpen] = useState(false);
+
   const serviceType = appointment.service_type ?? 'other';
+
+  // ── Load booking-type config when the sheet opens ──────────────
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -89,7 +117,7 @@ export function RescheduleSheet({
         if (cancelled) return;
         if (!c) {
           setConfigError(
-            `No booking-type config for "${serviceType}". Set the parent defaults in Admin → Booking types first.`,
+            `No booking-type config for "${serviceType}". Set the parent defaults in Admin, Booking types first.`,
           );
           return;
         }
@@ -104,9 +132,7 @@ export function RescheduleSheet({
     };
   }, [open, serviceType]);
 
-  // ── Live conflict check on slot change ─────────────────────────
-  // Debounced via the closure timer so rapid typing in the time
-  // input doesn't fire a query per keystroke.
+  // ── Live conflict check on slot change (debounced 250ms) ───────
   useEffect(() => {
     if (!open || !config) return;
     const newStart = composeIso(date, time);
@@ -127,6 +153,8 @@ export function RescheduleSheet({
           serviceType: serviceType as BookingServiceType,
           startAt: newStart,
           endAt: newEnd,
+          // Exclude the appointment being rescheduled so it doesn't
+          // conflict with itself when the new slot overlaps the old.
           excludeAppointmentId: appointment.id,
         });
         if (cancelled) return;
@@ -145,7 +173,7 @@ export function RescheduleSheet({
     };
   }, [open, config, date, time, appointment.id, appointment.location_id, serviceType]);
 
-  // ── Working-hours validation for the chosen date ────────────────
+  // ── Working-hours derivation for the chosen date ───────────────
   const hoursForDate = useMemo(() => {
     if (!date || !config) return null;
     const dow = dayOfWeekFromIsoDate(date);
@@ -206,16 +234,37 @@ export function RescheduleSheet({
       <BottomSheet
         open={open}
         onClose={onClose}
-        title="Reschedule appointment"
+        title={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
+            <span
+              aria-hidden
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                borderRadius: theme.radius.pill,
+                background: theme.color.accentBg,
+                color: theme.color.accent,
+                flexShrink: 0,
+              }}
+            >
+              <CalendarClock size={18} aria-hidden />
+            </span>
+            Reschedule appointment
+          </span>
+        }
         description={
           patientName ? (
             <span>
-              Moving <strong>{patientName}</strong>'s {humaniseService(serviceType)} appointment.
-              The new slot will replace the existing one.
+              Moving <strong>{patientName}</strong>'s {humaniseService(serviceType)} appointment to
+              a new slot. The new booking replaces the existing one.
             </span>
           ) : (
             <span>
-              Moving the {humaniseService(serviceType)} appointment to a new slot.
+              Moving the {humaniseService(serviceType)} appointment to a new slot. The new booking
+              replaces the existing one.
             </span>
           )
         }
@@ -241,41 +290,104 @@ export function RescheduleSheet({
           <CurrentSlotSummary appointment={appointment} />
 
           {configError ? (
-            <ErrorBanner title="Couldn't load booking config" body={configError} />
+            <StatusBanner tone="error" title="Couldn't load booking config">
+              {configError}
+            </StatusBanner>
           ) : null}
 
-          <SlotPicker
-            date={date}
-            time={time}
-            onDateChange={setDate}
-            onTimeChange={setTime}
-            config={config}
-            hoursForDate={hoursForDate}
-            inWorkingHours={inWorkingHours}
-          />
+          <Section
+            title="New slot"
+            required
+            info="Pick the date and start time the appointment is moving to. The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the new slot is in hours and conflict-free."
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
+              <FieldTrigger
+                ref={dateTriggerRef}
+                label="Date"
+                icon={<CalendarClock size={16} aria-hidden />}
+                value={date ? formatDateLong(date) : ''}
+                placeholder="Pick a date"
+                open={dateOpen}
+                onClick={() => {
+                  setTimeOpen(false);
+                  setDateOpen((v) => !v);
+                }}
+              />
+              <FieldTrigger
+                ref={timeTriggerRef}
+                label="Start time"
+                icon={<Clock size={16} aria-hidden />}
+                value={time}
+                placeholder="Pick a time"
+                open={timeOpen}
+                onClick={() => {
+                  setDateOpen(false);
+                  setTimeOpen((v) => !v);
+                }}
+              />
+            </div>
+            <DatePicker
+              open={dateOpen}
+              onClose={() => setDateOpen(false)}
+              value={date}
+              onChange={(iso) => setDate(iso)}
+              anchorRef={dateTriggerRef}
+              title="Pick the new date"
+            />
+            <TimePicker
+              open={timeOpen}
+              onClose={() => setTimeOpen(false)}
+              value={time}
+              onChange={(t) => setTime(t)}
+              anchorRef={timeTriggerRef}
+              title="Pick the new start time"
+              startHour={hoursForDate ? clampHour(hoursForDate.open) : 6}
+              endHour={hoursForDate ? clampHour(hoursForDate.close, true) : 22}
+            />
+            {config ? (
+              <InlineHint tone={hoursForDate || !date ? 'muted' : 'alert'}>
+                {config.duration_default}-minute slot
+                {hoursForDate
+                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}.`
+                  : date
+                  ? '. The clinic is closed on this day.'
+                  : '.'}
+              </InlineHint>
+            ) : null}
+            {!inWorkingHours && date && time && hoursForDate ? (
+              <div style={{ marginTop: theme.space[3] }}>
+                <StatusBanner tone="warning" title="Outside working hours">
+                  This service runs {hoursForDate.open} to {hoursForDate.close} on the day you picked.
+                </StatusBanner>
+              </div>
+            ) : null}
+            <div style={{ marginTop: theme.space[3] }}>
+              <ConflictBlock
+                checking={checkingConflicts}
+                conflicts={conflicts}
+                error={conflictError}
+                slotIsValid={slotIsValid}
+                durationMinutes={config?.duration_default ?? null}
+                freeBody="Slot is free. Saving will move the appointment and email a calendar update to the patient if they have one on file."
+              />
+            </div>
+          </Section>
 
-          <ConflictBlock
-            checking={checkingConflicts}
-            conflicts={conflicts}
-            error={conflictError}
-            slotIsValid={slotIsValid}
-            durationMinutes={config?.duration_default ?? null}
-          />
-
-          <Input
-            label="Reason (optional)"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. patient asked to move; staff sick day; equipment delay."
-          />
+          <Section
+            title="Reason"
+            info="Optional. Stored on the rescheduled-out row's cancel_reason and surfaced on the patient's timeline event so the team has context next time they look the appointment up."
+          >
+            <Input
+              aria-label="Reason for reschedule"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. patient asked to move; staff sick day; equipment delay."
+            />
+          </Section>
         </div>
       </BottomSheet>
       {toast ? (
-        <Toast
-          tone={toast.tone}
-          title={toast.title}
-          onDismiss={() => setToast(null)}
-        />
+        <Toast tone={toast.tone} title={toast.title} onDismiss={() => setToast(null)} />
       ) : null}
     </>
   );
@@ -285,6 +397,11 @@ export function RescheduleSheet({
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Soft summary card showing the slot the appointment is currently
+// in. Sits at the top of the sheet so the operator can compare new
+// slot against old without flipping back to the schedule. Visual
+// language is intentionally quieter than the input rows below: the
+// appointment is read-only here, the new slot is the actionable bit.
 function CurrentSlotSummary({
   appointment,
 }: {
@@ -307,15 +424,16 @@ function CurrentSlotSummary({
       <span
         aria-hidden
         style={{
-          width: 28,
-          height: 28,
-          borderRadius: theme.radius.input,
+          width: 32,
+          height: 32,
+          borderRadius: theme.radius.pill,
           background: theme.color.surface,
           color: theme.color.inkMuted,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
+          border: `1px solid ${theme.color.border}`,
         }}
       >
         <CalendarClock size={14} aria-hidden />
@@ -335,211 +453,26 @@ function CurrentSlotSummary({
         </p>
         <p
           style={{
-            margin: `2px 0 0`,
+            margin: '2px 0 0',
             fontSize: theme.type.size.sm,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {formatLongDate(start)} · {formatTime(start)}–{formatTime(end)}
+          {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)}
         </p>
       </div>
-    </div>
-  );
-}
-
-function SlotPicker({
-  date,
-  time,
-  onDateChange,
-  onTimeChange,
-  config,
-  hoursForDate,
-  inWorkingHours,
-}: {
-  date: string;
-  time: string;
-  onDateChange: (v: string) => void;
-  onTimeChange: (v: string) => void;
-  config: ResolvedBookingTypeConfig | null;
-  hoursForDate: { open: string; close: string } | null;
-  inWorkingHours: boolean;
-}) {
-  return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <header>
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.semibold,
-          }}
-        >
-          New slot
-        </span>
-      </header>
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
-        <Input
-          label="Date"
-          type="date"
-          value={date}
-          onChange={(e) => onDateChange(e.target.value)}
-        />
-        <Input
-          label="Start time"
-          type="time"
-          value={time}
-          onChange={(e) => onTimeChange(e.target.value)}
-        />
-      </div>
-      {config ? (
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            lineHeight: 1.5,
-          }}
-        >
-          Duration: <strong style={{ color: theme.color.ink }}>{config.duration_default} minutes</strong>
-          {hoursForDate ? (
-            <>
-              {' · '}
-              {date ? `Hours that day: ${hoursForDate.open}–${hoursForDate.close}` : null}
-            </>
-          ) : date && config ? (
-            <span style={{ color: theme.color.alert }}>
-              {' · The clinic is closed on this day.'}
-            </span>
-          ) : null}
-        </p>
-      ) : null}
-      {!inWorkingHours && date && time && hoursForDate ? (
-        <ErrorBanner
-          title="Outside working hours"
-          body={`This service runs ${hoursForDate.open}–${hoursForDate.close} on the day you picked.`}
-          subtle
-        />
-      ) : null}
-    </section>
-  );
-}
-
-function ConflictBlock({
-  checking,
-  conflicts,
-  error,
-  slotIsValid,
-  durationMinutes,
-}: {
-  checking: boolean;
-  conflicts: RescheduleConflict[];
-  error: string | null;
-  slotIsValid: boolean;
-  durationMinutes: number | null;
-}) {
-  if (error) return <ErrorBanner title="Couldn't check the slot" body={error} />;
-  if (!slotIsValid) return null;
-  if (checking) {
-    return (
-      <Banner tone="info">
-        Checking availability… ({durationMinutes ?? '–'} min slot)
-      </Banner>
-    );
-  }
-  if (conflicts.length === 0) {
-    return (
-      <Banner tone="success">
-        Slot is free. Saving will move the appointment and notify nobody (we'll wire emails next).
-      </Banner>
-    );
-  }
-  return (
-    <ErrorBanner
-      title="Slot conflicts"
-      body={
-        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          {conflicts.map((c, i) => (
-            <li key={i} style={{ fontSize: theme.type.size.sm, lineHeight: 1.5 }}>
-              {c.conflict_kind === 'pool_at_capacity'
-                ? `${c.pool_id} is at capacity (${c.current_count}/${c.pool_capacity}).`
-                : `Service hits its max-concurrent cap (${c.current_count}/${c.pool_capacity}).`}
-            </li>
-          ))}
-        </ul>
-      }
-    />
-  );
-}
-
-function ErrorBanner({
-  title,
-  body,
-  subtle = false,
-}: {
-  title: string;
-  body: React.ReactNode;
-  subtle?: boolean;
-}) {
-  const tone = subtle ? theme.color.warn : theme.color.alert;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: subtle ? theme.color.bg : theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderLeft: `3px solid ${tone}`,
-      }}
-    >
-      <AlertTriangle size={16} aria-hidden style={{ color: tone, flexShrink: 0, marginTop: 2 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-          {title}
-        </p>
-        <div style={{ marginTop: 2, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: 1.5 }}>
-          {body}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Banner({ tone, children }: { tone: 'success' | 'info'; children: React.ReactNode }) {
-  const colour = tone === 'success' ? theme.color.accent : theme.color.inkMuted;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: tone === 'success' ? theme.color.accentBg : theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-      }}
-    >
-      <span
-        aria-hidden
-        style={{ color: colour, marginTop: 2, flexShrink: 0, display: 'inline-flex' }}
-      >
-        {tone === 'success' ? <Check size={16} aria-hidden /> : <CalendarClock size={16} aria-hidden />}
-      </span>
-      <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: 1.5 }}>
-        {children}
-      </p>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
+// (The ISO splitters and dayOfWeekFromIsoDate are duplicated in
+// NewBookingSheet — a deliberate choice given they're 5-line pure
+// functions and extracting them would force both sheets to evolve
+// in lockstep on what is otherwise unrelated date work.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function splitIso(iso: string): { date: string; time: string } {
@@ -563,7 +496,6 @@ function composeIso(date: string, time: string): string | null {
 function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
   const d = new Date(`${isoDate}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
-  // JavaScript: 0=Sunday … 6=Saturday. Map to our keys.
   const map: Record<number, DayOfWeek> = {
     0: 'sun',
     1: 'mon',
@@ -577,6 +509,17 @@ function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
 }
 
 function formatLongDate(d: Date): string {
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatDateLong(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-GB', {
     weekday: 'short',
     day: 'numeric',
@@ -609,4 +552,17 @@ function composePatientName(first: string | null, last: string | null): string |
   const l = last?.trim();
   if (!f && !l) return null;
   return [f, l].filter(Boolean).join(' ');
+}
+
+// Working-hours strings come back as 'HH:MM'; bound them to whole
+// hours for the TimePicker's startHour / endHour scrollable range.
+// `endRoundUp` rounds 18:30 to 19 so the last in-hours slot is
+// reachable.
+function clampHour(hhmm: string, endRoundUp = false): number {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (Number.isNaN(h)) return endRoundUp ? 22 : 6;
+  if (endRoundUp && m > 0) return Math.min(23, h + 1);
+  return h;
 }
