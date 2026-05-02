@@ -268,7 +268,7 @@ export function NewBookingSheet({
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[8] }}>
           <Section
             title="Patient"
             info="Search existing patients by phone, name, or email. Also includes Venneir.com customers who haven't been seen at this clinic yet."
@@ -424,7 +424,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
         <h2
           style={{
