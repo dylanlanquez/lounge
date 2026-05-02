@@ -113,6 +113,11 @@ interface RawAppointment {
   deposit_currency: string | null;
   deposit_provider: 'paypal' | 'stripe' | null;
   deposit_status: 'paid' | 'failed' | null;
+  // Walk-in marker rows store the underlying lng_walk_ins id here.
+  // The marker exists only so walk-ins show on Schedule alongside
+  // booked appointments; the real entity is the visit. Used here to
+  // resolve the visit when no appointment_id-keyed visit row is found.
+  walk_in_id: string | null;
 }
 
 export function useAppointmentDetail(appointmentId: string | undefined | null): UseAppointmentDetailResult {
@@ -136,7 +141,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -182,11 +187,26 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
                 .eq('id', appt.staff_account_id)
                 .maybeSingle()
             : Promise.resolve({ data: null, error: null }),
-          supabase
-            .from('lng_visits')
-            .select('id, opened_at')
-            .eq('appointment_id', appt.id)
-            .maybeSingle(),
+          // Visit lookup. Two shapes:
+          //   • Booked-then-arrived appointments are the typical case;
+          //     the visit row joins via lng_visits.appointment_id.
+          //   • Walk-in markers (manual-source rows tagged with a
+          //     walk_in_id) belong to a visit linked via
+          //     lng_visits.walk_in_id instead. Without this branch a
+          //     Schedule-tap on a walk-in lands on AppointmentDetail
+          //     and never redirects to /visit/:id, leaving the user
+          //     on a marker row whose real surface lives elsewhere.
+          appt.walk_in_id
+            ? supabase
+                .from('lng_visits')
+                .select('id, opened_at')
+                .eq('walk_in_id', appt.walk_in_id)
+                .maybeSingle()
+            : supabase
+                .from('lng_visits')
+                .select('id, opened_at')
+                .eq('appointment_id', appt.id)
+                .maybeSingle(),
         ]);
         if (cancelled) return;
 

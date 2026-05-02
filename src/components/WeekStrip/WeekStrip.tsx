@@ -264,6 +264,14 @@ function DayPill({
     }
   };
 
+  // Subtle accent-tinted background for today when it isn't the
+  // selected day — gives staff a passive visual cue for "now" without
+  // competing with the selection ring. When today IS selected, the
+  // ring takes over and the bg drops back to transparent so the two
+  // affordances don't double up.
+  const todayBg =
+    isToday && !isSelected ? 'rgba(35, 96, 60, 0.08)' : 'transparent';
+
   return (
     <button
       type="button"
@@ -278,7 +286,7 @@ function DayPill({
       style={{
         appearance: 'none',
         border: 'none',
-        background: 'transparent',
+        background: todayBg,
         color: theme.color.ink,
         fontFamily: 'inherit',
         padding: `${theme.space[2]}px ${theme.space[1]}px`,
@@ -302,7 +310,7 @@ function DayPill({
         cursor: 'pointer',
         position: 'relative',
         WebkitTapHighlightColor: 'transparent',
-        transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
       <span

@@ -207,12 +207,32 @@ export function Schedule() {
     setSelectedDate(dateIso);
   };
 
-  const handleShiftWeek = (delta: number) => {
-    setSelectedDate((prev) => addDaysIso(prev, delta * 7));
+  // Chevrons either side of the date strip used to step a full week
+  // (delta * 7). Receptionists asked for a day-at-a-time step so they
+  // can scrub through the strip more precisely — the strip's natural
+  // scroll-snap still moves them by week-equivalents when they
+  // flick across it.
+  const handleShiftDay = (delta: number) => {
+    setSelectedDate((prev) => addDaysIso(prev, delta));
   };
 
   const handleJumpToToday = () => {
     setSelectedDate(todayIso);
+  };
+
+  // Navigate to the right detail page when an appointment block is
+  // tapped. AppointmentDetail handles the redirect to /visit/:id when
+  // a visit row exists, so a single destination is enough — no need
+  // to dispatch on status here. State carries patient context so the
+  // detail page's breadcrumb chains back through Schedule.
+  const openAppointment = (row: AppointmentRow) => {
+    navigate(`/appointment/${row.id}`, {
+      state: {
+        from: 'schedule',
+        patientId: row.patient_id,
+        patientName: patientFullDisplayName(row),
+      },
+    });
   };
 
   const onToday = selectedDate === todayIso;
@@ -325,7 +345,7 @@ export function Schedule() {
             marginBottom: theme.space[5],
           }}
         >
-          <IconNavButton ariaLabel="Previous week" onClick={() => handleShiftWeek(-1)}>
+          <IconNavButton ariaLabel="Previous day" onClick={() => handleShiftDay(-1)}>
             <ChevronLeft size={20} />
           </IconNavButton>
           <WeekStrip
@@ -335,7 +355,7 @@ export function Schedule() {
             onSelect={handleSelectDate}
             loading={weekCounts.loading}
           />
-          <IconNavButton ariaLabel="Next week" onClick={() => handleShiftWeek(1)}>
+          <IconNavButton ariaLabel="Next day" onClick={() => handleShiftDay(1)}>
             <ChevronRight size={20} />
           </IconNavButton>
         </div>
@@ -445,7 +465,7 @@ export function Schedule() {
               }
             />
           ) : layout === 'list' ? (
-            <ScheduleListView rows={day.data} onPick={setSelected} />
+            <ScheduleListView rows={day.data} onPick={openAppointment} />
           ) : (
             <div style={{ paddingTop: theme.space[2] }}>
               <CalendarGrid
@@ -484,7 +504,7 @@ export function Schedule() {
                           : null
                       }
                       dimmed={isAppointmentDimmed(item.data, now)}
-                      onClick={() => setSelected(item.data)}
+                      onClick={() => openAppointment(item.data)}
                     />
                   ) : (
                     <ClusterCard
@@ -730,10 +750,10 @@ export function Schedule() {
                   key={r.id}
                   row={r}
                   now={now}
-                  // Keep clusterRows set so the BottomSheet stays mounted
-                  // and morphs into detail mode in place — no second
-                  // popup.
-                  onPick={() => setSelected(r)}
+                  // From the cluster picker, navigate to the detail
+                  // page directly — same destination as a single-block
+                  // tap. The bottom sheet unmounts on route change.
+                  onPick={() => openAppointment(r)}
                 />
               ))}
             </ul>
