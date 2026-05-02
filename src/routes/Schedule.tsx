@@ -11,6 +11,7 @@ import {
   List,
   Mail,
   Monitor,
+  Plus,
   ShieldCheck,
   Video,
   X,
@@ -376,8 +377,21 @@ export function Schedule() {
               title={onToday ? 'No appointments today' : 'Nothing on this day'}
               description={
                 onToday
-                  ? 'Tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
-                  : 'Pick another day in the calendar above, or create a walk-in.'
+                  ? 'Book a new appointment, tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
+                  : 'Book a new appointment for this day, or pick another above.'
+              }
+              action={
+                currentLocation.data ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                      <Plus size={14} aria-hidden /> Book new appointment
+                    </span>
+                  </Button>
+                ) : undefined
               }
             />
           ) : layout === 'list' ? (
@@ -1324,5 +1338,16 @@ function capitalise(s: string): string {
 function formatDayHeading(dateIso: string): string {
   const d = new Date(`${dateIso}T00:00:00`);
   return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+// Default ISO datetime to seed the NewBookingSheet with when the
+// operator clicks "Book new appointment" from the empty-day card
+// (no calendar grid is rendered, so there's nothing to tap). We
+// choose the calendar's first hour because the booking-type
+// working-hours config typically opens around then; the operator
+// adjusts in the sheet if needed.
+function defaultBookingIso(dateIso: string, startHour: number): string {
+  const d = new Date(`${dateIso}T${String(startHour).padStart(2, '0')}:00:00`);
+  return d.toISOString();
 }
 
