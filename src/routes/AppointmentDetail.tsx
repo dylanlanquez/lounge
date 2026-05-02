@@ -44,6 +44,11 @@ import {
 } from '../lib/queries/appointments.ts';
 import type { AppointmentStatus } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
+import {
+  formatDateLongOrdinal,
+  formatTimeRange,
+  relativeDay,
+} from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
 import { markNoShow, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
@@ -550,7 +555,7 @@ function Hero({
   const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
   const dateLong = formatDateLongOrdinal(appt.start_at);
   const timeRange = formatTimeRange(appt.start_at, appt.end_at);
-  const relative = appt.status === 'booked' ? relativeWhen(appt.start_at) : null;
+  const relative = appt.status === 'booked' ? relativeDay(appt.start_at) : null;
 
   // Booked future appointments lean into the upcoming framing — soft
   // accent-tinted ribbon with the date front and centre. Past /
@@ -702,63 +707,10 @@ function Hero({
   );
 }
 
-// "Friday 1st May 2026" — ordinal day so the date reads like a person
-// would say it aloud. Uses Intl for the locale-correct weekday and
-// month names; the ordinal suffix is hand-rolled because Intl doesn't
-// expose it.
-function formatDateLongOrdinal(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const weekday = d.toLocaleDateString('en-GB', { weekday: 'long' });
-  const day = d.getDate();
-  const month = d.toLocaleDateString('en-GB', { month: 'long' });
-  const year = d.getFullYear();
-  return `${weekday} ${day}${ordinalSuffix(day)} ${month} ${year}`;
-}
-
-function ordinalSuffix(n: number): string {
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return 'th';
-  switch (n % 10) {
-    case 1:
-      return 'st';
-    case 2:
-      return 'nd';
-    case 3:
-      return 'rd';
-    default:
-      return 'th';
-  }
-}
-
-function formatTimeRange(startIso: string, endIso: string): string {
-  const s = new Date(startIso);
-  const e = new Date(endIso);
-  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return '';
-  const fmt = (d: Date) =>
-    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${fmt(s)} — ${fmt(e)}`;
-}
-
-// Friendly "in 5 days" / "Tomorrow" / "Today" indicator. Returns null
-// for absolute dates the receptionist won't read as relative — past
-// the 30-day window in either direction it just falls back to the
-// absolute date in the line above.
-function relativeWhen(iso: string): string | null {
-  const target = new Date(iso);
-  if (Number.isNaN(target.getTime())) return null;
-  const now = new Date();
-  // Day diff calculated against midnight-anchored dates so a 13:00
-  // appointment "today" doesn't read as "yesterday" at 14:00.
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((startOfDay(target) - startOfDay(now)) / 86_400_000);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Tomorrow';
-  if (days === -1) return 'Yesterday';
-  if (days > 1 && days <= 30) return `In ${days} days`;
-  if (days < -1 && days >= -30) return `${Math.abs(days)} days ago`;
-  return null;
-}
+// Date helpers live in src/lib/dateFormat.ts so VisitDetail's "When"
+// ribbon and this page's hero produce identical strings — one source
+// of truth for "Friday 1st May 2026" / "09:00 — 09:45" / relative
+// phrasing across both pages.
 
 function humaniseAppointmentStatus(status: AppointmentStatus): string {
   switch (status) {
