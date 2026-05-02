@@ -1303,6 +1303,20 @@ function Appointments({
       },
     });
 
+  // Same breadcrumb story for appointment-only rows (booked future,
+  // cancelled before arrival, no-show, rescheduled). Sends them to
+  // the AppointmentDetail page with from: 'patient' so the chain
+  // reads "Patients › Name › Appt 9 May" and the back-step lands
+  // here. Until /appointment/:id existed these rows were dead clicks.
+  const openAppointment = (id: string) =>
+    navigate(`/appointment/${id}`, {
+      state: {
+        from: 'patient',
+        patientId,
+        patientName,
+      },
+    });
+
   const all = useMemo(
     () => buildUnifiedAppts(visits, scheduledAppointments),
     [visits, scheduledAppointments]
@@ -1336,6 +1350,7 @@ function Appointments({
               rows={upcoming}
               isMobile={isMobile}
               onOpenVisit={openVisit}
+              onOpenAppointment={openAppointment}
             />
           ) : null}
           {past.length > 0 ? (
@@ -1344,6 +1359,7 @@ function Appointments({
               rows={past}
               isMobile={isMobile}
               onOpenVisit={openVisit}
+              onOpenAppointment={openAppointment}
             />
           ) : null}
         </div>
@@ -1357,11 +1373,13 @@ function ApptGroup({
   rows,
   isMobile,
   onOpenVisit,
+  onOpenAppointment,
 }: {
   eyebrow: string;
   rows: UnifiedApptRow[];
   isMobile: boolean;
   onOpenVisit: (visit: { id: string; opened_at: string }) => void;
+  onOpenAppointment: (id: string) => void;
 }) {
   const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
   return (
@@ -1391,12 +1409,12 @@ function ApptGroup({
         >
           {pager.visible.map((r) => (
             <li key={r.key}>
-              <ApptRowMobile row={r} onOpenVisit={onOpenVisit} />
+              <ApptRowMobile row={r} onOpenVisit={onOpenVisit} onOpenAppointment={onOpenAppointment} />
             </li>
           ))}
         </ul>
       ) : (
-        <ApptTable rows={pager.visible} onOpenVisit={onOpenVisit} />
+        <ApptTable rows={pager.visible} onOpenVisit={onOpenVisit} onOpenAppointment={onOpenAppointment} />
       )}
       <ListPager
         page={pager.page}
@@ -1411,9 +1429,11 @@ function ApptGroup({
 function ApptTable({
   rows,
   onOpenVisit,
+  onOpenAppointment,
 }: {
   rows: UnifiedApptRow[];
   onOpenVisit: (visit: { id: string; opened_at: string }) => void;
+  onOpenAppointment: (id: string) => void;
 }) {
   const headerStyle: CSSProperties = {
     fontSize: theme.type.size.xs,
@@ -1451,10 +1471,17 @@ function ApptTable({
         <tbody>
           {rows.map((r) => {
             const isVisit = r.kind === 'visit';
+            // Visit rows open VisitDetail; appointment-only rows
+            // (booked future, cancelled, no-show, rescheduled) open
+            // AppointmentDetail. Both pop the same patient-context
+            // state forward so the destination's breadcrumb chains
+            // back through this profile.
             const handleClick =
               isVisit && r.visit
                 ? () => onOpenVisit({ id: r.visit!.id, opened_at: r.visit!.opened_at })
-                : undefined;
+                : !isVisit && r.appointment
+                  ? () => onOpenAppointment(r.appointment!.id)
+                  : undefined;
             return (
               <tr
                 key={r.key}
@@ -1514,15 +1541,20 @@ function ApptTable({
 function ApptRowMobile({
   row,
   onOpenVisit,
+  onOpenAppointment,
 }: {
   row: UnifiedApptRow;
   onOpenVisit: (visit: { id: string; opened_at: string }) => void;
+  onOpenAppointment: (id: string) => void;
 }) {
   const isVisit = row.kind === 'visit';
-  const clickable = isVisit && row.visit;
-  const handleClick = clickable
-    ? () => onOpenVisit({ id: row.visit!.id, opened_at: row.visit!.opened_at })
-    : undefined;
+  const handleClick =
+    isVisit && row.visit
+      ? () => onOpenVisit({ id: row.visit!.id, opened_at: row.visit!.opened_at })
+      : !isVisit && row.appointment
+        ? () => onOpenAppointment(row.appointment!.id)
+        : undefined;
+  const clickable = !!handleClick;
   const service = isVisit
     ? row.visit?.service_label ?? 'Appointment'
     : humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ?? 'Appointment';
