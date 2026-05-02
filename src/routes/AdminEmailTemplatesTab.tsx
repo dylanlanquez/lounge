@@ -3,11 +3,14 @@ import {
   Braces,
   ChevronDown,
   ChevronRight,
+  Clock,
   Eye,
+  History,
   Mail,
   Pencil,
   Power,
   RotateCcw,
+  Send,
 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import {
@@ -26,10 +29,14 @@ import {
   type EmailTemplateVariable,
   EMAIL_TEMPLATE_DEFINITIONS,
   resetEmailTemplateToDefault,
+  restoreEmailTemplateVersion,
   sampleVariablesFor,
   saveEmailTemplate,
+  sendTemplateTest,
+  useEmailTemplateHistory,
   useEmailTemplates,
 } from '../lib/queries/emailTemplates.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { renderEmail } from '../lib/emailRenderer.ts';
 
 // Admin → Email templates tab.
@@ -138,21 +145,8 @@ export function AdminEmailTemplatesTab() {
                         onToggle={() =>
                           setOpenKey((prev) => (prev === key ? null : key))
                         }
-                        onSaved={() => {
-                          templates.refresh();
-                          setToast({
-                            tone: 'success',
-                            title: 'Template saved',
-                            description: def.label,
-                          });
-                        }}
-                        onError={(msg) =>
-                          setToast({
-                            tone: 'error',
-                            title: 'Could not save',
-                            description: msg,
-                          })
-                        }
+                        onRefresh={() => templates.refresh()}
+                        onToast={(t) => setToast(t)}
                       />
                     );
                   })}
@@ -195,16 +189,18 @@ function TemplateRow({
   isFirst,
   isOpen,
   onToggle,
-  onSaved,
-  onError,
+  onRefresh,
+  onToast,
 }: {
   template: EmailTemplateRow;
   definition: EmailTemplateDefinition;
   isFirst: boolean;
   isOpen: boolean;
   onToggle: () => void;
-  onSaved: () => void;
-  onError: (msg: string) => void;
+  /** Re-fetches the templates list. Called after any write. */
+  onRefresh: () => void;
+  /** Surfaces a toast on the page-level toast rail. */
+  onToast: (t: { tone: 'success' | 'error' | 'info'; title: string; description?: string }) => void;
 }) {
   // Local draft state — independent of the saved row until "Save"
   // commits. Re-seeded whenever the underlying row changes (e.g.
@@ -217,6 +213,19 @@ function TemplateRow({
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [bodyMode, setBodyMode] = useState<'edit' | 'preview'>('edit');
   const editorRef = useRef<Editor | null>(null);
+  // When set, the preview pane shows this historical version's
+  // content instead of the current draft. Lets the admin compare
+  // what's stored against what they're editing without losing the
+  // draft. Cleared on Edit-mode switch or "Back to current".
+  const [viewingHistory, setViewingHistory] = useState<{
+    id: string;
+    version: number;
+    subject: string;
+    body_syntax: string;
+    saved_at: string;
+  } | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [sendTestOpen, setSendTestOpen] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -240,9 +249,18 @@ function TemplateRow({
         body_syntax: body,
         enabled,
       });
-      onSaved();
+      onRefresh();
+      onToast({
+        tone: 'success',
+        title: 'Template saved',
+        description: definition.label,
+      });
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'Could not save');
+      onToast({
+        tone: 'error',
+        title: 'Could not save',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
     } finally {
       setSaving(false);
     }
@@ -375,18 +393,62 @@ function TemplateRow({
           <div>
             <BodyHeader
               mode={bodyMode}
-              onModeChange={setBodyMode}
+              onModeChange={(next) => {
+                // Switching back to Edit drops any historical view.
+                if (next === 'edit') setViewingHistory(null);
+                setBodyMode(next);
+              }}
               onInsertVariable={(name) => {
                 const editor = editorRef.current;
                 if (!editor) return;
                 editor.chain().focus().insertContent(`{{${name}}}`).run();
               }}
               variables={definition.variables}
+              templateKey={template.key}
+              currentVersion={template.version}
+              onPickHistory={(h) => {
+                setViewingHistory(h);
+                setBodyMode('preview');
+              }}
+              onSendTest={() => setSendTestOpen(true)}
             />
             {bodyMode === 'edit' ? (
               <SnippetEditor value={body} onChange={setBody} editorRef={editorRef} />
             ) : (
-              <BodyPreview templateKey={template.key} subject={subject} body={body} />
+              <BodyPreview
+                templateKey={template.key}
+                subject={viewingHistory?.subject ?? subject}
+                body={viewingHistory?.body_syntax ?? body}
+                historicalVersion={viewingHistory}
+                onBackToCurrent={() => setViewingHistory(null)}
+                restoring={restoring}
+                onRestore={async () => {
+                  if (!viewingHistory) return;
+                  setRestoring(true);
+                  try {
+                    await restoreEmailTemplateVersion({
+                      templateKey: template.key,
+                      historyId: viewingHistory.id,
+                    });
+                    setViewingHistory(null);
+                    setBodyMode('edit');
+                    onRefresh();
+                    onToast({
+                      tone: 'success',
+                      title: `Restored version ${viewingHistory.version}`,
+                      description: definition.label,
+                    });
+                  } catch (e) {
+                    onToast({
+                      tone: 'error',
+                      title: 'Could not restore',
+                      description: e instanceof Error ? e.message : 'Unknown error',
+                    });
+                  } finally {
+                    setRestoring(false);
+                  }
+                }}
+              />
             )}
             <p
               style={{
@@ -425,6 +487,17 @@ function TemplateRow({
         </div>
       ) : null}
 
+      {sendTestOpen ? (
+        <SendTestDialog
+          subject={subject}
+          body={body}
+          templateKey={template.key}
+          templateLabel={definition.label}
+          onClose={() => setSendTestOpen(false)}
+          onToast={onToast}
+        />
+      ) : null}
+
       {resetConfirmOpen ? (
         <Dialog
           open
@@ -455,9 +528,18 @@ function TemplateRow({
                   try {
                     await resetEmailTemplateToDefault(template.key);
                     setResetConfirmOpen(false);
-                    onSaved();
+                    onRefresh();
+                    onToast({
+                      tone: 'success',
+                      title: 'Reset to default',
+                      description: definition.label,
+                    });
                   } catch (e) {
-                    onError(e instanceof Error ? e.message : 'Could not reset');
+                    onToast({
+                      tone: 'error',
+                      title: 'Could not reset',
+                      description: e instanceof Error ? e.message : 'Unknown error',
+                    });
                   } finally {
                     setResetting(false);
                   }
@@ -671,11 +753,25 @@ function BodyHeader({
   onModeChange,
   onInsertVariable,
   variables,
+  templateKey,
+  currentVersion,
+  onPickHistory,
+  onSendTest,
 }: {
   mode: 'edit' | 'preview';
   onModeChange: (next: 'edit' | 'preview') => void;
   onInsertVariable: (name: string) => void;
   variables: ReadonlyArray<EmailTemplateVariable>;
+  templateKey: string;
+  currentVersion: number;
+  onPickHistory: (h: {
+    id: string;
+    version: number;
+    subject: string;
+    body_syntax: string;
+    saved_at: string;
+  }) => void;
+  onSendTest: () => void;
 }) {
   return (
     <div
@@ -704,9 +800,48 @@ function BodyHeader({
           variables={variables}
           onPick={onInsertVariable}
         />
+        <HistoryDropdown
+          templateKey={templateKey}
+          currentVersion={currentVersion}
+          onPick={onPickHistory}
+        />
+        <SendTestButton onClick={onSendTest} />
         <ModeToggle mode={mode} onChange={onModeChange} />
       </div>
     </div>
+  );
+}
+
+function SendTestButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        color: theme.color.ink,
+        padding: `${theme.space[1]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = theme.color.bg;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = theme.color.surface;
+      }}
+    >
+      <Send size={12} aria-hidden /> Send test
+    </button>
   );
 }
 
@@ -935,16 +1070,42 @@ function BodyPreview({
   templateKey,
   subject,
   body,
+  historicalVersion,
+  onBackToCurrent,
+  onRestore,
+  restoring,
 }: {
   templateKey: string;
   subject: string;
   body: string;
+  historicalVersion: {
+    id: string;
+    version: number;
+    subject: string;
+    body_syntax: string;
+    saved_at: string;
+  } | null;
+  onBackToCurrent: () => void;
+  onRestore: () => void;
+  restoring: boolean;
 }) {
   const sampleVars = useMemo(() => sampleVariablesFor(templateKey), [templateKey]);
   const rendered = useMemo(
     () => renderEmail({ subject, bodySyntax: body, variables: sampleVars, shell: 'bare' }),
     [subject, body, sampleVars],
   );
+  const historicalLabel = useMemo(() => {
+    if (!historicalVersion) return null;
+    const d = new Date(historicalVersion.saved_at);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }, [historicalVersion]);
   return (
     <div
       style={{
@@ -954,6 +1115,79 @@ function BodyPreview({
         overflow: 'hidden',
       }}
     >
+      {historicalVersion ? (
+        <div
+          style={{
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderBottom: `1px solid ${theme.color.border}`,
+            background: theme.color.accentBg,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[3],
+            flexWrap: 'wrap',
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 24,
+              height: 24,
+              borderRadius: theme.radius.pill,
+              background: theme.color.surface,
+              color: theme.color.accent,
+              flexShrink: 0,
+            }}
+          >
+            <Clock size={12} aria-hidden />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+              }}
+            >
+              Viewing version {historicalVersion.version}
+            </p>
+            {historicalLabel ? (
+              <p
+                style={{
+                  margin: '2px 0 0',
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  lineHeight: theme.type.leading.snug,
+                }}
+              >
+                Saved {historicalLabel}
+              </p>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', gap: theme.space[2], flexShrink: 0 }}>
+            <Button
+              variant="tertiary"
+              size="sm"
+              onClick={onBackToCurrent}
+              disabled={restoring}
+            >
+              Back to current
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onRestore}
+              loading={restoring}
+              disabled={restoring}
+            >
+              {restoring ? 'Restoring…' : 'Restore this version'}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <div
         style={{
           padding: `${theme.space[3]}px ${theme.space[4]}px`,
@@ -1046,5 +1280,385 @@ function BodyPreview({
         </p>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Version history dropdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+function HistoryDropdown({
+  templateKey,
+  currentVersion,
+  onPick,
+}: {
+  templateKey: string;
+  currentVersion: number;
+  onPick: (h: {
+    id: string;
+    version: number;
+    subject: string;
+    body_syntax: string;
+    saved_at: string;
+  }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // Lazy-fetch: only hit the table the first time the menu opens.
+  // History rows are immutable so no re-fetch on subsequent opens
+  // unless the row's version has bumped (covered by the templateKey
+  // dep + the refresh on save path).
+  const history = useEmailTemplateHistory(templateKey);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Re-pull on every dropdown open so a freshly saved version shows
+  // up immediately. Cheap query, low traffic.
+  useEffect(() => {
+    if (open) history.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const rows = history.data;
+  const isEmpty = !history.loading && !history.error && rows.length === 0;
+
+  return (
+    <div ref={wrapperRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          appearance: 'none',
+          border: `1px solid ${theme.color.border}`,
+          background: theme.color.surface,
+          color: theme.color.ink,
+          padding: `${theme.space[1]}px ${theme.space[3]}px`,
+          borderRadius: theme.radius.input,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.medium,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[1],
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = theme.color.bg;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = theme.color.surface;
+        }}
+      >
+        <History size={12} aria-hidden /> History
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            minWidth: 360,
+            maxHeight: 360,
+            overflowY: 'auto',
+            background: theme.color.surface,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.input,
+            boxShadow: theme.shadow.overlay,
+            zIndex: 100,
+          }}
+        >
+          <div
+            style={{
+              padding: `${theme.space[3]}px ${theme.space[4]}px`,
+              borderBottom: `1px solid ${theme.color.border}`,
+              background: theme.color.bg,
+            }}
+          >
+            <p
+              style={{
+                margin: 0,
+                fontSize: 11,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.inkMuted,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              Version history
+            </p>
+            <p
+              style={{
+                margin: '2px 0 0',
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                lineHeight: theme.type.leading.snug,
+              }}
+            >
+              Click a version to preview it. Currently on v{currentVersion}.
+            </p>
+          </div>
+          {history.loading ? (
+            <div style={{ padding: theme.space[4] }}>
+              <Skeleton height={48} />
+            </div>
+          ) : history.error ? (
+            <p
+              style={{
+                margin: 0,
+                padding: theme.space[4],
+                fontSize: theme.type.size.xs,
+                color: theme.color.alert,
+              }}
+            >
+              Couldn't load history: {history.error}
+            </p>
+          ) : isEmpty ? (
+            <p
+              style={{
+                margin: 0,
+                padding: theme.space[4],
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                lineHeight: theme.type.leading.snug,
+              }}
+            >
+              No prior versions yet. Saving an edit will snapshot the current copy here.
+            </p>
+          ) : (
+            <ul style={{ listStyle: 'none', margin: 0, padding: `${theme.space[2]}px 0` }}>
+              {rows.map((row) => {
+                const d = new Date(row.saved_at);
+                const label = Number.isNaN(d.getTime())
+                  ? row.saved_at
+                  : d.toLocaleDateString('en-GB', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                const subjPreview =
+                  row.subject.length > 60 ? `${row.subject.slice(0, 60)}…` : row.subject;
+                return (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        onPick(row);
+                        setOpen(false);
+                      }}
+                      style={{
+                        appearance: 'none',
+                        width: '100%',
+                        background: 'transparent',
+                        border: 'none',
+                        padding: `${theme.space[2]}px ${theme.space[4]}px`,
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        fontFamily: 'inherit',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: theme.space[3],
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = theme.color.bg;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: 36,
+                          padding: `2px ${theme.space[2]}px`,
+                          borderRadius: theme.radius.pill,
+                          background: theme.color.bg,
+                          border: `1px solid ${theme.color.border}`,
+                          fontSize: 11,
+                          fontWeight: theme.type.weight.semibold,
+                          color: theme.color.ink,
+                          fontVariantNumeric: 'tabular-nums',
+                          flexShrink: 0,
+                        }}
+                      >
+                        v{row.version}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span
+                          style={{
+                            display: 'block',
+                            fontSize: theme.type.size.sm,
+                            fontWeight: theme.type.weight.medium,
+                            color: theme.color.ink,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {subjPreview || 'Empty subject'}
+                        </span>
+                        <span
+                          style={{
+                            display: 'block',
+                            marginTop: 2,
+                            fontSize: theme.type.size.xs,
+                            color: theme.color.inkMuted,
+                          }}
+                        >
+                          Saved {label}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Send-test dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SendTestDialog({
+  subject,
+  body,
+  templateKey,
+  templateLabel,
+  onClose,
+  onToast,
+}: {
+  subject: string;
+  body: string;
+  templateKey: string;
+  templateLabel: string;
+  onClose: () => void;
+  onToast: (t: { tone: 'success' | 'error' | 'info'; title: string; description?: string }) => void;
+}) {
+  const me = useCurrentAccount();
+  const [recipient, setRecipient] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Prefill the recipient with the signed-in admin's email so the
+  // common case (admin testing on their own inbox) is one click.
+  useEffect(() => {
+    if (!recipient && me.account?.login_email) {
+      setRecipient(me.account.login_email);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me.account?.login_email]);
+
+  const sampleVars = useMemo(() => sampleVariablesFor(templateKey), [templateKey]);
+
+  const trimmed = recipient.trim();
+  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  const canSend = isValidEmail && !sending;
+
+  const handleSend = async () => {
+    if (!canSend) return;
+    setSending(true);
+    setError(null);
+    try {
+      const result = await sendTemplateTest({
+        subject,
+        bodySyntax: body,
+        variables: sampleVars,
+        to: trimmed,
+      });
+      if (!result.ok) {
+        setError(result.error ?? 'Could not send test email');
+        return;
+      }
+      onClose();
+      onToast({
+        tone: 'success',
+        title: 'Test email sent',
+        description: `${templateLabel} sent to ${result.recipient ?? trimmed}.`,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send test email');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={sending ? () => undefined : onClose}
+      width={460}
+      title="Send a test email"
+      description={
+        <span>
+          We'll render this draft with sample variable values and ship it from the booking
+          mailbox with a [TEST] subject prefix.
+        </span>
+      }
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+          <Button variant="tertiary" onClick={onClose} disabled={sending}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleSend} disabled={!canSend} loading={sending}>
+            {sending ? 'Sending…' : 'Send test'}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+        <Input
+          label="Send to"
+          type="email"
+          value={recipient}
+          onChange={(e) => setRecipient(e.target.value)}
+          placeholder="you@venneir.com"
+          helper="Defaults to your signed-in email. Change it if you want to test on another inbox."
+          autoFocus
+        />
+        {error ? (
+          <p
+            role="alert"
+            style={{
+              margin: 0,
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              background: '#FFF1F1',
+              border: `1px solid #F5C2C2`,
+              color: theme.color.alert,
+              fontSize: theme.type.size.xs,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Dialog>
   );
 }
