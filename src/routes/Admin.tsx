@@ -100,8 +100,9 @@ import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
+import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'booking_types' | 'conflicts' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'booking_types' | 'conflicts' | 'emails' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -152,6 +153,7 @@ export function Admin() {
               { value: 'catalogue', label: 'Catalogue' },
               { value: 'booking_types', label: 'Booking types' },
               { value: 'conflicts', label: 'Conflicts' },
+              { value: 'emails', label: 'Emails' },
               { value: 'upgrades', label: 'Upgrades' },
               { value: 'waivers', label: 'Waivers' },
               { value: 'receipts', label: 'Receipts' },
@@ -173,6 +175,8 @@ export function Admin() {
           <AdminBookingTypesTab />
         ) : tab === 'conflicts' ? (
           <AdminConflictsTab />
+        ) : tab === 'emails' ? (
+          <AdminEmailTemplatesTab />
         ) : tab === 'upgrades' ? (
           <UpgradesTab />
         ) : tab === 'waivers' ? (
