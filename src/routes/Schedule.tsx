@@ -545,93 +545,7 @@ export function Schedule() {
           }
           footer={
             pickingNoShowReason ? null : !selected ? null : (
-              <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Button
-                    variant="tertiary"
-                    onClick={() => {
-                      if (!selected) return;
-                      navigate(`/patient/${selected.patient_id}`, {
-                        state: { patientName: patientDisplayName(selected) },
-                      });
-                    }}
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                      Patient profile <ChevronRight size={16} />
-                    </span>
-                  </Button>
-                  {/* Reschedule — only for native bookings in 'booked'
-                      state. Calendly-sourced rows reschedule on
-                      Calendly itself per the working agreement; we
-                      surface that as a hint instead of an action. */}
-                  {selected.status === 'booked' && selected.source !== 'calendly' ? (
-                    <Button variant="tertiary" onClick={() => setReschedulingRow(selected)}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                        <CalendarClock size={14} aria-hidden /> Reschedule
-                      </span>
-                    </Button>
-                  ) : null}
-                  {/* Resend confirmation — native-booking only (Calendly
-                      sends its own). Disabled while in flight; toast
-                      reports the outcome including the no-email and
-                      not-configured cases. */}
-                  {selected.status === 'booked' &&
-                  selected.source !== 'calendly' &&
-                  selected.patient_email ? (
-                    <Button
-                      variant="tertiary"
-                      disabled={resendingConfirmationId === selected.id}
-                      onClick={async () => {
-                        const target = selected;
-                        setResendingConfirmationId(target.id);
-                        const result = await sendAppointmentConfirmation({
-                          appointmentId: target.id,
-                        });
-                        setResendingConfirmationId(null);
-                        if (result.ok) {
-                          setConfirmationToast({
-                            tone: 'success',
-                            title: 'Confirmation sent',
-                            description: result.recipient,
-                          });
-                        } else if (result.reason === 'no_email_on_patient') {
-                          setConfirmationToast({
-                            tone: 'info',
-                            title: 'No email on file for this patient',
-                          });
-                        } else if (result.reason === 'delivery_not_configured') {
-                          setConfirmationToast({
-                            tone: 'error',
-                            title: 'Email delivery not configured',
-                            description: 'Set RESEND_API_KEY on the edge function.',
-                          });
-                        } else {
-                          setConfirmationToast({
-                            tone: 'error',
-                            title: 'Could not send',
-                            description: result.error,
-                          });
-                        }
-                      }}
-                    >
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                        <Mail size={14} aria-hidden />{' '}
-                        {resendingConfirmationId === selected.id ? 'Sending…' : 'Resend confirmation'}
-                      </span>
-                    </Button>
-                  ) : null}
-                  {selected.status === 'booked' && selected.source === 'calendly' ? (
-                    <span
-                      style={{
-                        fontSize: theme.type.size.xs,
-                        color: theme.color.inkSubtle,
-                        fontStyle: 'italic',
-                      }}
-                    >
-                      Reschedule on Calendly
-                    </span>
-                  ) : null}
-                </div>
+              <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                 {(() => {
                   const isVirtual = !!selected.join_url;
                   const status = selected.status;
@@ -958,6 +872,49 @@ export function Schedule() {
                           ? 'This booking was cancelled in Calendly.'
                           : ''}
               </p>
+
+              <DetailQuickActions
+                appointment={selected}
+                resendingConfirmationId={resendingConfirmationId}
+                onPatientProfile={() => {
+                  navigate(`/patient/${selected.patient_id}`, {
+                    state: { patientName: patientDisplayName(selected) },
+                  });
+                }}
+                onReschedule={() => setReschedulingRow(selected)}
+                onResendConfirmation={async () => {
+                  const target = selected;
+                  setResendingConfirmationId(target.id);
+                  const result = await sendAppointmentConfirmation({
+                    appointmentId: target.id,
+                  });
+                  setResendingConfirmationId(null);
+                  if (result.ok) {
+                    setConfirmationToast({
+                      tone: 'success',
+                      title: 'Confirmation sent',
+                      description: result.recipient,
+                    });
+                  } else if (result.reason === 'no_email_on_patient') {
+                    setConfirmationToast({
+                      tone: 'info',
+                      title: 'No email on file for this patient',
+                    });
+                  } else if (result.reason === 'delivery_not_configured') {
+                    setConfirmationToast({
+                      tone: 'error',
+                      title: 'Email delivery not configured',
+                      description: 'Set RESEND_API_KEY on the edge function.',
+                    });
+                  } else {
+                    setConfirmationToast({
+                      tone: 'error',
+                      title: 'Could not send',
+                      description: result.error,
+                    });
+                  }
+                }}
+              />
             </div>
           ) : null}
         </BottomSheet>
@@ -1191,6 +1148,231 @@ function SkeletonRows() {
       <Skeleton height={56} radius={12} />
       <Skeleton height={56} radius={12} />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetailQuickActions — secondary navigation rows shown inside the
+// appointment-detail BottomSheet's body. Replaces the cramped
+// inline footer that was trying to fit Patient profile + Reschedule
+// + Resend confirmation alongside the primary action; now each
+// gets a full-width tap-target row in the body, the footer
+// stays focused on the primary status action.
+//
+// Conditional rules per the original footer:
+//   Patient profile        always shown
+//   Reschedule             native source + status='booked'
+//                          (Calendly-source rows reschedule on
+//                          Calendly itself per the working
+//                          agreement; we surface that as a hint)
+//   Resend confirmation    native source + status='booked' + has
+//                          patient_email
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DetailQuickActions({
+  appointment,
+  resendingConfirmationId,
+  onPatientProfile,
+  onReschedule,
+  onResendConfirmation,
+}: {
+  appointment: AppointmentRow;
+  resendingConfirmationId: string | null;
+  onPatientProfile: () => void;
+  onReschedule: () => void;
+  onResendConfirmation: () => void;
+}) {
+  const showReschedule =
+    appointment.status === 'booked' && appointment.source !== 'calendly';
+  const calendlyHintInline =
+    appointment.status === 'booked' && appointment.source === 'calendly';
+  const showResendConfirmation =
+    appointment.status === 'booked' &&
+    appointment.source !== 'calendly' &&
+    !!appointment.patient_email;
+  const sendingThis = resendingConfirmationId === appointment.id;
+
+  return (
+    <section
+      aria-label="Other actions"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        overflow: 'hidden',
+      }}
+    >
+      <QuickActionRow
+        icon={<UserIcon />}
+        label="Patient profile"
+        trailing={<ChevronRight size={16} aria-hidden style={{ color: theme.color.inkSubtle }} />}
+        onClick={onPatientProfile}
+        first
+      />
+      {showReschedule ? (
+        <QuickActionRow
+          icon={<CalendarClock size={16} aria-hidden />}
+          label="Reschedule"
+          trailing={<ChevronRight size={16} aria-hidden style={{ color: theme.color.inkSubtle }} />}
+          onClick={onReschedule}
+        />
+      ) : null}
+      {showResendConfirmation ? (
+        <QuickActionRow
+          icon={<Mail size={16} aria-hidden />}
+          label={sendingThis ? 'Sending…' : 'Resend confirmation'}
+          trailing={
+            sendingThis ? (
+              <span
+                aria-hidden
+                style={{
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontWeight: theme.type.weight.medium,
+                }}
+              >
+                Sending
+              </span>
+            ) : appointment.patient_email ? (
+              <span
+                style={{
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                  maxWidth: 200,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {appointment.patient_email}
+              </span>
+            ) : null
+          }
+          onClick={sendingThis ? () => undefined : onResendConfirmation}
+          disabled={sendingThis}
+        />
+      ) : null}
+      {calendlyHintInline ? (
+        <div
+          style={{
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderTop: `1px solid ${theme.color.border}`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            fontStyle: 'italic',
+            background: theme.color.bg,
+          }}
+        >
+          Reschedule on Calendly
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function QuickActionRow({
+  icon,
+  label,
+  trailing,
+  onClick,
+  first = false,
+  disabled = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  trailing?: React.ReactNode;
+  onClick: () => void;
+  first?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        borderTop: first ? 'none' : `1px solid ${theme.color.border}`,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        fontFamily: 'inherit',
+        cursor: disabled ? 'default' : 'pointer',
+        textAlign: 'left',
+        opacity: disabled ? 0.6 : 1,
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = theme.color.bg;
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = 'transparent';
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          color: theme.color.inkMuted,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 20,
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.ink,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+      {trailing ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+          {trailing}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+// Lightweight User glyph for the Patient profile row — using a
+// hand-drawn 16px Lucide-equivalent so the import surface stays
+// trim. Same dimensions and stroke as the other 16px icons in the
+// list.
+function UserIcon() {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx={12} cy={7} r={4} />
+    </svg>
   );
 }
 
