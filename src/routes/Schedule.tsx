@@ -20,6 +20,7 @@ import {
   Button,
   Card,
   EmptyState,
+  NewBookingSheet,
   RescheduleSheet,
   SegmentedControl,
   Skeleton,
@@ -78,6 +79,7 @@ import {
   reverseNoShow,
 } from '../lib/queries/visits.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
+import { useCurrentLocation } from '../lib/queries/locations.ts';
 
 type Layout = 'calendar' | 'list';
 const LAYOUT_KEY = 'lounge.scheduleLayout';
@@ -116,6 +118,10 @@ export function Schedule() {
     { tone: 'success' | 'error' | 'info'; title: string; description?: string } | null
   >(null);
   const [resendingConfirmationId, setResendingConfirmationId] = useState<string | null>(null);
+  // ISO datetime of the empty slot the operator just tapped. When
+  // non-null the NewBookingSheet renders pre-filled with this time.
+  const [newBookingSlot, setNewBookingSlot] = useState<string | null>(null);
+  const currentLocation = useCurrentLocation();
 
   const day = useDayAppointments(selectedDate);
   // Week-of-selected counts power the dots under each day pill.
@@ -383,6 +389,11 @@ export function Schedule() {
                 startHour={startHour}
                 endHour={endHour}
                 isoDate={selectedDate}
+                onEmptyTap={
+                  currentLocation.data
+                    ? (iso) => setNewBookingSlot(iso)
+                    : undefined
+                }
               >
                 {layoutAppointments(day.data).map((item) =>
                   item.kind === 'card' ? (
@@ -940,6 +951,50 @@ export function Schedule() {
             setSelected(null);
             day.refresh();
             weekCounts.refresh();
+          }}
+        />
+      ) : null}
+
+      {newBookingSlot && currentLocation.data ? (
+        <NewBookingSheet
+          open
+          initialIso={newBookingSlot}
+          locationId={currentLocation.data.id}
+          onClose={() => setNewBookingSlot(null)}
+          onCreated={(_id, info) => {
+            setNewBookingSlot(null);
+            day.refresh();
+            weekCounts.refresh();
+            // Single confirmation toast that captures both "booking
+            // saved" and the email outcome — keeps the operator from
+            // having to read two separate toasts in sequence.
+            if (info.emailSent) {
+              setConfirmationToast({
+                tone: 'success',
+                title: 'Booking added',
+                description: 'Confirmation email sent to the patient.',
+              });
+            } else if (info.emailReason === 'no_email_on_patient') {
+              setConfirmationToast({
+                tone: 'info',
+                title: 'Booking added',
+                description: 'No email on file, so no confirmation was sent.',
+              });
+            } else if (info.emailReason === 'delivery_not_configured') {
+              setConfirmationToast({
+                tone: 'info',
+                title: 'Booking added',
+                description: 'Email delivery is not configured on the server.',
+              });
+            } else if (info.emailReason) {
+              setConfirmationToast({
+                tone: 'info',
+                title: 'Booking added',
+                description: `Confirmation email did not send: ${info.emailReason}.`,
+              });
+            } else {
+              setConfirmationToast({ tone: 'success', title: 'Booking added' });
+            }
           }}
         />
       ) : null}

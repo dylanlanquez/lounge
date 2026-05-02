@@ -15,6 +15,12 @@ export interface CalendarGridProps {
   showNowIndicator?: boolean;
   // 'YYYY-MM-DD' — date the grid represents. Now-indicator only shows for today.
   isoDate?: string;
+  // Optional empty-slot handler. When provided, taps on empty calendar
+  // space fire with an ISO datetime composed from the grid's `isoDate`
+  // and the y-coordinate (snapped to the nearest 15 minutes). Children
+  // sit on top of the empty-tap layer in the DOM, so taps that land on
+  // an AppointmentCard hit its onClick instead of bubbling here.
+  onEmptyTap?: (iso: string) => void;
 }
 
 const TIME_AXIS_WIDTH = 64;
@@ -26,6 +32,7 @@ export function CalendarGrid({
   children,
   showNowIndicator = true,
   isoDate,
+  onEmptyTap,
 }: CalendarGridProps) {
   const totalHours = endHour - startHour;
   const totalHeight = totalHours * pxPerHour;
@@ -98,6 +105,38 @@ export function CalendarGrid({
             }}
           />
         ))}
+
+        {/* Empty-slot tap layer. Sits below children in DOM order so
+            absolute-positioned cards naturally take the click in their
+            own bounds; taps on empty space fall through to here. */}
+        {onEmptyTap ? (
+          <button
+            type="button"
+            aria-label="Book a new appointment at this time"
+            onClick={(e) => {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const y = e.clientY - rect.top;
+              const iso = isoForY(y, startHour, pxPerHour, totalHeight, isoDate);
+              if (iso) onEmptyTap(iso);
+            }}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: totalHeight,
+              border: 'none',
+              padding: 0,
+              margin: 0,
+              background: 'transparent',
+              cursor: 'pointer',
+              // No outline ring — the cursor change is the affordance,
+              // and a focus ring on the whole grid would be visually
+              // overwhelming.
+              WebkitTapHighlightColor: 'transparent',
+            }}
+          />
+        ) : null}
 
         {/* Children (appointment cards) */}
         {children}
@@ -281,6 +320,33 @@ function formatHour(h: number): string {
 function todayIso(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Convert a y-coordinate (relative to the slot column) into a
+// datetime ISO string snapped to the nearest 15 minutes. Used by
+// the empty-slot tap handler. Returns null if the grid has no
+// isoDate or the y is outside the visible range.
+const SNAP_MINUTES = 15;
+function isoForY(
+  y: number,
+  startHour: number,
+  pxPerHour: number,
+  totalHeight: number,
+  isoDate?: string,
+): string | null {
+  if (!isoDate) return null;
+  const clampedY = Math.max(0, Math.min(y, totalHeight - 1));
+  const minutesFromStart = (clampedY / pxPerHour) * 60;
+  const snapped = Math.round(minutesFromStart / SNAP_MINUTES) * SNAP_MINUTES;
+  const totalMinutes = startHour * 60 + snapped;
+  const hh = Math.floor(totalMinutes / 60);
+  const mm = totalMinutes % 60;
+  // Local time on the grid's date. Composing as "YYYY-MM-DDTHH:MM:00"
+  // lets the Date parser interpret it as local — same convention
+  // used by the reschedule sheet's composeIso.
+  const d = new Date(`${isoDate}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 function useNowOffset(startHour: number, pxPerHour: number, isToday: boolean) {
