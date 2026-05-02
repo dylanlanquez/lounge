@@ -175,13 +175,24 @@ function Breadcrumbs({
     : '';
   const previewName = entry.patientName?.trim() ?? '';
   const nameLabel: ReactNode = liveName || previewName || <NameSkeleton />;
-  const dateLabel: ReactNode = appt
-    ? formatApptCrumb(appt.start_at)
-    : <DateSkeleton />;
+  // Two crumb shapes for the appt cell:
+  //   includeName=true  → "Sarah's Appt. 9 May"   used when there's
+  //                       no separate patient crumb, so the trail
+  //                       still reads who it belongs to.
+  //   includeName=false → "Appt. 9 May"           used when a name
+  //                       crumb already sits to its left.
+  const apptCrumbInline = (includeName: boolean): ReactNode =>
+    appt ? (
+      formatApptCrumb(appt.start_at, includeName ? liveName || previewName : null)
+    ) : (
+      <DateSkeleton />
+    );
 
   const items = (() => {
     const baseLedger = { label: 'Ledger', onClick: () => navigate('/ledger') };
     if (entry.from === 'patient' && entry.patientId) {
+      // Patients › Sarah › Appt. 9 May — the name has its own crumb
+      // so the visit crumb stays compact.
       return [
         { label: 'Patients', onClick: () => navigate('/patients') },
         {
@@ -191,30 +202,24 @@ function Breadcrumbs({
               state: { patientName: liveName },
             }),
         },
-        { label: dateLabel },
+        { label: apptCrumbInline(false) },
       ];
     }
     if (entry.from === 'schedule') {
+      // Schedule › Sarah's Appt. 9 May — name baked into the visit
+      // crumb, since Schedule rows already show patient + service +
+      // date before the click.
       return [
         { label: 'Schedule', onClick: () => navigate('/schedule') },
-        { label: dateLabel },
+        { label: apptCrumbInline(true) },
       ];
     }
-    // Default + 'ledger' branch: chain through the Ledger.
-    if (appt) {
-      return [
-        baseLedger,
-        {
-          label: nameLabel,
-          onClick: () =>
-            navigate(`/patient/${appt.patient_id}`, {
-              state: { from: 'ledger', patientName: liveName },
-            }),
-        },
-        { label: dateLabel },
-      ];
-    }
-    return [baseLedger, { label: dateLabel }];
+    // Default + 'ledger' branch: same shape as Schedule. Ledger rows
+    // already surface the patient name + service + date inline, so
+    // a separate name crumb between Ledger and the visit crumb is
+    // clutter — and clicking the patient profile mid-trail wasn't a
+    // path the user actually wanted.
+    return [baseLedger, { label: apptCrumbInline(true) }];
   })();
 
   return (
@@ -224,10 +229,14 @@ function Breadcrumbs({
   );
 }
 
-function formatApptCrumb(iso: string): string {
+function formatApptCrumb(iso: string, name: string | null): string {
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'Appt.';
-  return `Appt. ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
+  const date = Number.isNaN(d.getTime())
+    ? 'Appt.'
+    : `Appt. ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
+  const trimmed = name?.trim();
+  if (trimmed) return `${trimmed}'s ${date}`;
+  return date;
 }
 
 function NameSkeleton() {
