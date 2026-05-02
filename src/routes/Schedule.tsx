@@ -35,6 +35,7 @@ import {
   StatusPill,
   Toast,
   WeekStrip,
+  WEEK_STRIP_WINDOW_RADIUS_DAYS,
 } from '../components/index.ts';
 import {
   CalendarGrid,
@@ -53,7 +54,6 @@ import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { useNow } from '../lib/useNow.ts';
 import {
   addDaysIso,
-  getWeekDays,
   monthLabel,
   todayIso as computeTodayIso,
 } from '../lib/calendarMonth.ts';
@@ -146,11 +146,15 @@ export function Schedule() {
   const monthPillRef = useRef<HTMLButtonElement | null>(null);
 
   const day = useDayAppointments(selectedDate);
-  // Week-of-selected counts power the dots under each day pill.
-  const weekDays = getWeekDays(selectedDate);
-  const weekStartIso = weekDays[0]!;
-  const weekEndIso = weekDays[6]!;
-  const weekCounts = useDateRangeCounts(weekStartIso, weekEndIso);
+  // Counts power the dots under each day pill in the WeekStrip. The
+  // strip materialises every day in a ±60 day window around today, so
+  // this query matches that window — earlier this only fetched the
+  // selected week, which left dots missing on adjacent weeks even
+  // when those days had bookings. The query is a small aggregate
+  // (just date+status), so a 121-day fetch is cheap.
+  const stripStartIso = addDaysIso(todayIso, -WEEK_STRIP_WINDOW_RADIUS_DAYS);
+  const stripEndIso = addDaysIso(todayIso, WEEK_STRIP_WINDOW_RADIUS_DAYS);
+  const weekCounts = useDateRangeCounts(stripStartIso, stripEndIso);
 
   // Waiver state for the selected patient. Sections are global; signatures
   // are per-patient. Pre-arrival the "required sections" are inferred from
