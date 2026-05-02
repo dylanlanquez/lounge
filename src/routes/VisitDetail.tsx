@@ -44,7 +44,13 @@ import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewe
 import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
 import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from '../lib/waiverDocument.ts';
-import { usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
+import { humaniseEventTypeLabel, usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
+import {
+  formatDateLongOrdinal,
+  formatTime,
+  formatTimeRange,
+  relativeMinutes,
+} from '../lib/dateFormat.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -62,7 +68,11 @@ import {
   useLatestUnsuitability,
   useVisitDetail,
 } from '../lib/queries/visits.ts';
-import type { VisitEndReason, VisitRow } from '../lib/queries/visits.ts';
+import type {
+  VisitAppointmentContext,
+  VisitEndReason,
+  VisitRow,
+} from '../lib/queries/visits.ts';
 import {
   amendCartDiscount,
   applyCartDiscount,
@@ -997,6 +1007,17 @@ export function VisitDetail() {
                     {cartStatusLabel(cart.status)}
                   </MetaPill>
                 ) : null}
+              </div>
+              {/* "When" ribbon — same prominent date treatment used
+                  on AppointmentDetail. Tinted accent while the patient
+                  is active in clinic (arrived / in chair), neutral
+                  once complete, warn when terminated unsuitable / early.
+                  Sits above the LifecycleStrip so the headline
+                  ("Arrived 23 minutes ago") lands first; the strip's
+                  fine-grained chronological detail still anchors the
+                  bottom of the section. */}
+              <div style={{ marginTop: theme.space[4] }}>
+                <VisitWhenRibbon visit={visit} appointment={appointment} />
               </div>
               <div style={{ marginTop: theme.space[4] }}>
                 <LifecycleStrip
@@ -2635,6 +2656,222 @@ function MetaPill({
       {children}
     </StatusPill>
   );
+}
+
+// "When" ribbon for the visit page — the live-state companion to the
+// upcoming-appointment ribbon on AppointmentDetail. Shows:
+//
+//   • Big date in ordinal form ("Monday 8th June 2026") — the slot
+//     date for scheduled visits, the arrival date for walk-ins.
+//   • A second line with the slot time / arrival time + a relative
+//     phrase tied to the live state ("Arrived 23 minutes ago",
+//     "In chair · 14 minutes", "Completed an hour ago",
+//     "Marked unsuitable 2 hours ago", "Ended early just now").
+//   • Service name on its own line.
+//
+// Tinted to read at a glance:
+//   active (arrived / in_chair) → accent. The patient is in the lab
+//                                 right now; this should pop the same
+//                                 way upcoming bookings do.
+//   complete                    → neutral. Done, no action needed.
+//   unsuitable / ended_early    → warn. Terminated, don't bury it.
+function VisitWhenRibbon({
+  visit,
+  appointment,
+}: {
+  visit: VisitRow;
+  appointment: VisitAppointmentContext | null;
+}) {
+  const isWalkIn = visit.arrival_type === 'walk_in';
+  // Date treatment differs by origin:
+  //   • Scheduled with appointment context → the slot date
+  //   • Walk-in (or scheduled with no appointment context, very rare)
+  //     → the arrival moment instead. Walk-ins never had a booked
+  //     slot, so the "appointment date" framing would be a lie.
+  const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
+  const dateLong = formatDateLongOrdinal(headlineIso);
+
+  // The status-derived second line: time anchor + relative phrase.
+  const lineParts = visitWhenStatusLine(visit, appointment, isWalkIn);
+
+  const service =
+    humaniseEventTypeLabel(appointment?.event_type_label ?? null) ?? (isWalkIn ? 'Walk-in' : 'Appointment');
+
+  // Tone: accent while the patient is active in clinic, neutral once
+  // complete, warn on either of the terminated states.
+  const tone: 'accent' | 'neutral' | 'warn' = (() => {
+    switch (visit.status) {
+      case 'arrived':
+      case 'in_chair':
+        return 'accent';
+      case 'complete':
+        return 'neutral';
+      case 'unsuitable':
+      case 'ended_early':
+        return 'warn';
+    }
+  })();
+
+  const ribbonBg =
+    tone === 'accent' ? theme.color.accentBg : tone === 'warn' ? 'rgba(179, 104, 21, 0.10)' : theme.color.bg;
+  const iconColor =
+    tone === 'accent' ? theme.color.accent : tone === 'warn' ? theme.color.warn : theme.color.inkMuted;
+  const relativeColor = iconColor;
+
+  return (
+    <Card padding="none">
+      <div
+        style={{
+          padding: `${theme.space[4]}px ${theme.space[5]}px ${theme.space[5]}px`,
+          background: ribbonBg,
+          borderRadius: theme.radius.card,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            flexWrap: 'wrap',
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 32,
+              height: 32,
+              borderRadius: theme.radius.pill,
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
+              color: iconColor,
+              flexShrink: 0,
+            }}
+          >
+            <CalendarCheck size={16} aria-hidden />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+                lineHeight: 1.2,
+              }}
+            >
+              {dateLong}
+            </p>
+            <p
+              style={{
+                margin: '2px 0 0',
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {lineParts.anchor}
+              {lineParts.relative ? (
+                <>
+                  <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
+                  <span style={{ color: relativeColor, fontWeight: theme.type.weight.semibold }}>
+                    {lineParts.relative}
+                  </span>
+                </>
+              ) : null}
+            </p>
+          </div>
+        </div>
+        <p
+          style={{
+            margin: 0,
+            paddingLeft: 44,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          {service}
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+// Build the second-line "anchor + relative" pair for the ribbon.
+// Anchor reads as a fact ("Scheduled 09:00", "Walked in 09:43");
+// relative phrases what's happening right now ("Arrived 23 minutes
+// ago", "In chair · 14 minutes", "Completed 5 minutes ago"). The
+// pair is deliberately split so the renderer can colour them
+// differently without re-parsing the string.
+function visitWhenStatusLine(
+  visit: VisitRow,
+  appointment: VisitAppointmentContext | null,
+  isWalkIn: boolean,
+): { anchor: string; relative: string | null } {
+  // Reference time for "X minutes ago": closed_at when the visit has
+  // ended, opened_at while it's still active. Falls through to
+  // null-safe parsing on either side.
+  const reference =
+    visit.status === 'complete' || visit.status === 'unsuitable' || visit.status === 'ended_early'
+      ? visit.closed_at ?? visit.opened_at
+      : visit.opened_at;
+  const relative = reference ? relativeMinutes(reference) : null;
+
+  // Anchor sentence varies with origin + status. Walk-ins never had a
+  // booked slot so we phrase the time as the arrival moment; scheduled
+  // visits show the booked time so staff can see at a glance whether
+  // the patient was on time, early, or late.
+  if (isWalkIn) {
+    return {
+      anchor: `Walked in ${formatTime(visit.opened_at)}`,
+      relative: walkInRelative(visit, relative),
+    };
+  }
+
+  const slotRange = appointment ? formatTimeRange(appointment.start_at, '') : '';
+  // formatTimeRange returns '' when end is unparseable; for visits we
+  // don't have end_at on the appointment context, so render just the
+  // start time using formatTime instead.
+  const slotStart = appointment ? formatTime(appointment.start_at) : '';
+  const anchor = slotStart ? `Scheduled ${slotStart}` : 'Scheduled';
+  // Suppress slotRange usage warning — see comment above.
+  void slotRange;
+
+  switch (visit.status) {
+    case 'arrived':
+      return { anchor, relative: relative ? `Arrived ${relative}` : 'Arrived' };
+    case 'in_chair':
+      return { anchor, relative: relative ? `In chair · ${relative}` : 'In chair' };
+    case 'complete':
+      return { anchor, relative: relative ? `Completed ${relative}` : 'Completed' };
+    case 'unsuitable':
+      return { anchor, relative: relative ? `Marked unsuitable ${relative}` : 'Marked unsuitable' };
+    case 'ended_early':
+      return { anchor, relative: relative ? `Ended early ${relative}` : 'Ended early' };
+  }
+}
+
+function walkInRelative(visit: VisitRow, baseRelative: string | null): string | null {
+  if (!baseRelative) return null;
+  switch (visit.status) {
+    case 'arrived':
+      return `Arrived ${baseRelative}`;
+    case 'in_chair':
+      return `In chair · ${baseRelative}`;
+    case 'complete':
+      return `Completed ${baseRelative}`;
+    case 'unsuitable':
+      return `Marked unsuitable ${baseRelative}`;
+    case 'ended_early':
+      return `Ended early ${baseRelative}`;
+  }
 }
 
 // Filters out internal placeholders and empty refs. Anything starting
