@@ -118,13 +118,6 @@ export interface ResourcePoolRow {
   updated_at: string;
 }
 
-// Service-pool junction row. Children of a service inherit the
-// parent's pool list wholesale (per-child overrides are out of
-// scope for v1).
-export interface ServicePoolRow {
-  service_type: BookingServiceType;
-  pool_id: string;
-}
 
 // One resolved phase as it comes back from lng_booking_type_resolve.
 // Parent shape, with child duration overrides applied by phase_index.
@@ -330,13 +323,22 @@ export function useResourcePools(): {
   return { data, loading, error, reload: () => setTick((n) => n + 1) };
 }
 
-export function useServicePools(): {
-  data: ServicePoolRow[];
+// Resource usage map for the Resources admin tab. Returns
+// Map<pool_id, BookingServiceType[]> — the parent services whose
+// phases consume each pool. Built from
+// lng_booking_type_phase_pools → lng_booking_type_phases →
+// lng_booking_type_config (parent rows only). Replaces the legacy
+// useServicePools hook that read the obsolete service-level
+// junction table.
+export function useResourceUsage(): {
+  byPoolId: Map<string, BookingServiceType[]>;
   loading: boolean;
   error: string | null;
   reload: () => void;
 } {
-  const [data, setData] = useState<ServicePoolRow[]>([]);
+  const [byPoolId, setByPoolId] = useState<Map<string, BookingServiceType[]>>(
+    new Map(),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -346,16 +348,65 @@ export function useServicePools(): {
     setLoading(true);
     setError(null);
     (async () => {
-      const { data: rows, error: err } = await supabase
-        .from('lng_booking_service_pools')
-        .select('service_type, pool_id');
+      // Two parallel reads: phase rows joined to their parent
+      // configs (so we get phase_id → service_type) and the phase
+      // pool junction (phase_id → pool_id). Combine client-side.
+      const [phaseRes, poolRes] = await Promise.all([
+        supabase
+          .from('lng_booking_type_phases')
+          .select(
+            'id, config:lng_booking_type_config!inner ( service_type, repair_variant, product_key, arch )',
+          ),
+        supabase.from('lng_booking_type_phase_pools').select('phase_id, pool_id'),
+      ]);
       if (cancelled) return;
-      if (err) {
-        setError(err.message);
+      if (phaseRes.error) {
+        setError(phaseRes.error.message);
         setLoading(false);
         return;
       }
-      setData((rows ?? []) as ServicePoolRow[]);
+      if (poolRes.error) {
+        setError(poolRes.error.message);
+        setLoading(false);
+        return;
+      }
+      // phase_id → service_type (parent rows only — child override
+      // phase rows inherit pool consumption from the parent at
+      // resolve time, so we don't double-count).
+      const serviceByPhase = new Map<string, BookingServiceType>();
+      for (const row of (phaseRes.data ?? []) as {
+        id: string;
+        config:
+          | {
+              service_type: BookingServiceType;
+              repair_variant: string | null;
+              product_key: string | null;
+              arch: string | null;
+            }
+          | {
+              service_type: BookingServiceType;
+              repair_variant: string | null;
+              product_key: string | null;
+              arch: string | null;
+            }[]
+          | null;
+      }[]) {
+        const cfg = Array.isArray(row.config) ? row.config[0] : row.config;
+        if (!cfg) continue;
+        const isParent =
+          cfg.repair_variant == null && cfg.product_key == null && cfg.arch == null;
+        if (!isParent) continue;
+        serviceByPhase.set(row.id, cfg.service_type);
+      }
+      const map = new Map<string, BookingServiceType[]>();
+      for (const row of (poolRes.data ?? []) as { phase_id: string; pool_id: string }[]) {
+        const service = serviceByPhase.get(row.phase_id);
+        if (!service) continue;
+        const list = map.get(row.pool_id) ?? [];
+        if (!list.includes(service)) list.push(service);
+        map.set(row.pool_id, list);
+      }
+      setByPoolId(map);
       setLoading(false);
     })();
     return () => {
@@ -363,7 +414,7 @@ export function useServicePools(): {
     };
   }, [tick]);
 
-  return { data, loading, error, reload: () => setTick((n) => n + 1) };
+  return { byPoolId, loading, error, reload: () => setTick((n) => n + 1) };
 }
 
 // Slug for a pool id. Lowercase, digits, hyphens. Used both at insert
@@ -412,27 +463,6 @@ export async function deleteResourcePool(id: string): Promise<void> {
     .delete()
     .eq('id', id);
   if (error) throw new Error(error.message);
-}
-
-// Replace the pool list for a service type. Atomic: deletes existing
-// rows, inserts the new set. Used when an admin edits the pools a
-// service consumes.
-export async function setServicePools(
-  service: BookingServiceType,
-  poolIds: string[],
-): Promise<void> {
-  // Delete first, then insert. Idempotent — running twice with the
-  // same poolIds is a no-op.
-  const { error: delErr } = await supabase
-    .from('lng_booking_service_pools')
-    .delete()
-    .eq('service_type', service);
-  if (delErr) throw new Error(delErr.message);
-  if (poolIds.length === 0) return;
-  const { error: insErr } = await supabase
-    .from('lng_booking_service_pools')
-    .insert(poolIds.map((pool_id) => ({ service_type: service, pool_id })));
-  if (insErr) throw new Error(insErr.message);
 }
 
 // Admin write — upsert a full config row. The unique key for an
@@ -705,7 +735,7 @@ export async function upsertBookingTypePhase(input: {
 }
 
 // Replace a phase's pool list. Atomic: deletes existing rows,
-// inserts the new set. Mirrors setServicePools.
+// inserts the new set. Idempotent.
 export async function setPhasePoolIds(
   phaseId: string,
   poolIds: string[],

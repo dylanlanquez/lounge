@@ -152,7 +152,7 @@ export function Admin() {
               { value: 'calendly', label: 'Calendly' },
               { value: 'catalogue', label: 'Catalogue' },
               { value: 'booking_types', label: 'Booking types' },
-              { value: 'conflicts', label: 'Conflicts' },
+              { value: 'conflicts', label: 'Resources' },
               { value: 'emails', label: 'Emails' },
               { value: 'upgrades', label: 'Upgrades' },
               { value: 'waivers', label: 'Waivers' },
