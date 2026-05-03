@@ -172,3 +172,6 @@ export type {
 export { PatientFacingDurationEditor } from './PatientFacingDurationEditor/PatientFacingDurationEditor.tsx';
 export type { PatientFacingDurationEditorProps } from './PatientFacingDurationEditor/PatientFacingDurationEditor.tsx';
 
+export { ReturnSegmentHints } from './ReturnSegmentHints/ReturnSegmentHints.tsx';
+export type { ReturnSegmentHintsProps } from './ReturnSegmentHints/ReturnSegmentHints.tsx';
+

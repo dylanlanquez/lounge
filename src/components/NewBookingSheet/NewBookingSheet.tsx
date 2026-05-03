@@ -15,6 +15,7 @@ import {
   FieldTrigger,
   InlineHint,
   Input,
+  ReturnSegmentHints,
   Section,
   StatusBanner,
   TimePicker,
@@ -451,6 +452,12 @@ export function NewBookingSheet({
                   ? '. The clinic is closed on this day.'
                   : '.'}
               </InlineHint>
+            ) : null}
+            {config && date && time ? (
+              <ReturnSegmentHints
+                phases={config.phases}
+                startIso={composeIso(date, time)}
+              />
             ) : null}
             {!inWorkingHours && date && time && hoursForDate ? (
               <div style={{ marginTop: theme.space[3] }}>

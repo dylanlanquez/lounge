@@ -8,6 +8,7 @@ import {
   FieldTrigger,
   InlineHint,
   Input,
+  ReturnSegmentHints,
   Section,
   StatusBanner,
   TimePicker,
@@ -354,6 +355,12 @@ export function RescheduleSheet({
                   : '.'}
               </InlineHint>
             ) : null}
+            {config && date && time ? (
+              <ReturnSegmentHints
+                phases={config.phases}
+                startIso={composeIso(date, time)}
+              />
+            ) : null}
             {!inWorkingHours && date && time && hoursForDate ? (
               <div style={{ marginTop: theme.space[3] }}>
                 <StatusBanner tone="warning" title="Outside working hours">
@@ -492,6 +499,7 @@ function composeIso(date: string, time: string): string | null {
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
+
 
 function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
   const d = new Date(`${isoDate}T00:00:00`);
