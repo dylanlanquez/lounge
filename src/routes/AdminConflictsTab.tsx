@@ -542,23 +542,39 @@ function ResourcesSection({
     [pools],
   );
 
-  const handleRemove = async (poolId: string) => {
-    if ((usageByPool.get(poolId) ?? []).length > 0) {
-      onToast({
-        tone: 'error',
-        title: 'In use. Remove it from every booking type first.',
-      });
-      return;
-    }
+  // Removing a pool cascades through the FK on
+  // lng_booking_service_pools.pool_id (and lng_staff_pool_assignments
+  // for staff_role pools), so the database happily detaches every
+  // mapping in one delete. The earlier guard that blocked removal
+  // when "in use" was over-protective — staff would land on a toast
+  // with no obvious next step. Replaced with a confirmation dialog
+  // that names exactly what's tied to the pool so the operator can
+  // make the call with eyes open.
+  const [removeTarget, setRemoveTarget] = useState<ResourcePoolRow | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const requestRemove = (poolId: string) => {
+    const pool = pools.find((p) => p.id === poolId);
+    if (!pool) return;
+    setRemoveTarget(pool);
+  };
+
+  const confirmRemove = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
     try {
-      await deleteResourcePool(poolId);
-      onToast({ tone: 'success', title: 'Removed' });
+      await deleteResourcePool(removeTarget.id);
+      onToast({ tone: 'success', title: `Removed ${removeTarget.display_name}` });
       onChanged();
+      staffAssignments.refresh();
+      setRemoveTarget(null);
     } catch (e) {
       onToast({
         tone: 'error',
         title: e instanceof Error ? e.message : 'Could not remove',
       });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -599,7 +615,7 @@ function ResourcesSection({
             staffAssignmentsByPool={staffAssignments.byPoolId}
             staffById={staffById}
             onEdit={(pool) => setEditing({ kind: 'edit', pool })}
-            onRemove={handleRemove}
+            onRemove={requestRemove}
           />
           <PoolGroup
             title="Staff roles"
@@ -609,7 +625,7 @@ function ResourcesSection({
             staffAssignmentsByPool={staffAssignments.byPoolId}
             staffById={staffById}
             onEdit={(pool) => setEditing({ kind: 'edit', pool })}
-            onRemove={handleRemove}
+            onRemove={requestRemove}
           />
         </div>
       )}
@@ -634,7 +650,175 @@ function ResourcesSection({
           onError={(msg) => onToast({ tone: 'error', title: msg })}
         />
       ) : null}
+
+      {removeTarget ? (
+        <RemovePoolDialog
+          pool={removeTarget}
+          consumers={usageByPool.get(removeTarget.id) ?? []}
+          assignedStaff={
+            removeTarget.kind === 'staff_role'
+              ? (staffAssignments.byPoolId[removeTarget.id] ?? [])
+                  .map((sid) => staffById.get(sid))
+                  .filter((s): s is StaffRow => !!s)
+              : []
+          }
+          removing={removing}
+          onCancel={() => (removing ? undefined : setRemoveTarget(null))}
+          onConfirm={confirmRemove}
+        />
+      ) : null}
     </Card>
+  );
+}
+
+// Confirmation dialog for removing a resource pool. Names every
+// mapping that goes with it (booking types, assigned staff) so the
+// admin doesn't accidentally erase a critical constraint, and
+// follows through with a single cascade-delete on confirm.
+function RemovePoolDialog({
+  pool,
+  consumers,
+  assignedStaff,
+  removing,
+  onCancel,
+  onConfirm,
+}: {
+  pool: ResourcePoolRow;
+  consumers: BookingServiceType[];
+  assignedStaff: StaffRow[];
+  removing: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const consumerLabels = consumers.map(
+    (s) => BOOKING_SERVICE_TYPES.find((b) => b.value === s)?.label ?? s,
+  );
+  const hasConsumers = consumerLabels.length > 0;
+  const hasStaff = assignedStaff.length > 0;
+  const isClean = !hasConsumers && !hasStaff;
+
+  return (
+    <Dialog
+      open
+      onClose={onCancel}
+      width={460}
+      title={`Remove ${pool.display_name}?`}
+      description={
+        isClean ? (
+          <span>
+            Nothing in your clinic uses this. Removing it is a clean wipe — no booking types or staff are tied to it.
+          </span>
+        ) : (
+          <span>
+            Removing this also untangles every mapping that depends on it. Existing bookings keep their slots; future bookings of the listed services will no longer be capped by this resource.
+          </span>
+        )
+      }
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+          <Button variant="tertiary" onClick={onCancel} disabled={removing}>
+            Keep it
+          </Button>
+          <Button
+            variant="primary"
+            onClick={onConfirm}
+            loading={removing}
+            disabled={removing}
+          >
+            {removing ? 'Removing…' : 'Remove'}
+          </Button>
+        </div>
+      }
+    >
+      {isClean ? null : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          {hasConsumers ? (
+            <RemovePoolImpactList
+              eyebrow={
+                consumerLabels.length === 1
+                  ? '1 booking type currently consumes this'
+                  : `${consumerLabels.length} booking types currently consume this`
+              }
+              items={consumerLabels}
+            />
+          ) : null}
+          {hasStaff ? (
+            <RemovePoolImpactList
+              eyebrow={
+                assignedStaff.length === 1
+                  ? '1 staff member is assigned to this role'
+                  : `${assignedStaff.length} staff members are assigned to this role`
+              }
+              items={assignedStaff.map((s) => s.display_name)}
+            />
+          ) : null}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function RemovePoolImpactList({
+  eyebrow,
+  items,
+}: {
+  eyebrow: string;
+  items: string[];
+}) {
+  return (
+    <div
+      style={{
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: 11,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.wide,
+          textTransform: 'uppercase',
+          color: theme.color.inkMuted,
+        }}
+      >
+        {eyebrow}
+      </p>
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: theme.space[2],
+        }}
+      >
+        {items.map((item) => (
+          <li
+            key={item}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: `${theme.space[1]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.pill,
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.ink,
+              fontWeight: theme.type.weight.medium,
+            }}
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
