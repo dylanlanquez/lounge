@@ -575,11 +575,20 @@ function PoolRow({
   // role"), since that's how an admin scans the list. Resource rows
   // keep the original "We have N" copy because there's no list of
   // human names to render.
+  // Resource pools surface "how many we have" and, when each unit
+  // holds more than 1 patient, the per-unit factor too. Staff-role
+  // rows lead with the people in the role.
+  const resourceCountLine =
+    pool.per_unit_capacity > 1
+      ? `${pool.units} ${pool.units === 1 ? 'unit' : 'units'} · ${pool.per_unit_capacity} patients each · capacity ${pool.capacity}`
+      : `We have ${pool.units}`;
   const summaryLine = isStaffRole
     ? assignedStaff.length === 0
       ? 'No staff assigned yet · the booking checker will block any service that needs this role'
-      : `${formatStaffList(assignedStaff)} · ${assignedStaff.length} in this role`
-    : `We have ${pool.capacity}${
+      : pool.per_unit_capacity > 1
+        ? `${formatStaffList(assignedStaff)} · ${assignedStaff.length} in this role · each handles ${pool.per_unit_capacity} at a time · capacity ${pool.capacity}`
+        : `${formatStaffList(assignedStaff)} · ${assignedStaff.length} in this role`
+    : `${resourceCountLine}${
         consumers.length > 0
           ? ` · used by ${consumers.length} booking type${consumers.length === 1 ? '' : 's'}`
           : ' · not in use yet'
@@ -709,8 +718,15 @@ function PoolEditorDialog({
   );
   const [displayName, setDisplayName] = useState(seed?.display_name ?? '');
   const [poolId, setPoolId] = useState(seed?.id ?? '');
-  const [capacity, setCapacity] = useState<string>(
-    seed?.capacity != null ? String(seed.capacity) : '1',
+  // Units: how many of this resource exist. For physical resources
+  // it's a manual input; for staff_role it's the count of selected
+  // staff (computed below). Per-unit capacity: how many patients
+  // each unit handles at once — defaults to 1 and is rarely changed.
+  const [unitsInput, setUnitsInput] = useState<string>(
+    seed?.units != null ? String(seed.units) : '1',
+  );
+  const [perUnitInput, setPerUnitInput] = useState<string>(
+    seed?.per_unit_capacity != null ? String(seed.per_unit_capacity) : '1',
   );
   const [notes, setNotes] = useState(seed?.notes ?? '');
   // Staff selection. Re-seeded whenever the row changes — same
@@ -729,6 +745,15 @@ function PoolEditorDialog({
 
   const isStaffRole = poolKind === 'staff_role';
 
+  // Effective units: for staff_role it's the count of picked staff
+  // (auto), for resource it's the parsed input. Effective capacity
+  // mirrors the DB-side generated column.
+  const effectiveUnits = isStaffRole
+    ? selectedStaffIds.length
+    : Math.max(parseInt(unitsInput, 10) || 0, 0);
+  const effectivePerUnit = Math.max(parseInt(perUnitInput, 10) || 0, 0);
+  const effectiveCapacity = effectiveUnits * effectivePerUnit;
+
   const save = async () => {
     setBusy(true);
     try {
@@ -736,20 +761,16 @@ function PoolEditorDialog({
       if (!isValidPoolId(poolId)) {
         throw new Error('Short name must start with a letter and use only lowercase letters, digits, and hyphens.');
       }
-      // Capacity validation only applies to resource pools — for
-      // staff_role pools the DB trigger will set capacity from the
-      // active staff count, so we ignore the input. We pass the
-      // current row's capacity straight through on edit, or 0 on
-      // create (the trigger will recompute it on the first
-      // assignment write).
-      let cap: number;
-      if (isStaffRole) {
-        cap = seed?.capacity ?? 0;
-      } else {
-        cap = parseInt(capacity, 10);
-        if (!Number.isFinite(cap) || cap <= 0) {
-          throw new Error('How many do you have? Enter a positive whole number.');
-        }
+      const units = effectiveUnits;
+      if (units <= 0) {
+        throw new Error(
+          isStaffRole
+            ? 'Pick at least one staff member for this role.'
+            : 'How many do you have? Enter a positive whole number.',
+        );
+      }
+      if (effectivePerUnit <= 0) {
+        throw new Error('Each unit needs to handle at least 1 patient at a time.');
       }
       if (isNew && existing.some((e) => e.id === poolId)) {
         throw new Error(`Already have a "${poolId}". Pick a different short name.`);
@@ -757,13 +778,13 @@ function PoolEditorDialog({
       await upsertResourcePool({
         id: poolId,
         display_name: displayName.trim(),
-        capacity: cap,
+        units,
+        per_unit_capacity: effectivePerUnit,
         kind: poolKind,
         notes: notes.trim() === '' ? null : notes.trim(),
       });
       // For staff_role pools, replace the assignment set in the same
-      // save action so capacity lands correctly without a second
-      // round-trip. The RPC handles diffing internally.
+      // save action. The RPC handles diffing internally.
       if (isStaffRole) {
         await setStaffPoolAssignments(poolId, selectedStaffIds);
       }
@@ -775,7 +796,7 @@ function PoolEditorDialog({
     }
   };
 
-  const namePlaceholder = isStaffRole ? 'e.g. Impression takers' : 'e.g. Chairs';
+  const namePlaceholder = isStaffRole ? 'e.g. Impression Clinician' : 'e.g. Chairs';
 
   return (
     <BottomSheet
@@ -828,12 +849,31 @@ function PoolEditorDialog({
             label="How many do you have?"
             required
             type="number"
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
+            value={unitsInput}
+            onChange={(e) => setUnitsInput(e.target.value)}
             placeholder="1"
-            helper="Bookings that need this can run side-by-side up to this number."
+            helper="The count of these in your clinic."
           />
         )}
+        <Input
+          label={isStaffRole ? 'Each person handles how many at a time?' : 'Each one handles how many at a time?'}
+          required
+          type="number"
+          value={perUnitInput}
+          onChange={(e) => setPerUnitInput(e.target.value)}
+          placeholder="1"
+          helper={
+            isStaffRole
+              ? 'Usually 1. Bump up for roles where one person can juggle several patients (e.g. Reception greeting and seating multiple at once).'
+              : 'Usually 1. Bump up for things that fit multiple patients (e.g. a room with two chairs).'
+          }
+        />
+        <CapacitySummary
+          isStaffRole={isStaffRole}
+          units={effectiveUnits}
+          perUnit={effectivePerUnit}
+          capacity={effectiveCapacity}
+        />
         <Input
           label="Note (optional)"
           value={notes}
@@ -842,6 +882,70 @@ function PoolEditorDialog({
         />
       </div>
     </BottomSheet>
+  );
+}
+
+// Honest, computed capacity readout sitting between the two inputs
+// and the notes field. Mirrors the DB-side generated column so the
+// admin sees the same number the conflict checker will read.
+function CapacitySummary({
+  isStaffRole,
+  units,
+  perUnit,
+  capacity,
+}: {
+  isStaffRole: boolean;
+  units: number;
+  perUnit: number;
+  capacity: number;
+}) {
+  const unitWord = isStaffRole
+    ? units === 1
+      ? 'person'
+      : 'people'
+    : units === 1
+      ? 'unit'
+      : 'units';
+  const eachWord = isStaffRole
+    ? perUnit === 1
+      ? '1 patient each'
+      : `${perUnit} patients each`
+    : perUnit === 1
+      ? '1 patient each'
+      : `${perUnit} patients each`;
+  return (
+    <div
+      style={{
+        background: theme.color.accentBg,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          color: theme.color.accent,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.wide,
+          textTransform: 'uppercase',
+        }}
+      >
+        Capacity
+      </span>
+      <span
+        style={{
+          fontSize: theme.type.size.base,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+        }}
+      >
+        {units} {unitWord} × {eachWord} = {capacity}{' '}
+        {capacity === 1 ? 'patient at a time' : 'patients at a time'}
+      </span>
+    </div>
   );
 }
 
