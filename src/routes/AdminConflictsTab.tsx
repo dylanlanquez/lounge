@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Box, Check, ChevronDown, ChevronRight, Layers, Plus, Settings2, Trash2, UserCircle2 } from 'lucide-react';
 import {
+  BottomSheet,
   Button,
   Card,
-  Dialog,
   EmptyState,
   Input,
   Skeleton,
@@ -346,15 +346,14 @@ function RemovePoolDialog({
   const isClean = !hasConsumers && !hasStaff;
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onCancel}
-      width={460}
       title={`Remove ${pool.display_name}?`}
       description={
         isClean ? (
           <span>
-            Nothing in your clinic uses this. Removing it is a clean wipe — no booking types or staff are tied to it.
+            Nothing in your clinic uses this. Removing it is a clean wipe, no booking types or staff are tied to it.
           </span>
         ) : (
           <span>
@@ -402,7 +401,7 @@ function RemovePoolDialog({
           ) : null}
         </div>
       )}
-    </Dialog>
+    </BottomSheet>
   );
 }
 
@@ -779,14 +778,13 @@ function PoolEditorDialog({
   const namePlaceholder = isStaffRole ? 'e.g. Impression takers' : 'e.g. Chairs';
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onClose}
-      width={520}
       title={isNew ? 'Add to your clinic' : `Edit ${seed?.display_name ?? 'this'}`}
       description={
         isNew
-          ? 'Anything finite that limits how many bookings can run at once. Pick whether this is a space / piece of equipment, or a staff role.'
+          ? 'Anything finite that limits how many bookings can run at once. Pick whether this is a space, piece of equipment, or a staff role.'
           : 'Changes apply to all future bookings. Existing bookings keep their slots.'
       }
       footer={<DialogFooter onCancel={onClose} onSave={save} busy={busy} />}
@@ -843,7 +841,7 @@ function PoolEditorDialog({
           placeholder="Anything internal staff should know."
         />
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
