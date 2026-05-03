@@ -10,6 +10,19 @@ export interface IntakeAnswer {
 // walking-figure for walk-ins / manually added rows.
 export type AppointmentSource = 'calendly' | 'manual' | 'native';
 
+// One materialised phase as needed by the schedule grid + appointment
+// detail. Subset of lng_appointment_phases — schedule consumers don't
+// need pool_ids on every render.
+export interface AppointmentPhaseSummary {
+  phase_index: number;
+  label: string;
+  patient_required: boolean;
+  start_at: string;
+  end_at: string;
+  status: 'pending' | 'in_progress' | 'complete' | 'skipped';
+  pool_ids: string[];
+}
+
 export interface AppointmentRow {
   id: string;
   patient_id: string;
@@ -37,6 +50,10 @@ export interface AppointmentRow {
   patient_phone: string | null;
   staff_first_name: string | null;
   staff_last_name: string | null;
+  // Materialised phases (ADR-006). Empty array when the appointment
+  // has not been materialised yet (legacy data) — consumers should
+  // fall back to a single implicit phase covering the whole window.
+  phases: AppointmentPhaseSummary[];
 }
 
 // Title-cases a name. Lowercase words → "Amanda". All-caps words of any

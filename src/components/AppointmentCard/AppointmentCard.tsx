@@ -8,6 +8,17 @@ import {
   formatLateDuration,
 } from '../../lib/queries/appointments.ts';
 
+// Subset of lng_appointment_phases the card needs to render its
+// two-tone phase ribbon. Always passed in phase_index order. When the
+// array has 0 or 1 phase the ribbon is suppressed and the card looks
+// the same as it always did.
+export interface AppointmentCardPhase {
+  patient_required: boolean;
+  start_at: string;
+  end_at: string;
+  status: 'pending' | 'in_progress' | 'complete' | 'skipped';
+}
+
 export interface AppointmentCardProps {
   patientName: string;
   startAt: string; // ISO
@@ -38,6 +49,10 @@ export interface AppointmentCardProps {
   // the eye lands on active work first. Parent decides; the card just
   // renders.
   dimmed?: boolean;
+  // Materialised phases for this appointment. Two or more phases triggers
+  // the two-tone ribbon at the bottom of the card; one phase leaves the
+  // card visually identical to today. Phases must be in phase_index order.
+  phases?: AppointmentCardPhase[];
   onClick?: () => void;
 }
 
@@ -95,6 +110,7 @@ export function AppointmentCard({
   source = 'calendly',
   lateMinutes,
   dimmed = false,
+  phases,
   onClick,
 }: AppointmentCardProps) {
   const isInteractive = Boolean(onClick);
@@ -123,6 +139,11 @@ export function AppointmentCard({
     : status === 'booked' && barColor
       ? barColor
       : BAR_COLOR[status];
+
+  // Render the phase ribbon only when there's something interesting
+  // to show (2+ phases). 1-phase cards (the default after backfill)
+  // look identical to today.
+  const showPhaseRibbon = (phases?.length ?? 0) > 1;
 
   return (
     <div
@@ -195,7 +216,74 @@ export function AppointmentCard({
             </span>
           ) : null}
         </p>
+        {showPhaseRibbon && (
+          <PhaseStrip
+            phases={phases!}
+            apptStart={startAt}
+            apptEnd={endAt}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+// Thin two-tone ribbon shown at the bottom of a multi-phase card.
+// One band per phase, sized proportional to its share of the booking
+// window. Active phases (patient in chair) render solid in the accent
+// colour; passive phases (patient may leave) render at lower opacity
+// with a diagonal hatch overlay so the eye reads them as "still
+// booked, just no patient". Completed phases dim themselves slightly
+// so the receptionist can see at a glance how far through the booking
+// is — without needing to open the detail.
+function PhaseStrip({
+  phases,
+  apptStart,
+  apptEnd,
+}: {
+  phases: AppointmentCardPhase[];
+  apptStart: string;
+  apptEnd: string;
+}) {
+  const totalMs = new Date(apptEnd).getTime() - new Date(apptStart).getTime();
+  if (totalMs <= 0) return null;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        marginTop: 4,
+        height: 6,
+        borderRadius: 3,
+        overflow: 'hidden',
+        background: 'rgba(14,20,20,0.06)',
+      }}
+      aria-hidden
+    >
+      {phases.map((p, i) => {
+        const phaseMs = new Date(p.end_at).getTime() - new Date(p.start_at).getTime();
+        const widthPct = totalMs > 0 ? (phaseMs / totalMs) * 100 : 0;
+        const passive = !p.patient_required;
+        const done = p.status === 'complete' || p.status === 'skipped';
+        const passivePattern =
+          'repeating-linear-gradient(135deg, rgba(255,255,255,0.55) 0 3px, rgba(255,255,255,0) 3px 7px)';
+        return (
+          <div
+            key={i}
+            style={{
+              width: `${widthPct}%`,
+              backgroundColor: passive
+                ? `${theme.color.accent}55`
+                : theme.color.accent,
+              backgroundImage: passive ? passivePattern : 'none',
+              opacity: done ? 0.5 : 1,
+              borderRight:
+                i < phases.length - 1 ? '1px solid rgba(255,255,255,0.35)' : 'none',
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

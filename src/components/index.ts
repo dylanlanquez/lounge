@@ -168,3 +168,6 @@ export type {
   PhaseEditorTarget,
   PhaseEditorValues,
 } from './PhaseEditor/PhaseEditor.tsx';
+
+export { AppointmentPhaseTimeline } from './AppointmentPhaseTimeline/AppointmentPhaseTimeline.tsx';
+export type { AppointmentPhaseTimelineProps } from './AppointmentPhaseTimeline/AppointmentPhaseTimeline.tsx';
