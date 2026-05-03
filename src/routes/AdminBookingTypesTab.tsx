@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Clock, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronRight, Clock, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react';
 import {
   Button,
   Card,
@@ -434,24 +434,13 @@ function ServiceNode({
         borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        aria-label={`${serviceLabel} — ${expanded ? 'collapse' : 'expand'}`}
+      <div
         style={{
-          appearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          cursor: 'pointer',
-          textAlign: 'left',
           width: '100%',
           padding: `${theme.space[4]}px ${theme.space[5]}px`,
           display: 'flex',
           alignItems: 'center',
           gap: theme.space[3],
-          fontFamily: 'inherit',
-          WebkitTapHighlightColor: 'transparent',
         }}
       >
         <span
@@ -472,17 +461,9 @@ function ServiceNode({
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
               letterSpacing: theme.type.tracking.tight,
-              display: 'flex',
-              alignItems: 'center',
-              gap: theme.space[1],
             }}
           >
             {serviceLabel}
-            {expanded ? (
-              <ChevronDown size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
-            ) : (
-              <ChevronRight size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
-            )}
           </span>
           <span
             style={{
@@ -494,16 +475,12 @@ function ServiceNode({
             {summariseHours(parent.working_hours)} · {summariseDuration(parent)}
           </span>
         </div>
-        <OverrideCountPill count={children.length} />
         <IconAction
           ariaLabel={`Configure ${serviceLabel}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onEditParent();
-          }}
+          onClick={onEditParent}
           icon={<Settings2 size={16} aria-hidden />}
         />
-      </button>
+      </div>
 
       <div
         style={{
@@ -535,7 +512,16 @@ function ServiceNode({
         )}
       </div>
 
-      {expanded ? (
+      <OverridesDisclosure
+        expanded={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+        count={children.length}
+        canAdd={available.length > 0}
+        serviceLabel={serviceLabel}
+        childKindWord={childKindLabel(serviceType)}
+      />
+
+      <Collapse open={expanded}>
         <div
           style={{
             background: theme.color.bg,
@@ -605,7 +591,7 @@ function ServiceNode({
             </p>
           ) : null}
         </div>
-      ) : null}
+      </Collapse>
 
       <PhaseEditor
         open={phaseEditorTarget !== null}
@@ -630,32 +616,105 @@ function ServiceNode({
   );
 }
 
-// Right-edge pill showing override count for a service. "—" when zero
-// so the column has a stable visual rhythm down the list.
-function OverrideCountPill({ count }: { count: number }) {
-  const has = count > 0;
+// Disclosure button below the parent ribbon — the explicit "open/
+// close overrides" affordance. Replaces the ambiguous static count
+// pill that used to sit on the right of the parent header. Reads as
+// a button (chevron + label) and announces state via aria-expanded.
+//
+// Copy switches based on count:
+//   0 + can-add → "Add an override for a specific {kind}"
+//   0 + cannot   → null (no children pickable, nothing to expand)
+//   N            → "1 override · Show" / "N overrides · Show" /
+//                  "Hide" when expanded
+function OverridesDisclosure({
+  expanded,
+  onToggle,
+  count,
+  canAdd,
+  serviceLabel,
+  childKindWord,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  count: number;
+  canAdd: boolean;
+  serviceLabel: string;
+  childKindWord: string;
+}) {
+  if (count === 0 && !canAdd) return null;
+
+  const labelWhenExpanded = count === 0 ? 'Hide' : 'Hide overrides';
+  const labelWhenCollapsed = count === 0
+    ? `Add an override for a specific ${childKindWord}`
+    : `${count} ${count === 1 ? 'override' : 'overrides'}`;
+
   return (
-    <span
-      aria-label={
-        has ? `${count} override${count === 1 ? '' : 's'}` : 'No overrides'
-      }
+    <div
       style={{
-        flexShrink: 0,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: `2px ${theme.space[2]}px`,
-        borderRadius: theme.radius.pill,
-        border: `1px solid ${theme.color.border}`,
-        background: has ? theme.color.surface : 'transparent',
-        color: has ? theme.color.ink : theme.color.inkSubtle,
-        fontSize: 11,
-        fontWeight: theme.type.weight.medium,
-        fontVariantNumeric: 'tabular-nums',
+        padding: `0 ${theme.space[5]}px ${theme.space[3]}px ${theme.space[8]}px`,
       }}
     >
-      {has ? `${count} override${count === 1 ? '' : 's'}` : '— overrides'}
-    </span>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? labelWhenExpanded : labelWhenCollapsed} for ${serviceLabel}`}
+        style={{
+          appearance: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          padding: `${theme.space[2]}px ${theme.space[3]}px`,
+          borderRadius: theme.radius.pill,
+          border: `1px solid ${theme.color.border}`,
+          background: theme.color.surface,
+          color: theme.color.ink,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <ChevronRight
+          size={14}
+          aria-hidden
+          style={{
+            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            color: theme.color.inkMuted,
+          }}
+        />
+        <span>{expanded ? labelWhenExpanded : labelWhenCollapsed}</span>
+      </button>
+    </div>
+  );
+}
+
+// Animated open/close container using the grid-template-rows 0fr/1fr
+// trick. Smoothly transitions height without measuring children. The
+// inner div has min-height: 0 + overflow: hidden so the grid row can
+// collapse to zero. Contents are still rendered when closed (so any
+// internal state is preserved between open/close cycles), just
+// height-clipped.
+function Collapse({
+  open,
+  children,
+}: {
+  open: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateRows: open ? '1fr' : '0fr',
+        transition: `grid-template-rows ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+      }}
+      aria-hidden={!open}
+    >
+      <div style={{ minHeight: 0, overflow: 'hidden' }}>{children}</div>
+    </div>
   );
 }
 
