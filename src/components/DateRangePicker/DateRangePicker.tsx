@@ -78,7 +78,12 @@ export function DateRangePicker({
   placeholder = 'Choose dates',
   onClear,
 }: DateRangePickerProps) {
-  const isMobile = useIsMobile(720);
+  // Two-month side-by-side popover needs ~720px of room. Anything
+  // tighter — typical iPad portrait widths sit at 768–834px — gets
+  // the single-calendar bottom sheet instead. Raised from 720 to
+  // 900 because at 720 a 768px tablet would still try to render
+  // the desktop popover and inevitably hang off the edge.
+  const isMobile = useIsMobile(900);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{
@@ -156,20 +161,31 @@ export function DateRangePicker({
 
   const closePicker = useCallback(() => setOpen(false), []);
 
-  // Position the desktop popover relative to the trigger. Right-align
-  // when the popover would overflow the viewport (spec §5).
+  // Position the desktop popover relative to the trigger, clamped
+  // to the viewport so it never hangs off either edge. The previous
+  // version branched between `left: rect.left` and `right: innerWidth
+  // - rect.right` based on a "fits on right" probe, but that fallback
+  // could still overflow the LEFT edge when the trigger sat in the
+  // middle of a narrow-but-not-mobile screen. Clamping a single
+  // `left` value is simpler and provably bounded.
   useLayoutEffect(() => {
     if (!open || isMobile || !triggerRef.current) return;
     const update = () => {
       if (!triggerRef.current) return;
       const rect = triggerRef.current.getBoundingClientRect();
-      const APPROX_W = 700;
-      const fitsOnRight = rect.left + APPROX_W <= window.innerWidth - POPOVER_PAD;
-      setPopoverPos(
-        fitsOnRight
-          ? { top: rect.bottom + 6, left: rect.left }
-          : { top: rect.bottom + 6, right: window.innerWidth - rect.right },
+      const APPROX_W = 720;
+      const minLeft = POPOVER_PAD;
+      const maxLeft = Math.max(
+        POPOVER_PAD,
+        window.innerWidth - APPROX_W - POPOVER_PAD,
       );
+      // Prefer the trigger's left edge. Slide left if that would push
+      // the popover past the right edge; clamp at minLeft if even
+      // that's not enough (the viewport is narrower than the popover,
+      // a degenerate case the breakpoint above should usually catch).
+      const desired = rect.left;
+      const left = Math.max(minLeft, Math.min(desired, maxLeft));
+      setPopoverPos({ top: rect.bottom + 6, left });
     };
     update();
     window.addEventListener('scroll', update, true);

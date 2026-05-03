@@ -91,8 +91,9 @@ export function DatePicker({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  // Position the desktop popover relative to the trigger; right-align
-  // when it would overflow. Same approach as DateRangePicker.
+  // Position the desktop popover relative to the trigger, clamped
+  // to the viewport so it never hangs off either edge. Same approach
+  // as DateRangePicker — see that file for the rationale.
   const [popoverPos, setPopoverPos] = useState<{
     top: number;
     left?: number;
@@ -105,12 +106,14 @@ export function DatePicker({
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const APPROX_W = 320;
-      const fitsOnRight = rect.left + APPROX_W <= window.innerWidth - POPOVER_PAD;
-      setPopoverPos(
-        fitsOnRight
-          ? { top: rect.bottom + 6, left: rect.left }
-          : { top: rect.bottom + 6, right: window.innerWidth - rect.right },
+      const minLeft = POPOVER_PAD;
+      const maxLeft = Math.max(
+        POPOVER_PAD,
+        window.innerWidth - APPROX_W - POPOVER_PAD,
       );
+      const desired = rect.left;
+      const left = Math.max(minLeft, Math.min(desired, maxLeft));
+      setPopoverPos({ top: rect.bottom + 6, left });
     };
     update();
     window.addEventListener('scroll', update, true);
