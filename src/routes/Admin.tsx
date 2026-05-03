@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Sparkles, Trash2, Users, X } from 'lucide-react';
 import {
@@ -102,7 +102,7 @@ import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'catalogue' | 'booking_types' | 'conflicts' | 'emails' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -150,7 +150,8 @@ export function Admin() {
             onChange={setTab}
             options={[
               { value: 'calendly', label: 'Calendly' },
-              { value: 'catalogue', label: 'Catalogue' },
+              { value: 'services', label: 'Services' },
+              { value: 'products', label: 'Products' },
               { value: 'booking_types', label: 'Booking types' },
               { value: 'conflicts', label: 'Resources' },
               { value: 'emails', label: 'Emails' },
@@ -169,8 +170,10 @@ export function Admin() {
 
         {tab === 'calendly' ? (
           <CalendlyTab />
-        ) : tab === 'catalogue' ? (
-          <CatalogueTab />
+        ) : tab === 'services' ? (
+          <CatalogueTab mode="services" />
+        ) : tab === 'products' ? (
+          <CatalogueTab mode="products" />
         ) : tab === 'booking_types' ? (
           <AdminBookingTypesTab />
         ) : tab === 'conflicts' ? (
@@ -1987,13 +1990,24 @@ function severityToTone(s: SystemFailureRow['severity']) {
 // surfaces. Active=false is the soft-delete (line items reference catalogue
 // rows by id, never hard-delete).
 
-function CatalogueTab() {
+type CatalogueMode = 'services' | 'products';
+
+function CatalogueTab({ mode }: { mode: CatalogueMode }) {
   const { rows, loading, error, refresh } = useCatalogueAll();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
 
-  const grouped = groupByCategory(rows);
+  // Filter to just this mode's rows. is_service splits the lwo_catalogue
+  // table into two logical buckets — Services (treatments / appointments
+  // bookable through the schedule) vs Products (retail items, care
+  // products that show up as cart upsells). Same table, two views.
+  const filteredRows = useMemo(
+    () => rows.filter((r) => (mode === 'services' ? r.is_service : !r.is_service)),
+    [rows, mode],
+  );
+  const grouped = groupByCategory(filteredRows);
+  const isServices = mode === 'services';
 
   const onSave = async (draft: CatalogueDraft, waiverSectionKeys: string[]) => {
     try {
@@ -2078,7 +2092,7 @@ function CatalogueTab() {
               fontWeight: theme.type.weight.semibold,
             }}
           >
-            Product catalogue
+            {isServices ? 'Services' : 'Products'}
           </h2>
           <p
             style={{
@@ -2087,12 +2101,14 @@ function CatalogueTab() {
               fontSize: theme.type.size.sm,
             }}
           >
-            Shared with Checkpoint. Edits land in <code>lwo_catalogue</code>; line-item prices snapshot at insert.
+            {isServices
+              ? 'Treatments and appointments your team books in. Shared with Checkpoint via lwo_catalogue.'
+              : 'Care products and retail items. Surface as cart upsells at checkout.'}
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <Plus size={16} /> Add product
+            <Plus size={16} /> {isServices ? 'Add service' : 'Add product'}
           </span>
         </Button>
       </div>
@@ -2103,15 +2119,20 @@ function CatalogueTab() {
         <Skeleton height={120} radius={12} />
       ) : adding ? (
         <CatalogueRowEditor
-          initial={emptyDraft()}
+          mode={mode}
+          initial={emptyDraft(mode)}
           onSave={onSave}
           onCancel={() => setAdding(false)}
         />
       ) : grouped.length === 0 ? (
         <EmptyState
           icon={<Package size={24} />}
-          title="No products yet"
-          description="Tap Add product to seed the catalogue."
+          title={isServices ? 'No services yet' : 'No products yet'}
+          description={
+            isServices
+              ? 'Tap Add service to seed your treatments.'
+              : 'Tap Add product to seed care products that show up as cart upsells.'
+          }
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
@@ -2134,6 +2155,7 @@ function CatalogueTab() {
                   editingId === row.id ? (
                     <li key={row.id}>
                       <CatalogueRowEditor
+                        mode={mode}
                         initial={draftFromRow(row)}
                         onSave={onSave}
                         onCancel={() => setEditingId(null)}
@@ -2192,7 +2214,8 @@ interface CatalogueDraft {
   active: boolean;
 }
 
-function emptyDraft(): CatalogueDraft {
+function emptyDraft(mode: CatalogueMode): CatalogueDraft {
+  const isService = mode === 'services';
   return {
     code: '',
     category: '',
@@ -2207,12 +2230,18 @@ function emptyDraft(): CatalogueDraft {
     product_key: '',
     repair_variant: '',
     arch_match: 'any',
-    is_service: false,
-    quantity_enabled: true,
+    is_service: isService,
+    // Services default to one-shot (no quantity selector, e.g. an
+    // appointment isn't bought "in 3s"). Products default to
+    // quantity-enabled because retail items often are.
+    quantity_enabled: !isService,
     sla_enabled: false,
     sla_target_minutes: '',
-    include_on_lwo: true,
-    allocate_job_box: true,
+    // LWO inclusion + JB allocation only mean anything for services
+    // (lab work flow). Default off for products — they're retail
+    // items that don't trigger lab orders.
+    include_on_lwo: isService,
+    allocate_job_box: isService,
     sort_order: '0',
     active: true,
   };
@@ -2323,15 +2352,18 @@ function CatalogueRowDisplay({
 }
 
 function CatalogueRowEditor({
+  mode,
   initial,
   onSave,
   onCancel,
 }: {
+  mode: CatalogueMode;
   initial: CatalogueDraft;
   onSave: (draft: CatalogueDraft, waiverSectionKeys: string[]) => Promise<void>;
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<CatalogueDraft>(initial);
+  const isService = mode === 'services';
   const [busy, setBusy] = useState(false);
   const [imgBusy, setImgBusy] = useState(false);
   const [imgError, setImgError] = useState<string | null>(null);
@@ -2512,7 +2544,7 @@ function CatalogueRowEditor({
           placeholder="e.g. per tooth"
         />
       </div>
-      {draft.arch_match !== 'any' ? (
+      {isService && draft.arch_match !== 'any' ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
           <Input
             label="Both arches price (£)"
@@ -2524,69 +2556,73 @@ function CatalogueRowEditor({
           <span />
         </div>
       ) : null}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-            Service type
-          </span>
-          <select
-            value={draft.service_type}
-            onChange={(e) => set('service_type', e.target.value)}
-            style={{
-              height: theme.layout.inputHeight,
-              padding: `0 ${theme.space[3]}px`,
-              fontSize: theme.type.size.base,
-              fontFamily: 'inherit',
-              border: `1px solid ${theme.color.border}`,
-              borderRadius: theme.radius.input,
-              background: theme.color.surface,
-            }}
-          >
-            <option value="">— any (wildcard) —</option>
-            <option value="denture_repair">Denture repair</option>
-            <option value="same_day_appliance">Same-day appliance</option>
-            <option value="click_in_veneers">Click-in veneers</option>
-            <option value="impression_appointment">Impression appointment</option>
-            <option value="other">Other / consultation</option>
-          </select>
-        </label>
-        <Input
-          label="Product key"
-          value={draft.product_key}
-          onChange={(e) => set('product_key', e.target.value)}
-          placeholder="e.g. retainer, night_guard"
-        />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
-        <Input
-          label="Repair variant"
-          value={draft.repair_variant}
-          onChange={(e) => set('repair_variant', e.target.value)}
-          placeholder="e.g. Snapped denture"
-        />
-        <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-            Arch match
-          </span>
-          <select
-            value={draft.arch_match}
-            onChange={(e) => set('arch_match', e.target.value as ArchMatch)}
-            style={{
-              height: theme.layout.inputHeight,
-              padding: `0 ${theme.space[3]}px`,
-              fontSize: theme.type.size.base,
-              fontFamily: 'inherit',
-              border: `1px solid ${theme.color.border}`,
-              borderRadius: theme.radius.input,
-              background: theme.color.surface,
-            }}
-          >
-            <option value="any">any (wildcard)</option>
-            <option value="single">single (upper or lower)</option>
-            <option value="both">both arches</option>
-          </select>
-        </label>
-      </div>
+      {isService ? (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+              <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+                Service type
+              </span>
+              <select
+                value={draft.service_type}
+                onChange={(e) => set('service_type', e.target.value)}
+                style={{
+                  height: theme.layout.inputHeight,
+                  padding: `0 ${theme.space[3]}px`,
+                  fontSize: theme.type.size.base,
+                  fontFamily: 'inherit',
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  background: theme.color.surface,
+                }}
+              >
+                <option value="">— any (wildcard) —</option>
+                <option value="denture_repair">Denture repair</option>
+                <option value="same_day_appliance">Same-day appliance</option>
+                <option value="click_in_veneers">Click-in veneers</option>
+                <option value="impression_appointment">Impression appointment</option>
+                <option value="other">Other / consultation</option>
+              </select>
+            </label>
+            <Input
+              label="Product key"
+              value={draft.product_key}
+              onChange={(e) => set('product_key', e.target.value)}
+              placeholder="e.g. retainer, night_guard"
+            />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+            <Input
+              label="Repair variant"
+              value={draft.repair_variant}
+              onChange={(e) => set('repair_variant', e.target.value)}
+              placeholder="e.g. Snapped denture"
+            />
+            <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+              <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+                Arch match
+              </span>
+              <select
+                value={draft.arch_match}
+                onChange={(e) => set('arch_match', e.target.value as ArchMatch)}
+                style={{
+                  height: theme.layout.inputHeight,
+                  padding: `0 ${theme.space[3]}px`,
+                  fontSize: theme.type.size.base,
+                  fontFamily: 'inherit',
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  background: theme.color.surface,
+                }}
+              >
+                <option value="any">any (wildcard)</option>
+                <option value="single">single (upper or lower)</option>
+                <option value="both">both arches</option>
+              </select>
+            </label>
+          </div>
+        </>
+      ) : null}
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
         <Input
           label="Sort order"
@@ -2601,121 +2637,123 @@ function CatalogueRowEditor({
           label="Active (visible to receptionist)"
         />
         <Checkbox
-          checked={draft.is_service}
-          onChange={(v) => set('is_service', v)}
-          label="This is a service (sits in Services bucket in the picker)"
-        />
-        <Checkbox
           checked={draft.quantity_enabled}
           onChange={(v) => set('quantity_enabled', v)}
-          label="Quantity selector (uncheck for one-shot services like in-clinic appointments)"
+          label={
+            isService
+              ? 'Quantity selector (uncheck for one-shot services like in-clinic appointments)'
+              : 'Quantity selector (lets the patient buy more than one)'
+          }
         />
       </div>
 
-      {/* Lounge-only operational settings: LWO inclusion, JB allocation, SLA. */}
-      <div
-        style={{
-          border: `1px solid ${theme.color.border}`,
-          borderRadius: 12,
-          padding: theme.space[3],
-          display: 'flex',
-          flexDirection: 'column',
-          gap: theme.space[3],
-          background: 'rgba(14, 20, 20, 0.02)',
-        }}
-      >
-        <p
+      {/* Service-only operational settings: LWO inclusion, JB allocation, SLA. */}
+      {isService ? (
+        <div
           style={{
-            margin: 0,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.medium,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: 12,
+            padding: theme.space[3],
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[3],
+            background: 'rgba(14, 20, 20, 0.02)',
           }}
         >
-          Operations
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
-          <Checkbox
-            checked={draft.include_on_lwo}
-            onChange={(v) => set('include_on_lwo', v)}
-            label="Print on Lab Work Order"
-          />
-          <Checkbox
-            checked={draft.allocate_job_box}
-            onChange={(v) => set('allocate_job_box', v)}
-            label="Requires a job box at arrival"
-          />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
-          <Checkbox
-            checked={draft.sla_enabled}
-            onChange={(v) => set('sla_enabled', v)}
-            label="SLA enabled (arrived → appointment complete)"
-          />
-          {draft.sla_enabled ? (
-            <Input
-              label="SLA target (minutes)"
-              inputMode="numeric"
-              value={draft.sla_target_minutes}
-              onChange={(e) => set('sla_target_minutes', e.target.value)}
-              placeholder="e.g. 120"
-              style={{ maxWidth: 180 }}
-            />
-          ) : null}
-        </div>
-      </div>
-
-      {/* Per-item waiver requirements. Empty selection = fall back to
-          applies_to_service_type inference. Any selection = those
-          sections become the required set for this item. */}
-      <div
-        style={{
-          border: `1px solid ${theme.color.border}`,
-          borderRadius: 12,
-          padding: theme.space[3],
-          display: 'flex',
-          flexDirection: 'column',
-          gap: theme.space[2],
-          background: 'rgba(14, 20, 20, 0.02)',
-        }}
-      >
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.medium,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          Required waivers
-        </p>
-        <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-          Tick every section the patient must sign for this item. Leave all unchecked to fall back to the
-          service-type rule on the waiver section itself.
-        </p>
-        {waiverSectionsLoading || existingWaiverLoading ? (
-          <Skeleton height={80} radius={8} />
-        ) : waiverSections.length === 0 ? (
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            No active waiver sections. Add some on the Waivers tab.
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Operations
           </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            {waiverSections.map((sec) => (
-              <Checkbox
-                key={sec.key}
-                checked={waiverKeys.includes(sec.key)}
-                onChange={(v) => toggleWaiver(sec.key, v)}
-                label={`${sec.title}  ·  v${sec.version}`}
-              />
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+            <Checkbox
+              checked={draft.include_on_lwo}
+              onChange={(v) => set('include_on_lwo', v)}
+              label="Print on Lab Work Order"
+            />
+            <Checkbox
+              checked={draft.allocate_job_box}
+              onChange={(v) => set('allocate_job_box', v)}
+              label="Requires a job box at arrival"
+            />
           </div>
-        )}
-      </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+            <Checkbox
+              checked={draft.sla_enabled}
+              onChange={(v) => set('sla_enabled', v)}
+              label="SLA enabled (arrived → appointment complete)"
+            />
+            {draft.sla_enabled ? (
+              <Input
+                label="SLA target (minutes)"
+                inputMode="numeric"
+                value={draft.sla_target_minutes}
+                onChange={(e) => set('sla_target_minutes', e.target.value)}
+                placeholder="e.g. 120"
+                style={{ maxWidth: 180 }}
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Service-only: per-item waiver requirements. Products don't sign
+          waivers — they're retail purchases. */}
+      {isService ? (
+        <div
+          style={{
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: 12,
+            padding: theme.space[3],
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+            background: 'rgba(14, 20, 20, 0.02)',
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Required waivers
+          </p>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+            Tick every section the patient must sign for this item. Leave all unchecked to fall back to the
+            service-type rule on the waiver section itself.
+          </p>
+          {waiverSectionsLoading || existingWaiverLoading ? (
+            <Skeleton height={80} radius={8} />
+          ) : waiverSections.length === 0 ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              No active waiver sections. Add some on the Waivers tab.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {waiverSections.map((sec) => (
+                <Checkbox
+                  key={sec.key}
+                  checked={waiverKeys.includes(sec.key)}
+                  onChange={(v) => toggleWaiver(sec.key, v)}
+                  label={`${sec.title}  ·  v${sec.version}`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {draft.id ? (
         <UpgradeLinksEditor
