@@ -273,18 +273,18 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // Resolve the booking type so the email can surface the
-  // patient-facing duration. Best-effort: if the resolve fails or
-  // returns no row (service_type unset on the appointment, or no
-  // parent config seeded), the variable degrades to empty and the
-  // template renders without it.
-  const patientFacingDurationMinutes = await resolvePatientFacingMinutes(admin, apt.service_type);
+  // patient-facing duration (or range). Best-effort: if the resolve
+  // fails or returns no row, both fields are null and the variable
+  // degrades to empty in the template.
+  const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
   const variables = buildVariables({
     apt,
     oldApt,
     patient,
     location,
-    patientFacingDurationMinutes,
+    patientFacingMinMinutes: patientFacingRange.min,
+    patientFacingMaxMinutes: patientFacingRange.max,
   });
   const subject = substituteVariables(template.subject, variables);
   const bodyAfterVars = substituteVariables(template.body_syntax, variables);
@@ -409,25 +409,33 @@ interface LocationRow {
   phone: string | null;
 }
 
-// Best-effort resolve of the patient-facing duration for a service.
-// Calls lng_booking_type_resolve and reads patient_facing_duration_
-// minutes from the result. Returns null when the appointment has no
-// service_type, when the resolver returns no row, or on any error —
-// the calling email path treats null as "render the variable empty".
-async function resolvePatientFacingMinutes(
+// Best-effort resolve of the patient-facing duration range for a
+// service. Returns {min, max}. min is the lower bound (or fixed
+// value when max is null); max is null unless the admin opted into
+// a range. On any error or missing data both are null and the
+// rendered variable degrades to empty.
+async function resolvePatientFacingRange(
   admin: SupabaseClient,
   serviceType: string | null,
-): Promise<number | null> {
-  if (!serviceType) return null;
+): Promise<{ min: number | null; max: number | null }> {
+  if (!serviceType) return { min: null, max: null };
   const { data, error } = await admin.rpc('lng_booking_type_resolve', {
     p_service_type: serviceType,
   });
-  if (error) return null;
+  if (error) return { min: null, max: null };
   const row = Array.isArray(data) ? data[0] : null;
-  if (!row) return null;
-  const minutes = (row as { patient_facing_duration_minutes: number | null })
-    .patient_facing_duration_minutes;
-  return typeof minutes === 'number' && minutes > 0 ? minutes : null;
+  if (!row) return { min: null, max: null };
+  const r = row as {
+    patient_facing_min_minutes: number | null;
+    patient_facing_max_minutes: number | null;
+  };
+  const min = typeof r.patient_facing_min_minutes === 'number' && r.patient_facing_min_minutes > 0
+    ? r.patient_facing_min_minutes
+    : null;
+  const max = typeof r.patient_facing_max_minutes === 'number' && r.patient_facing_max_minutes > 0
+    ? r.patient_facing_max_minutes
+    : null;
+  return { min, max };
 }
 
 async function readAppointment(
@@ -577,13 +585,22 @@ function icsUid(appointmentId: string): string {
   return `${appointmentId}@lounge.venneir.com`;
 }
 
-// Patient-facing duration label for the email. Friendlier than the
-// admin "1 h 30" because the patient is reading prose, not a config
-// summary. Returns empty string when the booking type has no value
-// configured so the {{patientFacingDuration}} variable degrades to
-// blank rather than printing "0 min" or NaN.
-function formatMinutesForEmail(min: number | null): string {
+// Patient-facing duration label for the email. Renders "30 min",
+// "1 hour", "1 hour 30 min" for fixed values, "30 to 45 min" or
+// "1 to 2 hours" for ranges. Returns empty string when min is null
+// so the {{patientFacingDuration}} variable degrades to blank
+// rather than printing "0 min" or NaN. Mirrors
+// patientFacingDurationLabel() in src/lib/queries/bookingTypes.ts.
+function formatPatientFacingDurationForEmail(
+  min: number | null,
+  max: number | null,
+): string {
   if (!min || min <= 0) return '';
+  if (!max || max <= min) return formatMinutesLong(min);
+  return `${formatMinutesLong(min)} to ${formatMinutesLong(max)}`;
+}
+
+function formatMinutesLong(min: number): string {
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -616,12 +633,12 @@ interface VariableContext {
   oldApt: AppointmentRow | null;
   patient: PatientRow;
   location: LocationRow | null;
-  // Resolved patient-facing duration for the booking type, in minutes.
-  // Null when the booking type has no value configured AND no phase
-  // total to derive from. Empty string in the rendered template when
-  // null (so the variable degrades gracefully if admin uses it on
-  // a service that hasn't set one).
-  patientFacingDurationMinutes: number | null;
+  // Resolved patient-facing duration as a min/max range. min is
+  // the lower bound (or fixed value when max is null); max is null
+  // unless the admin opted into a range. Empty string in the
+  // rendered template when min is null.
+  patientFacingMinMinutes: number | null;
+  patientFacingMaxMinutes: number | null;
 }
 
 function buildVariables(ctx: VariableContext): Record<string, string> {
@@ -656,7 +673,10 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     locationPhone: location?.phone?.trim() || '',
     appointmentRef: apt.appointment_ref ?? '',
     googleCalendarUrl: googleCalendarUrl(apt, location),
-    patientFacingDuration: formatMinutesForEmail(ctx.patientFacingDurationMinutes),
+    patientFacingDuration: formatPatientFacingDurationForEmail(
+      ctx.patientFacingMinMinutes,
+      ctx.patientFacingMaxMinutes,
+    ),
   };
 
   if (oldApt) {

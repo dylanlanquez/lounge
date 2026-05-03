@@ -350,8 +350,8 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     name: 'patientFacingDuration',
     label: 'Duration (patient-facing)',
     description:
-      'How long we tell the patient the appointment is, e.g. "30 min". Set per booking type in Booking types so the email matches the marketing copy, not the operational total. Empty when no value is configured.',
-    sample: '30 min',
+      'How long we tell the patient the appointment is. Renders as a fixed time ("30 min", "1 hour") or a range ("30 to 45 min", "4 to 6 hours") depending on how the booking type is set up in Booking types. Empty when no value is configured.',
+    sample: '4 to 6 hours',
   },
   {
     name: 'googleCalendarUrl',

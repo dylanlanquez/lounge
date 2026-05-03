@@ -74,12 +74,15 @@ export interface BookingTypeConfigRow {
   // exact type. Independent of resource-pool capacity (both rules
   // apply at conflict-check time). Null = inherit from parent.
   max_concurrent: number | null;
-  // What we tell the patient in their confirmation. Null on a child
-  // = inherit parent. Null on a parent = resolves to the derived
-  // block duration (sum of phase defaults) at resolve time. See
-  // ADR-006 §6.3.1 — patient-facing copy reads this; the conflict
-  // checker never reads it.
-  patient_facing_duration_minutes: number | null;
+  // Patient-facing duration as a min/max range. min is the lower
+  // bound (or fixed value when max is null). max is null for fixed
+  // values; set when the patient should see a range like "30 to 45
+  // min". Both null on a child = inherit parent. Both null on a
+  // parent = resolves to the derived block duration. See ADR-006
+  // §6.3.1 — patient-facing copy reads these; the conflict checker
+  // never reads them.
+  patient_facing_min_minutes: number | null;
+  patient_facing_max_minutes: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -164,9 +167,39 @@ export interface ResolvedBookingTypeConfig {
   // Sum of phases[].duration_default. Drives the calendar block
   // width and the slot picker. Null when no phases yet.
   block_duration_minutes: number | null;
-  // What we tell the patient. Resolved (child → parent → block
-  // fallback). Null only when block_duration_minutes is also null.
-  patient_facing_duration_minutes: number | null;
+  // What we tell the patient as a min/max range. min is resolved
+  // (child → parent → block fallback) and is null only when block
+  // is also null. max is null unless the admin opted into a range
+  // explicitly — no fallback. Use patientFacingDurationLabel() to
+  // format both into a single human string.
+  patient_facing_min_minutes: number | null;
+  patient_facing_max_minutes: number | null;
+}
+
+// Human format for a patient-facing duration range. Single value
+// when max is null or equal to min ("30 min" / "1 hour"). Ranged
+// when max > min ("30 to 45 min" / "1 to 2 hours"). The same helper
+// is used by the admin ribbon, the editor preview, and (in spirit)
+// the email renderer — the edge functions carry their own copy
+// because Deno can't import from src.
+export function patientFacingDurationLabel(
+  min: number | null,
+  max: number | null,
+): string {
+  if (!min || min <= 0) return '';
+  if (!max || max <= min) return formatDurationLong(min);
+  return `${formatDurationLong(min)} to ${formatDurationLong(max)}`;
+}
+
+// "30 min", "1 hour", "1 hour 30 min". Long-form (matches the
+// email tone). Used inside patientFacingDurationLabel.
+function formatDurationLong(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const hourWord = h === 1 ? 'hour' : 'hours';
+  if (m === 0) return `${h} ${hourWord}`;
+  return `${h} ${hourWord} ${m} min`;
 }
 
 // Fetch every config row in one shot. Used by the admin Booking
@@ -244,8 +277,10 @@ export async function resolveBookingTypeConfig(args: {
     source: row.source as 'child' | 'parent',
     phases: Array.isArray(row.phases) ? (row.phases as ResolvedPhase[]) : [],
     block_duration_minutes: (row.block_duration_minutes as number | null) ?? null,
-    patient_facing_duration_minutes:
-      (row.patient_facing_duration_minutes as number | null) ?? null,
+    patient_facing_min_minutes:
+      (row.patient_facing_min_minutes as number | null) ?? null,
+    patient_facing_max_minutes:
+      (row.patient_facing_max_minutes as number | null) ?? null,
   };
 }
 
@@ -412,7 +447,8 @@ export async function upsertBookingTypeConfig(input: {
   duration_max?: number | null;
   duration_default?: number | null;
   max_concurrent?: number | null;
-  patient_facing_duration_minutes?: number | null;
+  patient_facing_min_minutes?: number | null;
+  patient_facing_max_minutes?: number | null;
   notes?: string | null;
 }): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -428,8 +464,10 @@ export async function upsertBookingTypeConfig(input: {
   if (input.duration_max !== undefined) payload.duration_max = input.duration_max;
   if (input.duration_default !== undefined) payload.duration_default = input.duration_default;
   if (input.max_concurrent !== undefined) payload.max_concurrent = input.max_concurrent;
-  if (input.patient_facing_duration_minutes !== undefined)
-    payload.patient_facing_duration_minutes = input.patient_facing_duration_minutes;
+  if (input.patient_facing_min_minutes !== undefined)
+    payload.patient_facing_min_minutes = input.patient_facing_min_minutes;
+  if (input.patient_facing_max_minutes !== undefined)
+    payload.patient_facing_max_minutes = input.patient_facing_max_minutes;
   if (input.notes !== undefined) payload.notes = input.notes;
 
   const { error } = await supabase

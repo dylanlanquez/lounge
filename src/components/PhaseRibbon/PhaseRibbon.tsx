@@ -40,10 +40,13 @@ export interface PhaseRibbonProps {
   // Operational and patient-facing totals. The component does NOT
   // sum these itself — the caller knows whether a child override
   // changes them and is the source of truth. Pass null for the
-  // patient-facing line to hide it.
+  // patient-facing min to hide the chip entirely. Set max to surface
+  // a range ("30 to 45 min" / "1 to 2 hours") rather than a fixed
+  // value.
   operational_minutes: number;
   patient_in_minutes: number;
-  patient_facing_minutes: number | null;
+  patient_facing_min_minutes: number | null;
+  patient_facing_max_minutes: number | null;
   // Optional per-phase tap handler — opens the editor in the admin.
   // When omitted, chips are not interactive.
   onPhaseClick?: (key: string) => void;
@@ -63,7 +66,8 @@ export function PhaseRibbon({
   phases,
   operational_minutes,
   patient_in_minutes,
-  patient_facing_minutes,
+  patient_facing_min_minutes,
+  patient_facing_max_minutes,
   onPhaseClick,
   onAddPhase,
   onEditPatientFacing,
@@ -83,7 +87,8 @@ export function PhaseRibbon({
         <SummaryLine
           operational={operational_minutes}
           patient_in={patient_in_minutes}
-          patient_facing={patient_facing_minutes}
+          patient_facing_min={patient_facing_min_minutes}
+          patient_facing_max={patient_facing_max_minutes}
           onEditPatientFacing={onEditPatientFacing}
         />
       )}
@@ -266,18 +271,31 @@ function PhaseChip({
 function SummaryLine({
   operational,
   patient_in,
-  patient_facing,
+  patient_facing_min,
+  patient_facing_max,
   onEditPatientFacing,
 }: {
   operational: number;
   patient_in: number;
-  patient_facing: number | null;
+  patient_facing_min: number | null;
+  patient_facing_max: number | null;
   onEditPatientFacing?: () => void;
 }) {
-  const drift =
-    patient_facing !== null && patient_facing !== operational
-      ? Math.abs(patient_facing - operational)
-      : 0;
+  const facingLabel = formatPatientFacing(patient_facing_min, patient_facing_max);
+  // "Attention" tone fires when the patient-facing line meaningfully
+  // diverges from the operational total. Range counts as divergent
+  // (it's never equal to a single operational number); fixed values
+  // count when min differs from operational.
+  const isRange =
+    patient_facing_max !== null &&
+    patient_facing_min !== null &&
+    patient_facing_max > patient_facing_min;
+  const fixedDiverges =
+    patient_facing_min !== null &&
+    !isRange &&
+    patient_facing_min !== operational;
+  const tone = isRange || fixedDiverges ? 'attention' : 'default';
+
   return (
     <div
       style={{
@@ -290,16 +308,28 @@ function SummaryLine({
     >
       <SummaryItem label="Operational" value={formatMinutes(operational)} />
       <SummaryItem label="Patient in" value={formatMinutes(patient_in)} />
-      {patient_facing !== null && (
+      {facingLabel && (
         <SummaryItem
           label="Telling patient"
-          value={formatMinutes(patient_facing)}
-          tone={drift > 0 ? 'attention' : 'default'}
+          value={facingLabel}
+          tone={tone}
           onClick={onEditPatientFacing}
         />
       )}
     </div>
   );
+}
+
+// Compact format for the ribbon summary. Single value or range,
+// short-form ("30 min" / "1 h 30") to match the operational and
+// patient-in pills next to it. Empty when min isn't set.
+function formatPatientFacing(
+  min: number | null,
+  max: number | null,
+): string {
+  if (!min || min <= 0) return '';
+  if (!max || max <= min) return formatMinutes(min);
+  return `${formatMinutes(min)} to ${formatMinutes(max)}`;
 }
 
 function SummaryItem({

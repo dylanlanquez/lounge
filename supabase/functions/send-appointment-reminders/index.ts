@@ -236,13 +236,19 @@ async function processOne(
   }
 
   // Best-effort resolve of the booking type so {{patientFacingDuration}}
-  // hydrates from the parent config. Null falls back to empty string in
-  // the renderer.
-  const patientFacingDurationMinutes = await resolvePatientFacingMinutes(admin, apt.service_type);
+  // hydrates from the parent config. Returns {min, max} — either or
+  // both can be null and the renderer degrades to empty string.
+  const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
   // Build variables. Keep names matching what the admin UI exposes
   // so the editor's autocomplete + the renderer never disagree.
-  const variables = buildVariables(apt, patient, location, patientFacingDurationMinutes);
+  const variables = buildVariables(
+    apt,
+    patient,
+    location,
+    patientFacingRange.min,
+    patientFacingRange.max,
+  );
 
   // Render via the inline parser (same pipeline as src/lib/emailRenderer.ts).
   const subject = substituteVariables(template.subject, variables);
@@ -289,7 +295,8 @@ function buildVariables(
   apt: AppointmentRow,
   patient: PatientRow,
   location: LocationRow | null,
-  patientFacingDurationMinutes: number | null,
+  patientFacingMinMinutes: number | null,
+  patientFacingMaxMinutes: number | null,
 ): Record<string, string> {
   const start = new Date(apt.start_at);
   const fmt = (opts: Intl.DateTimeFormatOptions) =>
@@ -315,16 +322,28 @@ function buildVariables(
     locationCity: location?.city?.trim() || '',
     locationAddress: locationFreeform(location),
     appointmentRef: apt.appointment_ref ?? '',
-    patientFacingDuration: formatMinutesForEmail(patientFacingDurationMinutes),
+    patientFacingDuration: formatPatientFacingDurationForEmail(
+      patientFacingMinMinutes,
+      patientFacingMaxMinutes,
+    ),
   };
 }
 
-// Mirrors the helper in send-appointment-confirmation. Friendly
-// patient-facing format ("30 min" / "1 hour" / "1 hour 30 min").
-// Returns empty string when null so the variable degrades gracefully
-// in templates that include it on a service without a value set.
-function formatMinutesForEmail(min: number | null): string {
+// Mirrors the helper in send-appointment-confirmation. Renders fixed
+// values ("30 min" / "1 hour 30 min") or ranges ("30 to 45 min" /
+// "1 to 2 hours"). Empty when min is null so the variable degrades
+// gracefully in templates that include it on services without a
+// value set.
+function formatPatientFacingDurationForEmail(
+  min: number | null,
+  max: number | null,
+): string {
   if (!min || min <= 0) return '';
+  if (!max || max <= min) return formatMinutesLong(min);
+  return `${formatMinutesLong(min)} to ${formatMinutesLong(max)}`;
+}
+
+function formatMinutesLong(min: number): string {
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -334,22 +353,30 @@ function formatMinutesForEmail(min: number | null): string {
 }
 
 // Mirrors the helper in send-appointment-confirmation. Best-effort —
-// any error or empty result returns null and the variable hydrates
-// to empty string.
-async function resolvePatientFacingMinutes(
+// any error or empty result returns {min: null, max: null} and the
+// variable hydrates to empty string.
+async function resolvePatientFacingRange(
   admin: SupabaseClient,
   serviceType: string | null,
-): Promise<number | null> {
-  if (!serviceType) return null;
+): Promise<{ min: number | null; max: number | null }> {
+  if (!serviceType) return { min: null, max: null };
   const { data, error } = await admin.rpc('lng_booking_type_resolve', {
     p_service_type: serviceType,
   });
-  if (error) return null;
+  if (error) return { min: null, max: null };
   const row = Array.isArray(data) ? data[0] : null;
-  if (!row) return null;
-  const minutes = (row as { patient_facing_duration_minutes: number | null })
-    .patient_facing_duration_minutes;
-  return typeof minutes === 'number' && minutes > 0 ? minutes : null;
+  if (!row) return { min: null, max: null };
+  const r = row as {
+    patient_facing_min_minutes: number | null;
+    patient_facing_max_minutes: number | null;
+  };
+  const min = typeof r.patient_facing_min_minutes === 'number' && r.patient_facing_min_minutes > 0
+    ? r.patient_facing_min_minutes
+    : null;
+  const max = typeof r.patient_facing_max_minutes === 'number' && r.patient_facing_max_minutes > 0
+    ? r.patient_facing_max_minutes
+    : null;
+  return { min, max };
 }
 
 function labelForService(apt: AppointmentRow): string {
