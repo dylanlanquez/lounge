@@ -27,6 +27,7 @@ import {
   type WorkingHours,
   BOOKING_SERVICE_TYPES,
   DAYS_OF_WEEK,
+  bookingTypeRowDerivedLabel,
   bookingTypeRowLabel,
   deleteBookingTypeChildOverride,
   deleteBookingTypePhase,
@@ -1160,17 +1161,11 @@ function BookingTypeEditorDialog({
     return !row?.working_hours;
   });
 
-  const [durMin, setDurMin] = useState<string>(row?.duration_min?.toString() ?? '');
-  const [durDefault, setDurDefault] = useState<string>(row?.duration_default?.toString() ?? '');
-  const [durMax, setDurMax] = useState<string>(row?.duration_max?.toString() ?? '');
-  const [durationInherits, setDurationInherits] = useState<boolean>(() => {
-    if (isParent) return false;
-    return (
-      row?.duration_min == null &&
-      row?.duration_max == null &&
-      row?.duration_default == null
-    );
-  });
+  // Editable display label — admin can rename any override row.
+  // Empty / whitespace = clear, falls back to the catalogue / arch /
+  // service-derived label. Only shown for non-parent rows; the
+  // parent label IS the service name.
+  const [displayLabel, setDisplayLabel] = useState<string>(row?.display_label ?? '');
 
   const [notes, setNotes] = useState<string>(row?.notes ?? '');
   const [busy, setBusy] = useState(false);
@@ -1178,15 +1173,10 @@ function BookingTypeEditorDialog({
   // When a child toggles "inherit" on or off, prefill from the
   // parent so the user can adjust from a reasonable starting point
   // rather than typing into empty fields.
-  const fillFromParent = (which: 'hours' | 'duration') => {
+  const fillFromParent = (which: 'hours') => {
     if (!parent) return;
     if (which === 'hours' && parent.working_hours) {
       setHours(cloneHours(parent.working_hours));
-    }
-    if (which === 'duration') {
-      if (parent.duration_min != null) setDurMin(parent.duration_min.toString());
-      if (parent.duration_default != null) setDurDefault(parent.duration_default.toString());
-      if (parent.duration_max != null) setDurMax(parent.duration_max.toString());
     }
   };
 
@@ -1199,7 +1189,8 @@ function BookingTypeEditorDialog({
   const save = async () => {
     setBusy(true);
     try {
-      const payload = {
+      const trimmedLabel = displayLabel.trim();
+      const payload: Parameters<typeof upsertBookingTypeConfig>[0] = {
         service_type:
           target.kind === 'new-child'
             ? target.service_type
@@ -1223,41 +1214,23 @@ function BookingTypeEditorDialog({
               : null
             : ((target as { row: BookingTypeConfigRow }).row.arch),
         working_hours: hoursInherits ? null : hours,
-        duration_min: durationInherits ? null : parseDur(durMin),
-        duration_max: durationInherits ? null : parseDur(durMax),
-        duration_default: durationInherits ? null : parseDur(durDefault),
+        // display_label only meaningful for non-parent rows; the
+        // parent's label is the service name and shouldn't be
+        // overridden from this dialog.
+        ...(isParent
+          ? {}
+          : { display_label: trimmedLabel === '' ? null : trimmedLabel }),
         notes: notes.trim() === '' ? null : notes.trim(),
       };
 
-      // Validate: parent rows must have non-null hours and durations.
-      // Child rows that don't inherit must have valid duration ranges.
-      if (isParent) {
-        if (hoursInherits) throw new Error("Parent rows can't inherit; set the working hours.");
-        if (
-          payload.duration_min == null ||
-          payload.duration_default == null ||
-          payload.duration_max == null
-        ) {
-          throw new Error('Parent rows need min, default and max durations.');
-        }
+      // Parent rows still must have non-null hours.
+      if (isParent && hoursInherits) {
+        throw new Error("Parent rows can't inherit; set the working hours.");
       }
-      if (!durationInherits) {
-        const min = payload.duration_min;
-        const def = payload.duration_default;
-        const max = payload.duration_max;
-        if ((min != null && min <= 0) || (def != null && def <= 0) || (max != null && max <= 0)) {
-          throw new Error('Durations must be positive minutes.');
-        }
-        if (min != null && max != null && max < min) {
-          throw new Error('Max duration must be at least the minimum.');
-        }
-        if (
-          def != null &&
-          ((min != null && def < min) || (max != null && def > max))
-        ) {
-          throw new Error('Default must sit between min and max.');
-        }
-      }
+
+      // Duration columns are vestigial — the phase ribbon owns
+      // duration now. We don't include them in the payload so
+      // existing values stay untouched.
 
       await upsertBookingTypeConfig(payload);
       onSaved();
@@ -1307,6 +1280,14 @@ function BookingTypeEditorDialog({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        {!isParent && (
+          <TitleSection
+            value={displayLabel}
+            onChange={setDisplayLabel}
+            derived={derivedLabelForTarget(target)}
+          />
+        )}
+
         <SectionWithInherit
           title="Working hours"
           allowInherit={!isParent}
@@ -1319,28 +1300,6 @@ function BookingTypeEditorDialog({
         >
           {!hoursInherits ? (
             <WorkingHoursEditor value={hours} onChange={setHours} />
-          ) : null}
-        </SectionWithInherit>
-
-        <SectionWithInherit
-          title="Duration"
-          allowInherit={!isParent}
-          inherits={durationInherits}
-          onToggleInherit={(v) => {
-            if (!v && parent) fillFromParent('duration');
-            setDurationInherits(v);
-          }}
-          parentSummary={parent ? summariseDuration(parent) : ''}
-        >
-          {!durationInherits ? (
-            <DurationRangeEditor
-              durMin={durMin}
-              durDefault={durDefault}
-              durMax={durMax}
-              onMin={setDurMin}
-              onDefault={setDurDefault}
-              onMax={setDurMax}
-            />
           ) : null}
         </SectionWithInherit>
 
@@ -1367,6 +1326,76 @@ function BookingTypeEditorDialog({
       </div>
     </Dialog>
   );
+}
+
+// Editable title section shown at the top of the editor for child /
+// new-child rows. Empty value = use the catalogue / arch default;
+// non-empty = take it verbatim. The "Use catalogue default" link
+// lets the admin clear the override and revert to the auto-derived
+// label without typing it back from memory.
+function TitleSection({
+  value,
+  onChange,
+  derived,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  derived: string;
+}) {
+  const isOverridden = value.trim() !== '' && value.trim() !== derived;
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <header style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.semibold,
+          }}
+        >
+          Title
+        </span>
+        {isOverridden && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            style={{
+              appearance: 'none',
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              cursor: 'pointer',
+              color: theme.color.accent,
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.medium,
+              fontFamily: 'inherit',
+            }}
+          >
+            Use catalogue default ({derived})
+          </button>
+        )}
+      </header>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={derived}
+      />
+      <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+        How this override appears in the booking-types tree, schedule cards, and
+        emails. Leave blank to use the catalogue default.
+      </span>
+    </section>
+  );
+}
+
+// Compute the catalogue / arch / service derived label for the
+// current edit target, ignoring any admin override. Used by
+// TitleSection for the "Use catalogue default" link copy.
+function derivedLabelForTarget(target: EditTarget): string {
+  if (target.kind === 'new-child') return target.label;
+  return bookingTypeRowDerivedLabel(target.row);
 }
 
 // Wrapper for a section with an optional "Override" toggle. Models
@@ -1693,133 +1722,6 @@ function WorkingHoursEditor({
 //   minutes                          minutes
 //
 // Default is the most-used value (it's what the receptionist sees
-// pre-selected when booking), so it's visually heavier — larger
-// type, bolder weight, the focal point. Min and Max are smaller and
-// muted — they bound the slider but aren't the primary interaction.
-//
-// Visible em-dash separators between fields read the trio as a
-// "30 — 60 — 90 minutes" range at a glance.
-function DurationRangeEditor({
-  durMin,
-  durDefault,
-  durMax,
-  onMin,
-  onDefault,
-  onMax,
-}: {
-  durMin: string;
-  durDefault: string;
-  durMax: string;
-  onMin: (v: string) => void;
-  onDefault: (v: string) => void;
-  onMax: (v: string) => void;
-}) {
-  return (
-    <div
-      style={{
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        display: 'flex',
-        alignItems: 'flex-end',
-        gap: theme.space[3],
-      }}
-    >
-      <DurationField label="Min" emphasis="muted" value={durMin} onChange={onMin} />
-      <DurationDash />
-      <DurationField label="Default" emphasis="primary" value={durDefault} onChange={onDefault} />
-      <DurationDash />
-      <DurationField label="Max" emphasis="muted" value={durMax} onChange={onMax} />
-      <span
-        style={{
-          fontSize: theme.type.size.xs,
-          color: theme.color.inkMuted,
-          paddingBottom: 6,
-          marginLeft: theme.space[1],
-        }}
-      >
-        minutes
-      </span>
-    </div>
-  );
-}
-
-function DurationDash() {
-  return (
-    <span
-      aria-hidden
-      style={{
-        color: theme.color.inkSubtle,
-        fontSize: theme.type.size.md,
-        paddingBottom: 8,
-      }}
-    >
-      —
-    </span>
-  );
-}
-
-function DurationField({
-  label,
-  emphasis,
-  value,
-  onChange,
-}: {
-  label: string;
-  emphasis: 'primary' | 'muted';
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const isPrimary = emphasis === 'primary';
-  return (
-    <label
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
-        flex: isPrimary ? 1.4 : 1,
-        minWidth: 0,
-      }}
-    >
-      <span
-        style={{
-          fontSize: 11,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          color: isPrimary ? theme.color.ink : theme.color.inkMuted,
-          fontWeight: isPrimary ? theme.type.weight.semibold : theme.type.weight.medium,
-        }}
-      >
-        {label}
-      </span>
-      <input
-        type="number"
-        inputMode="numeric"
-        min={0}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          appearance: 'none',
-          border: `1px solid ${theme.color.border}`,
-          background: theme.color.bg,
-          borderRadius: theme.radius.input,
-          padding: `${isPrimary ? 8 : 6}px ${theme.space[2]}px`,
-          fontSize: isPrimary ? theme.type.size.lg : theme.type.size.md,
-          fontWeight: isPrimary ? theme.type.weight.semibold : theme.type.weight.medium,
-          color: isPrimary ? theme.color.ink : theme.color.inkMuted,
-          fontFamily: 'inherit',
-          fontVariantNumeric: 'tabular-nums',
-          textAlign: 'center',
-          minWidth: 0,
-          width: '100%',
-          outline: 'none',
-        }}
-      />
-    </label>
-  );
-}
-
 // Compact native time input. Native `<input type="time">` keeps the
 // keyboard / picker behaviour the OS provides (sensible on iPad
 // kiosks and Mac admins alike); we just style the chrome to match
@@ -1913,14 +1815,6 @@ function summariseDuration(row: BookingTypeConfigRow): string {
   if (def != null) parts.push(`default ${def}`);
   if (max != null) parts.push(`max ${max}`);
   return parts.join(', ');
-}
-
-function parseDur(s: string): number | null {
-  const t = s.trim();
-  if (t === '') return null;
-  const n = Number(t);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n);
 }
 
 function labelOfService(s: BookingServiceType): string {
