@@ -688,10 +688,11 @@ function IntakeCard({
               value={value}
               isFirst={i === 0}
               wrapValue
-              // Intake questions are full sentences. Widen the label
-              // column so "What product is the impression for" sits
-              // on one line without nudging the value off-card.
-              labelMaxWidth={240}
+              // Intake questions vary from "Arch" to "What product is
+              // the impression for". Per-row content sizing keeps the
+              // label-to-answer gap tight on every row, instead of
+              // every row inheriting the widest label's lane.
+              labelMaxWidth="fit"
             />
           );
         })}
@@ -1230,20 +1231,33 @@ function KeyValueRow({
   value: ReactNode;
   isFirst?: boolean;
   wrapValue?: boolean;
-  /** Override the default label column cap (140px without an icon,
-   * 130px with one). Used by Intake answers where questions are full
-   * sentences ("What product is the impression for") and the default
-   * cap forces a two-line wrap. */
-  labelMaxWidth?: number;
+  /**
+   * Sizing for the label column.
+   *
+   *   undefined  default cap — 140px without an icon, 130px with one.
+   *              Right for short, predictable labels (Location, Email).
+   *   number     fixed cap in px. Use when intermediate-length labels
+   *              need a slightly wider lane but still consistent
+   *              alignment across rows.
+   *   'fit'      label sizes to its natural content width per row.
+   *              Best for variable-length labels (intake questions
+   *              from "Arch" to "What product is the impression for")
+   *              where a fixed cap forces every row to inherit the
+   *              widest label's gap.
+   */
+  labelMaxWidth?: number | 'fit';
 }) {
-  const labelCap = labelMaxWidth ?? (icon ? 130 : 140);
+  const labelTrack =
+    labelMaxWidth === 'fit'
+      ? 'max-content'
+      : `minmax(0, ${labelMaxWidth ?? (icon ? 130 : 140)}px)`;
   return (
     <div
       style={{
         display: 'grid',
         gridTemplateColumns: icon
-          ? `14px minmax(0, ${labelCap}px) minmax(0, 1fr)`
-          : `minmax(0, ${labelCap}px) minmax(0, 1fr)`,
+          ? `14px ${labelTrack} minmax(0, 1fr)`
+          : `${labelTrack} minmax(0, 1fr)`,
         gap: theme.space[3],
         alignItems: 'baseline',
         padding: `${theme.space[3]}px 0`,
