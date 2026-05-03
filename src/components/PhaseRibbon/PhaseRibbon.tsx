@@ -1,4 +1,4 @@
-import { Hourglass, Plus, UserRound } from 'lucide-react';
+import { Hourglass, Pencil, Plus, UserRound } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 
 // PhaseRibbon — horizontal proportional ribbon showing the phases
@@ -50,6 +50,10 @@ export interface PhaseRibbonProps {
   // Optional "+ Add phase" handler — appends a chip at the end with
   // a plus icon; tap fires this. Omit for read-only ribbons.
   onAddPhase?: () => void;
+  // Optional handler for tapping the "Telling patient" summary chip.
+  // When provided, the chip renders with a pencil affordance and is
+  // a button. When omitted the chip stays plain text.
+  onEditPatientFacing?: () => void;
   // Compact mode shrinks chips and hides the summary line. Used when
   // the ribbon needs to fit inside a tight admin row.
   compact?: boolean;
@@ -62,6 +66,7 @@ export function PhaseRibbon({
   patient_facing_minutes,
   onPhaseClick,
   onAddPhase,
+  onEditPatientFacing,
   compact = false,
 }: PhaseRibbonProps) {
   const totalMin = phases.reduce((acc, p) => acc + Math.max(p.duration_minutes, 1), 0);
@@ -79,6 +84,7 @@ export function PhaseRibbon({
           operational={operational_minutes}
           patient_in={patient_in_minutes}
           patient_facing={patient_facing_minutes}
+          onEditPatientFacing={onEditPatientFacing}
         />
       )}
 
@@ -248,10 +254,12 @@ function SummaryLine({
   operational,
   patient_in,
   patient_facing,
+  onEditPatientFacing,
 }: {
   operational: number;
   patient_in: number;
   patient_facing: number | null;
+  onEditPatientFacing?: () => void;
 }) {
   const drift =
     patient_facing !== null && patient_facing !== operational
@@ -274,6 +282,7 @@ function SummaryLine({
           label="Telling patient"
           value={formatMinutes(patient_facing)}
           tone={drift > 0 ? 'attention' : 'default'}
+          onClick={onEditPatientFacing}
         />
       )}
     </div>
@@ -284,23 +293,51 @@ function SummaryItem({
   label,
   value,
   tone = 'default',
+  onClick,
 }: {
   label: string;
   value: string;
   tone?: 'default' | 'attention';
+  onClick?: () => void;
 }) {
+  const valueStyle = {
+    fontWeight: theme.type.weight.semibold,
+    color: tone === 'attention' ? theme.color.alert : theme.color.ink,
+  } as const;
+
+  if (!onClick) {
+    return (
+      <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: theme.space[1] }}>
+        <span>{label}</span>
+        <span style={valueStyle}>{value}</span>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: theme.space[1] }}>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Edit ${label.toLowerCase()}`}
+      style={{
+        appearance: 'none',
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        padding: `${theme.space[1]}px ${theme.space[2]}px`,
+        borderRadius: theme.radius.pill,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        cursor: 'pointer',
+        fontSize: theme.type.size.sm,
+        color: theme.color.inkMuted,
+        fontFamily: 'inherit',
+      }}
+    >
       <span>{label}</span>
-      <span
-        style={{
-          fontWeight: theme.type.weight.semibold,
-          color: tone === 'attention' ? theme.color.alert : theme.color.ink,
-        }}
-      >
-        {value}
-      </span>
-    </div>
+      <span style={valueStyle}>{value}</span>
+      <Pencil size={11} strokeWidth={2.25} aria-hidden style={{ color: theme.color.inkMuted }} />
+    </button>
   );
 }
 

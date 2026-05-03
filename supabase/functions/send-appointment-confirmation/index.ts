@@ -272,7 +272,20 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
-  const variables = buildVariables({ apt, oldApt, patient, location });
+  // Resolve the booking type so the email can surface the
+  // patient-facing duration. Best-effort: if the resolve fails or
+  // returns no row (service_type unset on the appointment, or no
+  // parent config seeded), the variable degrades to empty and the
+  // template renders without it.
+  const patientFacingDurationMinutes = await resolvePatientFacingMinutes(admin, apt.service_type);
+
+  const variables = buildVariables({
+    apt,
+    oldApt,
+    patient,
+    location,
+    patientFacingDurationMinutes,
+  });
   const subject = substituteVariables(template.subject, variables);
   const bodyAfterVars = substituteVariables(template.body_syntax, variables);
   const html = wrapInLoungeShell(parseFormatting(toBr(bodyAfterVars)));
@@ -394,6 +407,27 @@ interface LocationRow {
   city: string | null;
   address: string | null;
   phone: string | null;
+}
+
+// Best-effort resolve of the patient-facing duration for a service.
+// Calls lng_booking_type_resolve and reads patient_facing_duration_
+// minutes from the result. Returns null when the appointment has no
+// service_type, when the resolver returns no row, or on any error —
+// the calling email path treats null as "render the variable empty".
+async function resolvePatientFacingMinutes(
+  admin: SupabaseClient,
+  serviceType: string | null,
+): Promise<number | null> {
+  if (!serviceType) return null;
+  const { data, error } = await admin.rpc('lng_booking_type_resolve', {
+    p_service_type: serviceType,
+  });
+  if (error) return null;
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) return null;
+  const minutes = (row as { patient_facing_duration_minutes: number | null })
+    .patient_facing_duration_minutes;
+  return typeof minutes === 'number' && minutes > 0 ? minutes : null;
 }
 
 async function readAppointment(
@@ -543,6 +577,21 @@ function icsUid(appointmentId: string): string {
   return `${appointmentId}@lounge.venneir.com`;
 }
 
+// Patient-facing duration label for the email. Friendlier than the
+// admin "1 h 30" because the patient is reading prose, not a config
+// summary. Returns empty string when the booking type has no value
+// configured so the {{patientFacingDuration}} variable degrades to
+// blank rather than printing "0 min" or NaN.
+function formatMinutesForEmail(min: number | null): string {
+  if (!min || min <= 0) return '';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const hourWord = h === 1 ? 'hour' : 'hours';
+  if (m === 0) return `${h} ${hourWord}`;
+  return `${h} ${hourWord} ${m} min`;
+}
+
 // JS strings are UTF-16 but btoa wants Latin-1. Encode UTF-8 bytes as
 // Latin-1 first so accented names + pound signs survive the round-trip.
 function unicodeEscape(s: string): string {
@@ -567,6 +616,12 @@ interface VariableContext {
   oldApt: AppointmentRow | null;
   patient: PatientRow;
   location: LocationRow | null;
+  // Resolved patient-facing duration for the booking type, in minutes.
+  // Null when the booking type has no value configured AND no phase
+  // total to derive from. Empty string in the rendered template when
+  // null (so the variable degrades gracefully if admin uses it on
+  // a service that hasn't set one).
+  patientFacingDurationMinutes: number | null;
 }
 
 function buildVariables(ctx: VariableContext): Record<string, string> {
@@ -601,6 +656,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     locationPhone: location?.phone?.trim() || '',
     appointmentRef: apt.appointment_ref ?? '',
     googleCalendarUrl: googleCalendarUrl(apt, location),
+    patientFacingDuration: formatMinutesForEmail(ctx.patientFacingDurationMinutes),
   };
 
   if (oldApt) {

@@ -347,6 +347,13 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     sample: 'LAP-00042',
   },
   {
+    name: 'patientFacingDuration',
+    label: 'Duration (patient-facing)',
+    description:
+      'How long we tell the patient the appointment is, e.g. "30 min". Set per booking type in Booking types so the email matches the marketing copy, not the operational total. Empty when no value is configured.',
+    sample: '30 min',
+  },
+  {
     name: 'googleCalendarUrl',
     label: 'Add-to-calendar URL',
     description:
