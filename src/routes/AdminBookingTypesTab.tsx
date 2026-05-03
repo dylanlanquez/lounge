@@ -460,7 +460,7 @@ function ServiceNode({
           gap: theme.space[3],
         }}
       >
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <span
             style={{
               fontSize: theme.type.size.lg,
@@ -470,15 +470,6 @@ function ServiceNode({
             }}
           >
             {serviceLabel}
-          </span>
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {summariseHours(parent.working_hours)} · {summariseDuration(parent)}
           </span>
         </div>
         <IconAction
@@ -1759,23 +1750,6 @@ function summariseHours(h: WorkingHours | null | undefined): string {
     null as string | null,
   );
   return `${open.length}d · ${earliest}–${latest}`;
-}
-
-function summariseDuration(row: BookingTypeConfigRow): string {
-  const min = row.duration_min;
-  const def = row.duration_default;
-  const max = row.duration_max;
-  if (min == null && def == null && max == null) return 'inherits';
-  if (min != null && def != null && max != null) {
-    if (min === max) return `${def}m`;
-    return `${min}–${max}m (default ${def})`;
-  }
-  // Partial — surface what's set.
-  const parts: string[] = [];
-  if (min != null) parts.push(`min ${min}`);
-  if (def != null) parts.push(`default ${def}`);
-  if (max != null) parts.push(`max ${max}`);
-  return parts.join(', ');
 }
 
 function labelOfService(s: BookingServiceType): string {
