@@ -688,6 +688,10 @@ function IntakeCard({
               value={value}
               isFirst={i === 0}
               wrapValue
+              // Intake questions are full sentences. Widen the label
+              // column so "What product is the impression for" sits
+              // on one line without nudging the value off-card.
+              labelMaxWidth={240}
             />
           );
         })}
@@ -1219,20 +1223,27 @@ function KeyValueRow({
   value,
   isFirst,
   wrapValue,
+  labelMaxWidth,
 }: {
   icon?: ReactNode;
   label: string;
   value: ReactNode;
   isFirst?: boolean;
   wrapValue?: boolean;
+  /** Override the default label column cap (140px without an icon,
+   * 130px with one). Used by Intake answers where questions are full
+   * sentences ("What product is the impression for") and the default
+   * cap forces a two-line wrap. */
+  labelMaxWidth?: number;
 }) {
+  const labelCap = labelMaxWidth ?? (icon ? 130 : 140);
   return (
     <div
       style={{
         display: 'grid',
         gridTemplateColumns: icon
-          ? '14px minmax(0, 130px) minmax(0, 1fr)'
-          : 'minmax(0, 140px) minmax(0, 1fr)',
+          ? `14px minmax(0, ${labelCap}px) minmax(0, 1fr)`
+          : `minmax(0, ${labelCap}px) minmax(0, 1fr)`,
         gap: theme.space[3],
         alignItems: 'baseline',
         padding: `${theme.space[3]}px 0`,
