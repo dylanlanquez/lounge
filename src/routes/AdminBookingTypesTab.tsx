@@ -331,8 +331,12 @@ function ServiceNode({
   const patientInMinutes = ribbonPhases
     .filter((p) => p.patient_required)
     .reduce((acc, p) => acc + (p.duration_minutes || 0), 0);
-  const patientFacingMinutes =
-    parent.patient_facing_duration_minutes ?? operationalMinutes;
+  // Resolved patient-facing min for the ribbon's "Telling patient X"
+  // pill — falls back to the operational total when the column is
+  // null. Max stays null unless the admin opted into a range.
+  const patientFacingMinResolved =
+    parent.patient_facing_min_minutes ?? operationalMinutes;
+  const patientFacingMaxResolved = parent.patient_facing_max_minutes;
   const nextPhaseIndex =
     ribbonPhases.length === 0
       ? 1
@@ -371,14 +375,18 @@ function ServiceNode({
     }
   };
 
-  const handlePatientFacingSave = async (minutes: number | null) => {
+  const handlePatientFacingSave = async (values: {
+    min: number | null;
+    max: number | null;
+  }) => {
     try {
       await upsertBookingTypeConfig({
         service_type: parent.service_type,
         repair_variant: parent.repair_variant,
         product_key: parent.product_key,
         arch: parent.arch,
-        patient_facing_duration_minutes: minutes,
+        patient_facing_min_minutes: values.min,
+        patient_facing_max_minutes: values.max,
       });
       onPhaseSaved();
     } catch (e) {
@@ -505,7 +513,8 @@ function ServiceNode({
             phases={ribbonPhases}
             operational_minutes={operationalMinutes}
             patient_in_minutes={patientInMinutes}
-            patient_facing_minutes={patientFacingMinutes}
+            patient_facing_min_minutes={patientFacingMinResolved}
+            patient_facing_max_minutes={patientFacingMaxResolved}
             onPhaseClick={(key) => {
               const target = phases.data.find((p) => p.id === key);
               if (target) setPhaseEditorTarget({ kind: 'edit', phase: target });
@@ -602,7 +611,8 @@ function ServiceNode({
         open={patientFacingOpen}
         configId={parent.id}
         serviceLabel={serviceLabel}
-        currentOverrideMinutes={parent.patient_facing_duration_minutes}
+        currentOverrideMin={parent.patient_facing_min_minutes}
+        currentOverrideMax={parent.patient_facing_max_minutes}
         operationalMinutes={operationalMinutes}
         onClose={() => setPatientFacingOpen(false)}
         onSave={handlePatientFacingSave}
