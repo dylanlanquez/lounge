@@ -2135,45 +2135,34 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
           }
         />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          {grouped.map(([category, catRows]) => (
-            <div key={category}>
-              <h3
-                style={{
-                  margin: `0 0 ${theme.space[2]}px`,
-                  fontSize: theme.type.size.xs,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.inkSubtle,
-                  textTransform: 'uppercase',
-                  letterSpacing: theme.type.tracking.wide,
-                }}
-              >
-                {category}
-              </h3>
-              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                {catRows.map((row) =>
-                  editingId === row.id ? (
-                    <li key={row.id}>
-                      <CatalogueRowEditor
-                        mode={mode}
-                        initial={draftFromRow(row)}
-                        onSave={onSave}
-                        onCancel={() => setEditingId(null)}
-                      />
-                    </li>
-                  ) : (
-                    <CatalogueRowDisplay
-                      key={row.id}
-                      row={row}
-                      onEdit={() => setEditingId(row.id)}
-                      onToggleActive={() => onToggleActive(row)}
-                    />
-                  )
-                )}
-              </ul>
-            </div>
-          ))}
-        </div>
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {/* Flat list. Category is preserved as a sort key inside
+              groupByCategory so related rows still cluster, but the
+              category eyebrow header is dropped — each card's own
+              title already carries the name and the eyebrow read
+              as duplicate noise. */}
+          {grouped.flatMap(([, catRows]) =>
+            catRows.map((row) =>
+              editingId === row.id ? (
+                <li key={row.id}>
+                  <CatalogueRowEditor
+                    mode={mode}
+                    initial={draftFromRow(row)}
+                    onSave={onSave}
+                    onCancel={() => setEditingId(null)}
+                  />
+                </li>
+              ) : (
+                <CatalogueRowDisplay
+                  key={row.id}
+                  row={row}
+                  onEdit={() => setEditingId(row.id)}
+                  onToggleActive={() => onToggleActive(row)}
+                />
+              ),
+            ),
+          )}
+        </ul>
       )}
 
       {toast ? (
