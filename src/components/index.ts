@@ -169,3 +169,6 @@ export type {
   PhaseEditorValues,
 } from './PhaseEditor/PhaseEditor.tsx';
 
+export { PatientFacingDurationEditor } from './PatientFacingDurationEditor/PatientFacingDurationEditor.tsx';
+export type { PatientFacingDurationEditorProps } from './PatientFacingDurationEditor/PatientFacingDurationEditor.tsx';
+

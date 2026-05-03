@@ -7,6 +7,7 @@ import {
   Dialog,
   DropdownSelect,
   Input,
+  PatientFacingDurationEditor,
   PhaseEditor,
   type PhaseEditorTarget,
   type PhaseEditorValues,
@@ -193,7 +194,13 @@ export function AdminBookingTypesTab() {
                     });
                   }
                 }}
-                onPhaseSaved={() => setToast({ tone: 'success', title: 'Phase saved' })}
+                onPhaseSaved={() => {
+                  setToast({ tone: 'success', title: 'Saved' });
+                  // Reload configs too — saving the patient-facing
+                  // duration writes to lng_booking_type_config and the
+                  // resolved value lives on the parent row.
+                  reload();
+                }}
                 onPhaseDeleted={() => setToast({ tone: 'success', title: 'Phase deleted' })}
                 onPhaseError={(msg) => setToast({ tone: 'error', title: msg })}
               />
@@ -300,6 +307,7 @@ function ServiceNode({
   const [expanded, setExpanded] = useState(false);
   const phases = useBookingTypePhases(parent.id);
   const [phaseEditorTarget, setPhaseEditorTarget] = useState<PhaseEditorTarget | null>(null);
+  const [patientFacingOpen, setPatientFacingOpen] = useState(false);
 
   // Map DB rows → ribbon shape. Always uses duration_default (the
   // operational default); admin can edit the trio in the editor.
@@ -359,6 +367,22 @@ function ServiceNode({
       onPhaseDeleted();
     } catch (e) {
       onPhaseError(e instanceof Error ? e.message : 'Could not delete phase');
+      throw e;
+    }
+  };
+
+  const handlePatientFacingSave = async (minutes: number | null) => {
+    try {
+      await upsertBookingTypeConfig({
+        service_type: parent.service_type,
+        repair_variant: parent.repair_variant,
+        product_key: parent.product_key,
+        arch: parent.arch,
+        patient_facing_duration_minutes: minutes,
+      });
+      onPhaseSaved();
+    } catch (e) {
+      onPhaseError(e instanceof Error ? e.message : 'Could not save');
       throw e;
     }
   };
@@ -493,6 +517,7 @@ function ServiceNode({
                 next_phase_index: nextPhaseIndex,
               })
             }
+            onEditPatientFacing={() => setPatientFacingOpen(true)}
           />
         )}
       </div>
@@ -571,6 +596,16 @@ function ServiceNode({
         onClose={() => setPhaseEditorTarget(null)}
         onSave={handlePhaseSave}
         onDelete={handlePhaseDelete}
+      />
+
+      <PatientFacingDurationEditor
+        open={patientFacingOpen}
+        configId={parent.id}
+        serviceLabel={serviceLabel}
+        currentOverrideMinutes={parent.patient_facing_duration_minutes}
+        operationalMinutes={operationalMinutes}
+        onClose={() => setPatientFacingOpen(false)}
+        onSave={handlePatientFacingSave}
       />
     </li>
   );

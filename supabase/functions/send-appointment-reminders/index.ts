@@ -235,9 +235,14 @@ async function processOne(
     return { outcome: 'failed', reason: 'RESEND_API_KEY not configured' };
   }
 
+  // Best-effort resolve of the booking type so {{patientFacingDuration}}
+  // hydrates from the parent config. Null falls back to empty string in
+  // the renderer.
+  const patientFacingDurationMinutes = await resolvePatientFacingMinutes(admin, apt.service_type);
+
   // Build variables. Keep names matching what the admin UI exposes
   // so the editor's autocomplete + the renderer never disagree.
-  const variables = buildVariables(apt, patient, location);
+  const variables = buildVariables(apt, patient, location, patientFacingDurationMinutes);
 
   // Render via the inline parser (same pipeline as src/lib/emailRenderer.ts).
   const subject = substituteVariables(template.subject, variables);
@@ -284,6 +289,7 @@ function buildVariables(
   apt: AppointmentRow,
   patient: PatientRow,
   location: LocationRow | null,
+  patientFacingDurationMinutes: number | null,
 ): Record<string, string> {
   const start = new Date(apt.start_at);
   const fmt = (opts: Intl.DateTimeFormatOptions) =>
@@ -309,7 +315,41 @@ function buildVariables(
     locationCity: location?.city?.trim() || '',
     locationAddress: locationFreeform(location),
     appointmentRef: apt.appointment_ref ?? '',
+    patientFacingDuration: formatMinutesForEmail(patientFacingDurationMinutes),
   };
+}
+
+// Mirrors the helper in send-appointment-confirmation. Friendly
+// patient-facing format ("30 min" / "1 hour" / "1 hour 30 min").
+// Returns empty string when null so the variable degrades gracefully
+// in templates that include it on a service without a value set.
+function formatMinutesForEmail(min: number | null): string {
+  if (!min || min <= 0) return '';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const hourWord = h === 1 ? 'hour' : 'hours';
+  if (m === 0) return `${h} ${hourWord}`;
+  return `${h} ${hourWord} ${m} min`;
+}
+
+// Mirrors the helper in send-appointment-confirmation. Best-effort —
+// any error or empty result returns null and the variable hydrates
+// to empty string.
+async function resolvePatientFacingMinutes(
+  admin: SupabaseClient,
+  serviceType: string | null,
+): Promise<number | null> {
+  if (!serviceType) return null;
+  const { data, error } = await admin.rpc('lng_booking_type_resolve', {
+    p_service_type: serviceType,
+  });
+  if (error) return null;
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) return null;
+  const minutes = (row as { patient_facing_duration_minutes: number | null })
+    .patient_facing_duration_minutes;
+  return typeof minutes === 'number' && minutes > 0 ? minutes : null;
 }
 
 function labelForService(apt: AppointmentRow): string {
