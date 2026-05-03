@@ -354,6 +354,14 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     sample: '4 to 6 hours',
   },
   {
+    name: 'patientFacingSchedule',
+    label: 'Schedule (patient-facing)',
+    description:
+      'Smart schedule line. For bookings with a long passive phase (e.g. Click-in Veneers lab fabrication), renders one sentence per active phase with the start time and a "please return" prefix for follow-ups: "Book-in & Imps at 09:00 (30 min). Please return at approximately 13:30 for Try In (10 min)." For short or single-phase bookings, falls back to the patient-facing duration.',
+    sample:
+      'Book-in & Imps at 09:00 (30 min). Please return at approximately 13:30 for Try In (10 min).',
+  },
+  {
     name: 'googleCalendarUrl',
     label: 'Add-to-calendar URL',
     description:

@@ -278,6 +278,13 @@ async function handle(req: Request): Promise<Response> {
   // degrades to empty in the template.
   const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
+  // Phase data feeds the segmented schedule. Best-effort — empty
+  // array degrades to the duration label.
+  const [phases, segmentedThresholdMinutes] = await Promise.all([
+    fetchAppointmentPhases(admin, apt.id),
+    resolveSegmentedThresholdMinutes(admin),
+  ]);
+
   const variables = buildVariables({
     apt,
     oldApt,
@@ -285,6 +292,8 @@ async function handle(req: Request): Promise<Response> {
     location,
     patientFacingMinMinutes: patientFacingRange.min,
     patientFacingMaxMinutes: patientFacingRange.max,
+    phases,
+    segmentedThresholdMinutes,
   });
   const subject = substituteVariables(template.subject, variables);
   const bodyAfterVars = substituteVariables(template.body_syntax, variables);
@@ -436,6 +445,49 @@ async function resolvePatientFacingRange(
     ? r.patient_facing_max_minutes
     : null;
   return { min, max };
+}
+
+// Materialised phases for an appointment, ordered by phase_index.
+// Read straight from lng_appointment_phases — these are snapshots
+// taken at booking time so renames / re-configs of the booking type
+// later don't drift the email copy from what the patient was told.
+interface AppointmentPhase {
+  phase_index: number;
+  label: string;
+  patient_required: boolean;
+  start_at: string;
+  end_at: string;
+}
+async function fetchAppointmentPhases(
+  admin: SupabaseClient,
+  appointmentId: string,
+): Promise<AppointmentPhase[]> {
+  const { data, error } = await admin
+    .from('lng_appointment_phases')
+    .select('phase_index, label, patient_required, start_at, end_at')
+    .eq('appointment_id', appointmentId)
+    .order('phase_index', { ascending: true });
+  if (error || !Array.isArray(data)) return [];
+  return data as AppointmentPhase[];
+}
+
+// Threshold in minutes — if any passive phase runs at least this
+// long, the segmented variable renders as a multi-segment schedule
+// rather than a single duration line. Sourced from lng_settings so
+// admin can tune without redeploy. Default 60 mirrors M3.
+async function resolveSegmentedThresholdMinutes(
+  admin: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await admin
+    .from('lng_settings')
+    .select('value')
+    .is('location_id', null)
+    .eq('key', 'booking.patient_segmented_threshold_minutes')
+    .maybeSingle();
+  if (error || !data) return 60;
+  const v = (data as { value: unknown }).value;
+  if (typeof v === 'number' && v > 0) return v;
+  return 60;
 }
 
 async function readAppointment(
@@ -609,6 +661,54 @@ function formatMinutesLong(min: number): string {
   return `${h} ${hourWord} ${m} min`;
 }
 
+// Builds the {{patientFacingSchedule}} variable. When the booking
+// has a long passive phase (≥ thresholdMinutes), patients shouldn't
+// be told a single 5-hour duration — they should be told to come in,
+// leave, and come back. Renders one sentence per active phase with
+// the start time and a "please return at..." prefix on follow-ups.
+//
+// When there are no qualifying passive phases (single-phase booking,
+// or all passives are short), this falls back to the duration label
+// so a template that uses only {{patientFacingSchedule}} still
+// renders something useful for short bookings.
+function buildPatientFacingSchedule(
+  phases: AppointmentPhase[],
+  thresholdMinutes: number,
+  fallbackDuration: string,
+  formatTime: (iso: string) => string,
+): string {
+  if (phases.length < 2) return fallbackDuration;
+
+  // Detect any passive phase that's long enough to warrant a
+  // segmented schedule (the patient genuinely leaves and comes back).
+  const hasLongPassive = phases.some((p) => {
+    if (p.patient_required) return false;
+    const ms = new Date(p.end_at).getTime() - new Date(p.start_at).getTime();
+    return ms >= thresholdMinutes * 60_000;
+  });
+  if (!hasLongPassive) return fallbackDuration;
+
+  // One sentence per active phase. The first reads as the booking
+  // start; subsequent active phases read as a "please return"
+  // instruction with the time the patient should be back.
+  const activePhases = phases.filter((p) => p.patient_required);
+  if (activePhases.length === 0) return fallbackDuration;
+
+  const sentences = activePhases.map((p, i) => {
+    const durMinutes = Math.max(
+      Math.round((new Date(p.end_at).getTime() - new Date(p.start_at).getTime()) / 60_000),
+      1,
+    );
+    const durLabel = formatMinutesLong(durMinutes);
+    if (i === 0) {
+      return `${p.label} at ${formatTime(p.start_at)} (${durLabel})`;
+    }
+    return `Please return at approximately ${formatTime(p.start_at)} for ${p.label} (${durLabel})`;
+  });
+
+  return `${sentences.join('. ')}.`;
+}
+
 // JS strings are UTF-16 but btoa wants Latin-1. Encode UTF-8 bytes as
 // Latin-1 first so accented names + pound signs survive the round-trip.
 function unicodeEscape(s: string): string {
@@ -639,6 +739,12 @@ interface VariableContext {
   // rendered template when min is null.
   patientFacingMinMinutes: number | null;
   patientFacingMaxMinutes: number | null;
+  // Materialised phases for this appointment + the segmented
+  // threshold setting — both feed the {{patientFacingSchedule}}
+  // variable. Empty array on legacy appointments or pre-materialised
+  // ones falls back to the duration label.
+  phases: AppointmentPhase[];
+  segmentedThresholdMinutes: number;
 }
 
 function buildVariables(ctx: VariableContext): Record<string, string> {
@@ -676,6 +782,15 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     patientFacingDuration: formatPatientFacingDurationForEmail(
       ctx.patientFacingMinMinutes,
       ctx.patientFacingMaxMinutes,
+    ),
+    patientFacingSchedule: buildPatientFacingSchedule(
+      ctx.phases,
+      ctx.segmentedThresholdMinutes,
+      formatPatientFacingDurationForEmail(
+        ctx.patientFacingMinMinutes,
+        ctx.patientFacingMaxMinutes,
+      ),
+      time24,
     ),
   };
 
