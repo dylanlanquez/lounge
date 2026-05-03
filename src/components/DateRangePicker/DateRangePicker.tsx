@@ -67,7 +67,10 @@ export interface DateRangePickerProps {
 
 const PILL_PADDING_DESKTOP = 8;
 const PILL_PADDING_MOBILE = 12;
-const SIDEBAR_MIN_WIDTH = 168;
+// Sidebar trimmed to 156 (from 168) so the full popover fits at
+// iPad-portrait widths (~768px) with breathing room. Preset labels
+// like "Last 30 days" / "Year to date" still fit on a single line.
+const SIDEBAR_MIN_WIDTH = 156;
 const POPOVER_PAD = 16;
 
 export function DateRangePicker({
@@ -78,12 +81,14 @@ export function DateRangePicker({
   placeholder = 'Choose dates',
   onClear,
 }: DateRangePickerProps) {
-  // Two-month side-by-side popover needs ~720px of room. Anything
-  // tighter — typical iPad portrait widths sit at 768–834px — gets
-  // the single-calendar bottom sheet instead. Raised from 720 to
-  // 900 because at 720 a 768px tablet would still try to render
-  // the desktop popover and inevitably hang off the edge.
-  const isMobile = useIsMobile(900);
+  // The two-month popover stays the default on tablet portrait —
+  // staff want to see both months side-by-side to pick from / to
+  // without flipping between months. The popover compacts to ~700px
+  // (see PresetSidebar / DesktopPopover container padding) so it
+  // fits comfortably at 768+ viewports, and the clamping in the
+  // useLayoutEffect below guarantees it never overflows even if
+  // a future tweak nudges the actual width up.
+  const isMobile = useIsMobile(720);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{
@@ -173,7 +178,11 @@ export function DateRangePicker({
     const update = () => {
       if (!triggerRef.current) return;
       const rect = triggerRef.current.getBoundingClientRect();
-      const APPROX_W = 720;
+      // Approximate popover width: 156 sidebar + 16+16 calendar
+      // container padding + 248+20+248 two calendars-with-gap +
+      // 1+1 borders. Round up generously for safety. Used purely
+      // for clamping; the popover's intrinsic size is unconstrained.
+      const APPROX_W = 706;
       const minLeft = POPOVER_PAD;
       const maxLeft = Math.max(
         POPOVER_PAD,
@@ -455,8 +464,11 @@ function DesktopPopover({
           <div
             style={{
               display: 'flex',
-              gap: theme.space[6],
-              padding: `${theme.space[4]}px ${theme.space[5]}px`,
+              // Trimmed gap (24→20) and side-padding (20→16) so the
+              // two-calendar layout fits cleanly inside an iPad
+              // portrait viewport without sacrificing day-cell size.
+              gap: theme.space[5],
+              padding: `${theme.space[4]}px ${theme.space[4]}px`,
             }}
           >
             <MonthGrid
