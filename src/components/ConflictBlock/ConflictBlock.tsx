@@ -85,12 +85,46 @@ export function ConflictBlock({
       >
         {conflicts.map((c, i) => (
           <li key={i} style={{ fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
-            {c.conflict_kind === 'pool_at_capacity'
-              ? `${c.pool_id} is at capacity (${c.current_count}/${c.pool_capacity}).`
-              : `Service hits its max-concurrent cap (${c.current_count}/${c.pool_capacity}).`}
+            {describeConflict(c)}
           </li>
         ))}
       </ul>
     </StatusBanner>
   );
+}
+
+// Operator-language conflict copy. Reads the phase-aware fields when
+// present (pool busy in a specific phase, time window known) and
+// falls back to the legacy "pool at capacity" sentence otherwise.
+function describeConflict(c: RescheduleConflict): string {
+  if (c.conflict_kind === 'max_concurrent') {
+    return `Service is at its concurrent-bookings cap (${c.current_count}/${c.pool_capacity} already booked).`;
+  }
+  const poolName = c.pool_id ? humanisePoolId(c.pool_id) : 'Resource';
+  const window = c.conflict_start_at && c.conflict_end_at
+    ? `${formatTime(c.conflict_start_at)} to ${formatTime(c.conflict_end_at)}`
+    : null;
+  const phase = c.phase_label ? ` (${c.phase_label})` : '';
+  if (window) {
+    return `${poolName} busy ${window}${phase}, ${c.current_count}/${c.pool_capacity} already booked.`;
+  }
+  return `${poolName} is at capacity${phase}, ${c.current_count}/${c.pool_capacity} already booked.`;
+}
+
+// "lab-bench" → "Lab bench". Pool ids are slugged so the display
+// form is the slug with the first letter uppercased and hyphens
+// turned into spaces. When admins rename pools, the slug stays
+// (per the booking-resource-pools migration's check constraint),
+// so this stays correct without lookup.
+function humanisePoolId(id: string): string {
+  const spaced = id.replace(/-/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }

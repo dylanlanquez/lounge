@@ -74,6 +74,12 @@ export interface BookingTypeConfigRow {
   // exact type. Independent of resource-pool capacity (both rules
   // apply at conflict-check time). Null = inherit from parent.
   max_concurrent: number | null;
+  // What we tell the patient in their confirmation. Null on a child
+  // = inherit parent. Null on a parent = resolves to the derived
+  // block duration (sum of phase defaults) at resolve time. See
+  // ADR-006 §6.3.1 — patient-facing copy reads this; the conflict
+  // checker never reads it.
+  patient_facing_duration_minutes: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -112,6 +118,20 @@ export interface ServicePoolRow {
   pool_id: string;
 }
 
+// One resolved phase as it comes back from lng_booking_type_resolve.
+// Parent shape, with child duration overrides applied by phase_index.
+// Pool ids are inherited from the parent's phase row in v1 (children
+// retune durations only — see ADR-006 §6.3.3).
+export interface ResolvedPhase {
+  phase_index: number;
+  label: string;
+  patient_required: boolean;
+  duration_min: number | null;
+  duration_max: number | null;
+  duration_default: number | null;
+  pool_ids: string[];
+}
+
 // Effective config for a specific booking type, with parent-fallback
 // merged in. Returned by `lng_booking_type_resolve`. All scheduling
 // fields are guaranteed non-null when a parent row exists for the
@@ -129,14 +149,24 @@ export interface ResolvedBookingTypeConfig {
   // Per-booking-type concurrent cap (resolved from child or parent).
   // Null when neither sets it.
   max_concurrent: number | null;
-  // Pool ids this booking type consumes (service-level only in v1;
-  // children inherit the parent's pool list).
+  // Pool ids this booking type consumes (aggregated across all phases).
+  // Kept for backwards compatibility; new callers should read `phases`.
   pool_ids: string[];
   notes: string | null;
   // 'child' when the row's own values were used; 'parent' when the
   // resolver fell back. Useful for the admin UI's "inherits from"
   // chip.
   source: 'child' | 'parent';
+  // Phase shape (ADR-006). Ordered by phase_index. May be empty
+  // briefly after a config is created and before its first phase
+  // has been added — callers must handle that case.
+  phases: ResolvedPhase[];
+  // Sum of phases[].duration_default. Drives the calendar block
+  // width and the slot picker. Null when no phases yet.
+  block_duration_minutes: number | null;
+  // What we tell the patient. Resolved (child → parent → block
+  // fallback). Null only when block_duration_minutes is also null.
+  patient_facing_duration_minutes: number | null;
 }
 
 // Fetch every config row in one shot. Used by the admin Booking
@@ -212,6 +242,10 @@ export async function resolveBookingTypeConfig(args: {
     pool_ids: Array.isArray(row.pool_ids) ? (row.pool_ids as string[]) : [],
     notes: row.notes ?? null,
     source: row.source as 'child' | 'parent',
+    phases: Array.isArray(row.phases) ? (row.phases as ResolvedPhase[]) : [],
+    block_duration_minutes: (row.block_duration_minutes as number | null) ?? null,
+    patient_facing_duration_minutes:
+      (row.patient_facing_duration_minutes as number | null) ?? null,
   };
 }
 
@@ -378,6 +412,7 @@ export async function upsertBookingTypeConfig(input: {
   duration_max?: number | null;
   duration_default?: number | null;
   max_concurrent?: number | null;
+  patient_facing_duration_minutes?: number | null;
   notes?: string | null;
 }): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -393,6 +428,8 @@ export async function upsertBookingTypeConfig(input: {
   if (input.duration_max !== undefined) payload.duration_max = input.duration_max;
   if (input.duration_default !== undefined) payload.duration_default = input.duration_default;
   if (input.max_concurrent !== undefined) payload.max_concurrent = input.max_concurrent;
+  if (input.patient_facing_duration_minutes !== undefined)
+    payload.patient_facing_duration_minutes = input.patient_facing_duration_minutes;
   if (input.notes !== undefined) payload.notes = input.notes;
 
   const { error } = await supabase
@@ -458,4 +495,174 @@ function archLabel(arch: 'upper' | 'lower' | 'both'): string {
     case 'both':
       return 'Both arches';
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Booking-type phases (ADR-006)
+//
+// A booking type's phase shape lives on the parent config row in
+// lng_booking_type_phases. The single source of truth for the
+// admin's editable phase list is this table. The resolver
+// (lng_booking_type_resolve) returns the merged read view; for
+// editing, the admin UI reads phase rows directly so it can show
+// the parent vs child source clearly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// One phase row as it sits in lng_booking_type_phases. config_id
+// points at either a parent or a child config row. A child phase
+// row exists only when the admin overrode this phase's durations
+// for that child variant; otherwise the resolver inherits.
+export interface BookingTypePhaseRow {
+  id: string;
+  config_id: string;
+  phase_index: number;
+  label: string;
+  patient_required: boolean;
+  duration_min: number | null;
+  duration_max: number | null;
+  duration_default: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  // Pool ids attached to this phase. Joined in by the hook below;
+  // not a column on the underlying table.
+  pool_ids: string[];
+}
+
+// Fetch all phase rows for a single config row, with their pool
+// junction rows joined in. Ordered by phase_index. Used by the
+// admin booking-types editor.
+export function useBookingTypePhases(configId: string | null | undefined): {
+  data: BookingTypePhaseRow[];
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+} {
+  const [data, setData] = useState<BookingTypePhaseRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!configId) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      // Pull phases + their pool junction rows in two parallel
+      // requests. Combining server-side via a view or RPC is a
+      // future optimisation if this becomes a hot path.
+      const [phaseResult, poolResult] = await Promise.all([
+        supabase
+          .from('lng_booking_type_phases')
+          .select('*')
+          .eq('config_id', configId)
+          .order('phase_index', { ascending: true }),
+        supabase
+          .from('lng_booking_type_phase_pools')
+          .select('phase_id, pool_id'),
+      ]);
+      if (cancelled) return;
+      if (phaseResult.error) {
+        setError(phaseResult.error.message);
+        setLoading(false);
+        return;
+      }
+      if (poolResult.error) {
+        setError(poolResult.error.message);
+        setLoading(false);
+        return;
+      }
+      const poolsByPhase = new Map<string, string[]>();
+      for (const row of (poolResult.data ?? []) as { phase_id: string; pool_id: string }[]) {
+        const existing = poolsByPhase.get(row.phase_id) ?? [];
+        existing.push(row.pool_id);
+        poolsByPhase.set(row.phase_id, existing);
+      }
+      const merged: BookingTypePhaseRow[] = ((phaseResult.data ?? []) as Omit<
+        BookingTypePhaseRow,
+        'pool_ids'
+      >[]).map((row) => ({
+        ...row,
+        pool_ids: (poolsByPhase.get(row.id) ?? []).sort(),
+      }));
+      setData(merged);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [configId, tick]);
+
+  return { data, loading, error, reload: () => setTick((n) => n + 1) };
+}
+
+// Insert or update a phase row. The unique key is (config_id,
+// phase_index). For a new phase, the caller picks the next free
+// phase_index (typically max + 1). For an edit, the existing
+// phase_index is reused.
+export async function upsertBookingTypePhase(input: {
+  id?: string | null;
+  config_id: string;
+  phase_index: number;
+  label: string;
+  patient_required: boolean;
+  duration_min?: number | null;
+  duration_max?: number | null;
+  duration_default?: number | null;
+  notes?: string | null;
+}): Promise<string> {
+  const payload: Record<string, unknown> = {
+    config_id: input.config_id,
+    phase_index: input.phase_index,
+    label: input.label,
+    patient_required: input.patient_required,
+    duration_min: input.duration_min ?? null,
+    duration_max: input.duration_max ?? null,
+    duration_default: input.duration_default ?? null,
+    notes: input.notes ?? null,
+  };
+  if (input.id) payload.id = input.id;
+
+  const { data, error } = await supabase
+    .from('lng_booking_type_phases')
+    .upsert(payload, { onConflict: 'config_id,phase_index' })
+    .select('id')
+    .single();
+  if (error) throw new Error(error.message);
+  return (data as { id: string }).id;
+}
+
+// Replace a phase's pool list. Atomic: deletes existing rows,
+// inserts the new set. Mirrors setServicePools.
+export async function setPhasePoolIds(
+  phaseId: string,
+  poolIds: string[],
+): Promise<void> {
+  const { error: delErr } = await supabase
+    .from('lng_booking_type_phase_pools')
+    .delete()
+    .eq('phase_id', phaseId);
+  if (delErr) throw new Error(delErr.message);
+  if (poolIds.length === 0) return;
+  const { error: insErr } = await supabase
+    .from('lng_booking_type_phase_pools')
+    .insert(poolIds.map((pool_id) => ({ phase_id: phaseId, pool_id })));
+  if (insErr) throw new Error(insErr.message);
+}
+
+// Delete a phase row. The DB cascades to the phase pool junction
+// rows. Caller is responsible for confirming with the admin first
+// (the slice spec calls for refusing when active appointments use
+// the shape — that check is deferred to a follow-up RPC).
+export async function deleteBookingTypePhase(phaseId: string): Promise<void> {
+  const { error } = await supabase
+    .from('lng_booking_type_phases')
+    .delete()
+    .eq('id', phaseId);
+  if (error) throw new Error(error.message);
 }

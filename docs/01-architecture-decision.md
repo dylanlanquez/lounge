@@ -546,7 +546,124 @@ Components consume via `theme.color.ink`, etc. Hardcoded values inside JSX are f
 
 ---
 
-## 6. Branding palette conflict (R20)
+## 6. ADR-006 — Booking phases (active vs passive segmentation)
+
+### 6.1 Status
+
+**Draft, awaiting sign-off.** Generalises the booking-type model shipped between brief slices 16 and 21 (`lng_booking_type_config`, `lng_booking_resource_pools`, `lng_booking_service_pools`, `lng_booking_check_conflict`). No code written yet — slice spec at `docs/slices/booking-phases.md`.
+
+### 6.2 Context
+
+The current model treats every booking as one contiguous `[start_at, end_at]` window that consumes its service-level pool list for the entire duration. Operationally, several Lounge services do not behave this way:
+
+- **Denture repair** (~35 min total). The first ~15 min is sign-in, assessment, and hand-off to the bench (chair held, patient present). The remaining ~15–20 min is bench work the patient is not needed for; the chair is free for someone else.
+- **Click-in Veneers** (~5–7 h end-to-end). The first ~30 min is impression-taking (chair held, patient present). The next 3–6 h is lab fabrication (lab bench / oven held, patient not present, chair free). The final ~20 min is fit-and-deliver (chair held *again*, patient back).
+- **Same-day appliance** behaves similarly to denture repair for some products (night guard) and similarly to Click-in Veneers for others (hard-cure retainer).
+
+The single-window model has three failure modes against this reality:
+
+1. **Over-blocks chair capacity.** A 9:00 denture repair "occupies" the chair until 9:35 in the conflict checker, but in practice it's free at 9:15. The next booking is denied a slot it could have had.
+2. **Under-tells the patient operationally.** There is no first-class answer to "when do I need to be back?" for staff to read off. The reschedule sheet can only show the booking's start time, not the moment(s) the patient is required.
+3. **Conflates operational time with patient-facing time.** The patient experiences a denture repair as a single 30-minute appointment — they don't see or care about "15m active + 15m passive". Our staff need the operational phase view; the patient needs a single "your appointment is 30 min" line in the confirmation. Click-in Veneers is the inverse: operationally it spans 5–7 hours, but no patient is ever told "your appointment is 7 hours" — they're told "impression at 9:00, return at ~13:00 for fit". The model needs a separate patient-facing duration that the admin controls per booking type.
+
+A scalar shortcut (adding `active_minutes` and `passive_minutes` columns to `lng_booking_type_config`) cannot represent a "patient comes back" service: Click-in Veneers needs the chair at the start *and* again at the end, with passive lab time in between. Any model that does not let pool consumption vary across the booking window will require a second rewrite the moment the third phase is needed.
+
+### 6.3 Decision
+
+**A booking type is a sequence of one or more phases. Each phase has its own duration, its own answer to "is the patient required?", and its own pool consumption.** Three durations now exist on a booking type, each serving a distinct audience.
+
+#### 6.3.1 Three durations, three audiences
+
+| Field | What it is | Who reads it | Source |
+|---|---|---|---|
+| **Phase durations** | Per-phase timing inside the booking | The conflict checker, the schedule grid, the appointment-detail timeline | `lng_booking_type_phases.duration_*` (parent + child override per `phase_index`) |
+| **Block duration** | Sum of phase defaults | The schedule grid block width, the slot picker's "next available slot" search, the operational total shown to staff | Derived: `SUM(phase.duration_default)` |
+| **Patient-facing duration** | What we tell the patient in the confirmation | Confirmation email/SMS subject + body, Calendly event duration, any patient-facing copy | `lng_booking_type_config.patient_facing_duration_minutes` (parent + child fallback) — defaults at resolve time to the block duration if unset |
+
+The patient-facing duration is **explicitly separable** from the block duration. Two motivating cases:
+
+- **Denture repair.** Block = 35 min (15m active + 20m passive). Patient-facing = 30 min — the operational total, rounded for the patient. The patient experiences their appointment as one 30-min slot, regardless of what's happening on the bench. The fact that we round 35 → 30 in the confirmation is an admin choice, not a system decision.
+- **Click-in Veneers.** Block = 6 h (30m + 4h + 20m). Patient-facing = unset / split — telling a patient "your appointment is 7 hours" is wrong. Their confirmation reads as a *segmented* schedule: "Impression at 09:00 (30 min), return at ~13:00 for fit (20 min)". The patient comms layer reads `patient_facing_duration_minutes` AND the active-phase schedule and renders accordingly (see slice doc §6).
+
+#### 6.3.2 Schema additions
+
+- New table `lng_booking_type_phases` (FK to `lng_booking_type_config(id) on delete cascade`). Per-phase columns: `phase_index`, `label`, `patient_required boolean`, `duration_min/max/default`, `notes`.
+- New table `lng_booking_type_phase_pools` (junction `phase_id × pool_id`). Pool consumption moves from service-level (`lng_booking_service_pools`) to phase-level. The old service-level table is retained as a fallback during the migration window, then dropped.
+- New column `lng_booking_type_config.patient_facing_duration_minutes int` — nullable, with the standard parent/child fallback. Null on a child = inherit parent. Null on a parent = use the derived block duration at resolve time.
+- New table `lng_appointment_phases` — per-appointment snapshot of the resolved phase sequence (label, patient_required, pool_ids, start_at, end_at, status), frozen at booking time so subsequent config edits do not rewrite live appointments. (Same invariant as `lng_visits` snapshotting appointment data on check-in.)
+
+#### 6.3.3 Override rules
+
+Child override rows (under the existing `repair_variant` / `product_key` / `arch` shape) can:
+
+- Retune individual phases' durations by `phase_index` (insert a row in `lng_booking_type_phases` with the same `phase_index` against the child config).
+- Override `patient_facing_duration_minutes` (single scalar on the child config row).
+
+Children **cannot** add or remove phases, change `patient_required`, or change pool consumption — those are structural properties of the parent service. Children retune timings and patient-facing copy; parents own the shape.
+
+#### 6.3.4 Conflict checker
+
+`lng_booking_check_conflict` is rewritten to walk `lng_appointment_phases × lng_booking_type_phase_pools`. Same two rules (pool capacity, per-service `max_concurrent`), finer time grain. The conflict checker **never** reads `patient_facing_duration_minutes` — that field is for patient comms only.
+
+#### 6.3.5 Backwards compatibility
+
+A 1-phase booking is the degenerate case and behaves identically to today. Every existing parent config is seeded with a default 1-phase row at migration time so nothing observably changes until an admin breaks a service into multiple phases. `patient_facing_duration_minutes` defaults to null (= use block duration) so no existing patient-comms output changes either.
+
+### 6.4 Reasoning
+
+1. **Operational fidelity.** The chair-pool occupation that the conflict checker reports matches what's physically true at any given minute. No more false denials caused by counting passive lab time as chair time.
+2. **One model handles every shape.** 1-phase (today's default), 2-phase (denture repair), 3-phase with a patient return (Click-in Veneers), and any future N-phase service all use the same row shape. No per-service code branches.
+3. **Patient mental model is a separate concern from operational fidelity.** Staff need to know phase boundaries to the minute; the patient needs one number ("30 min") or one segmented schedule ("9:00 impression, ~13:00 fit"). Coupling these two views to the same field is what causes the "tell the patient the operational total" anti-pattern. Separating them makes both correct.
+4. **Children stay narrow on purpose.** Allowing a child to add/remove phases or flip `patient_required` would create an explosion of override-shape rules and admin confusion ("which row decides whether the patient is needed?"). Restricting children to per-phase duration override + patient-facing duration matches the existing override surface and keeps the resolver linear.
+5. **Snapshot-at-materialisation.** A receptionist who edits a booking type at 14:30 should not retroactively change a 09:00 appointment that's already in flight. Snapshotting is the same defence used elsewhere in `lng_*` and the simplest way to make config edits forward-only.
+6. **Phase-level conflict reasons enable plain-English copy.** "Lab bench busy 14:00–17:30 (Click-in Veneers — Lab fabrication)" is what a receptionist needs. Pool-slug copy ("Pool `lab-bench` at capacity") is what the developer wrote first because it was the only thing the checker knew. Phases are what unlocks the operator-facing version.
+
+### 6.5 Consequences
+
+#### Positive
+
+- Conflict checker is operationally correct. The chair pool is held only while the chair is actually held.
+- Schedule grid can render two-tone blocks (active solid, passive hatched) so the receptionist sees who is in a chair right now versus who is passively occupying lab time.
+- Appointment detail surfaces "patient back by 13:00" as a first-class fact rather than something the receptionist has to compute.
+- Booking-types admin reads as a phase ribbon — staff understand "what shape is this service" at a glance, which is the simplification the brief is asking for.
+
+#### Negative / risks
+
+- This is a real schema migration + conflict-checker rewrite + three UI surface re-designs (booking-types admin, schedule grid, appointment detail). Sized as its own cross-cutting infrastructure slice, not a tweak. Mitigation: per-slice template, migrations split per concern (see slice doc §11).
+- The migration window has an active period: new bookings created between the M1 (phase definitions) and M4 (conflict-checker port) migrations need to materialise phases at insert time *before* the checker is switched. Order is enforced by the slice doc step list, not by anything in the schema.
+- Per-child phase override (duration only, by `phase_index`) is conceptually clean but the admin UI must show inheritance lineage clearly — a child phase row that doesn't override a field has to read "inherits 20m from parent", not just blank.
+- An existing closed appointment's "what was its phase shape" is unrecoverable. Backfill only covers active appointments (`status in ('booked','arrived','in_progress')`). Reporting that wants historical phase analytics will start at the migration date.
+
+### 6.6 Implementation rules
+
+- All new tables `lng_*` per ADR-001: `lng_booking_type_phases`, `lng_booking_type_phase_pools`, `lng_appointment_phases`.
+- `lng_appointment_phases.label`, `patient_required`, `pool_ids` are SNAPSHOTS. Editing the source config does not propagate.
+- `lng_booking_type_resolve` returns three new fields: `phases` (array of resolved phase rows in `phase_index` order), `block_duration_minutes` (derived sum), and `patient_facing_duration_minutes` (resolved from child or parent; falls back to `block_duration_minutes` if both null).
+- `lng_booking_check_conflict` signature changes: the candidate's repair variant / product key / arch are passed in alongside the service type so it can resolve the candidate's own phase list (today it only knows the service-level pool list). Returns one row per conflict; row carries `phase_index`, `phase_label`, and a `conflict_window tstzrange` so the reschedule sheet can render operator copy directly. **The conflict checker never reads `patient_facing_duration_minutes`** — block / phase times are the only inputs.
+- `lng_booking_service_pools` is **read by the new resolver only as a fallback** during the migration window (any config row with zero phase rows). Dropped in a follow-up migration once every parent has at least one phase.
+- Backfill: every existing parent config row gets a default single phase named after the service, `patient_required = true`, `duration_default = parent.duration_default`, `pool_ids = current service-level pools`. Every active appointment gets a single materialised phase covering `[start_at, end_at]` with that pool set. `patient_facing_duration_minutes` left null on parents (resolves to block default = today's behaviour). Backfill is idempotent (safe to re-run).
+- Booking creation paths (Calendly inbound, native reschedule, future native new-booking flow) all call a single helper `materialiseAppointmentPhases(appointment_id)` that resolves the booking type and inserts the snapshot rows. There is exactly one place phase materialisation happens.
+- Phase status transitions (`pending` → `in_progress` → `complete`) are **explicit receptionist actions**, never time-based auto-advance. The receptionist is the source of truth for "patient may leave" and "ready for collection".
+- **Patient-facing copy reads `patient_facing_duration_minutes`** (resolved). Confirmation emails, SMS, and Calendly event durations source it. Operational surfaces (calendar block, slot picker, reschedule sheet) read the block / phase durations. The two paths must not cross — flagged in code review per the brief's anti-shortcut rules.
+- For services where `patient_facing_duration_minutes` is meaningfully shorter than the block (Click-in Veneers): patient comms render the *segmented schedule* — the active-phase start times — rather than a single duration line. The email template branches on whether the booking has a passive phase ≥ 60 min, not on the service type.
+- Per the brief's anti-shortcut rules: no `if (service_type === 'click_in_veneers')` branches anywhere in the rendering, conflict, or comms code. The phase set + the patient-facing duration are the source of truth; renderers and templates read them.
+
+### 6.7 Open questions parked for slice spec
+
+| # | Question | Recommendation |
+|---|---|---|
+| AQ6 | Can children override phase **labels**? | No — labels are a service-level concern; durations are the only override axis. |
+| AQ7 | Phase reorder UX in admin — drag handle vs arrows? | Drag handle (touch-first), with up/down arrow fallback for keyboard / a11y. |
+| AQ8 | Deleting a phase from a config that has live appointments | Refuse, with "X active appointments use this shape — complete them first" inline message. |
+| AQ9 | Overdue passive→active transition (patient hasn't returned by ~13:00 for the Fit phase) | Add an `overdue` derived state to the phase status pill. No auto-cancel — receptionist decides. |
+| AQ10 | When `patient_facing_duration_minutes` is set but doesn't match the block sum, do we surface the mismatch in admin? | Yes — small inline note on the booking-types editor: "Operational total 35m, telling patient 30m. Confirm." Prevents silent drift between what we book and what we tell the patient. |
+| AQ11 | When does the patient-facing copy switch from "single duration" to "segmented schedule"? | Threshold rule: any booking type with at least one passive phase of ≥ 60 min renders patient comms in segmented mode. No service-type branch. |
+
+Resolutions land in `docs/slices/booking-phases.md` at sign-off.
+
+---
+
+## 7. Branding palette conflict (R20)
 
 Brief §9.3 says forest green `#1F4D3A`. The favicon is bright teal background with navy "L". This must be resolved before Phase 2.
 
@@ -556,7 +673,7 @@ If Dylan would prefer the app-side palette to follow the favicon (teal accent, n
 
 ---
 
-## 7. Migration filename convention
+## 8. Migration filename convention
 
 Format: `YYYYMMDD_NN_lng_<description>.sql`
 
@@ -589,7 +706,7 @@ Example sequence for Phase 1 slice 0:
 
 ---
 
-## 8. Open architecture questions parked
+## 9. Open architecture questions parked
 
 These do not block Phase 0 sign-off but must be resolved before the slice they touch:
 
@@ -603,7 +720,7 @@ These do not block Phase 0 sign-off but must be resolved before the slice they t
 
 ---
 
-## 9. Sign-off
+## 10. Sign-off
 
 By signing off this ADR, you accept:
 
@@ -612,8 +729,9 @@ By signing off this ADR, you accept:
 - ADR-003: Stripe Terminal leapfrog, EPOS data model locked, BNPL via S700 only.
 - ADR-004: `receptionist` added to `lab_role_enum`, with the boolean overrides specified.
 - ADR-005: Inline styles + theme system, no CSS framework.
+- ADR-006: Booking phases — phase sequence with per-phase pool consumption + patient-facing duration as a separate, admin-controlled field. Slice spec at `docs/slices/booking-phases.md`.
 
-Open architecture questions AQ1–AQ5 will be resolved at the slice they block, not as a Phase 0 sign-off prerequisite.
+Open architecture questions AQ1–AQ5 will be resolved at the slice they block, not as a Phase 0 sign-off prerequisite. AQ6–AQ11 (booking-phases) are resolved in the slice doc at sign-off.
 
 ---
 

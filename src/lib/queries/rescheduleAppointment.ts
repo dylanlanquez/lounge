@@ -38,6 +38,14 @@ export interface RescheduleConflict {
   pool_id: string | null;
   pool_capacity: number;
   current_count: number;
+  // Phase-aware fields populated by the phase-aware conflict checker
+  // (M5). For pool_at_capacity, names the candidate's phase that hit
+  // the limit and the time window of that phase. Null for
+  // max_concurrent (which is whole-appointment, not per-phase).
+  phase_index: number | null;
+  phase_label: string | null;
+  conflict_start_at: string | null; // ISO timestamptz
+  conflict_end_at: string | null;   // ISO timestamptz
 }
 
 export class RescheduleConflictError extends Error {
@@ -82,12 +90,32 @@ export async function checkBookingConflict(args: {
   });
   if (error) throw new Error(error.message);
   if (!Array.isArray(data)) return [];
-  return data.map((r) => ({
+  return data.map((r) => mapConflictRow(r));
+}
+
+// Single mapper for the lng_booking_check_conflict RPC row → typed
+// conflict record. Used by both the reschedule and new-booking
+// helpers so the row-to-object shape stays in lockstep.
+export function mapConflictRow(r: {
+  conflict_kind: string;
+  pool_id: string | null;
+  pool_capacity: number;
+  current_count: number;
+  phase_index?: number | null;
+  phase_label?: string | null;
+  conflict_start_at?: string | null;
+  conflict_end_at?: string | null;
+}): RescheduleConflict {
+  return {
     conflict_kind: r.conflict_kind as RescheduleConflict['conflict_kind'],
     pool_id: r.pool_id ?? null,
-    pool_capacity: r.pool_capacity as number,
-    current_count: r.current_count as number,
-  }));
+    pool_capacity: r.pool_capacity,
+    current_count: r.current_count,
+    phase_index: r.phase_index ?? null,
+    phase_label: r.phase_label ?? null,
+    conflict_start_at: r.conflict_start_at ?? null,
+    conflict_end_at: r.conflict_end_at ?? null,
+  };
 }
 
 export async function rescheduleAppointment(input: {
@@ -223,7 +251,8 @@ function describeConflicts(conflicts: RescheduleConflict[]): string {
   return conflicts
     .map((c) => {
       if (c.conflict_kind === 'pool_at_capacity') {
-        return `pool "${c.pool_id}" at capacity ${c.pool_capacity} (${c.current_count} already booked)`;
+        const phase = c.phase_label ? ` during ${c.phase_label}` : '';
+        return `pool "${c.pool_id}" at capacity ${c.pool_capacity}${phase} (${c.current_count} already booked)`;
       }
       return `service hits max-concurrent ${c.pool_capacity} (${c.current_count} already booked)`;
     })

@@ -7,6 +7,11 @@ import {
   Dialog,
   DropdownSelect,
   Input,
+  PhaseEditor,
+  type PhaseEditorTarget,
+  type PhaseEditorValues,
+  PhaseRibbon,
+  type PhaseRibbonPhase,
   Skeleton,
   Toast,
 } from '../components/index.ts';
@@ -16,13 +21,19 @@ import {
   type BookingTypeConfigRow,
   type DayHours,
   type DayOfWeek,
+  type ResourcePoolRow,
   type WorkingHours,
   BOOKING_SERVICE_TYPES,
   DAYS_OF_WEEK,
   bookingTypeRowLabel,
   deleteBookingTypeChildOverride,
+  deleteBookingTypePhase,
+  setPhasePoolIds,
   upsertBookingTypeConfig,
+  upsertBookingTypePhase,
   useBookingTypeConfigs,
+  useBookingTypePhases,
+  useResourcePools,
 } from '../lib/queries/bookingTypes.ts';
 import { supabase } from '../lib/supabase.ts';
 
@@ -84,6 +95,7 @@ type EditTarget =
 
 export function AdminBookingTypesTab() {
   const { data, loading, error, reload } = useBookingTypeConfigs();
+  const pools = useResourcePools();
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
 
@@ -160,6 +172,7 @@ export function AdminBookingTypesTab() {
                 serviceType={s.value}
                 parent={group.parent}
                 children={group.children}
+                pools={pools.data}
                 onEditParent={() => setEditTarget({ kind: 'parent', row: group.parent })}
                 onEditChild={(row) => setEditTarget({ kind: 'child', row })}
                 onAddChild={(target) => setEditTarget(target)}
@@ -180,6 +193,9 @@ export function AdminBookingTypesTab() {
                     });
                   }
                 }}
+                onPhaseSaved={() => setToast({ tone: 'success', title: 'Phase saved' })}
+                onPhaseDeleted={() => setToast({ tone: 'success', title: 'Phase deleted' })}
+                onPhaseError={(msg) => setToast({ tone: 'error', title: msg })}
               />
             );
           })}
@@ -258,22 +274,94 @@ function ServiceNode({
   serviceType,
   parent,
   children,
+  pools,
   onEditParent,
   onEditChild,
   onAddChild,
   onRemoveChild,
+  onPhaseSaved,
+  onPhaseDeleted,
+  onPhaseError,
 }: {
   isFirst: boolean;
   serviceLabel: string;
   serviceType: BookingServiceType;
   parent: BookingTypeConfigRow;
   children: BookingTypeConfigRow[];
+  pools: ResourcePoolRow[];
   onEditParent: () => void;
   onEditChild: (row: BookingTypeConfigRow) => void;
   onAddChild: (target: EditTarget) => void;
   onRemoveChild: (row: BookingTypeConfigRow) => void;
+  onPhaseSaved: () => void;
+  onPhaseDeleted: () => void;
+  onPhaseError: (msg: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const phases = useBookingTypePhases(parent.id);
+  const [phaseEditorTarget, setPhaseEditorTarget] = useState<PhaseEditorTarget | null>(null);
+
+  // Map DB rows → ribbon shape. Always uses duration_default (the
+  // operational default); admin can edit the trio in the editor.
+  const ribbonPhases: PhaseRibbonPhase[] = useMemo(
+    () =>
+      phases.data.map((p) => ({
+        key: p.id,
+        phase_index: p.phase_index,
+        label: p.label,
+        patient_required: p.patient_required,
+        duration_minutes: p.duration_default ?? 0,
+        pool_ids: p.pool_ids,
+      })),
+    [phases.data],
+  );
+
+  const operationalMinutes = ribbonPhases.reduce(
+    (acc, p) => acc + (p.duration_minutes || 0),
+    0,
+  );
+  const patientInMinutes = ribbonPhases
+    .filter((p) => p.patient_required)
+    .reduce((acc, p) => acc + (p.duration_minutes || 0), 0);
+  const patientFacingMinutes =
+    parent.patient_facing_duration_minutes ?? operationalMinutes;
+  const nextPhaseIndex =
+    ribbonPhases.length === 0
+      ? 1
+      : Math.max(...ribbonPhases.map((p) => p.phase_index)) + 1;
+
+  const handlePhaseSave = async (values: PhaseEditorValues) => {
+    try {
+      const phaseId = await upsertBookingTypePhase({
+        id: values.id,
+        config_id: values.config_id,
+        phase_index: values.phase_index,
+        label: values.label,
+        patient_required: values.patient_required,
+        duration_default: values.duration_default,
+        duration_min: values.duration_min,
+        duration_max: values.duration_max,
+        notes: values.notes,
+      });
+      await setPhasePoolIds(phaseId, values.pool_ids);
+      phases.reload();
+      onPhaseSaved();
+    } catch (e) {
+      onPhaseError(e instanceof Error ? e.message : 'Could not save phase');
+      throw e;
+    }
+  };
+
+  const handlePhaseDelete = async (phaseId: string) => {
+    try {
+      await deleteBookingTypePhase(phaseId);
+      phases.reload();
+      onPhaseDeleted();
+    } catch (e) {
+      onPhaseError(e instanceof Error ? e.message : 'Could not delete phase');
+      throw e;
+    }
+  };
   // Children-set we can EXPOSE to the "Add override" dropdown — i.e.
   // the catalogue (or arch enum) entries that don't yet have a row
   // in lng_booking_type_config.
@@ -381,6 +469,34 @@ function ServiceNode({
         />
       </button>
 
+      <div
+        style={{
+          padding: `0 ${theme.space[5]}px ${theme.space[3]}px ${theme.space[8]}px`,
+        }}
+      >
+        {phases.loading ? (
+          <Skeleton height={48} />
+        ) : (
+          <PhaseRibbon
+            phases={ribbonPhases}
+            operational_minutes={operationalMinutes}
+            patient_in_minutes={patientInMinutes}
+            patient_facing_minutes={patientFacingMinutes}
+            onPhaseClick={(key) => {
+              const target = phases.data.find((p) => p.id === key);
+              if (target) setPhaseEditorTarget({ kind: 'edit', phase: target });
+            }}
+            onAddPhase={() =>
+              setPhaseEditorTarget({
+                kind: 'create',
+                config_id: parent.id,
+                next_phase_index: nextPhaseIndex,
+              })
+            }
+          />
+        )}
+      </div>
+
       {expanded ? (
         <div
           style={{
@@ -447,6 +563,15 @@ function ServiceNode({
           ) : null}
         </div>
       ) : null}
+
+      <PhaseEditor
+        open={phaseEditorTarget !== null}
+        target={phaseEditorTarget}
+        pools={pools}
+        onClose={() => setPhaseEditorTarget(null)}
+        onSave={handlePhaseSave}
+        onDelete={handlePhaseDelete}
+      />
     </li>
   );
 }
