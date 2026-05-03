@@ -351,7 +351,6 @@ function ServiceNode({
         config_id: values.config_id,
         phase_index: values.phase_index,
         label: values.label,
-        label_override: values.label_override,
         patient_required: values.patient_required,
         duration_default: values.duration_default,
         duration_min: values.duration_min,
@@ -878,18 +877,17 @@ function ChildRow({
     () =>
       parentPhases.map((parentPhase) => {
         const override = childOverrideByIndex.get(parentPhase.phase_index);
-        const effectiveDuration =
-          override?.duration_default ?? parentPhase.duration_default ?? 0;
-        // Effective label: label_override on the child wins, else
-        // parent's label. Mirrors the resolver's coalesce.
-        const effectiveLabel = override?.label_override?.trim() || parentPhase.label;
+        // Per M12, when a child phase row exists every field comes
+        // from it; otherwise the parent's wholesale. Mirrors the
+        // resolver so the ribbon stays in lockstep.
+        const effective = override ?? parentPhase;
         return {
           key: String(parentPhase.phase_index),
           phase_index: parentPhase.phase_index,
-          label: effectiveLabel,
-          patient_required: parentPhase.patient_required,
-          duration_minutes: effectiveDuration,
-          pool_ids: parentPhase.pool_ids,
+          label: effective.label,
+          patient_required: effective.patient_required,
+          duration_minutes: effective.duration_default ?? 0,
+          pool_ids: effective.pool_ids,
         };
       }),
     [parentPhases, childOverrideByIndex],
@@ -907,23 +905,21 @@ function ChildRow({
 
   const handleChildPhaseSave = async (values: PhaseEditorValues) => {
     try {
-      await upsertBookingTypePhase({
+      const phaseId = await upsertBookingTypePhase({
         id: values.id,
         config_id: values.config_id,
         phase_index: values.phase_index,
         label: values.label,
-        label_override: values.label_override,
         patient_required: values.patient_required,
         duration_default: values.duration_default,
         duration_min: values.duration_min,
         duration_max: values.duration_max,
         notes: values.notes,
       });
-      // Pool consumption on a child override is inherited from the
-      // parent at resolve time (per ADR-006 §6.3.3 — children retune
-      // duration only). We don't write phase pool rows for the
-      // child; the resolver always reads from the parent phase's
-      // pool list.
+      // Child override pools live on the child phase id (M12 row-level
+      // override semantics) so the resolver returns them when the
+      // child row is present.
+      await setPhasePoolIds(phaseId, values.pool_ids);
       childPhases.reload();
       onChanged();
     } catch (e) {
