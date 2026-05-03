@@ -83,6 +83,11 @@ export interface BookingTypeConfigRow {
   // never reads them.
   patient_facing_min_minutes: number | null;
   patient_facing_max_minutes: number | null;
+  // Optional admin-editable display name. When set, takes
+  // precedence over the catalogue / arch / service-derived label.
+  // Used to rename a child override row in the UI without changing
+  // the underlying catalogue key.
+  display_label: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -449,6 +454,7 @@ export async function upsertBookingTypeConfig(input: {
   max_concurrent?: number | null;
   patient_facing_min_minutes?: number | null;
   patient_facing_max_minutes?: number | null;
+  display_label?: string | null;
   notes?: string | null;
 }): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -468,6 +474,7 @@ export async function upsertBookingTypeConfig(input: {
     payload.patient_facing_min_minutes = input.patient_facing_min_minutes;
   if (input.patient_facing_max_minutes !== undefined)
     payload.patient_facing_max_minutes = input.patient_facing_max_minutes;
+  if (input.display_label !== undefined) payload.display_label = input.display_label;
   if (input.notes !== undefined) payload.notes = input.notes;
 
   const { error } = await supabase
@@ -506,11 +513,22 @@ export async function deleteBookingTypeChildOverride(args: {
   if (error) throw new Error(error.message);
 }
 
-// Display label for a row in the booking-type tree. Parents read as
-// the service display name; children read as the child key value
-// (Title Case for product keys; raw for repair variants which
-// already come through human-friendly).
+// Display label for a row in the booking-type tree. Admin-set
+// display_label always wins. Otherwise: parents read as the service
+// display name; children read as the child key value (Title Case
+// for product keys; raw for repair variants; archLabel for arches).
 export function bookingTypeRowLabel(row: BookingTypeConfigRow): string {
+  if (row.display_label && row.display_label.trim()) return row.display_label.trim();
+  if (row.repair_variant) return row.repair_variant;
+  if (row.product_key) return humaniseProductKey(row.product_key);
+  if (row.arch) return archLabel(row.arch);
+  return BOOKING_SERVICE_TYPES.find((s) => s.value === row.service_type)?.label ?? row.service_type;
+}
+
+// The auto-derived label, ignoring any admin override. Used by the
+// editor to show "Use catalogue default (X)" link copy. Pure
+// derivation — no DB lookup.
+export function bookingTypeRowDerivedLabel(row: BookingTypeConfigRow): string {
   if (row.repair_variant) return row.repair_variant;
   if (row.product_key) return humaniseProductKey(row.product_key);
   if (row.arch) return archLabel(row.arch);
