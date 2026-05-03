@@ -7,6 +7,7 @@ import {
 import {
   type RescheduleConflict,
   RescheduleConflictError,
+  mapConflictRow,
 } from './rescheduleAppointment.ts';
 import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 
@@ -89,12 +90,7 @@ export async function createAppointment(input: {
   );
   if (conflictErr) throw new Error(conflictErr.message);
   const conflicts: RescheduleConflict[] = Array.isArray(conflictData)
-    ? conflictData.map((r) => ({
-        conflict_kind: r.conflict_kind as RescheduleConflict['conflict_kind'],
-        pool_id: r.pool_id ?? null,
-        pool_capacity: r.pool_capacity as number,
-        current_count: r.current_count as number,
-      }))
+    ? conflictData.map((r) => mapConflictRow(r))
     : [];
   if (conflicts.length > 0) throw new RescheduleConflictError(conflicts);
 
