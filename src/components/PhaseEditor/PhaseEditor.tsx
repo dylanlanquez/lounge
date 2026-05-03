@@ -58,6 +58,9 @@ export interface PhaseEditorValues {
   config_id: string;
   phase_index: number;
   label: string;
+  // Set only on child-override saves when the variant should
+  // rename the phase. Null on parent saves.
+  label_override: string | null;
   patient_required: boolean;
   duration_default: number;
   duration_min: number | null;
@@ -107,12 +110,14 @@ export function PhaseEditor({
       setDurationDefault(p.duration_default?.toString() ?? '');
       setPoolIds(p.pool_ids);
     } else if (target.kind === 'child-override') {
-      // Read structural fields from the parent (read-only in this
-      // mode). Duration starts from the existing override if there
-      // is one, else from the parent default.
+      // Patient-required and pools are structural and stay read-only
+      // (per ADR-006). Label CAN be renamed for the variant — we
+      // pre-fill with the override if set, else the parent's label.
+      // Saving compares to the parent label and writes label_override
+      // only when they differ.
       const p = target.parentPhase;
       const o = target.childOverride;
-      setLabel(p.label);
+      setLabel(o?.label_override?.trim() || p.label);
       setPatientRequired(p.patient_required);
       setPoolIds(p.pool_ids);
       const seedDuration =
@@ -148,6 +153,7 @@ export function PhaseEditor({
           config_id: target.phase.config_id,
           phase_index: target.phase.phase_index,
           label: label.trim(),
+          label_override: null,
           patient_required: patientRequired,
           duration_default: dDefault,
           duration_min: null,
@@ -161,6 +167,7 @@ export function PhaseEditor({
           config_id: target.config_id,
           phase_index: target.next_phase_index,
           label: label.trim(),
+          label_override: null,
           patient_required: patientRequired,
           duration_default: dDefault,
           duration_min: null,
@@ -169,16 +176,22 @@ export function PhaseEditor({
           notes: null,
         };
       } else {
-        // child-override: the structural fields (label, patient,
-        // pools) are copied from the parent so the row satisfies
-        // the table's NOT NULL columns. The resolver discards them
-        // anyway and reads from the parent's row at lookup time.
+        // child-override: structural fields (patient_required, pool
+        // consumption) stay parent-only. Label stays NOT NULL on the
+        // row (we copy parent's value to satisfy the constraint),
+        // but the variant's rename — if any — goes into
+        // label_override. We only write label_override when the
+        // typed value differs from the parent's label, so the column
+        // distinguishes "explicit rename" from "implicit copy".
         const p = target.parentPhase;
+        const trimmedLabel = label.trim();
+        const labelChanged = trimmedLabel !== '' && trimmedLabel !== p.label.trim();
         values = {
           id: target.childOverride?.id ?? null,
           config_id: target.childConfigId,
           phase_index: p.phase_index,
           label: p.label,
+          label_override: labelChanged ? trimmedLabel : null,
           patient_required: p.patient_required,
           duration_default: dDefault,
           duration_min: null,
@@ -292,19 +305,25 @@ export function PhaseEditor({
           />
         )}
 
-        {!isChildOverride && (
-          <Section
-            title="Name this phase"
-            subtitle="A short label your team will see on the schedule and the timeline."
-          >
-            <Input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Sign in & assess"
-              autoFocus
-            />
-          </Section>
-        )}
+        <Section
+          title={isChildOverride ? 'Phase name (just for this variant)' : 'Name this phase'}
+          subtitle={
+            isChildOverride
+              ? "Rename the phase for this variant only. Leave it as the parent's name to keep them in sync."
+              : 'A short label your team will see on the schedule and the timeline.'
+          }
+        >
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={
+              isChildOverride && target.kind === 'child-override'
+                ? target.parentPhase.label
+                : 'Sign in & assess'
+            }
+            autoFocus={!isChildOverride}
+          />
+        </Section>
 
         {!isChildOverride && (
           <Section

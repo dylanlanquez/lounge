@@ -13,6 +13,7 @@ import {
   type PhaseEditorValues,
   PhaseRibbon,
   type PhaseRibbonPhase,
+  SegmentedControl,
   Skeleton,
   Toast,
 } from '../components/index.ts';
@@ -351,6 +352,7 @@ function ServiceNode({
         config_id: values.config_id,
         phase_index: values.phase_index,
         label: values.label,
+        label_override: values.label_override,
         patient_required: values.patient_required,
         duration_default: values.duration_default,
         duration_min: values.duration_min,
@@ -812,10 +814,13 @@ function ChildRow({
         const override = childOverrideByIndex.get(parentPhase.phase_index);
         const effectiveDuration =
           override?.duration_default ?? parentPhase.duration_default ?? 0;
+        // Effective label: label_override on the child wins, else
+        // parent's label. Mirrors the resolver's coalesce.
+        const effectiveLabel = override?.label_override?.trim() || parentPhase.label;
         return {
           key: String(parentPhase.phase_index),
           phase_index: parentPhase.phase_index,
-          label: parentPhase.label,
+          label: effectiveLabel,
           patient_required: parentPhase.patient_required,
           duration_minutes: effectiveDuration,
           pool_ids: parentPhase.pool_ids,
@@ -841,6 +846,7 @@ function ChildRow({
         config_id: values.config_id,
         phase_index: values.phase_index,
         label: values.label,
+        label_override: values.label_override,
         patient_required: values.patient_required,
         duration_default: values.duration_default,
         duration_min: values.duration_min,
@@ -1281,268 +1287,161 @@ function BookingTypeEditorDialog({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
         {!isParent && (
-          <TitleSection
-            value={displayLabel}
-            onChange={setDisplayLabel}
-            derived={derivedLabelForTarget(target)}
-          />
+          <DialogSection
+            title="Title"
+            sub="How this override appears in the booking-types tree, schedule cards, and emails. Leave blank to use the catalogue default."
+            action={
+              displayLabel.trim() !== '' &&
+              displayLabel.trim() !== derivedLabelForTarget(target) ? (
+                <ResetLink onClick={() => setDisplayLabel('')}>
+                  Use catalogue default ({derivedLabelForTarget(target)})
+                </ResetLink>
+              ) : null
+            }
+          >
+            <Input
+              value={displayLabel}
+              onChange={(e) => setDisplayLabel(e.target.value)}
+              placeholder={derivedLabelForTarget(target)}
+            />
+          </DialogSection>
         )}
 
-        <SectionWithInherit
+        <DialogSection
           title="Working hours"
-          allowInherit={!isParent}
-          inherits={hoursInherits}
-          onToggleInherit={(v) => {
-            if (!v && parent) fillFromParent('hours');
-            setHoursInherits(v);
-          }}
-          parentSummary={parent ? summariseHours(parent.working_hours) : ''}
+          sub={
+            isParent
+              ? "When this service is bookable. Patients can't pick a time outside these hours."
+              : hoursInherits
+                ? `Inheriting from parent: ${parent ? summariseHours(parent.working_hours) : ''}.`
+                : 'Custom hours just for this variant.'
+          }
+          action={
+            !isParent ? (
+              <SegmentedControl
+                size="sm"
+                value={hoursInherits ? 'inherit' : 'custom'}
+                onChange={(v) => {
+                  const next = v === 'inherit';
+                  if (!next && parent) fillFromParent('hours');
+                  setHoursInherits(next);
+                }}
+                options={[
+                  { value: 'inherit', label: 'Inherit' },
+                  { value: 'custom', label: 'Custom' },
+                ]}
+              />
+            ) : null
+          }
         >
           {!hoursInherits ? (
             <WorkingHoursEditor value={hours} onChange={setHours} />
           ) : null}
-        </SectionWithInherit>
+        </DialogSection>
 
-        <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-          <header style={{ display: 'flex', alignItems: 'center' }}>
-            <span
-              style={{
-                fontSize: theme.type.size.xs,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.semibold,
-              }}
-            >
-              Notes
-            </span>
-          </header>
+        <DialogSection
+          title="Notes"
+          sub="Optional. Anything internal staff should know."
+        >
           <Input
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Optional. Anything internal staff should know."
+            placeholder="Anything internal staff should know."
           />
-        </section>
+        </DialogSection>
       </div>
     </Dialog>
   );
 }
 
-// Editable title section shown at the top of the editor for child /
-// new-child rows. Empty value = use the catalogue / arch default;
-// non-empty = take it verbatim. The "Use catalogue default" link
-// lets the admin clear the override and revert to the auto-derived
-// label without typing it back from memory.
-function TitleSection({
-  value,
-  onChange,
-  derived,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  derived: string;
-}) {
-  const isOverridden = value.trim() !== '' && value.trim() !== derived;
-  return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      <header style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.semibold,
-          }}
-        >
-          Title
-        </span>
-        {isOverridden && (
-          <button
-            type="button"
-            onClick={() => onChange('')}
-            style={{
-              appearance: 'none',
-              border: 'none',
-              background: 'transparent',
-              padding: 0,
-              cursor: 'pointer',
-              color: theme.color.accent,
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.medium,
-              fontFamily: 'inherit',
-            }}
-          >
-            Use catalogue default ({derived})
-          </button>
-        )}
-      </header>
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={derived}
-      />
-      <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-        How this override appears in the booking-types tree, schedule cards, and
-        emails. Leave blank to use the catalogue default.
-      </span>
-    </section>
-  );
-}
-
 // Compute the catalogue / arch / service derived label for the
-// current edit target, ignoring any admin override. Used by
-// TitleSection for the "Use catalogue default" link copy.
+// current edit target, ignoring any admin override. Used by the
+// Title section's "Use catalogue default" link copy.
 function derivedLabelForTarget(target: EditTarget): string {
   if (target.kind === 'new-child') return target.label;
   return bookingTypeRowDerivedLabel(target.row);
 }
 
-// Wrapper for a section with an optional "Override" toggle. Models
-// the Linear / Stripe / Vercel pattern for inherit-or-override:
-//
-//   • Section header: uppercase tracked-wide label on the left,
-//     OS-style toggle switch on the right (only when allowInherit).
-//   • Off state: a single line of muted prose showing what the
-//     parent's value is. The admin reads it and moves on.
-//   • On state: the editable controls appear. Prefilled from parent
-//     so the admin starts from a sensible point.
-//
-// One affordance per section, one state, no chip-plus-card.
-function SectionWithInherit({
+// Section helper for the booking-type editor dialog. Mirrors the
+// Arrival.tsx Section pattern (the canonical Lounge form section):
+// bold H2 title, muted sub paragraph, optional right-aligned action
+// slot, content below. Per the saved memory, no uppercase eyebrow
+// labels — they read as low-priority captions on tablet, the H2
+// pattern reads as the actual section it is.
+function DialogSection({
   title,
-  allowInherit,
-  inherits,
-  onToggleInherit,
-  parentSummary,
+  sub,
+  action,
   children,
 }: {
   title: string;
-  allowInherit: boolean;
-  inherits: boolean;
-  onToggleInherit: (v: boolean) => void;
-  parentSummary: string;
-  children: React.ReactNode;
+  sub?: string;
+  action?: React.ReactNode;
+  children?: React.ReactNode;
 }) {
-  // Override switch is the inverse of "inherits" — we surface it that
-  // way to the admin because "Override" is the verb that matches
-  // the action they're considering.
-  const isOverriding = !inherits;
   return (
-    <section
-      style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}
-    >
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
       <header
         style={{
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'flex-end',
           justifyContent: 'space-between',
           gap: theme.space[3],
         }}
       >
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.semibold,
-          }}
-        >
-          {title}
-        </span>
-        {allowInherit ? (
-          <ToggleSwitch
-            label="Override"
-            on={isOverriding}
-            onChange={(next) => onToggleInherit(!next)}
-          />
-        ) : null}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1], minWidth: 0 }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+            }}
+          >
+            {title}
+          </h2>
+          {sub ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              {sub}
+            </p>
+          ) : null}
+        </div>
+        {action ? <div style={{ flexShrink: 0 }}>{action}</div> : null}
       </header>
-      {inherits ? (
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-            lineHeight: 1.5,
-          }}
-        >
-          Using parent default: <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>{parentSummary}</span>
-        </p>
-      ) : (
-        children
-      )}
+      {children ? <div>{children}</div> : null}
     </section>
   );
 }
 
-// OS-style toggle switch. Track + thumb, animated. Used here as the
-// "Override" affordance per section. Two visual states only.
-function ToggleSwitch({
-  label,
-  on,
-  onChange,
+// Small "reset to default" link button used in section action slots.
+// Accent-coloured, no underline by default — matches the link
+// affordance in PatientFacingDurationEditor.
+function ResetLink({
+  onClick,
+  children,
 }: {
-  label: string;
-  on: boolean;
-  onChange: (next: boolean) => void;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={() => onChange(!on)}
+      onClick={onClick}
       style={{
         appearance: 'none',
         border: 'none',
         background: 'transparent',
-        cursor: 'pointer',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: theme.space[2],
         padding: 0,
+        cursor: 'pointer',
+        color: theme.color.accent,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.medium,
         fontFamily: 'inherit',
-        WebkitTapHighlightColor: 'transparent',
+        textAlign: 'right',
       }}
     >
-      <span
-        style={{
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.medium,
-          color: on ? theme.color.ink : theme.color.inkMuted,
-        }}
-      >
-        {label}
-      </span>
-      <span
-        aria-hidden
-        style={{
-          width: 32,
-          height: 18,
-          borderRadius: 999,
-          background: on ? theme.color.accent : theme.color.border,
-          position: 'relative',
-          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            position: 'absolute',
-            top: 2,
-            left: on ? 16 : 2,
-            width: 14,
-            height: 14,
-            borderRadius: '50%',
-            background: '#FFFFFF',
-            boxShadow: '0 1px 2px rgba(14, 20, 20, 0.2)',
-            transition: `left ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
-          }}
-        />
-      </span>
+      {children}
     </button>
   );
 }
