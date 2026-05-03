@@ -167,12 +167,6 @@ function PhaseChip({
   const passive = !phase.patient_required;
   const Icon = phase.patient_required ? UserRound : Hourglass;
 
-  // Diagonal-hatch CSS pattern for passive phases. Same accent
-  // colour as active so the chip reads as "still part of this
-  // booking, just no patient", not as a different visual category.
-  const passivePattern =
-    'repeating-linear-gradient(135deg, rgba(255,255,255,0.55) 0 4px, rgba(255,255,255,0) 4px 9px)';
-
   const interactive = !!onClick;
 
   return (
@@ -194,13 +188,14 @@ function PhaseChip({
         borderRadius: theme.radius.input - 4,
         border: 'none',
         cursor: interactive ? 'pointer' : 'default',
-        // Solid accent for active; muted accent + hatch for passive.
-        // backgroundColor + backgroundImage compose: the hatch sits
-        // on top of the muted-accent fill so the band still reads as
-        // "same colour family, just patient-not-required".
-        backgroundColor: passive ? `${theme.color.accent}66` : theme.color.accent,
-        backgroundImage: passive ? passivePattern : 'none',
-        color: '#FFFFFF',
+        // Solid accent for active; pale accent fill for passive.
+        // Same colour family signals "still part of this booking";
+        // lower saturation signals "patient not here right now".
+        // No diagonal hatch — that pattern reads as "pending /
+        // warning state" rather than "wait time".
+        backgroundColor: passive ? theme.color.accentBg : theme.color.accent,
+        // Text colour flips for legibility on the pale background.
+        color: passive ? theme.color.accent : '#FFFFFF',
         textAlign: 'center',
         gap: 2,
         transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
