@@ -157,21 +157,22 @@ export function AdminBookingTypesTab() {
         </p>
       </header>
 
-      <Card padding="none">
-        <ul
-          style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-          }}
-        >
-          {BOOKING_SERVICE_TYPES.map((s, i) => {
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+        }}
+      >
+          {BOOKING_SERVICE_TYPES.map((s) => {
             const group = grouped.get(s.value);
             if (!group) return null;
             return (
               <ServiceNode
                 key={s.value}
-                isFirst={i === 0}
                 serviceLabel={s.label}
                 serviceType={s.value}
                 parent={group.parent}
@@ -209,8 +210,7 @@ export function AdminBookingTypesTab() {
               />
             );
           })}
-        </ul>
-      </Card>
+      </ul>
 
       {editTarget ? (
         <BookingTypeEditorDialog
@@ -274,12 +274,12 @@ function serviceOfTarget(t: EditTarget): BookingServiceType {
 // One service block — parent row + collapsible children.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Service row — one entry in the booking-types tree. Two-line
-// content (name + summary) on the left, override count + cog button
-// on the right, hairline separator above (except first). Click the
-// row to expand the children, click the cog to open the editor.
+// Service card — one entry in the booking-types list. Each service
+// is its own card with a coloured left edge in its identity colour
+// so the eye picks out denture / veneers / appliance / impression
+// without reading the title. The cog opens the editor; the override
+// disclosure below the ribbon expands the variants.
 function ServiceNode({
-  isFirst,
   serviceLabel,
   serviceType,
   parent,
@@ -293,7 +293,6 @@ function ServiceNode({
   onPhaseDeleted,
   onPhaseError,
 }: {
-  isFirst: boolean;
   serviceLabel: string;
   serviceType: BookingServiceType;
   parent: BookingTypeConfigRow;
@@ -431,33 +430,41 @@ function ServiceNode({
   return (
     <li
       style={{
-        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
+        position: 'relative',
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        boxShadow: theme.shadow.card,
+        // Coloured left edge bar in the service's identity colour.
+        // Sits inside the card border-radius via overflow:hidden so it
+        // hugs the rounded corners cleanly.
+        overflow: 'hidden',
       }}
     >
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: 4,
+          background: dot,
+        }}
+      />
       <div
         style={{
           width: '100%',
           padding: `${theme.space[4]}px ${theme.space[5]}px`,
+          paddingLeft: theme.space[5] + 4,
           display: 'flex',
           alignItems: 'center',
           gap: theme.space[3],
         }}
       >
-        <span
-          aria-hidden
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: '50%',
-            background: dot,
-            flexShrink: 0,
-            marginTop: 2,
-          }}
-        />
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span
             style={{
-              fontSize: theme.type.size.md,
+              fontSize: theme.type.size.lg,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
               letterSpacing: theme.type.tracking.tight,
