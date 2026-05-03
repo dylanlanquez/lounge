@@ -321,6 +321,10 @@ function humaniseIntakeQuestion(question: string): string {
     case 'tooth shade':
     case 'desired shade':
       return 'Shade';
+    case 'what product is the impression for':
+    case 'what product is this impression for':
+    case 'product the impression is for':
+      return 'Product';
     default:
       // Pass-through so already-friendly Calendly questions render
       // as the operator typed them. Add a rewrite case above when
