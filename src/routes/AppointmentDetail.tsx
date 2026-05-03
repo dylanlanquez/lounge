@@ -688,11 +688,12 @@ function IntakeCard({
               value={value}
               isFirst={i === 0}
               wrapValue
-              // Intake questions vary from "Arch" to "What product is
-              // the impression for". Per-row content sizing keeps the
-              // label-to-answer gap tight on every row, instead of
-              // every row inheriting the widest label's lane.
-              labelMaxWidth="fit"
+              // Reserve the icon column so values align with the
+              // Booking details card on the same page. The
+              // humaniseIntakeQuestion switch keeps every label
+              // shorter than the 130px cap so this row's label
+              // never wraps.
+              reserveIconColumn
             />
           );
         })}
@@ -743,6 +744,10 @@ function humaniseIntakeQuestion(question: string): string {
     case 'tooth shade':
     case 'desired shade':
       return 'Shade';
+    case 'what product is the impression for':
+    case 'what product is this impression for':
+    case 'product the impression is for':
+      return 'Product';
     default:
       return trimmed;
   }
@@ -1224,7 +1229,7 @@ function KeyValueRow({
   value,
   isFirst,
   wrapValue,
-  labelMaxWidth,
+  reserveIconColumn,
 }: {
   icon?: ReactNode;
   label: string;
@@ -1232,39 +1237,34 @@ function KeyValueRow({
   isFirst?: boolean;
   wrapValue?: boolean;
   /**
-   * Sizing for the label column.
-   *
-   *   undefined  default cap — 140px without an icon, 130px with one.
-   *              Right for short, predictable labels (Location, Email).
-   *   number     fixed cap in px. Use when intermediate-length labels
-   *              need a slightly wider lane but still consistent
-   *              alignment across rows.
-   *   'fit'      label sizes to its natural content width per row.
-   *              Best for variable-length labels (intake questions
-   *              from "Arch" to "What product is the impression for")
-   *              where a fixed cap forces every row to inherit the
-   *              widest label's gap.
+   * When true, the row uses the icon-aware grid layout even without
+   * an icon — the icon cell is left empty but its 14px track + gap
+   * still occupy space. Used by IntakeCard so its rows align column-
+   * for-column with BookingDetailsCard's iconned rows. Without this
+   * flag the labels would start 26px further left and the values
+   * would pull left too, breaking the page's vertical rhythm.
    */
-  labelMaxWidth?: number | 'fit';
+  reserveIconColumn?: boolean;
 }) {
-  const labelTrack =
-    labelMaxWidth === 'fit'
-      ? 'max-content'
-      : `minmax(0, ${labelMaxWidth ?? (icon ? 130 : 140)}px)`;
+  // Single grid template across both cards so values land in the
+  // same vertical column. Booking-detail rows pass an icon; intake
+  // rows pass reserveIconColumn so the icon track is preserved
+  // empty.
+  const useIconColumn = !!icon || !!reserveIconColumn;
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: icon
-          ? `14px ${labelTrack} minmax(0, 1fr)`
-          : `${labelTrack} minmax(0, 1fr)`,
+        gridTemplateColumns: useIconColumn
+          ? `14px minmax(0, 130px) minmax(0, 1fr)`
+          : `minmax(0, 140px) minmax(0, 1fr)`,
         gap: theme.space[3],
         alignItems: 'baseline',
         padding: `${theme.space[3]}px 0`,
         borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      {icon ? (
+      {useIconColumn ? (
         <span style={{ color: theme.color.inkSubtle, display: 'inline-flex', alignSelf: 'center' }}>
           {icon}
         </span>

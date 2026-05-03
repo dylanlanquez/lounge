@@ -861,6 +861,10 @@ function humaniseIntakeQuestion(question: string): string {
     case 'tooth shade':
     case 'desired shade':
       return 'Shade';
+    case 'what product is the impression for':
+    case 'what product is this impression for':
+    case 'product the impression is for':
+      return 'Product';
     default:
       return trimmed;
   }
