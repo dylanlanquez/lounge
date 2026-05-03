@@ -97,6 +97,12 @@ export function PhaseRibbon({
           background: 'rgba(14,20,20,0.04)',
           borderRadius: theme.radius.input,
           padding: 2,
+          // Defensive: if a service has many short phases or the
+          // container is narrower than the sum of chip min-widths,
+          // let the ribbon scroll horizontally instead of forcing
+          // every chip to compress past readability.
+          overflowX: 'auto',
+          flexWrap: 'nowrap',
         }}
         role="group"
         aria-label="Booking phase ribbon"
@@ -185,7 +191,14 @@ function PhaseChip({
       }`}
       style={{
         flex: `1 1 ${flexBasis}`,
-        minWidth: 0,
+        // Min-width floor so short phases stay readable even when
+        // proportional sizing would otherwise crush them. Click-in
+        // Veneers' 30m / 4h / 10m split was previously dropping the
+        // 10-min "Try In" chip down to ~50px wide and truncating
+        // the label to a single letter. 96px in full mode fits any
+        // reasonable label + duration with breathing room; 48px in
+        // compact mode (no label, just duration) is enough.
+        minWidth: compact ? 48 : 96,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
