@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Hourglass, Trash2, UserRound } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -31,7 +31,27 @@ import {
 
 export type PhaseEditorTarget =
   | { kind: 'create'; config_id: string; next_phase_index: number }
-  | { kind: 'edit'; phase: BookingTypePhaseRow };
+  | { kind: 'edit'; phase: BookingTypePhaseRow }
+  // Per ADR-006 §6.3.3 — children can only override duration. Label,
+  // patient_required, and pool_ids stay structural and read from the
+  // parent. The editor renders those fields as muted "from
+  // {parentLabel}" rows, with only duration editable.
+  //
+  //   parentPhase: the parent's phase row (for label/patient/pools).
+  //   childOverride: the existing child row at this phase_index, or
+  //     null when no override exists yet (open in "create override"
+  //     mode pre-filled with the parent's duration).
+  //   childConfigId: the child config row id we're attaching the
+  //     override to.
+  //   parentLabel: human label of the parent service for the
+  //     "from {parent}" muted text.
+  | {
+      kind: 'child-override';
+      childConfigId: string;
+      parentPhase: BookingTypePhaseRow;
+      childOverride: BookingTypePhaseRow | null;
+      parentLabel: string;
+    };
 
 export interface PhaseEditorValues {
   id: string | null;
@@ -52,7 +72,9 @@ export interface PhaseEditorProps {
   pools: ResourcePoolRow[];
   onClose: () => void;
   onSave: (values: PhaseEditorValues) => Promise<void>;
-  // Only shown when editing an existing phase.
+  // Only shown for edit / child-override modes — both let the admin
+  // remove the row (parent edit deletes the phase entirely; child
+  // override deletes just the override row, reverting to inherit).
   onDelete?: (phaseId: string) => Promise<void>;
 }
 
@@ -84,6 +106,18 @@ export function PhaseEditor({
       setPatientRequired(p.patient_required);
       setDurationDefault(p.duration_default?.toString() ?? '');
       setPoolIds(p.pool_ids);
+    } else if (target.kind === 'child-override') {
+      // Read structural fields from the parent (read-only in this
+      // mode). Duration starts from the existing override if there
+      // is one, else from the parent default.
+      const p = target.parentPhase;
+      const o = target.childOverride;
+      setLabel(p.label);
+      setPatientRequired(p.patient_required);
+      setPoolIds(p.pool_ids);
+      const seedDuration =
+        o?.duration_default ?? p.duration_default ?? 0;
+      setDurationDefault(seedDuration > 0 ? seedDuration.toString() : '');
     } else {
       setLabel('');
       setPatientRequired(true);
@@ -107,25 +141,52 @@ export function PhaseEditor({
     setError(null);
     try {
       const dDefault = Number.parseInt(durationDefault, 10);
-      const values: PhaseEditorValues = {
-        id: target.kind === 'edit' ? target.phase.id : null,
-        config_id:
-          target.kind === 'edit' ? target.phase.config_id : target.config_id,
-        phase_index:
-          target.kind === 'edit'
-            ? target.phase.phase_index
-            : target.next_phase_index,
-        label: label.trim(),
-        patient_required: patientRequired,
-        duration_default: dDefault,
-        // min/max stay null from this UI — the typical case is a
-        // single duration and the slot-picker uses duration_default
-        // either way. A future expander can opt into a range.
-        duration_min: null,
-        duration_max: null,
-        pool_ids: poolIds,
-        notes: null,
-      };
+      let values: PhaseEditorValues;
+      if (target.kind === 'edit') {
+        values = {
+          id: target.phase.id,
+          config_id: target.phase.config_id,
+          phase_index: target.phase.phase_index,
+          label: label.trim(),
+          patient_required: patientRequired,
+          duration_default: dDefault,
+          duration_min: null,
+          duration_max: null,
+          pool_ids: poolIds,
+          notes: null,
+        };
+      } else if (target.kind === 'create') {
+        values = {
+          id: null,
+          config_id: target.config_id,
+          phase_index: target.next_phase_index,
+          label: label.trim(),
+          patient_required: patientRequired,
+          duration_default: dDefault,
+          duration_min: null,
+          duration_max: null,
+          pool_ids: poolIds,
+          notes: null,
+        };
+      } else {
+        // child-override: the structural fields (label, patient,
+        // pools) are copied from the parent so the row satisfies
+        // the table's NOT NULL columns. The resolver discards them
+        // anyway and reads from the parent's row at lookup time.
+        const p = target.parentPhase;
+        values = {
+          id: target.childOverride?.id ?? null,
+          config_id: target.childConfigId,
+          phase_index: p.phase_index,
+          label: p.label,
+          patient_required: p.patient_required,
+          duration_default: dDefault,
+          duration_min: null,
+          duration_max: null,
+          pool_ids: p.pool_ids,
+          notes: null,
+        };
+      }
       await onSave(values);
       onClose();
     } catch (e) {
@@ -136,12 +197,22 @@ export function PhaseEditor({
   };
 
   const handleDelete = async () => {
-    if (!target || target.kind !== 'edit' || !onDelete) return;
-    if (!window.confirm('Delete this phase? Existing appointments keep their snapshot.')) return;
+    if (!target || !onDelete) return;
+    let id: string | null = null;
+    let prompt = '';
+    if (target.kind === 'edit') {
+      id = target.phase.id;
+      prompt = 'Delete this phase? Existing appointments keep their snapshot.';
+    } else if (target.kind === 'child-override') {
+      id = target.childOverride?.id ?? null;
+      prompt = 'Reset this phase to the parent default? The override is removed.';
+    }
+    if (!id) return;
+    if (!window.confirm(prompt)) return;
     setDeleting(true);
     setError(null);
     try {
-      await onDelete(target.phase.id);
+      await onDelete(id);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not delete the phase.');
@@ -153,7 +224,21 @@ export function PhaseEditor({
   if (!target) return null;
 
   const sheetTitle =
-    target.kind === 'edit' ? `Edit phase ${target.phase.phase_index}` : 'Add phase';
+    target.kind === 'edit'
+      ? `Edit phase ${target.phase.phase_index}`
+      : target.kind === 'create'
+        ? 'Add phase'
+        : `Override duration · phase ${target.parentPhase.phase_index}`;
+  const isChildOverride = target.kind === 'child-override';
+  const showDelete =
+    (target.kind === 'edit' && !!onDelete) ||
+    (target.kind === 'child-override' && !!target.childOverride && !!onDelete);
+  const deleteLabel = isChildOverride ? 'Reset to parent' : 'Delete';
+  const saveLabel = target.kind === 'create'
+    ? 'Add phase'
+    : isChildOverride
+      ? 'Save override'
+      : 'Save changes';
 
   return (
     <BottomSheet
@@ -170,12 +255,8 @@ export function PhaseEditor({
           }}
         >
           <div>
-            {target.kind === 'edit' && onDelete && (
-              <Button
-                variant="tertiary"
-                onClick={handleDelete}
-                loading={deleting}
-              >
+            {showDelete && (
+              <Button variant="tertiary" onClick={handleDelete} loading={deleting}>
                 <span
                   style={{
                     display: 'inline-flex',
@@ -185,7 +266,7 @@ export function PhaseEditor({
                   }}
                 >
                   <Trash2 size={16} />
-                  Delete
+                  {deleteLabel}
                 </span>
               </Button>
             )}
@@ -195,45 +276,66 @@ export function PhaseEditor({
               Cancel
             </Button>
             <Button onClick={handleSave} loading={saving} disabled={!canSave}>
-              {target.kind === 'edit' ? 'Save changes' : 'Add phase'}
+              {saveLabel}
             </Button>
           </div>
         </div>
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-        <Section
-          title="Name this phase"
-          subtitle="A short label your team will see on the schedule and the timeline."
-        >
-          <Input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Sign in & assess"
-            autoFocus
+        {isChildOverride && target.kind === 'child-override' && (
+          <ParentRecap
+            parentLabel={target.parentLabel}
+            phaseLabel={target.parentPhase.label}
+            patientRequired={target.parentPhase.patient_required}
+            pools={pools.filter((p) => target.parentPhase.pool_ids.includes(p.id))}
           />
-        </Section>
+        )}
+
+        {!isChildOverride && (
+          <Section
+            title="Name this phase"
+            subtitle="A short label your team will see on the schedule and the timeline."
+          >
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Sign in & assess"
+              autoFocus
+            />
+          </Section>
+        )}
+
+        {!isChildOverride && (
+          <Section
+            title="Is the patient here?"
+            subtitle="Active phases hold the chair and the clinician. Passive phases free the patient to leave."
+          >
+            <SegmentedControl
+              value={patientRequired ? 'active' : 'passive'}
+              onChange={(v) => setPatientRequired(v === 'active')}
+              options={[
+                { value: 'active', label: 'Patient in chair' },
+                { value: 'passive', label: 'Patient may leave' },
+              ]}
+            />
+          </Section>
+        )}
 
         <Section
-          title="Is the patient here?"
-          subtitle="Active phases hold the chair and the clinician. Passive phases free the patient to leave."
+          title="How long?"
+          subtitle={
+            isChildOverride
+              ? 'Override the duration just for this variant. Everything else stays inherited.'
+              : 'In minutes.'
+          }
         >
-          <SegmentedControl
-            value={patientRequired ? 'active' : 'passive'}
-            onChange={(v) => setPatientRequired(v === 'active')}
-            options={[
-              { value: 'active', label: 'Patient in chair' },
-              { value: 'passive', label: 'Patient may leave' },
-            ]}
-          />
-        </Section>
-
-        <Section title="How long?" subtitle="In minutes.">
           <div style={{ maxWidth: 200 }}>
             <Input
               type="number"
               inputMode="numeric"
               min={1}
+              autoFocus={isChildOverride}
               value={durationDefault}
               onChange={(e) => setDurationDefault(e.target.value.replace(/[^0-9]/g, ''))}
               trailingIcon={
@@ -245,10 +347,11 @@ export function PhaseEditor({
           </div>
         </Section>
 
-        <Section
-          title="What does this phase need?"
-          subtitle="Pick the chairs, rooms, lab benches or staff this phase holds. The conflict checker uses this list to know what's busy when."
-        >
+        {!isChildOverride && (
+          <Section
+            title="What does this phase need?"
+            subtitle="Pick the chairs, rooms, lab benches or staff this phase holds. The conflict checker uses this list to know what's busy when."
+          >
           {pools.length === 0 ? (
             <div
               style={{
@@ -266,7 +369,8 @@ export function PhaseEditor({
               onChange={setPoolIds}
             />
           )}
-        </Section>
+          </Section>
+        )}
 
         {error && (
           <div
@@ -320,6 +424,89 @@ function Section({
         )}
       </div>
       {children}
+    </div>
+  );
+}
+
+// Recap card shown at the top of the editor in child-override mode.
+// Reads the parent's structural facts (label, patient_required, pool
+// list) as muted summary text so the admin sees what they're
+// inheriting before touching the duration field. Per ADR-006 these
+// fields can't be changed at the child level — only the duration.
+function ParentRecap({
+  parentLabel,
+  phaseLabel,
+  patientRequired,
+  pools,
+}: {
+  parentLabel: string;
+  phaseLabel: string;
+  patientRequired: boolean;
+  pools: ResourcePoolRow[];
+}) {
+  const Icon = patientRequired ? UserRound : Hourglass;
+  return (
+    <div
+      style={{
+        background: theme.color.bg,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+        }}
+      >
+        <Icon size={16} strokeWidth={2.25} style={{ color: theme.color.accent }} />
+        <span
+          style={{
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {phaseLabel}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+          }}
+        >
+          from {parentLabel}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: theme.space[3],
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+        }}
+      >
+        <span>
+          {patientRequired ? 'Patient in chair' : 'Patient may leave'}
+        </span>
+        {pools.length > 0 && (
+          <span>Holds {pools.map((p) => p.display_name).join(', ')}</span>
+        )}
+      </div>
+      <div
+        style={{
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkSubtle,
+        }}
+      >
+        Label, patient state, and resources are set on the parent. Override
+        them there if every variant needs the change.
+      </div>
     </div>
   );
 }

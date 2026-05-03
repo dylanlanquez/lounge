@@ -20,6 +20,7 @@ import { theme } from '../theme/index.ts';
 import {
   type BookingServiceType,
   type BookingTypeConfigRow,
+  type BookingTypePhaseRow,
   type DayHours,
   type DayOfWeek,
   type ResourcePoolRow,
@@ -562,8 +563,13 @@ function ServiceNode({
                   isFirst={i === 0}
                   dot={dot}
                   row={c}
+                  parentPhases={phases.data}
+                  parentLabel={serviceLabel}
+                  pools={pools}
                   onEdit={() => onEditChild(c)}
                   onRemove={() => onRemoveChild(c)}
+                  onChanged={onPhaseSaved}
+                  onError={onPhaseError}
                 />
               ))}
             </ul>
@@ -764,81 +770,237 @@ function ChildRow({
   isFirst,
   dot,
   row,
+  parentPhases,
+  parentLabel,
+  pools,
   onEdit,
   onRemove,
+  onChanged,
+  onError,
 }: {
   isFirst: boolean;
   dot: string;
   row: BookingTypeConfigRow;
+  parentPhases: BookingTypePhaseRow[];
+  parentLabel: string;
+  pools: ResourcePoolRow[];
   onEdit: () => void;
   onRemove: () => void;
+  onChanged: () => void;
+  onError: (msg: string) => void;
 }) {
   const inheritsHours = row.working_hours == null;
-  const inheritsDuration =
-    row.duration_min == null && row.duration_max == null && row.duration_default == null;
+  const childPhases = useBookingTypePhases(row.id);
+  const [phaseEditorTarget, setPhaseEditorTarget] = useState<PhaseEditorTarget | null>(null);
+  const [patientFacingOpen, setPatientFacingOpen] = useState(false);
+
+  // Map of phase_index → child override row (when one exists). The
+  // resolver does this server-side too, but for the editor we want
+  // the raw child row so we can edit / delete it directly.
+  const childOverrideByIndex = useMemo(() => {
+    const m = new Map<number, BookingTypePhaseRow>();
+    for (const p of childPhases.data) m.set(p.phase_index, p);
+    return m;
+  }, [childPhases.data]);
+
+  // Effective ribbon phases — parent shape with child duration
+  // override applied per phase_index. Order matches the parent.
+  const ribbonPhases: PhaseRibbonPhase[] = useMemo(
+    () =>
+      parentPhases.map((parentPhase) => {
+        const override = childOverrideByIndex.get(parentPhase.phase_index);
+        const effectiveDuration =
+          override?.duration_default ?? parentPhase.duration_default ?? 0;
+        return {
+          key: String(parentPhase.phase_index),
+          phase_index: parentPhase.phase_index,
+          label: parentPhase.label,
+          patient_required: parentPhase.patient_required,
+          duration_minutes: effectiveDuration,
+          pool_ids: parentPhase.pool_ids,
+        };
+      }),
+    [parentPhases, childOverrideByIndex],
+  );
+
+  const operationalMinutes = ribbonPhases.reduce(
+    (acc, p) => acc + (p.duration_minutes || 0),
+    0,
+  );
+  const patientInMinutes = ribbonPhases
+    .filter((p) => p.patient_required)
+    .reduce((acc, p) => acc + (p.duration_minutes || 0), 0);
+  const patientFacingMin = row.patient_facing_min_minutes ?? operationalMinutes;
+  const patientFacingMax = row.patient_facing_max_minutes;
+
+  const handleChildPhaseSave = async (values: PhaseEditorValues) => {
+    try {
+      await upsertBookingTypePhase({
+        id: values.id,
+        config_id: values.config_id,
+        phase_index: values.phase_index,
+        label: values.label,
+        patient_required: values.patient_required,
+        duration_default: values.duration_default,
+        duration_min: values.duration_min,
+        duration_max: values.duration_max,
+        notes: values.notes,
+      });
+      // Pool consumption on a child override is inherited from the
+      // parent at resolve time (per ADR-006 §6.3.3 — children retune
+      // duration only). We don't write phase pool rows for the
+      // child; the resolver always reads from the parent phase's
+      // pool list.
+      childPhases.reload();
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not save override');
+      throw e;
+    }
+  };
+
+  const handleChildPhaseDelete = async (phaseId: string) => {
+    try {
+      await deleteBookingTypePhase(phaseId);
+      childPhases.reload();
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not reset override');
+      throw e;
+    }
+  };
+
+  const handleChildPatientFacingSave = async (values: {
+    min: number | null;
+    max: number | null;
+  }) => {
+    try {
+      await upsertBookingTypeConfig({
+        service_type: row.service_type,
+        repair_variant: row.repair_variant,
+        product_key: row.product_key,
+        arch: row.arch,
+        patient_facing_min_minutes: values.min,
+        patient_facing_max_minutes: values.max,
+      });
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not save');
+      throw e;
+    }
+  };
+
   return (
     <li
       style={{
         display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
+        flexDirection: 'column',
+        gap: theme.space[2],
         padding: `${theme.space[3]}px ${theme.space[4]}px`,
         borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      <span
-        aria-hidden
+      <div
         style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          background: dot,
-          flexShrink: 0,
-          opacity: 0.5,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
         }}
-      />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      >
         <span
+          aria-hidden
           style={{
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: dot,
+            flexShrink: 0,
+            opacity: 0.5,
           }}
-        >
-          {bookingTypeRowLabel(row)}
-        </span>
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            display: 'flex',
-            gap: theme.space[2],
-            flexWrap: 'wrap',
-            alignItems: 'center',
-          }}
-        >
-          <InheritChip
-            inherits={inheritsHours}
-            label="Hours"
-            override={summariseHours(row.working_hours)}
-          />
-          <InheritChip
-            inherits={inheritsDuration}
-            label="Duration"
-            override={summariseDuration(row)}
-          />
-        </span>
+        />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            {bookingTypeRowLabel(row)}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              display: 'flex',
+              gap: theme.space[2],
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            <InheritChip
+              inherits={inheritsHours}
+              label="Hours"
+              override={summariseHours(row.working_hours)}
+            />
+          </span>
+        </div>
+        <IconAction
+          ariaLabel={`Configure ${bookingTypeRowLabel(row)}`}
+          onClick={onEdit}
+          icon={<Settings2 size={16} aria-hidden />}
+        />
+        <IconAction
+          ariaLabel={`Remove override for ${bookingTypeRowLabel(row)}`}
+          onClick={onRemove}
+          icon={<Trash2 size={16} aria-hidden />}
+          tone="danger"
+        />
       </div>
-      <IconAction
-        ariaLabel={`Configure ${bookingTypeRowLabel(row)}`}
-        onClick={onEdit}
-        icon={<Settings2 size={16} aria-hidden />}
+
+      {parentPhases.length > 0 && !childPhases.loading && (
+        <div style={{ paddingLeft: 14 }}>
+          <PhaseRibbon
+            phases={ribbonPhases}
+            operational_minutes={operationalMinutes}
+            patient_in_minutes={patientInMinutes}
+            patient_facing_min_minutes={patientFacingMin}
+            patient_facing_max_minutes={patientFacingMax}
+            onPhaseClick={(key) => {
+              const phaseIndex = Number.parseInt(key, 10);
+              const parentPhase = parentPhases.find((pp) => pp.phase_index === phaseIndex);
+              if (!parentPhase) return;
+              setPhaseEditorTarget({
+                kind: 'child-override',
+                childConfigId: row.id,
+                parentPhase,
+                childOverride: childOverrideByIndex.get(phaseIndex) ?? null,
+                parentLabel,
+              });
+            }}
+            onEditPatientFacing={() => setPatientFacingOpen(true)}
+          />
+        </div>
+      )}
+
+      <PhaseEditor
+        open={phaseEditorTarget !== null}
+        target={phaseEditorTarget}
+        pools={pools}
+        onClose={() => setPhaseEditorTarget(null)}
+        onSave={handleChildPhaseSave}
+        onDelete={handleChildPhaseDelete}
       />
-      <IconAction
-        ariaLabel={`Remove override for ${bookingTypeRowLabel(row)}`}
-        onClick={onRemove}
-        icon={<Trash2 size={16} aria-hidden />}
-        tone="danger"
+
+      <PatientFacingDurationEditor
+        open={patientFacingOpen}
+        configId={row.id}
+        serviceLabel={bookingTypeRowLabel(row)}
+        currentOverrideMin={row.patient_facing_min_minutes}
+        currentOverrideMax={row.patient_facing_max_minutes}
+        operationalMinutes={operationalMinutes}
+        onClose={() => setPatientFacingOpen(false)}
+        onSave={handleChildPatientFacingSave}
       />
     </li>
   );
