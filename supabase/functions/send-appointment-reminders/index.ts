@@ -240,6 +240,13 @@ async function processOne(
   // both can be null and the renderer degrades to empty string.
   const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
+  // Phase data + threshold drive {{patientFacingSchedule}}. Empty
+  // phases degrade to the duration label.
+  const [phases, segmentedThresholdMinutes] = await Promise.all([
+    fetchAppointmentPhases(admin, apt.id),
+    resolveSegmentedThresholdMinutes(admin),
+  ]);
+
   // Build variables. Keep names matching what the admin UI exposes
   // so the editor's autocomplete + the renderer never disagree.
   const variables = buildVariables(
@@ -248,6 +255,8 @@ async function processOne(
     location,
     patientFacingRange.min,
     patientFacingRange.max,
+    phases,
+    segmentedThresholdMinutes,
   );
 
   // Render via the inline parser (same pipeline as src/lib/emailRenderer.ts).
@@ -297,11 +306,23 @@ function buildVariables(
   location: LocationRow | null,
   patientFacingMinMinutes: number | null,
   patientFacingMaxMinutes: number | null,
+  phases: AppointmentPhase[],
+  segmentedThresholdMinutes: number,
 ): Record<string, string> {
   const start = new Date(apt.start_at);
   const fmt = (opts: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', ...opts }).format(start);
-  const time = fmt({ hour: '2-digit', minute: '2-digit', hour12: false });
+  // Format any ISO timestamp as HH:MM in London time. Used by the
+  // appointment-time variable AND by buildPatientFacingSchedule for
+  // each phase's start time.
+  const formatHmm = (iso: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(iso));
+  const time = formatHmm(apt.start_at);
   const dayShort = fmt({ weekday: 'short', day: 'numeric', month: 'short' });
   const dateTime = `${dayShort} at ${time}`;
   const dateLong = fmt({
@@ -325,6 +346,12 @@ function buildVariables(
     patientFacingDuration: formatPatientFacingDurationForEmail(
       patientFacingMinMinutes,
       patientFacingMaxMinutes,
+    ),
+    patientFacingSchedule: buildPatientFacingSchedule(
+      phases,
+      segmentedThresholdMinutes,
+      formatPatientFacingDurationForEmail(patientFacingMinMinutes, patientFacingMaxMinutes),
+      formatHmm,
     ),
   };
 }
@@ -355,6 +382,80 @@ function formatMinutesLong(min: number): string {
 // Mirrors the helper in send-appointment-confirmation. Best-effort —
 // any error or empty result returns {min: null, max: null} and the
 // variable hydrates to empty string.
+// Mirrors the helper in send-appointment-confirmation.
+interface AppointmentPhase {
+  phase_index: number;
+  label: string;
+  patient_required: boolean;
+  start_at: string;
+  end_at: string;
+}
+
+async function fetchAppointmentPhases(
+  admin: SupabaseClient,
+  appointmentId: string,
+): Promise<AppointmentPhase[]> {
+  const { data, error } = await admin
+    .from('lng_appointment_phases')
+    .select('phase_index, label, patient_required, start_at, end_at')
+    .eq('appointment_id', appointmentId)
+    .order('phase_index', { ascending: true });
+  if (error || !Array.isArray(data)) return [];
+  return data as AppointmentPhase[];
+}
+
+async function resolveSegmentedThresholdMinutes(
+  admin: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await admin
+    .from('lng_settings')
+    .select('value')
+    .is('location_id', null)
+    .eq('key', 'booking.patient_segmented_threshold_minutes')
+    .maybeSingle();
+  if (error || !data) return 60;
+  const v = (data as { value: unknown }).value;
+  if (typeof v === 'number' && v > 0) return v;
+  return 60;
+}
+
+// Mirrors buildPatientFacingSchedule in send-appointment-confirmation.
+// When the booking has a long passive phase, render a multi-segment
+// schedule ("Imps at 09:00 (30 min). Please return at approximately
+// 13:30 for Try In (10 min).") instead of a single duration line.
+function buildPatientFacingSchedule(
+  phases: AppointmentPhase[],
+  thresholdMinutes: number,
+  fallbackDuration: string,
+  formatTime: (iso: string) => string,
+): string {
+  if (phases.length < 2) return fallbackDuration;
+
+  const hasLongPassive = phases.some((p) => {
+    if (p.patient_required) return false;
+    const ms = new Date(p.end_at).getTime() - new Date(p.start_at).getTime();
+    return ms >= thresholdMinutes * 60_000;
+  });
+  if (!hasLongPassive) return fallbackDuration;
+
+  const activePhases = phases.filter((p) => p.patient_required);
+  if (activePhases.length === 0) return fallbackDuration;
+
+  const sentences = activePhases.map((p, i) => {
+    const durMinutes = Math.max(
+      Math.round((new Date(p.end_at).getTime() - new Date(p.start_at).getTime()) / 60_000),
+      1,
+    );
+    const durLabel = formatMinutesLong(durMinutes);
+    if (i === 0) {
+      return `${p.label} at ${formatTime(p.start_at)} (${durLabel})`;
+    }
+    return `Please return at approximately ${formatTime(p.start_at)} for ${p.label} (${durLabel})`;
+  });
+
+  return `${sentences.join('. ')}.`;
+}
+
 async function resolvePatientFacingRange(
   admin: SupabaseClient,
   serviceType: string | null,
