@@ -25,6 +25,7 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   patient_phone: null,
   staff_first_name: null,
   staff_last_name: null,
+  phases: [],
 });
 
 describe('intakeSummary / filterCareIntake', () => {

@@ -47,18 +47,39 @@ interface RawRow {
     | { first_name: string | null; last_name: string | null }
     | { first_name: string | null; last_name: string | null }[]
     | null;
+  phases?:
+    | {
+        phase_index: number;
+        label: string;
+        patient_required: boolean;
+        start_at: string;
+        end_at: string;
+        status: 'pending' | 'in_progress' | 'complete' | 'skipped';
+        pool_ids: string[] | null;
+      }[]
+    | null;
 }
+
+// Embedded phase select reused by both column-list variants. PostgREST
+// resolves lng_appointment_phases via the FK to lng_appointments(id).
+// Returns an empty array for appointments that aren't materialised
+// yet — the renderer falls back to a single implicit phase in that
+// case so legacy rows still display.
+const PHASE_SELECT =
+  'phases:lng_appointment_phases ( phase_index, label, patient_required, start_at, end_at, status, pool_ids )';
 
 const SELECT_WITH_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, notes, intake, join_url,
   deposit_pence, deposit_currency, deposit_provider, deposit_status,
   patient:patients ( first_name, last_name, email, phone ),
-  staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
+  staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
+  ${PHASE_SELECT}
 `;
 const SELECT_NO_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, notes,
   patient:patients ( first_name, last_name, email, phone ),
-  staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name )
+  staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
+  ${PHASE_SELECT}
 `;
 
 function mapRows(rows: unknown[]): AppointmentRow[] {
@@ -89,6 +110,17 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       patient_phone: patient?.phone ?? null,
       staff_first_name: staff?.first_name ?? null,
       staff_last_name: staff?.last_name ?? null,
+      phases: (raw.phases ?? [])
+        .map((p) => ({
+          phase_index: p.phase_index,
+          label: p.label,
+          patient_required: p.patient_required,
+          start_at: p.start_at,
+          end_at: p.end_at,
+          status: p.status,
+          pool_ids: p.pool_ids ?? [],
+        }))
+        .sort((a, b) => a.phase_index - b.phase_index),
     };
   });
 }

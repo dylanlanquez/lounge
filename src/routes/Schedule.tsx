@@ -532,6 +532,7 @@ export function Schedule() {
                           : null
                       }
                       dimmed={isAppointmentDimmed(item.data, now)}
+                      phases={item.data.phases}
                       onClick={() => setSelected(item.data)}
                     />
                   ) : (
