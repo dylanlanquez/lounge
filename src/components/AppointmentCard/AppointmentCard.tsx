@@ -266,20 +266,20 @@ function PhaseStrip({
         const widthPct = totalMs > 0 ? (phaseMs / totalMs) * 100 : 0;
         const passive = !p.patient_required;
         const done = p.status === 'complete' || p.status === 'skipped';
-        const passivePattern =
-          'repeating-linear-gradient(135deg, rgba(255,255,255,0.55) 0 3px, rgba(255,255,255,0) 3px 7px)';
         return (
           <div
             key={i}
             style={{
               width: `${widthPct}%`,
-              backgroundColor: passive
-                ? `${theme.color.accent}55`
-                : theme.color.accent,
-              backgroundImage: passive ? passivePattern : 'none',
+              // Solid accent for active phases, pale accent fill
+              // for passive — same colour family, no diagonal
+              // hatch. The hatch read as "warning / pending" on
+              // first ship; flat fill is calmer and still reads
+              // as "still booked, no patient".
+              backgroundColor: passive ? theme.color.accentBg : theme.color.accent,
               opacity: done ? 0.5 : 1,
               borderRight:
-                i < phases.length - 1 ? '1px solid rgba(255,255,255,0.35)' : 'none',
+                i < phases.length - 1 ? `1px solid ${theme.color.surface}` : 'none',
             }}
           />
         );

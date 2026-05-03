@@ -22,7 +22,6 @@ import {
 import {
   AppointmentHero,
   type AppointmentHeroTone,
-  AppointmentPhaseTimeline,
   AppointmentTimeline,
   BottomSheet,
   Breadcrumb,
@@ -34,7 +33,6 @@ import {
   Skeleton,
   type StatusTone,
 } from '../components/index.ts';
-import { useAppointmentPhases } from '../lib/queries/appointmentPhases.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -262,7 +260,6 @@ function Loaded({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
-  const phases = useAppointmentPhases(appt.id);
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
@@ -461,19 +458,6 @@ function Loaded({
           appt.reschedule_to_id ? navigate(`/appointment/${appt.reschedule_to_id}`) : undefined
         }
       />
-
-      {phases.data.length > 1 && (
-        <section style={{ marginTop: theme.space[5] }}>
-          <AppointmentPhaseTimeline
-            appointmentId={appt.id}
-            phases={phases.data}
-            onChanged={() => {
-              phases.refresh();
-              onChanged();
-            }}
-          />
-        </section>
-      )}
 
       <section style={{ marginTop: theme.space[5] }}>
         <AppointmentTimeline appointmentId={appt.id} />
