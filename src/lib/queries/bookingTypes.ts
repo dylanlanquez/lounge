@@ -602,15 +602,10 @@ export interface BookingTypePhaseRow {
   id: string;
   config_id: string;
   phase_index: number;
-  // The phase's canonical label. On parent rows this is the source
-  // of truth. On child override rows we copy the parent's value at
-  // insert time to satisfy the column's NOT NULL — but the actual
-  // rename for the variant lives in `label_override`.
+  // Phase label. On parent rows this is the canonical name. On child
+  // override rows it's the variant's rename (M12 row-level override
+  // semantics — when a child phase row exists, all its fields win).
   label: string;
-  // Child-only rename of the phase. Null on parent rows. Null on
-  // child rows when the variant hasn't renamed the phase. The
-  // resolver returns coalesce(label_override, parent.label).
-  label_override: string | null;
   patient_required: boolean;
   duration_min: number | null;
   duration_max: number | null;
@@ -698,14 +693,14 @@ export function useBookingTypePhases(configId: string | null | undefined): {
 // Insert or update a phase row. The unique key is (config_id,
 // phase_index). For a new phase, the caller picks the next free
 // phase_index (typically max + 1). For an edit, the existing
-// phase_index is reused. label_override is for child-only renames
-// — pass null on parent rows.
+// phase_index is reused. Per M12, child override rows store all
+// fields directly (no separate _override columns); the resolver
+// uses row-level override semantics.
 export async function upsertBookingTypePhase(input: {
   id?: string | null;
   config_id: string;
   phase_index: number;
   label: string;
-  label_override?: string | null;
   patient_required: boolean;
   duration_min?: number | null;
   duration_max?: number | null;
@@ -716,7 +711,6 @@ export async function upsertBookingTypePhase(input: {
     config_id: input.config_id,
     phase_index: input.phase_index,
     label: input.label,
-    label_override: input.label_override ?? null,
     patient_required: input.patient_required,
     duration_min: input.duration_min ?? null,
     duration_max: input.duration_max ?? null,
