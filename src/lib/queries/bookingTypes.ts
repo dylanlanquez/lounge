@@ -111,6 +111,17 @@ export type ResourcePoolKind = 'resource' | 'staff_role';
 export interface ResourcePoolRow {
   id: string;
   display_name: string;
+  // How many of this resource exist. For physical resources, the
+  // count of chairs/rooms/equipment. For staff_role pools, the
+  // count of assigned staff (kept in sync with the picker).
+  units: number;
+  // How many patients each unit handles at the same time. Defaults
+  // to 1; admin only changes for the genuinely parallel cases
+  // (1 receptionist juggling 3, a room with 2 chairs, etc.).
+  per_unit_capacity: number;
+  // Effective capacity = units × per_unit_capacity. Generated
+  // stored column on the DB side, kept in sync automatically.
+  // The conflict checker reads this; admin never edits it directly.
   capacity: number;
   kind: ResourcePoolKind;
   notes: string | null;
@@ -435,20 +446,24 @@ export function isValidPoolId(id: string): boolean {
 export async function upsertResourcePool(input: {
   id: string;
   display_name: string;
-  capacity: number;
+  units: number;
+  per_unit_capacity: number;
   kind: ResourcePoolKind;
   notes?: string | null;
 }): Promise<void> {
   if (!isValidPoolId(input.id)) {
     throw new Error('Pool id must be lowercase letters, digits, and hyphens.');
   }
+  // capacity is a generated column server-side (units × per_unit_
+  // capacity). Don't write to it; the DB rejects.
   const { error } = await supabase
     .from('lng_booking_resource_pools')
     .upsert(
       {
         id: input.id,
         display_name: input.display_name,
-        capacity: input.capacity,
+        units: input.units,
+        per_unit_capacity: input.per_unit_capacity,
         kind: input.kind,
         notes: input.notes ?? null,
       },
