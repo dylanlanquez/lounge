@@ -1,26 +1,20 @@
-// Booking-widget demo data.
+// Booking-widget data layer.
 //
-// Phase 1 of the widget runs end-to-end against this in-file dataset
-// so the visual flow + conditional step engine can be exercised
-// without touching Supabase. Each booking type carries the metadata
-// the step engine needs to decide how the flow branches:
+// Booking types now come live from the public `lng_widget_booking_types`
+// view (phase 2a — see useWidgetBookingTypes below). Locations,
+// dentists and slots are still in-file constants (phase 2b/c will
+// swap them in turn):
 //
-//   • deposit_pence > 0   → adds Step 6 (Payment)
-//   • allow_staff_pick    → adds Step 3 (Dentist)
+//   • locations  → public.locations (RLS already off, just needs
+//                  a hook)
+//   • dentists   → either a Lounge-owned lng_widget_dentists table
+//                  or a view over public.accounts. TBD; the
+//                  widget reads the same shape either way.
+//   • slots      → server-side RPC that walks lng_appointments for
+//                  conflicts and respects clinic.opening_hours.
 //
-// Phase 2 swaps these arrays out for live reads:
-//
-//   • locations     → public.locations (RLS already off)
-//   • bookingTypes  → public.lng_booking_type_config + a new
-//                     widget_visible / widget_price_pence /
-//                     widget_deposit_pence column set
-//   • dentists      → public.accounts filtered by location +
-//                     active staff. Anon-read policy needed.
-//   • slots         → server-side resolver that respects
-//                     existing appointments + opening hours.
-//
-// Until then this file is the single source of truth for what the
-// widget shows. Edit it freely while iterating on the design.
+// The shapes below stay stable across phases — the swap is just at
+// the read site.
 
 export interface WidgetLocation {
   id: string;
@@ -52,64 +46,14 @@ export interface WidgetDentist {
   avatarUrl: string;
 }
 
+// Locations stay static for phase 2a; they'll move to a live read
+// once we add multi-location support. The default Lounge clinic is
+// fine to hardcode while the app is single-location.
 export const WIDGET_LOCATIONS: WidgetLocation[] = [
   {
     id: 'loc-1',
     name: 'Venneir Lounge',
     addressLine: '138 Main Street, Glasgow, G1 2QA',
-  },
-];
-
-export const WIDGET_BOOKING_TYPES: WidgetBookingType[] = [
-  {
-    id: 'bt-consultation',
-    label: 'Consultation',
-    description:
-      'A 30-minute chat with one of our dentists. We assess what you need, talk through options, and book the right treatment from there. No commitment.',
-    pricePence: 0,
-    depositPence: 0,
-    allowStaffPick: false,
-    durationMinutes: 30,
-  },
-  {
-    id: 'bt-cleaning',
-    label: 'Cleaning &amp; polish',
-    description:
-      'Scale and polish with one of our hygienists. Removes plaque and surface stains, brightens the smile, and keeps the gums healthy.',
-    pricePence: 5000,
-    depositPence: 0,
-    allowStaffPick: false,
-    durationMinutes: 30,
-  },
-  {
-    id: 'bt-whitening',
-    label: 'Tooth whitening',
-    description:
-      'Custom-tray home-whitening kit. We take impressions, fit your trays, and provide the gel. Most patients see results within two weeks.',
-    pricePence: 32000,
-    depositPence: 5000,
-    allowStaffPick: true,
-    durationMinutes: 45,
-  },
-  {
-    id: 'bt-veneers',
-    label: 'Click-in veneers',
-    description:
-      'Removable, life-like veneers, designed and made in-house in a single visit. Same-day fit. We take impressions, design your smile with you, and you walk out wearing them.',
-    pricePence: 195000,
-    depositPence: 25000,
-    allowStaffPick: true,
-    durationMinutes: 90,
-  },
-  {
-    id: 'bt-implant-consult',
-    label: 'Implant consultation',
-    description:
-      'Detailed assessment with our implant lead, including a CT scan if needed. We talk through the plan, the timeline and the costs in plain English.',
-    pricePence: 7500,
-    depositPence: 2500,
-    allowStaffPick: true,
-    durationMinutes: 45,
   },
 ];
 
@@ -139,6 +83,62 @@ export const WIDGET_DENTISTS: WidgetDentist[] = [
     avatarUrl: '',
   },
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live booking-type read
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase.ts';
+
+interface BookingTypeReadResult {
+  data: WidgetBookingType[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/** Reads the public `lng_widget_booking_types` view. The view
+ *  exposes only widget-visible parent rows, anon-readable, so this
+ *  works without the patient signing in. Single-fire on mount,
+ *  no real-time. */
+export function useWidgetBookingTypes(): BookingTypeReadResult {
+  const [data, setData] = useState<WidgetBookingType[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('lng_widget_booking_types')
+        .select('id, label, description, price_pence, deposit_pence, allow_staff_pick, duration_minutes')
+        .order('label', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      const shaped: WidgetBookingType[] = (rows ?? []).map((r) => ({
+        id: r.id as string,
+        label: (r.label as string) ?? '',
+        description: (r.description as string) ?? '',
+        pricePence: (r.price_pence as number | null) ?? 0,
+        depositPence: (r.deposit_pence as number) ?? 0,
+        allowStaffPick: (r.allow_staff_pick as boolean) ?? true,
+        durationMinutes: (r.duration_minutes as number) ?? 30,
+      }));
+      setData(shaped);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { data, loading, error };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Slot generator — v1 stub

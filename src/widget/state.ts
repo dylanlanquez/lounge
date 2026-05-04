@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import {
-  WIDGET_BOOKING_TYPES,
   WIDGET_LOCATIONS,
   type WidgetBookingType,
   type WidgetDentist,
@@ -206,5 +205,4 @@ export function formatPrice(pence: number): string {
   return `£${(pence / 100).toFixed(2)}`;
 }
 
-export const ALL_BOOKING_TYPES = WIDGET_BOOKING_TYPES;
 export const ALL_LOCATIONS = WIDGET_LOCATIONS;

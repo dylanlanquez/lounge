@@ -1,21 +1,37 @@
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Phone } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
-import { ALL_BOOKING_TYPES, formatPrice, type BookingStateApi } from '../state.ts';
+import { formatPrice, type BookingStateApi } from '../state.ts';
+import { useWidgetBookingTypes } from '../data.ts';
 
 // Step 2 — Service / Appointment Type.
 //
-// Lists every public-visible booking type as a card. Description
-// reads like the practice wrote it for the patient (it lives in
-// data.ts and will move to lng_booking_type_config.widget_description
-// in phase 2). Price renders right-aligned. Tapping a card sets the
-// service in state, which can shorten or lengthen the rest of the
-// flow (Dentist + Payment steps switch on / off based on the chosen
-// service's flags).
+// Lists every widget-visible booking type as a card. Reads live from
+// the public.lng_widget_booking_types view (admins control which
+// services show by toggling widget_visible per row in
+// lng_booking_type_config). Price + deposit render right-aligned;
+// description reads like the practice wrote it for the patient
+// (lives in widget_description on the same row).
+//
+// Tapping a card sets the service in state, which can shorten or
+// lengthen the rest of the flow — Dentist and Payment steps switch
+// on / off based on the chosen service's flags.
 
 export function ServiceStep({ api }: { api: BookingStateApi }) {
+  const { data, loading, error } = useWidgetBookingTypes();
+
+  if (loading) {
+    return <ServiceSkeleton />;
+  }
+  if (error) {
+    return <ServiceError message={error} />;
+  }
+  if (!data || data.length === 0) {
+    return <ServiceEmpty />;
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      {ALL_BOOKING_TYPES.map((bt) => {
+      {data.map((bt) => {
         const selected = api.state.service?.id === bt.id;
         return (
           <button
@@ -104,6 +120,115 @@ export function ServiceStep({ api }: { api: BookingStateApi }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Loading / empty / error states
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ServiceSkeleton() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          aria-hidden
+          style={{
+            height: 96,
+            background: theme.color.surface,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.card,
+            opacity: 0.6,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ServiceEmpty() {
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px dashed ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[6],
+        textAlign: 'center',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 48,
+          height: 48,
+          borderRadius: '50%',
+          background: theme.color.bg,
+          color: theme.color.inkMuted,
+          marginBottom: theme.space[3],
+        }}
+      >
+        <Phone size={20} aria-hidden />
+      </span>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+        }}
+      >
+        Online booking is paused right now
+      </p>
+      <p
+        style={{
+          margin: `${theme.space[2]}px 0 0`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        Give us a call and we'll find you a time. Sorry for the hop.
+      </p>
+    </div>
+  );
+}
+
+function ServiceError({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.alert}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[5],
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.alert,
+        }}
+      >
+        Something went wrong loading our services
+      </p>
+      <p
+        style={{
+          margin: `${theme.space[2]}px 0 0`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+        }}
+      >
+        Refresh the page, or call us if it sticks. ({message})
+      </p>
     </div>
   );
 }
