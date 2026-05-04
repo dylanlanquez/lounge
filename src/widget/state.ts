@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  useResolvedCatalogueRow,
   useWidgetUpgrades,
   WIDGET_LOCATIONS,
   type WidgetBookingType,
@@ -208,16 +209,31 @@ export function useBookingState() {
     WIDGET_LOCATIONS.length === 1 ? 'service' : 'location',
   );
 
-  // Upgrades query lives inside the hook so the active step list
-  // can flip on / off cleanly as the patient drills through axes.
-  const upgradesResult = useWidgetUpgrades({
+  // Upgrades + catalogue resolution both live inside the hook so
+  // every consumer (Summary, Service step, Payment step) sees the
+  // same shape via the api object — no parallel hooks scattered
+  // across the tree.
+  const resolverInput = {
     serviceType: state.service?.serviceType ?? null,
     productKey: state.axes.product_key ?? null,
     repairVariant: state.axes.repair_variant ?? null,
-  });
+  };
+  const upgradesResult = useWidgetUpgrades(resolverInput);
+  const resolvedResult = useResolvedCatalogueRow(resolverInput);
   const upgrades = upgradesResult.data ?? [];
   const hasUpgrades = upgrades.length > 0;
   const activeSteps = useMemo(() => activeStepsFor(state, hasUpgrades), [state, hasUpgrades]);
+  const priceBreakdown = useMemo(
+    () =>
+      computePriceBreakdown({
+        service: state.service,
+        resolvedRow: resolvedResult.data,
+        arch: state.axes.arch,
+        upgrades,
+        selectedUpgradeIds: state.upgradeIds,
+      }),
+    [state.service, resolvedResult.data, state.axes.arch, upgrades, state.upgradeIds],
+  );
   const currentIdx = activeSteps.indexOf(stepKey);
   const totalSteps = activeSteps.length;
 
@@ -301,6 +317,8 @@ export function useBookingState() {
     setAxisPin,
     toggleUpgrade,
     upgrades,
+    resolvedRow: resolvedResult.data,
+    priceBreakdown,
     stepKey,
     activeSteps,
     currentIdx,
@@ -354,6 +372,93 @@ export function formatPrice(pence: number): string {
   if (pence === 0) return 'Free';
   if (pence % 100 === 0) return `£${pence / 100}`;
   return `£${(pence / 100).toFixed(2)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pricing — pure resolution from state + catalogue row + upgrades
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Given the patient's resolved catalogue row, their arch pin, the
+// list of upgrade rows that apply, and the upgrade ids they've
+// ticked, returns the breakdown the summary needs. Pure — no
+// network, no React. The widget calls this once per render with
+// inputs from the live hooks.
+
+import type { ResolvedCatalogueRow, WidgetUpgrade } from './data.ts';
+
+export interface PriceBreakdown {
+  /** The catalogue row's price for the resolved arch. 0 when no
+   *  row has been resolved yet. */
+  serviceLinePence: number;
+  /** Selected upgrades' prices summed, with each upgrade's per-arch
+   *  price chosen the same way the service line is. */
+  upgradesLinePence: number;
+  /** Service + upgrades. */
+  subtotalPence: number;
+  /** Captured at booking — read from the booking type's
+   *  widget_deposit_pence. */
+  depositPence: number;
+  /** Subtotal − deposit. Never negative. Surfaced as "Pay at
+   *  appointment" in the summary. */
+  payAtAppointmentPence: number;
+}
+
+export function computePriceBreakdown(input: {
+  service: WidgetBookingType | null;
+  resolvedRow: ResolvedCatalogueRow | null;
+  arch: 'upper' | 'lower' | 'both' | undefined;
+  upgrades: WidgetUpgrade[];
+  selectedUpgradeIds: string[];
+}): PriceBreakdown {
+  const archIsBoth = input.arch === 'both';
+  const priceFor = (
+    unit: number,
+    bothArches: number | null,
+    archMatch?: 'any' | 'single' | 'both',
+  ) => {
+    // 'single' rows have a separate both-arches price; 'both' /
+    // 'any' rows always use unit_price.
+    if (archMatch === 'single' && archIsBoth && bothArches !== null) {
+      return bothArches;
+    }
+    return unit;
+  };
+
+  const serviceLinePence = input.resolvedRow
+    ? priceFor(
+        input.resolvedRow.unitPricePence,
+        input.resolvedRow.bothArchesPricePence,
+        input.resolvedRow.archMatch,
+      )
+    : 0;
+
+  const upgradesLinePence = input.upgrades
+    .filter((u) => input.selectedUpgradeIds.includes(u.id))
+    .reduce(
+      (sum, u) =>
+        sum +
+        priceFor(
+          u.unitPricePence,
+          u.bothArchesPricePence,
+          // Upgrades inherit the resolved row's arch_match: a
+          // single-arch product's upgrade also uses the both-arches
+          // price when the patient picked 'both'.
+          input.resolvedRow?.archMatch,
+        ),
+      0,
+    );
+
+  const subtotalPence = serviceLinePence + upgradesLinePence;
+  const depositPence = input.service?.depositPence ?? 0;
+  const payAtAppointmentPence = Math.max(0, subtotalPence - depositPence);
+
+  return {
+    serviceLinePence,
+    upgradesLinePence,
+    subtotalPence,
+    depositPence,
+    payAtAppointmentPence,
+  };
 }
 
 export const ALL_LOCATIONS = WIDGET_LOCATIONS;

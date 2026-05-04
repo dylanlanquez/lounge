@@ -1,13 +1,18 @@
 import { Calendar, MapPin, Plus, PoundSterling } from 'lucide-react';
 import { theme } from '../theme/index.ts';
-import { formatPrice, type WidgetState } from './state.ts';
+import {
+  formatPrice,
+  type PriceBreakdown,
+  type WidgetState,
+} from './state.ts';
 import {
   axesForService,
   axisValueLabel,
   type AxisKey,
 } from '../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
-import type { WidgetUpgrade } from './data.ts';
+import type { ResolvedCatalogueRow, WidgetUpgrade } from './data.ts';
+import type { WidgetCopy } from './copy.ts';
 
 // Summary panel — the right-hand "Booking Summary" card.
 //
@@ -22,6 +27,9 @@ import type { WidgetUpgrade } from './data.ts';
 export function Summary({
   state,
   upgrades,
+  resolvedRow,
+  breakdown,
+  copy,
   showCta,
   onCtaClick,
   isPaymentNext,
@@ -30,6 +38,13 @@ export function Summary({
   /** Upgrade list resolved against the current axis pins. The
    *  Summary picks the rows the patient has ticked. */
   upgrades: WidgetUpgrade[];
+  /** Catalogue row the service + axis pins resolve to. Drives the
+   *  service-line price and the per-arch upgrade pricing. */
+  resolvedRow: ResolvedCatalogueRow | null;
+  /** Price breakdown computed in useBookingState. */
+  breakdown: PriceBreakdown;
+  /** Editable per-step copy. */
+  copy: WidgetCopy;
   showCta: boolean;
   onCtaClick: () => void;
   isPaymentNext: boolean;
@@ -37,13 +52,19 @@ export function Summary({
   const selectedUpgrades = upgrades.filter((u) => state.upgradeIds.includes(u.id));
   const hasAnything =
     state.location || state.service || state.slotIso || selectedUpgrades.length > 0;
-  const total = state.service ? state.service.depositPence : 0;
-  // Per-axis pricing comes from lwo_catalogue (resolved after the
-  // axis steps lock down which row applies). Until that lands in
-  // phase 2c, we only render the deposit total — no "remaining"
-  // line, no "pay at appointment" amount. Better to show nothing
-  // than a wrong number.
-  const remaining = 0;
+  const total = breakdown.depositPence > 0 ? breakdown.depositPence : breakdown.subtotalPence;
+  const payAtAppointment = breakdown.depositPence > 0 ? breakdown.payAtAppointmentPence : 0;
+  const archIsBoth = state.axes.arch === 'both';
+  const upgradePrice = (u: WidgetUpgrade): number => {
+    if (
+      resolvedRow?.archMatch === 'single' &&
+      archIsBoth &&
+      u.bothArchesPricePence !== null
+    ) {
+      return u.bothArchesPricePence;
+    }
+    return u.unitPricePence;
+  };
 
   return (
     <div
@@ -64,7 +85,7 @@ export function Summary({
           letterSpacing: theme.type.tracking.tight,
         }}
       >
-        Booking summary
+        {copy.summaryTitle}
       </p>
 
       {hasAnything ? (
@@ -85,34 +106,22 @@ export function Summary({
             <Row
               icon={<PoundSterling size={14} />}
               primary={state.service.label}
-              secondary={(() => {
-                // Build a "Whitening tray · Upper arch" chain from
-                // the pinned axes, so the summary reflects every
-                // drill-down decision the patient has made.
-                const chain = axisChainLabel(state);
-                const priceLine =
-                  state.service.depositPence > 0
-                    ? `Deposit today: ${formatPrice(state.service.depositPence)}`
-                    : null;
-                return [chain, priceLine].filter(Boolean).join(' · ') || undefined;
-              })()}
+              secondary={axisChainLabel(state) ?? undefined}
+              right={
+                breakdown.serviceLinePence > 0
+                  ? formatPrice(breakdown.serviceLinePence)
+                  : undefined
+              }
             />
           ) : null}
-          {selectedUpgrades.map((u) => {
-            const archIsBoth = state.axes.arch === 'both';
-            const price =
-              archIsBoth && u.bothArchesPricePence !== null
-                ? u.bothArchesPricePence
-                : u.unitPricePence;
-            return (
-              <Row
-                key={u.id}
-                icon={<Plus size={14} />}
-                primary={u.name}
-                right={`+${formatPrice(price)}`}
-              />
-            );
-          })}
+          {selectedUpgrades.map((u) => (
+            <Row
+              key={u.id}
+              icon={<Plus size={14} />}
+              primary={u.name}
+              right={`+${formatPrice(upgradePrice(u))}`}
+            />
+          ))}
           {state.slotIso ? (
             <Row icon={<Calendar size={14} />} primary={formatSlotLong(state.slotIso)} />
           ) : null}
@@ -143,7 +152,7 @@ export function Summary({
               color: theme.color.ink,
             }}
           >
-            Total today
+            {copy.summaryTotalLabel}
           </span>
           <span
             style={{
@@ -157,7 +166,7 @@ export function Summary({
             {formatPrice(total)}
           </span>
         </div>
-        {remaining > 0 ? (
+        {payAtAppointment > 0 ? (
           <div
             style={{
               marginTop: theme.space[2],
@@ -169,8 +178,10 @@ export function Summary({
               color: theme.color.inkMuted,
             }}
           >
-            <span>Pay at appointment</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatPrice(remaining)}</span>
+            <span>{copy.summaryPayLaterLabel}</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {formatPrice(payAtAppointment)}
+            </span>
           </div>
         ) : null}
       </div>
@@ -204,7 +215,7 @@ export function Summary({
             e.currentTarget.style.transform = 'scale(1)';
           }}
         >
-          {isPaymentNext ? 'Continue to payment' : 'Book appointment'}
+          {isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
         </button>
       ) : null}
     </div>

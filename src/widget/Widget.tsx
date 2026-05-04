@@ -8,7 +8,7 @@ import {
   stepTitle,
   useBookingState,
 } from './state.ts';
-import { useWidgetCopy } from './copy.ts';
+import { useWidgetCopy, type WidgetCopy } from './copy.ts';
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
@@ -100,12 +100,15 @@ export function Widget() {
         </section>
 
         {isMobile ? (
-          <MobileSummaryDock api={api} />
+          <MobileSummaryDock api={api} copy={copy} />
         ) : (
           <aside style={{ position: 'sticky', top: theme.space[5] }}>
             <Summary
               state={api.state}
               upgrades={api.upgrades}
+              resolvedRow={api.resolvedRow}
+              breakdown={api.priceBreakdown}
+              copy={copy}
               showCta={api.stepKey === 'details'}
               onCtaClick={api.goNext}
               isPaymentNext={(api.activeSteps[api.currentIdx + 1] ?? null) === 'payment'}
@@ -311,14 +314,18 @@ function StepContent({
 // Mobile summary dock — sticky bottom bar that expands on tap
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MobileSummaryDock({ api }: { api: BookingStateApi }) {
-  const total = api.state.service ? api.state.service.depositPence : 0;
+function MobileSummaryDock({ api, copy }: { api: BookingStateApi; copy: WidgetCopy }) {
+  const { priceBreakdown } = api;
+  const total =
+    priceBreakdown.depositPence > 0
+      ? priceBreakdown.depositPence
+      : priceBreakdown.subtotalPence;
   const showSummary =
     api.stepKey === 'time' ||
     api.stepKey === 'details' ||
     api.stepKey === 'payment';
-  // Step 5 hosts the primary CTA; on mobile it lives in the dock so
-  // it sits above the keyboard.
+  // The details step hosts the primary CTA; on mobile it lives in
+  // the dock so it sits above the keyboard.
   const showDetailsCta = api.stepKey === 'details';
   const isPaymentNext = (api.activeSteps[api.currentIdx + 1] ?? null) === 'payment';
 
@@ -362,7 +369,7 @@ function MobileSummaryDock({ api }: { api: BookingStateApi }) {
                 letterSpacing: theme.type.tracking.wide,
               }}
             >
-              {total > 0 ? 'Deposit today' : 'Total today'}
+              {copy.summaryTotalLabel}
             </p>
             <p
               style={{
@@ -383,7 +390,7 @@ function MobileSummaryDock({ api }: { api: BookingStateApi }) {
               onClick={api.goNext}
               style={primaryCtaStyle}
             >
-              {isPaymentNext ? 'Continue to payment' : 'Book appointment'}
+              {isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
             </button>
           ) : null}
         </div>

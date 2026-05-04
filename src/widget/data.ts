@@ -55,6 +55,14 @@ export interface WidgetUpgrade {
   bothArchesPricePence: number | null;
 }
 
+export interface ResolvedCatalogueRow {
+  id: string;
+  name: string;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  archMatch: 'any' | 'single' | 'both';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Live booking-type read
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +190,92 @@ export function firstAvailable(
     if (slots.length > 0) return { date: d, slot: slots[0]! };
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live catalogue resolver
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Once the patient has pinned the axes their service requires, we
+// can identify the single catalogue row that price applies to.
+// `lwo_catalogue` already has an open SELECT policy so this works
+// anonymously — we filter by service_type plus whichever axis
+// dimension the registry declared (product_key for same-day
+// appliances, repair_variant for denture repair, neither for
+// click-in veneers / impressions). At most one row matches.
+
+interface ResolverInput {
+  serviceType: string | null;
+  productKey: string | null;
+  repairVariant: string | null;
+}
+
+interface ResolverResult {
+  data: ResolvedCatalogueRow | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/** Resolves the catalogue row that applies to the patient's
+ *  service + axis selection. Returns null while the service hasn't
+ *  been picked or while the query is pending. */
+export function useResolvedCatalogueRow(input: ResolverInput): ResolverResult {
+  const [data, setData] = useState<ResolvedCatalogueRow | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!input.serviceType) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      let q = supabase
+        .from('lwo_catalogue')
+        .select('id, name, unit_price, both_arches_price, arch_match')
+        .eq('service_type', input.serviceType)
+        .eq('active', true);
+      if (input.productKey) q = q.eq('product_key', input.productKey);
+      else q = q.is('product_key', null);
+      if (input.repairVariant) q = q.eq('repair_variant', input.repairVariant);
+      else q = q.is('repair_variant', null);
+      const { data: row, error: err } = await q.maybeSingle();
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setData(null);
+        setLoading(false);
+        return;
+      }
+      if (!row) {
+        setData(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      setData({
+        id: row.id as string,
+        name: (row.name as string) ?? '',
+        unitPricePence: Math.round(Number(row.unit_price) * 100),
+        bothArchesPricePence:
+          row.both_arches_price === null
+            ? null
+            : Math.round(Number(row.both_arches_price) * 100),
+        archMatch: (row.arch_match as 'any' | 'single' | 'both') ?? 'any',
+      });
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [input.serviceType, input.productKey, input.repairVariant]);
+
+  return { data, loading, error };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
