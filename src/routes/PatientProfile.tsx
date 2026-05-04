@@ -117,7 +117,7 @@ export function PatientProfile() {
           <ProfileSkeleton isMobile={isMobile} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-            <Hero patient={patient} cases={cases} onEdit={() => setEditSection('profile')} />
+            <Hero patient={patient} cases={cases} files={files} onEdit={() => setEditSection('profile')} />
             <CareDetails patient={patient} onEdit={() => setEditSection('care')} />
             <WaiverStatus
               patientId={patient.id}
@@ -446,10 +446,12 @@ function ProfileSkeleton({ isMobile }: { isMobile: boolean }) {
 function Hero({
   patient,
   cases: _cases,
+  files,
   onEdit,
 }: {
   patient: PatientProfileRow;
   cases: PatientCaseRow[];
+  files: PatientFileEntry[];
   onEdit: () => void;
 }) {
   // The earlier "Active / Inactive" pill mapped to whether the
@@ -460,6 +462,21 @@ function Hero({
   // below.
   const fullName = `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Unnamed patient';
   const linkedToShopify = !!patient.shopify_customer_id;
+  // Scan-on-file pill: glance-able answer to "do we have their arch
+  // scans yet?" without opening the Files section. Uses the same
+  // label_key vocabulary the lab uses (upper_arch / lower_arch, plus
+  // the *_opposing variants for impressions taken against the other
+  // arch). Hidden entirely when neither arch is on file.
+  const hasUpperScan = files.some((f) => f.label_key === 'upper_arch' || f.label_key === 'upper_arch_opposing');
+  const hasLowerScan = files.some((f) => f.label_key === 'lower_arch' || f.label_key === 'lower_arch_opposing');
+  const scanPillLabel =
+    hasUpperScan && hasLowerScan
+      ? 'Upper & lower scan'
+      : hasUpperScan
+        ? 'Upper scan'
+        : hasLowerScan
+          ? 'Lower scan'
+          : null;
 
   return (
     <Card padding="lg">
@@ -504,6 +521,7 @@ function Hero({
                 </span>
               ) : null}
               {linkedToShopify ? <ShopifyLinkedPill /> : null}
+              {scanPillLabel ? <ScanOnFilePill label={scanPillLabel} /> : null}
             </div>
           </div>
         </div>
@@ -536,6 +554,31 @@ function Hero({
 
       <FieldGrid fields={buildHeroFields(patient)} />
     </Card>
+  );
+}
+
+// Static pill that confirms which arch scans are on file. Matches the
+// ShopifyLinkedPill's accent palette so the two read as a row of
+// at-a-glance "what we have for this patient" badges.
+function ScanOnFilePill({ label }: { label: string }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[1],
+        padding: `2px ${theme.space[2]}px`,
+        borderRadius: theme.radius.pill,
+        background: theme.color.accentBg,
+        color: theme.color.accent,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: 0.1,
+      }}
+    >
+      <Check size={12} aria-hidden style={{ flexShrink: 0 }} />
+      {label}
+    </span>
   );
 }
 

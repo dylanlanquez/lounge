@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Boxes, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, ShoppingBag } from 'lucide-react';
 import { CollapsibleCard } from '../CollapsibleCard/CollapsibleCard.tsx';
 import { theme } from '../../theme/index.ts';
 import { PreviewModal } from '../PatientFilesGrid/PatientFilesGrid.tsx';
@@ -70,7 +70,7 @@ export function FinalDeliveries({
   return (
     <>
       <CollapsibleCard
-        icon={<Boxes size={18} color={theme.color.ink} aria-hidden />}
+        icon={<ShoppingBag size={18} color={theme.color.ink} aria-hidden />}
         title="Final deliveries"
         meta={`${accepted.length} ${accepted.length === 1 ? 'file' : 'files'}`}
       >
