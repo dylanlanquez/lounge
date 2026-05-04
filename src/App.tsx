@@ -21,6 +21,7 @@ const InClinic = lazy(() => import('./routes/InClinic.tsx').then((m) => ({ defau
 const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })));
 const Reports = lazy(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })));
 const CashCounts = lazy(() => import('./routes/CashCounts.tsx').then((m) => ({ default: m.CashCounts })));
+const Widget = lazy(() => import('./widget/Widget.tsx').then((m) => ({ default: m.Widget })));
 const Arrival = lazy(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })));
 const NotFound = lazy(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })));
 
@@ -150,6 +151,11 @@ function RoutedErrorBoundary() {
           <Route path="/admin" element={<RequireStaff><Admin /></RequireStaff>} />
           <Route path="/reports" element={<RequireStaff><Reports /></RequireStaff>} />
           <Route path="/cash-counts" element={<RequireStaff><CashCounts /></RequireStaff>} />
+          {/* Public booking widget — embedded on the practice's
+              website via iframe. No auth, no kiosk shell, no bottom
+              nav. Lives at /widget/* so the bar-suppression rule in
+              BottomNav can target it as a path family. */}
+          <Route path="/widget/book" element={<Widget />} />
           {/* /financials merged into /reports — keep the alias so old
               bookmarks and existing TopBar shortcuts still land. */}
           <Route path="/financials" element={<Navigate to="/reports" replace />} />

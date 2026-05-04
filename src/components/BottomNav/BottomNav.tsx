@@ -18,6 +18,10 @@ export function shouldShowBottomNav(pathname: string, signedIn: boolean): boolea
   // tap out mid-flow (the iPad is handed across the desk for the
   // customer-facing steps).
   if (pathname.startsWith('/arrival/')) return false;
+  // Public booking widget — embedded on the practice's website. Has
+  // its own self-contained chrome; the Lounge bottom nav has no
+  // place inside it.
+  if (pathname.startsWith('/widget/')) return false;
   return true;
 }
 

@@ -1,0 +1,344 @@
+import { Calendar, MapPin, PoundSterling, User } from 'lucide-react';
+import { theme } from '../theme/index.ts';
+import { formatPrice, type WidgetState } from './state.ts';
+
+// Summary panel — the right-hand "Booking Summary" card.
+//
+// Populates progressively: each chosen field appears as a row with
+// its icon. Empty state (Step 1, before anything's chosen) shows a
+// faded calendar glyph centred in the card so the panel doesn't
+// look broken when the patient first lands.
+//
+// At Step 5 (Your Details) the panel hosts the primary "Book
+// appointment" CTA. Everywhere else, just a Total at the bottom.
+
+export function Summary({
+  state,
+  showCta,
+  onCtaClick,
+  isPaymentNext,
+}: {
+  state: WidgetState;
+  showCta: boolean;
+  onCtaClick: () => void;
+  isPaymentNext: boolean;
+}) {
+  const hasAnything =
+    state.location || state.service || state.dentist || state.slotIso;
+  const total = state.service ? state.service.depositPence : 0;
+  const remaining =
+    state.service && state.service.depositPence > 0
+      ? state.service.pricePence - state.service.depositPence
+      : 0;
+
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[5],
+        boxShadow: theme.shadow.card,
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+        }}
+      >
+        Booking summary
+      </p>
+
+      {hasAnything ? (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: `${theme.space[4]}px 0 0`,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[3],
+          }}
+        >
+          {state.location ? (
+            <Row icon={<MapPin size={14} />} primary={state.location.name} secondary={state.location.addressLine} />
+          ) : null}
+          {state.service ? (
+            <Row
+              icon={<PoundSterling size={14} />}
+              primary={state.service.label}
+              secondary={
+                state.service.depositPence > 0
+                  ? `Deposit today: ${formatPrice(state.service.depositPence)}`
+                  : state.service.pricePence > 0
+                    ? `Pay at appointment: ${formatPrice(state.service.pricePence)}`
+                    : undefined
+              }
+              right={state.service.pricePence > 0 ? formatPrice(state.service.pricePence) : undefined}
+            />
+          ) : null}
+          {state.dentist && state.dentist !== 'any' ? (
+            <Row
+              icon={<DentistAvatar name={state.dentist.name} avatarUrl={state.dentist.avatarUrl} />}
+              primary={state.dentist.name}
+              secondary={state.dentist.role || undefined}
+            />
+          ) : state.dentist === 'any' ? (
+            <Row icon={<User size={14} />} primary="Any available dentist" />
+          ) : null}
+          {state.slotIso ? (
+            <Row icon={<Calendar size={14} />} primary={formatSlotLong(state.slotIso)} />
+          ) : null}
+        </ul>
+      ) : (
+        <EmptyIllustration />
+      )}
+
+      <div
+        style={{
+          marginTop: theme.space[5],
+          paddingTop: theme.space[4],
+          borderTop: `1px solid ${theme.color.border}`,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: theme.space[3],
+          }}
+        >
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            Total today
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {formatPrice(total)}
+          </span>
+        </div>
+        {remaining > 0 ? (
+          <div
+            style={{
+              marginTop: theme.space[2],
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              gap: theme.space[3],
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+            }}
+          >
+            <span>Pay at appointment</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatPrice(remaining)}</span>
+          </div>
+        ) : null}
+      </div>
+
+      {showCta ? (
+        <button
+          type="button"
+          onClick={onCtaClick}
+          style={{
+            marginTop: theme.space[4],
+            width: '100%',
+            height: 48,
+            appearance: 'none',
+            border: 'none',
+            background: theme.color.ink,
+            color: theme.color.surface,
+            borderRadius: theme.radius.pill,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            cursor: 'pointer',
+            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          }}
+          onMouseDown={(e) => {
+            e.currentTarget.style.transform = 'scale(0.98)';
+          }}
+          onMouseUp={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
+          }}
+        >
+          {isPaymentNext ? 'Continue to payment' : 'Book appointment'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Row({
+  icon,
+  primary,
+  secondary,
+  right,
+}: {
+  icon: React.ReactNode;
+  primary: string;
+  secondary?: string;
+  right?: string;
+}) {
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 28,
+          height: 28,
+          borderRadius: theme.radius.pill,
+          background: theme.color.bg,
+          color: theme.color.inkMuted,
+          flexShrink: 0,
+          marginTop: 2,
+        }}
+      >
+        {icon}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          {primary}
+        </p>
+        {secondary ? (
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {secondary}
+          </p>
+        ) : null}
+      </div>
+      {right ? (
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0,
+          }}
+        >
+          {right}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+function DentistAvatar({ name, avatarUrl }: { name: string; avatarUrl: string }) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt=""
+        aria-hidden
+        style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }}
+      />
+    );
+  }
+  const initials = name
+    .split(/\s+/)
+    .filter((w) => /[A-Za-z]/.test(w[0] ?? ''))
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join('');
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: '50%',
+        background: theme.color.accentBg,
+        color: theme.color.accent,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 11,
+        fontWeight: theme.type.weight.semibold,
+      }}
+    >
+      {initials || '·'}
+    </span>
+  );
+}
+
+function EmptyIllustration() {
+  return (
+    <div
+      style={{
+        margin: `${theme.space[6]}px auto`,
+        width: 80,
+        height: 80,
+        borderRadius: '50%',
+        background: theme.color.bg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: theme.color.inkSubtle,
+      }}
+    >
+      <Calendar size={32} aria-hidden />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function formatSlotLong(iso: string): string {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long' });
+  const hour = d.getHours();
+  const minute = d.getMinutes();
+  const period = hour < 12 ? 'am' : 'pm';
+  const display = hour <= 12 ? hour : hour - 12;
+  return `${day}, ${display}:${String(minute).padStart(2, '0')} ${period}`;
+}

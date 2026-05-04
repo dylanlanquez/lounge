@@ -99,8 +99,9 @@ import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 import { AdminBrandingTab } from './AdminBrandingTab.tsx';
+import { AdminWidgetTab } from './AdminWidgetTab.tsx';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'branding' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -155,6 +156,7 @@ export function Admin() {
               { value: 'conflicts', label: 'Resources' },
               { value: 'emails', label: 'Emails' },
               { value: 'branding', label: 'Branding' },
+              { value: 'widget', label: 'Widget' },
               { value: 'waivers', label: 'Waivers' },
               { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
@@ -181,6 +183,8 @@ export function Admin() {
           <AdminEmailTemplatesTab />
         ) : tab === 'branding' ? (
           <AdminBrandingTab />
+        ) : tab === 'widget' ? (
+          <AdminWidgetTab />
         ) : tab === 'waivers' ? (
           <WaiversTab />
         ) : tab === 'receipts' ? (
