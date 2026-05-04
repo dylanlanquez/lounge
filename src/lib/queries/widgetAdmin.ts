@@ -15,17 +15,30 @@ import type { BookingServiceType } from './bookingTypes.ts';
 // This module exposes:
 //
 //   useWidgetAdminServices()  — every parent booking type with its
-//                                widget config + the catalogue
-//                                products that belong to it.
+//                                widget config, the catalogue products
+//                                that belong to it, and each product's
+//                                catalogue upgrades.
 //   saveServiceConfig()        — write the widget_visible /
 //                                widget_description / widget_deposit
 //                                fields back to lng_booking_type_config.
 //   saveProductVisibility()    — flip widget_visible on a single
 //                                lwo_catalogue row.
+//   saveUpgradeVisibility()    — flip widget_visible on a single
+//                                lng_catalogue_upgrades row.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
+
+export interface WidgetAdminUpgrade {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  widgetVisible: boolean;
+}
 
 export interface WidgetAdminProduct {
   id: string;
@@ -37,6 +50,8 @@ export interface WidgetAdminProduct {
   bothArchesPricePence: number | null;
   archMatch: 'any' | 'single' | 'both';
   widgetVisible: boolean;
+  /** Catalogue upgrades attached to this product, in sort_order. */
+  upgrades: WidgetAdminUpgrade[];
 }
 
 export interface WidgetAdminService {
@@ -90,7 +105,7 @@ export function useWidgetAdminServices(): ReadResult {
       // every catalogue row that COULD belong to one of them.
       // Stitched together below — the catalogue rows are grouped
       // by service_type and attached to the matching service.
-      const [btResult, catResult] = await Promise.all([
+      const [btResult, catResult, upgradeResult] = await Promise.all([
         supabase
           .from('lng_booking_type_config')
           .select(
@@ -108,6 +123,14 @@ export function useWidgetAdminServices(): ReadResult {
           .eq('active', true)
           .order('sort_order', { ascending: true })
           .order('name', { ascending: true }),
+        supabase
+          .from('lng_catalogue_upgrades')
+          .select(
+            'id, code, name, description, catalogue_id, price, both_arches_price, widget_visible, sort_order',
+          )
+          .eq('active', true)
+          .order('sort_order', { ascending: true })
+          .order('name', { ascending: true }),
       ]);
       if (cancelled) return;
       if (btResult.error) {
@@ -120,8 +143,41 @@ export function useWidgetAdminServices(): ReadResult {
         setLoading(false);
         return;
       }
+      if (upgradeResult.error) {
+        setError(upgradeResult.error.message);
+        setLoading(false);
+        return;
+      }
 
-      // Group catalogue by service_type for O(1) lookup.
+      // Group upgrades by their parent catalogue row id, so each
+      // product gets its upgrade list attached on a single pass.
+      const upgradesByCatId = new Map<string, WidgetAdminUpgrade[]>();
+      for (const row of (upgradeResult.data ?? []) as Array<{
+        id: string;
+        code: string;
+        name: string;
+        description: string | null;
+        catalogue_id: string;
+        price: number;
+        both_arches_price: number | null;
+        widget_visible: boolean;
+      }>) {
+        const list = upgradesByCatId.get(row.catalogue_id) ?? [];
+        list.push({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          description: row.description ?? '',
+          unitPricePence: Math.round(Number(row.price) * 100),
+          bothArchesPricePence:
+            row.both_arches_price === null ? null : Math.round(Number(row.both_arches_price) * 100),
+          widgetVisible: row.widget_visible,
+        });
+        upgradesByCatId.set(row.catalogue_id, list);
+      }
+
+      // Group catalogue by service_type for O(1) lookup, attaching
+      // upgrades to each product as we go.
       const catByService = new Map<string, WidgetAdminProduct[]>();
       for (const row of (catResult.data ?? []) as Array<{
         id: string;
@@ -148,6 +204,7 @@ export function useWidgetAdminServices(): ReadResult {
             row.both_arches_price === null ? null : Math.round(Number(row.both_arches_price) * 100),
           archMatch: row.arch_match,
           widgetVisible: row.widget_visible,
+          upgrades: upgradesByCatId.get(row.id) ?? [],
         });
         catByService.set(row.service_type, list);
       }
@@ -236,6 +293,17 @@ export async function saveProductVisibility(input: {
 }): Promise<void> {
   const { error } = await supabase
     .from('lwo_catalogue')
+    .update({ widget_visible: input.widgetVisible })
+    .eq('id', input.id);
+  if (error) throw new Error(`Couldn't save: ${error.message}`);
+}
+
+export async function saveUpgradeVisibility(input: {
+  id: string;
+  widgetVisible: boolean;
+}): Promise<void> {
+  const { error } = await supabase
+    .from('lng_catalogue_upgrades')
     .update({ widget_visible: input.widgetVisible })
     .eq('id', input.id);
   if (error) throw new Error(`Couldn't save: ${error.message}`);

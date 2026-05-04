@@ -16,9 +16,11 @@ import { theme } from '../theme/index.ts';
 import {
   saveProductVisibility,
   saveServiceConfig,
+  saveUpgradeVisibility,
   useWidgetAdminServices,
   type WidgetAdminProduct,
   type WidgetAdminService,
+  type WidgetAdminUpgrade,
 } from '../lib/queries/widgetAdmin.ts';
 
 // Toggle `window.LNG_DEBUG = true` from the dev console to see
@@ -733,15 +735,25 @@ function ServiceCardBody({
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
-  // Local draft for the WHOLE form — parent service fields and the
-  // per-product visibility toggles. Nothing writes to the database
-  // until the admin clicks Save. Cancel reverts everything.
+  // Local draft for the WHOLE form — parent service fields, per-
+  // product visibility toggles, AND per-upgrade visibility toggles.
+  // Nothing writes to the database until the admin clicks Save.
+  // Cancel reverts everything in one go.
   const [visible, setVisible] = useState(service.widgetVisible);
   const [description, setDescription] = useState(service.widgetDescription);
   const [depositText, setDepositText] = useState(formatPoundsText(service.widgetDepositPence));
   const [productVis, setProductVis] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
   );
+  const [upgradeVis, setUpgradeVis] = useState<Record<string, boolean>>(() => {
+    const acc: Record<string, boolean> = {};
+    for (const p of service.products) {
+      for (const u of p.upgrades) {
+        acc[u.id] = u.widgetVisible;
+      }
+    }
+    return acc;
+  });
   const [saving, setSaving] = useState(false);
 
   // Re-seed when the parent row changes underneath us (e.g. after a
@@ -753,6 +765,15 @@ function ServiceCardBody({
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
     );
+    setUpgradeVis(() => {
+      const acc: Record<string, boolean> = {};
+      for (const p of service.products) {
+        for (const u of p.upgrades) {
+          acc[u.id] = u.widgetVisible;
+        }
+      }
+      return acc;
+    });
   }, [
     service.widgetVisible,
     service.widgetDescription,
@@ -762,18 +783,23 @@ function ServiceCardBody({
 
   const depositPence = parsePoundsToPence(depositText) ?? 0;
 
-  // Which product IDs differ from the saved row state? Saved as a
-  // list so we can iterate it for the batched commit and count it
-  // for the dirty check.
+  // Which product / upgrade IDs differ from the saved row state?
+  // Saved as lists so we can iterate them for the batched commit
+  // and count them for the dirty check.
   const changedProductIds = service.products
     .filter((p) => productVis[p.id] !== p.widgetVisible)
     .map((p) => p.id);
+  const changedUpgradeIds = service.products
+    .flatMap((p) => p.upgrades)
+    .filter((u) => upgradeVis[u.id] !== u.widgetVisible)
+    .map((u) => u.id);
 
   const dirty =
     visible !== service.widgetVisible ||
     description !== service.widgetDescription ||
     depositPence !== service.widgetDepositPence ||
-    changedProductIds.length > 0;
+    changedProductIds.length > 0 ||
+    changedUpgradeIds.length > 0;
 
   dlog('ServiceCardBody render', {
     serviceId: service.id,
@@ -810,6 +836,15 @@ function ServiceCardBody({
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
     );
+    setUpgradeVis(() => {
+      const acc: Record<string, boolean> = {};
+      for (const p of service.products) {
+        for (const u of p.upgrades) {
+          acc[u.id] = u.widgetVisible;
+        }
+      }
+      return acc;
+    });
   };
 
   const onSave = async () => {
@@ -818,13 +853,14 @@ function ServiceCardBody({
       visible,
       depositPence,
       changedProductIds,
+      changedUpgradeIds,
     });
     setSaving(true);
     try {
-      // Commit the parent service config + every changed product row
-      // in parallel. If any single write fails, surface the error
-      // and leave the rest of the local draft intact so the admin
-      // can fix it.
+      // Commit the parent service config + every changed product
+      // row + every changed upgrade row in parallel. If any single
+      // write fails, surface the error and leave the rest of the
+      // local draft intact so the admin can fix it.
       await Promise.all([
         saveServiceConfig({
           id: service.id,
@@ -834,6 +870,9 @@ function ServiceCardBody({
         }),
         ...changedProductIds.map((id) =>
           saveProductVisibility({ id, widgetVisible: productVis[id] === true }),
+        ),
+        ...changedUpgradeIds.map((id) =>
+          saveUpgradeVisibility({ id, widgetVisible: upgradeVis[id] === true }),
         ),
       ]);
       dlog('Save success', { serviceId: service.id });
@@ -927,6 +966,10 @@ function ServiceCardBody({
                     onChange={(next) =>
                       setProductVis((prev) => ({ ...prev, [p.id]: next }))
                     }
+                    upgradeVis={upgradeVis}
+                    onUpgradeChange={(id, next) =>
+                      setUpgradeVis((prev) => ({ ...prev, [id]: next }))
+                    }
                   />
                 </li>
               ))}
@@ -978,22 +1021,200 @@ function ProductRow({
   product,
   checked,
   onChange,
+  upgradeVis,
+  onUpgradeChange,
 }: {
   product: WidgetAdminProduct;
   checked: boolean;
   onChange: (next: boolean) => void;
+  /** Draft visibility map for the upgrades on this product. The
+   *  parent ServiceCardBody owns the state — this row just renders
+   *  + reports back. */
+  upgradeVis: Record<string, boolean>;
+  onUpgradeChange: (id: string, next: boolean) => void;
 }) {
+  // The whole row is a vertical container — the product header on
+  // top and the upgrade list (when there are upgrades) tucked
+  // beneath, indented to read as "extras for this product".
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        overflow: 'hidden',
+      }}
+    >
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          style={{
+            width: 18,
+            height: 18,
+            accentColor: theme.color.ink,
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            {product.name}
+          </p>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {priceLabel(product)}
+          </p>
+        </div>
+        <code
+          style={{
+            fontSize: 11,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            color: theme.color.inkSubtle,
+            background: theme.color.bg,
+            padding: '2px 6px',
+            borderRadius: 4,
+          }}
+        >
+          {product.code}
+        </code>
+      </label>
+
+      {product.upgrades.length > 0 ? (
+        <UpgradesSubList
+          upgrades={product.upgrades}
+          archMatch={product.archMatch}
+          upgradeVis={upgradeVis}
+          onUpgradeChange={onUpgradeChange}
+          parentVisible={checked}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function UpgradesSubList({
+  upgrades,
+  archMatch,
+  upgradeVis,
+  onUpgradeChange,
+  parentVisible,
+}: {
+  upgrades: WidgetAdminUpgrade[];
+  archMatch: 'any' | 'single' | 'both';
+  upgradeVis: Record<string, boolean>;
+  onUpgradeChange: (id: string, next: boolean) => void;
+  parentVisible: boolean;
+}) {
+  return (
+    <div
+      style={{
+        borderTop: `1px solid ${theme.color.border}`,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        background: theme.color.bg,
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          marginBottom: theme.space[2],
+          fontSize: 11,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        Upgrades for this product
+      </p>
+      {!parentVisible ? (
+        <p
+          style={{
+            margin: 0,
+            marginBottom: theme.space[2],
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontStyle: 'italic',
+          }}
+        >
+          The product itself is hidden, so these upgrades won't show on the widget either.
+          Tick the product first to make them effective.
+        </p>
+      ) : null}
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+        }}
+      >
+        {upgrades.map((u) => (
+          <li key={u.id}>
+            <UpgradeRow
+              upgrade={u}
+              archMatch={archMatch}
+              checked={upgradeVis[u.id] ?? false}
+              onChange={(next) => onUpgradeChange(u.id, next)}
+              dimmed={!parentVisible}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function UpgradeRow({
+  upgrade,
+  archMatch,
+  checked,
+  onChange,
+  dimmed,
+}: {
+  upgrade: WidgetAdminUpgrade;
+  archMatch: 'any' | 'single' | 'both';
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  dimmed: boolean;
+}) {
+  const showsBothArchPrice = archMatch === 'single' && upgrade.bothArchesPricePence !== null;
   return (
     <label
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
         border: `1px solid ${theme.color.border}`,
         borderRadius: theme.radius.input,
         background: theme.color.surface,
         cursor: 'pointer',
+        opacity: dimmed ? 0.55 : 1,
       }}
     >
       <input
@@ -1001,8 +1222,8 @@ function ProductRow({
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         style={{
-          width: 18,
-          height: 18,
+          width: 16,
+          height: 16,
           accentColor: theme.color.ink,
           cursor: 'pointer',
           flexShrink: 0,
@@ -1013,35 +1234,37 @@ function ProductRow({
           style={{
             margin: 0,
             fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
+            fontWeight: theme.type.weight.medium,
             color: theme.color.ink,
           }}
         >
-          {product.name}
+          {upgrade.name}
         </p>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {priceLabel(product)}
-        </p>
+        {upgrade.description ? (
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {upgrade.description}
+          </p>
+        ) : null}
       </div>
-      <code
+      <span
         style={{
-          fontSize: 11,
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          color: theme.color.inkSubtle,
-          background: theme.color.bg,
-          padding: '2px 6px',
-          borderRadius: 4,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
         }}
       >
-        {product.code}
-      </code>
+        +{formatPence(upgrade.unitPricePence)}
+        {showsBothArchPrice ? ` · +${formatPence(upgrade.bothArchesPricePence!)} both` : ''}
+      </span>
     </label>
   );
 }
