@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Building2, Clock, Image as ImageIcon, Mail, Scale } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Building2, Clock, Image as ImageIcon, Mail, Scale, Trash2, Upload } from 'lucide-react';
 import { Button, Card, Checkbox, Input, Skeleton, Toast } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import {
@@ -10,6 +10,7 @@ import {
   useClinicSettings,
 } from '../lib/queries/clinicSettings.ts';
 import { useEditableLocation, saveLocation } from '../lib/queries/locations.ts';
+import { supabase } from '../lib/supabase.ts';
 
 // Branding & clinic admin tab.
 //
@@ -232,6 +233,8 @@ function BrandingCard({
   const [logoMaxWidth, setLogoMaxWidth] = useState(data.brandLogoMaxWidth);
   const [accent, setAccent] = useState(data.brandAccentColor);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setLogoUrl(data.brandLogoUrl);
@@ -275,11 +278,59 @@ function BrandingCard({
     }
   };
 
+  const onUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      onToast({ tone: 'error', title: 'Pick an image file (PNG, JPG, SVG)' });
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      onToast({ tone: 'error', title: 'Logo too large', description: 'Keep it under 2MB.' });
+      return;
+    }
+    setUploading(true);
+    try {
+      // Path like `logo/2026-05-04T12-34-56.png`. The timestamp gives
+      // us a fresh URL each upload so email clients refresh their
+      // cache instead of serving a stale logo.
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png';
+      const path = `logo/${new Date().toISOString().replace(/[:.]/g, '-')}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('branding')
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) throw new Error(upErr.message);
+      const { data: pub } = supabase.storage.from('branding').getPublicUrl(path);
+      if (!pub?.publicUrl) throw new Error('Could not resolve public URL for the upload');
+      // Stage the URL in the form state. The user still needs to hit
+      // Save to publish — keeps the "must be locked in" rule the
+      // admin asked for. Until then, the live preview keeps showing
+      // the previously-saved logo.
+      setLogoUrl(pub.publicUrl);
+      onToast({
+        tone: 'info',
+        title: 'Logo uploaded',
+        description: 'Hit Save changes to publish it. It won\'t go out in emails until you do.',
+      });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Upload failed',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const onRemove = () => {
+    setLogoUrl('');
+  };
+
   return (
     <Section
       icon={<ImageIcon size={16} aria-hidden />}
       title="Branding"
-      description="Logo and accent colour applied to every transactional email."
+      description="Logo and accent colour applied to every transactional email. Edits aren't live until you hit Save changes."
     >
       <FieldGroup>
         <Input
@@ -287,8 +338,50 @@ function BrandingCard({
           value={logoUrl}
           onChange={(e) => setLogoUrl(e.target.value)}
           placeholder="https://lounge.venneir.com/lounge-logo.png"
-          helper="Must be a publicly fetchable URL. Email clients can't see localhost or auth-gated images."
+          helper="Paste a publicly fetchable URL, or use Upload. Email clients can't see localhost or auth-gated images."
         />
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onUpload(file);
+            }}
+          />
+          <Button
+            variant="secondary"
+            onClick={() => fileInputRef.current?.click()}
+            loading={uploading}
+            disabled={uploading}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Upload size={14} aria-hidden /> Upload logo
+            </span>
+          </Button>
+          <Button
+            variant="tertiary"
+            onClick={onRemove}
+            disabled={uploading || !logoUrl}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Trash2 size={14} aria-hidden /> Remove logo
+            </span>
+          </Button>
+          {dirty ? (
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.warn,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              Unsaved changes
+            </span>
+          ) : null}
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexWrap: 'wrap' }}>
           <Checkbox
             label="Show logo at the top of emails"
@@ -307,46 +400,77 @@ function BrandingCard({
           />
           <ColorRow label="Accent colour" value={accent} onChange={setAccent} />
         </div>
-        <LogoPreview url={logoUrl} maxWidth={logoMaxWidth} show={logoShow} />
+        {/* Preview always shows the SAVED state, not the in-flight
+            edit — once the user clicks Save the data refreshes and
+            the preview updates with it. Prevents accidental
+            "looks-fine-while-typing → saved-with-typo" outcomes. */}
+        <LogoPreview
+          publishedUrl={data.brandLogoUrl}
+          publishedMaxWidth={data.brandLogoMaxWidth}
+          publishedShow={data.brandLogoShow}
+        />
       </FieldGroup>
       <SaveRow dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />
     </Section>
   );
 }
 
-function LogoPreview({ url, maxWidth, show }: { url: string; maxWidth: number; show: boolean }) {
+function LogoPreview({
+  publishedUrl,
+  publishedMaxWidth,
+  publishedShow,
+}: {
+  publishedUrl: string;
+  publishedMaxWidth: number;
+  publishedShow: boolean;
+}) {
   return (
-    <div
-      style={{
-        background: theme.color.bg,
-        border: `1px dashed ${theme.color.border}`,
-        borderRadius: theme.radius.input,
-        padding: theme.space[5],
-        textAlign: 'center',
-        minHeight: 80,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      {!show ? (
-        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
-          Logo hidden in emails
-        </span>
-      ) : url ? (
-        <img
-          src={url}
-          alt="Brand logo preview"
-          style={{ maxWidth, maxHeight: 80, objectFit: 'contain' }}
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
-        />
-      ) : (
-        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
-          No logo URL set
-        </span>
-      )}
+    <div>
+      <span
+        style={{
+          display: 'block',
+          fontSize: 11,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          marginBottom: theme.space[1],
+        }}
+      >
+        Currently published
+      </span>
+      <div
+        style={{
+          background: theme.color.bg,
+          border: `1px dashed ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          padding: theme.space[5],
+          textAlign: 'center',
+          minHeight: 80,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {!publishedShow ? (
+          <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
+            Logo hidden in emails
+          </span>
+        ) : publishedUrl ? (
+          <img
+            src={publishedUrl}
+            alt="Brand logo preview"
+            style={{ maxWidth: publishedMaxWidth, maxHeight: 80, objectFit: 'contain' }}
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        ) : (
+          <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
+            No logo set
+          </span>
+        )}
+      </div>
     </div>
   );
 }
