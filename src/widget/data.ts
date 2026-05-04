@@ -36,16 +36,14 @@ export interface WidgetBookingType {
   durationMinutes: number;
 }
 
-// Locations stay static for phase 2a; they'll move to a live read
-// once we add multi-location support. The default Lounge clinic is
-// fine to hardcode while the app is single-location.
-export const WIDGET_LOCATIONS: WidgetLocation[] = [
-  {
-    id: 'loc-1',
-    name: 'Venneir Lounge',
-    addressLine: '138 Main Street, Glasgow, G1 2QA',
-  },
-];
+// Phase 2c had a single hardcoded location entry that the edge
+// functions resolved server-side via a UUID-or-default fallback.
+// Phase 6 (multi-location) reads them live from
+// public.lng_widget_locations — see useWidgetLocations() below.
+// The constant stays as an empty fallback so any code path that
+// touches it without going through the hook degrades to "no
+// locations" rather than crashing.
+export const WIDGET_LOCATIONS: WidgetLocation[] = [];
 
 export interface WidgetUpgrade {
   id: string;
@@ -61,6 +59,54 @@ export interface ResolvedCatalogueRow {
   unitPricePence: number;
   bothArchesPricePence: number | null;
   archMatch: 'any' | 'single' | 'both';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live location read
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface LocationReadResult {
+  data: WidgetLocation[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/** Reads the public lng_widget_locations view. Anon-readable, so
+ *  the patient never has to be signed in. Single-fire on mount,
+ *  no real-time. */
+export function useWidgetLocations(): LocationReadResult {
+  const [data, setData] = useState<WidgetLocation[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('lng_widget_locations')
+        .select('id, name, address_line')
+        .order('name', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      const shaped: WidgetLocation[] = (rows ?? []).map((r) => ({
+        id: r.id as string,
+        name: (r.name as string) ?? '',
+        addressLine: (r.address_line as string) ?? '',
+      }));
+      setData(shaped);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { data, loading, error };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

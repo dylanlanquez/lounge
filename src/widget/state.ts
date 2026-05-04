@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import {
   useResolvedCatalogueRow,
   useWidgetUpgrades,
-  WIDGET_LOCATIONS,
   type WidgetBookingType,
   type WidgetLocation,
 } from './data.ts';
@@ -160,10 +159,18 @@ export function clearRememberedIdentity(): void {
  *  `hasUpgrades` is passed in (rather than read from state) because
  *  it depends on a network query the engine can't make synchronously.
  *  The widget shell holds the upgrade-list result and feeds the flag
- *  in. */
-export function activeStepsFor(state: WidgetState, hasUpgrades: boolean): StepKey[] {
+ *  in.
+ *
+ *  `locationCount` decides whether the location step is in play —
+ *  zero or one location → skip Step 1 entirely (the widget's only
+ *  one location, or a deep-link pre-selected one). */
+export function activeStepsFor(
+  state: WidgetState,
+  hasUpgrades: boolean,
+  locationCount: number,
+): StepKey[] {
   const out: StepKey[] = [];
-  if (WIDGET_LOCATIONS.length > 1) out.push('location');
+  if (locationCount > 1) out.push('location');
   out.push('service');
   if (state.service) {
     const axes = axesForService(state.service.serviceType as BookingServiceType);
@@ -189,15 +196,23 @@ export function activeStepsFor(state: WidgetState, hasUpgrades: boolean): StepKe
 }
 
 /** Hook that owns the booking state, the current-step pointer, and
- *  the navigation helpers. Call from the route component once. The
- *  hook also runs the live upgrades query against the patient's
+ *  the navigation helpers. Call from the route component once,
+ *  passing the live-loaded locations list (and an optional
+ *  pre-selected location for ?location= deep-links).
+ *
+ *  The hook also runs the live upgrades query against the patient's
  *  resolved axes; the Upgrades step becomes part of the active
  *  list whenever the query returns rows. */
-export function useBookingState() {
+export function useBookingState(locations: WidgetLocation[], preSelected: WidgetLocation | null = null) {
   const [state, setState] = useState<WidgetState>(() => {
     const remembered = loadRememberedIdentity();
+    // Pre-selection priority: an explicit URL deep-link wins,
+    // then auto-select if there's only one location, else null
+    // (the patient picks on Step 1).
+    const startingLocation =
+      preSelected ?? (locations.length === 1 ? locations[0]! : null);
     return {
-      location: WIDGET_LOCATIONS.length === 1 ? WIDGET_LOCATIONS[0]! : null,
+      location: startingLocation,
       service: null,
       axes: {},
       upgradeIds: [],
@@ -205,9 +220,11 @@ export function useBookingState() {
       details: { ...EMPTY_DETAILS, ...(remembered ?? {}) },
     };
   });
-  const [stepKey, setStepKey] = useState<StepKey>(() =>
-    WIDGET_LOCATIONS.length === 1 ? 'service' : 'location',
-  );
+  const [stepKey, setStepKey] = useState<StepKey>(() => {
+    const startingLocation =
+      preSelected ?? (locations.length === 1 ? locations[0]! : null);
+    return startingLocation ? 'service' : 'location';
+  });
 
   // Upgrades + catalogue resolution both live inside the hook so
   // every consumer (Summary, Service step, Payment step) sees the
@@ -222,7 +239,10 @@ export function useBookingState() {
   const resolvedResult = useResolvedCatalogueRow(resolverInput);
   const upgrades = upgradesResult.data ?? [];
   const hasUpgrades = upgrades.length > 0;
-  const activeSteps = useMemo(() => activeStepsFor(state, hasUpgrades), [state, hasUpgrades]);
+  const activeSteps = useMemo(
+    () => activeStepsFor(state, hasUpgrades, locations.length),
+    [state, hasUpgrades, locations.length],
+  );
   const priceBreakdown = useMemo(
     () =>
       computePriceBreakdown({
@@ -461,4 +481,3 @@ export function computePriceBreakdown(input: {
   };
 }
 
-export const ALL_LOCATIONS = WIDGET_LOCATIONS;

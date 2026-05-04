@@ -1,7 +1,8 @@
 import { ChevronRight, Home, MapPin } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
-import { ALL_LOCATIONS, type BookingStateApi } from '../state.ts';
+import type { BookingStateApi } from '../state.ts';
 import { clearRememberedIdentity, loadRememberedIdentity } from '../state.ts';
+import type { WidgetLocation } from '../data.ts';
 
 // Step 1 — Location.
 //
@@ -14,7 +15,13 @@ import { clearRememberedIdentity, loadRememberedIdentity } from '../state.ts';
 // identity (a previous booking from this device) and offers a
 // "Not you?" reset that wipes it and re-renders Step 1 fresh.
 
-export function LocationStep({ api }: { api: BookingStateApi }) {
+export function LocationStep({
+  api,
+  locations,
+}: {
+  api: BookingStateApi;
+  locations: WidgetLocation[];
+}) {
   const remembered = loadRememberedIdentity();
   const greeting =
     remembered?.firstName && remembered?.lastName
@@ -66,7 +73,7 @@ export function LocationStep({ api }: { api: BookingStateApi }) {
         </p>
       ) : null}
 
-      {ALL_LOCATIONS.map((loc) => {
+      {locations.map((loc) => {
         const selected = api.state.location?.id === loc.id;
         return (
           <button

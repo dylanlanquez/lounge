@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { theme } from '../theme/index.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
@@ -9,6 +9,7 @@ import {
   useBookingState,
 } from './state.ts';
 import { useWidgetCopy, type WidgetCopy } from './copy.ts';
+import { useWidgetLocations, type WidgetLocation } from './data.ts';
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
@@ -50,9 +51,50 @@ const SIDEBAR_WIDTH = 320;
 const TWO_COLUMN_BREAKPOINT = 880;
 
 export function Widget() {
-  const api = useBookingState();
-  const { copy } = useWidgetCopy();
+  // Live reads of locations + copy. We gate the first render on
+  // both, so the page never flashes a "Welcome, pick a location"
+  // header for half a second before stepping into a deep-linked
+  // service flow (no-flicker rule). The booking-types and slots
+  // queries each have their own per-step loading state and don't
+  // block the shell.
+  const locationsResult = useWidgetLocations();
+  const { copy, loading: copyLoading } = useWidgetCopy();
   const isMobile = useIsMobile(TWO_COLUMN_BREAKPOINT);
+
+  if (locationsResult.loading || copyLoading || !locationsResult.data) {
+    return <BootScreen error={locationsResult.error} />;
+  }
+
+  return (
+    <WidgetReady
+      locations={locationsResult.data}
+      copy={copy}
+      isMobile={isMobile}
+    />
+  );
+}
+
+function WidgetReady({
+  locations,
+  copy,
+  isMobile,
+}: {
+  locations: WidgetLocation[];
+  copy: WidgetCopy;
+  isMobile: boolean;
+}) {
+  // ?location=<uuid> deep-link: when an embed pins the widget to a
+  // specific clinic, pre-select it and the engine drops Step 1.
+  // Read once on mount; we don't react to URL changes mid-session.
+  const preSelected = useMemo<WidgetLocation | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const param = new URLSearchParams(window.location.search).get('location');
+    if (!param) return null;
+    return locations.find((l) => l.id === param) ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const api = useBookingState(locations, preSelected);
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
     appointmentRef: string | null;
@@ -157,7 +199,12 @@ export function Widget() {
           {submission.error ? (
             <ErrorBanner message={submission.error} onDismiss={() => setSubmission((s) => ({ ...s, error: null }))} />
           ) : null}
-          <StepContent api={api} onSubmit={submit} submitting={submission.state === 'submitting'} />
+          <StepContent
+            api={api}
+            locations={locations}
+            onSubmit={submit}
+            submitting={submission.state === 'submitting'}
+          />
         </section>
 
         {isMobile ? (
@@ -353,10 +400,12 @@ function ProgressDot({
 
 function StepContent({
   api,
+  locations,
   onSubmit,
   submitting,
 }: {
   api: BookingStateApi;
+  locations: WidgetLocation[];
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
 }) {
@@ -369,7 +418,7 @@ function StepContent({
   }
   switch (api.stepKey) {
     case 'location':
-      return <LocationStep api={api} />;
+      return <LocationStep api={api} locations={locations} />;
     case 'service':
       return <ServiceStep api={api} />;
     case 'upgrades':
@@ -496,6 +545,35 @@ function MobileSummaryDock({
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+function BootScreen({ error }: { error: string | null }) {
+  // Shown while locations + copy are loading on first mount. Plain
+  // and quiet — most loads complete in <300ms so flashing a big
+  // spinner just adds noise.
+  return (
+    <div
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        color: theme.color.inkMuted,
+        fontFamily: theme.type.family,
+        fontSize: theme.type.size.sm,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: theme.space[5],
+      }}
+    >
+      {error ? (
+        <p style={{ margin: 0, color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+          Couldn't reach the booking system. Please refresh the page.
+        </p>
+      ) : (
+        <span aria-live="polite">Loading…</span>
+      )}
+    </div>
+  );
+}
 
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
