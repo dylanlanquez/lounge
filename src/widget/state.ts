@@ -11,6 +11,7 @@ import {
   type CatalogueArchMatch,
 } from '../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
+import { DEFAULT_COPY, type WidgetCopy } from './copy.ts';
 
 // Booking-widget state + step engine.
 //
@@ -316,24 +317,24 @@ export type BookingStateApi = ReturnType<typeof useBookingState>;
 // Display helpers used across multiple steps
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function stepTitle(key: StepKey): string {
+export function stepTitle(key: StepKey, copy: WidgetCopy = DEFAULT_COPY): string {
   if (key.startsWith('axis:')) {
     const axisKey = key.slice(5) as AxisKey;
     return AXIS_QUESTION[axisKey];
   }
   switch (key) {
     case 'location':
-      return 'Location';
+      return copy.locationTitle;
     case 'service':
-      return 'What you need';
+      return copy.serviceTitle;
     case 'upgrades':
-      return 'Optional extras';
+      return copy.upgradesTitle;
     case 'time':
-      return 'Date and time';
+      return copy.timeTitle;
     case 'details':
-      return 'Your details';
+      return copy.detailsTitle;
     case 'payment':
-      return 'Payment';
+      return copy.paymentTitle;
     default:
       return '';
   }

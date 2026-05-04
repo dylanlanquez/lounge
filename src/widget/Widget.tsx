@@ -8,6 +8,7 @@ import {
   stepTitle,
   useBookingState,
 } from './state.ts';
+import { useWidgetCopy } from './copy.ts';
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
@@ -48,6 +49,7 @@ const TWO_COLUMN_BREAKPOINT = 880;
 
 export function Widget() {
   const api = useBookingState();
+  const { copy } = useWidgetCopy();
   const isMobile = useIsMobile(TWO_COLUMN_BREAKPOINT);
   const [submitted, setSubmitted] = useSubmitted();
 
@@ -73,7 +75,7 @@ export function Widget() {
       }}
     >
       <Header
-        title={stepTitle(api.stepKey)}
+        title={stepTitle(api.stepKey, copy)}
         currentIdx={api.currentIdx}
         totalSteps={api.totalSteps}
         canGoBack={api.currentIdx > 0}
@@ -108,7 +110,7 @@ export function Widget() {
               onCtaClick={api.goNext}
               isPaymentNext={(api.activeSteps[api.currentIdx + 1] ?? null) === 'payment'}
             />
-            <PoweredByLounge />
+            <PoweredByLounge label={copy.footerPoweredBy} />
           </aside>
         )}
       </main>
@@ -442,7 +444,8 @@ export function PrimaryCta({
   );
 }
 
-function PoweredByLounge() {
+function PoweredByLounge({ label }: { label: string }) {
+  if (!label) return null;
   return (
     <p
       style={{
@@ -454,7 +457,7 @@ function PoweredByLounge() {
         letterSpacing: theme.type.tracking.wide,
       }}
     >
-      Powered by Lounge
+      {label}
     </p>
   );
 }

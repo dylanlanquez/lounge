@@ -22,6 +22,12 @@ import {
   type WidgetAdminService,
   type WidgetAdminUpgrade,
 } from '../lib/queries/widgetAdmin.ts';
+import {
+  DEFAULT_COPY,
+  saveWidgetCopy,
+  useWidgetCopyOverrides,
+  type WidgetCopy,
+} from '../widget/copy.ts';
 
 // Toggle `window.LNG_DEBUG = true` from the dev console to see
 // per-render / per-event diagnostics from this admin page. Off by
@@ -161,6 +167,18 @@ export function AdminWidgetTab() {
           }}
           onError={(message) =>
             setToast({ tone: 'error', title: 'Could not save', description: message })
+          }
+        />
+      </EditorBoundary>
+
+      <EditorBoundary>
+        <CopyEditor
+          onSaved={() => {
+            reloadPreview();
+            setToast({ tone: 'success', title: 'Step copy saved' });
+          }}
+          onError={(message) =>
+            setToast({ tone: 'error', title: 'Could not save copy', description: message })
           }
         />
       </EditorBoundary>
@@ -1533,3 +1551,464 @@ function parsePoundsToPence(text: string): number | null {
   return Math.round(float * 100);
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy editor — overrides for the patient-facing strings on each step
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CopyField {
+  key: keyof WidgetCopy;
+  label: string;
+  helper?: string;
+  multiline?: boolean;
+}
+
+interface CopyGroup {
+  title: string;
+  description: string;
+  fields: CopyField[];
+}
+
+const COPY_GROUPS: CopyGroup[] = [
+  {
+    title: 'Location step',
+    description:
+      'Shown only when there is more than one location. The greeting line surfaces when a returning patient is recognised.',
+    fields: [
+      { key: 'locationTitle', label: 'Step title' },
+      {
+        key: 'locationGreetingFormat',
+        label: 'Returning-patient greeting',
+        helper: 'Use {name} where the patient\'s name should appear.',
+      },
+    ],
+  },
+  {
+    title: 'Service step',
+    description: 'The first picker — what kind of appointment the patient is booking.',
+    fields: [
+      { key: 'serviceTitle', label: 'Step title' },
+      { key: 'serviceHelper', label: 'Helper paragraph', multiline: true },
+    ],
+  },
+  {
+    title: 'Drill-down questions',
+    description:
+      "Shown after the service when the chosen service has follow-up questions. The question text comes from the registry; only the helper line under each question is editable here.",
+    fields: [
+      {
+        key: 'axisRepairVariantHelper',
+        label: 'Helper for "What needs fixing?"',
+        multiline: true,
+      },
+      {
+        key: 'axisProductKeyHelper',
+        label: 'Helper for "What kind?"',
+        multiline: true,
+      },
+      {
+        key: 'axisArchHelper',
+        label: 'Helper for "Which teeth?"',
+        multiline: true,
+      },
+    ],
+  },
+  {
+    title: 'Optional extras step',
+    description:
+      "Shown when there are widget-visible upgrades for the patient's resolved choices.",
+    fields: [
+      { key: 'upgradesTitle', label: 'Step title' },
+      { key: 'upgradesHelper', label: 'Helper paragraph', multiline: true },
+      {
+        key: 'upgradesContinueEmpty',
+        label: 'Continue button — nothing ticked',
+      },
+      {
+        key: 'upgradesContinueWithFormat',
+        label: 'Continue button — with extras',
+        helper: 'Use {n} for the number of extras chosen.',
+      },
+    ],
+  },
+  {
+    title: 'Date & time step',
+    description: 'Calendar + slot picker.',
+    fields: [
+      { key: 'timeTitle', label: 'Step title' },
+      { key: 'timeFirstOpeningLabel', label: '"First opening" banner label' },
+    ],
+  },
+  {
+    title: 'Your details step',
+    description: 'Form for name, email, phone, notes, and consent.',
+    fields: [
+      { key: 'detailsTitle', label: 'Step title' },
+      { key: 'detailsNotesLabel', label: 'Notes field label' },
+      { key: 'detailsNotesPlaceholder', label: 'Notes field placeholder' },
+      {
+        key: 'detailsRememberLabel',
+        label: '"Remember me" line',
+        multiline: true,
+      },
+      {
+        key: 'detailsTermsLabel',
+        label: 'Terms checkbox label',
+        helper: 'Use {link} where the link to your terms should appear.',
+      },
+      { key: 'detailsTermsUrl', label: 'Terms page URL' },
+    ],
+  },
+  {
+    title: 'Payment step',
+    description: 'Shown only when the chosen service has a deposit.',
+    fields: [
+      { key: 'paymentTitle', label: 'Step title' },
+      { key: 'paymentDisclaimer', label: 'Disclaimer line', multiline: true },
+    ],
+  },
+  {
+    title: 'Confirmation screen',
+    description: 'After a successful booking.',
+    fields: [
+      { key: 'successTitle', label: 'Heading' },
+      {
+        key: 'successBodyFormat',
+        label: 'Body line',
+        helper: 'Use {service} and {location}.',
+      },
+      {
+        key: 'successFollowupFormat',
+        label: 'Follow-up line',
+        helper: 'Use {email} for the patient\'s email.',
+        multiline: true,
+      },
+    ],
+  },
+  {
+    title: 'Booking summary panel',
+    description: 'Right column on desktop, sticky bottom on mobile.',
+    fields: [
+      { key: 'summaryTitle', label: 'Panel title' },
+      { key: 'summaryTotalLabel', label: '"Total today" label' },
+      { key: 'summaryPayLaterLabel', label: '"Pay at appointment" label' },
+      { key: 'summaryCtaBook', label: 'Primary CTA — book' },
+      { key: 'summaryCtaPayment', label: 'Primary CTA — when payment follows' },
+    ],
+  },
+  {
+    title: 'Footer',
+    description: 'Below the summary panel. Empty hides the line entirely.',
+    fields: [{ key: 'footerPoweredBy', label: '"Powered by" line' }],
+  },
+];
+
+function CopyEditor({
+  onSaved,
+  onError,
+}: {
+  onSaved: () => void;
+  onError: (message: string) => void;
+}) {
+  const { overrides, loading, error, refresh } = useWidgetCopyOverrides();
+  const [draft, setDraft] = useState<Partial<WidgetCopy>>({});
+  const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  // Re-seed when the saved overrides change (after a successful
+  // save the parent refreshes; the form local state should match
+  // what's now on disk).
+  useEffect(() => {
+    setDraft(overrides);
+  }, [overrides]);
+
+  const dirty = !shallowEqualOverrides(draft, overrides);
+
+  // beforeunload guard while dirty — same pattern as the services
+  // editor. Don't let the admin lose copy edits to a tab close.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      await saveWidgetCopy(draft);
+      refresh();
+      onSaved();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const setField = (key: keyof WidgetCopy, value: string) => {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <Card padding="md">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            Step copy
+          </p>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+              maxWidth: 720,
+            }}
+          >
+            Override the patient-facing text on each step. Empty fields fall back to the
+            shipped defaults (shown as placeholders), so you can edit one line at a time
+            without worrying about missing labels elsewhere.
+          </p>
+        </div>
+        <Button variant="tertiary" size="sm" onClick={() => setExpanded((v) => !v)}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            {expanded ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+            {expanded ? 'Collapse' : 'Expand'}
+          </span>
+        </Button>
+      </div>
+
+      {!expanded ? null : loading ? (
+        <div style={{ marginTop: theme.space[4] }}>
+          <Skeleton height={120} />
+        </div>
+      ) : error ? (
+        <p
+          role="alert"
+          style={{
+            margin: `${theme.space[3]}px 0 0`,
+            padding: theme.space[3],
+            background: '#FFEEEC',
+            color: theme.color.alert,
+            borderRadius: theme.radius.input,
+            fontSize: theme.type.size.sm,
+          }}
+        >
+          Couldn't load step copy: {error}
+        </p>
+      ) : (
+        <div style={{ marginTop: theme.space[4], display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          {COPY_GROUPS.map((group) => (
+            <CopyGroupCard key={group.title} group={group} draft={draft} onChange={setField} />
+          ))}
+          {dirty ? (
+            <div
+              role="status"
+              style={{
+                margin: 0,
+                padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                background: '#FFF6E5',
+                color: theme.color.warn,
+                border: `1px solid #F5DCA0`,
+                borderRadius: theme.radius.input,
+                fontSize: theme.type.size.xs,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              You have unsaved copy edits. Hit Save changes to publish them, or Cancel
+              to discard.
+            </div>
+          ) : null}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: theme.space[2],
+              paddingTop: theme.space[3],
+              borderTop: `1px solid ${theme.color.border}`,
+            }}
+          >
+            <Button
+              variant="tertiary"
+              onClick={() => setDraft(overrides)}
+              disabled={!dirty || saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={onSave}
+              disabled={!dirty || saving}
+              loading={saving}
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function CopyGroupCard({
+  group,
+  draft,
+  onChange,
+}: {
+  group: CopyGroup;
+  draft: Partial<WidgetCopy>;
+  onChange: (key: keyof WidgetCopy, value: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[5],
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+        }}
+      >
+        {group.title}
+      </p>
+      <p
+        style={{
+          margin: `${theme.space[1]}px 0 ${theme.space[4]}px`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        {group.description}
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+        {group.fields.map((field) => (
+          <CopyFieldRow
+            key={field.key}
+            field={field}
+            value={(draft[field.key] as string | undefined) ?? ''}
+            onChange={(v) => onChange(field.key, v)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CopyFieldRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: CopyField;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const placeholder = (DEFAULT_COPY[field.key] as string) ?? '';
+  return (
+    <div>
+      <p
+        style={{
+          margin: 0,
+          marginBottom: theme.space[1],
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+        }}
+      >
+        {field.label}
+      </p>
+      {field.helper ? (
+        <p
+          style={{
+            margin: `0 0 ${theme.space[1]}px`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          {field.helper}
+        </p>
+      ) : null}
+      {field.multiline ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          style={{
+            width: '100%',
+            padding: theme.space[3],
+            borderRadius: theme.radius.input,
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
+            color: theme.color.ink,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.sm,
+            lineHeight: theme.type.leading.snug,
+            resize: 'vertical',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={{
+            width: '100%',
+            height: 44,
+            padding: `0 ${theme.space[3]}px`,
+            borderRadius: theme.radius.input,
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
+            color: theme.color.ink,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.sm,
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function shallowEqualOverrides(a: Partial<WidgetCopy>, b: Partial<WidgetCopy>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    const k = key as keyof WidgetCopy;
+    if ((a[k] ?? '') !== (b[k] ?? '')) return false;
+  }
+  return true;
+}
