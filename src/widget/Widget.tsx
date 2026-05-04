@@ -19,6 +19,7 @@ import { PaymentStep } from './steps/Payment.tsx';
 import { SuccessScreen } from './steps/Success.tsx';
 import { Summary } from './Summary.tsx';
 import { submitBooking, SubmitError } from './submit.ts';
+import { isDetailsValid } from './validation.ts';
 import type { AxisKey } from '../lib/queries/bookingTypeAxes.ts';
 
 // Public booking widget — embedded on the practice's website.
@@ -108,7 +109,11 @@ export function Widget() {
   const isPaymentNext = (api.activeSteps[api.currentIdx + 1] ?? null) === 'payment';
   const onCtaClick = isPaymentNext ? api.goNext : () => submit(null);
   const ctaBusy = !isPaymentNext && submission.state === 'submitting';
-  const ctaDisabled = api.stepKey === 'details' && !api.state.details.agreeTerms;
+  // The Details CTA gates on the same validity rules the inline
+  // errors use — single source of truth in widget/validation.ts.
+  // Stays disabled until every required field is valid AND terms
+  // are agreed.
+  const ctaDisabled = api.stepKey === 'details' && !isDetailsValid(api.state.details);
 
   return (
     <div
@@ -255,6 +260,8 @@ function Header({
           <ArrowLeft size={18} aria-hidden />
         </button>
         <h1
+          aria-live="polite"
+          aria-atomic="true"
           style={{
             margin: 0,
             fontSize: theme.type.size.xl,

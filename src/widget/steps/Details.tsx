@@ -1,7 +1,14 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { theme } from '../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { persistRememberedIdentity } from '../state.ts';
+import {
+  validateEmail,
+  validateFirstName,
+  validateLastName,
+  validatePhone,
+} from '../validation.ts';
+import { CountryPicker } from '../CountryPicker.tsx';
 
 // Step 5 — Your Details.
 //
@@ -11,25 +18,36 @@ import { persistRememberedIdentity } from '../state.ts';
 // The "primary action" (Book appointment / Continue to payment)
 // lives in the Summary panel on desktop and the sticky bottom dock
 // on mobile, NOT inside this form. The Widget shell wires it to the
-// step engine. So this step has no submit button of its own — it
-// just owns the inputs and writes them back to state on every
-// keystroke. Validation is checked by the parent CTA before
-// advancing.
+// step engine and gates it on the same validation rules used here
+// (see widget/validation.ts) so the form's "valid" state is the
+// single source of truth.
+//
+// Validation strategy: errors only surface after the field has been
+// touched (blurred at least once) so we don't yell at the user as
+// they type. Once an error is shown, it clears as soon as the input
+// becomes valid — no need to blur again.
 //
 // Persists identity to localStorage when "Remember me" is ticked
 // (default), so the next time someone books from this device the
 // widget greets them by name on Step 1.
 
-const COUNTRIES: { code: string; flag: string; dial: string; label: string }[] = [
-  { code: 'GB', flag: '🇬🇧', dial: '+44', label: 'United Kingdom' },
-  { code: 'IE', flag: '🇮🇪', dial: '+353', label: 'Ireland' },
-  { code: 'US', flag: '🇺🇸', dial: '+1', label: 'United States' },
-  { code: 'CA', flag: '🇨🇦', dial: '+1', label: 'Canada' },
-  { code: 'AU', flag: '🇦🇺', dial: '+61', label: 'Australia' },
-];
+type TouchedMap = {
+  firstName: boolean;
+  lastName: boolean;
+  email: boolean;
+  phoneNumber: boolean;
+};
+
+const ALL_UNTOUCHED: TouchedMap = {
+  firstName: false,
+  lastName: false,
+  email: false,
+  phoneNumber: false,
+};
 
 export function DetailsStep({ api }: { api: BookingStateApi }) {
   const d = api.state.details;
+  const [touched, setTouched] = useState<TouchedMap>(ALL_UNTOUCHED);
 
   // Persist identity whenever the form changes AND remember-me is on.
   // Debounce-free; localStorage writes are cheap and the form is
@@ -42,9 +60,18 @@ export function DetailsStep({ api }: { api: BookingStateApi }) {
     api.setState((prev) => ({ ...prev, details: { ...prev.details, [field]: value } }));
   };
 
-  const country = useMemo(
-    () => COUNTRIES.find((c) => c.code === d.phoneCountry) ?? COUNTRIES[0]!,
-    [d.phoneCountry],
+  const markTouched = (field: keyof TouchedMap) => {
+    setTouched((t) => (t[field] ? t : { ...t, [field]: true }));
+  };
+
+  const errors = useMemo(
+    () => ({
+      firstName: touched.firstName ? validateFirstName(d.firstName) : null,
+      lastName: touched.lastName ? validateLastName(d.lastName) : null,
+      email: touched.email ? validateEmail(d.email) : null,
+      phoneNumber: touched.phoneNumber ? validatePhone(d.phoneNumber, d.phoneCountry) : null,
+    }),
+    [d.firstName, d.lastName, d.email, d.phoneNumber, d.phoneCountry, touched],
   );
 
   return (
@@ -69,15 +96,21 @@ export function DetailsStep({ api }: { api: BookingStateApi }) {
       >
         <Field
           label="First name"
+          required
           value={d.firstName}
           onChange={(v) => update('firstName', v)}
+          onBlur={() => markTouched('firstName')}
           autoComplete="given-name"
+          error={errors.firstName}
         />
         <Field
           label="Last name"
+          required
           value={d.lastName}
           onChange={(v) => update('lastName', v)}
+          onBlur={() => markTouched('lastName')}
           autoComplete="family-name"
+          error={errors.lastName}
         />
       </div>
 
@@ -90,22 +123,27 @@ export function DetailsStep({ api }: { api: BookingStateApi }) {
       >
         <Field
           label="Email"
+          required
           type="email"
           value={d.email}
           onChange={(v) => update('email', v)}
+          onBlur={() => markTouched('email')}
           autoComplete="email"
           placeholder="you@example.com"
+          error={errors.email}
         />
         <PhoneField
-          country={country}
-          value={d.phoneNumber}
+          countryCode={d.phoneCountry}
+          number={d.phoneNumber}
           onCountryChange={(c) => update('phoneCountry', c)}
-          onChange={(v) => update('phoneNumber', v)}
+          onNumberChange={(v) => update('phoneNumber', v)}
+          onBlur={() => markTouched('phoneNumber')}
+          error={errors.phoneNumber}
         />
       </div>
 
-      <div>
-        <Label>Notes or comments (optional)</Label>
+      <label style={{ display: 'block' }}>
+        <LabelText>Notes or comments (optional)</LabelText>
         <textarea
           value={d.notes}
           onChange={(e) => update('notes', e.target.value)}
@@ -131,7 +169,7 @@ export function DetailsStep({ api }: { api: BookingStateApi }) {
             e.currentTarget.style.borderColor = theme.color.border;
           }}
         />
-      </div>
+      </label>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
         <Checkbox
@@ -170,94 +208,98 @@ function Field({
   label,
   value,
   onChange,
+  onBlur,
   type = 'text',
   placeholder,
   autoComplete,
+  required = false,
+  error = null,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   type?: string;
   placeholder?: string;
   autoComplete?: string;
+  required?: boolean;
+  error?: string | null;
 }) {
+  const showError = Boolean(error);
+  const errorId = useId();
+  // Wrapping input in <label> implicitly associates the two for
+  // screen readers without needing matching id/htmlFor pairs.
   return (
-    <div>
-      <Label>{label}</Label>
+    <label style={{ display: 'block' }}>
+      <LabelText required={required}>{label}</LabelText>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
         autoComplete={autoComplete}
-        style={inputStyle}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = theme.color.ink;
+        aria-required={required || undefined}
+        aria-invalid={showError || undefined}
+        aria-describedby={showError ? errorId : undefined}
+        style={{
+          ...inputStyle,
+          borderColor: showError ? theme.color.alert : theme.color.border,
         }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = theme.color.border;
+        onFocus={(e) => {
+          e.currentTarget.style.borderColor = showError
+            ? theme.color.alert
+            : theme.color.ink;
         }}
       />
-    </div>
+      {showError ? <ErrorLine id={errorId}>{error}</ErrorLine> : null}
+    </label>
   );
 }
 
 function PhoneField({
-  country,
-  value,
+  countryCode,
+  number,
   onCountryChange,
-  onChange,
+  onNumberChange,
+  onBlur,
+  error = null,
 }: {
-  country: (typeof COUNTRIES)[number];
-  value: string;
+  countryCode: string;
+  number: string;
   onCountryChange: (code: string) => void;
-  onChange: (v: string) => void;
+  onNumberChange: (v: string) => void;
+  onBlur?: () => void;
+  error?: string | null;
 }) {
+  const showError = Boolean(error);
+  const errorId = useId();
   return (
     <div>
-      <Label>Mobile number</Label>
+      <LabelText required>Mobile number</LabelText>
       <div
         style={{
           display: 'flex',
           alignItems: 'stretch',
-          border: `1px solid ${theme.color.border}`,
+          border: `1px solid ${showError ? theme.color.alert : theme.color.border}`,
           borderRadius: theme.radius.input,
           background: theme.color.surface,
           overflow: 'hidden',
           height: 44,
         }}
       >
-        <select
-          value={country.code}
-          onChange={(e) => onCountryChange(e.target.value)}
-          style={{
-            appearance: 'none',
-            border: 'none',
-            background: theme.color.bg,
-            padding: `0 ${theme.space[3]}px`,
-            fontFamily: 'inherit',
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            cursor: 'pointer',
-            outline: 'none',
-            borderRight: `1px solid ${theme.color.border}`,
-            minWidth: 96,
-            boxSizing: 'border-box',
-          }}
-          aria-label="Country code"
-        >
-          {COUNTRIES.map((c) => (
-            <option key={c.code} value={c.code}>
-              {c.flag} {c.dial}
-            </option>
-          ))}
-        </select>
+        <CountryPicker value={countryCode} onChange={onCountryChange} />
         <input
           type="tel"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          value={number}
+          onChange={(e) => onNumberChange(e.target.value)}
+          onBlur={onBlur}
           placeholder="7700 900000"
           autoComplete="tel-national"
+          aria-label="Mobile number"
+          aria-required
+          aria-invalid={showError || undefined}
+          aria-describedby={showError ? errorId : undefined}
           style={{
             flex: 1,
             border: 'none',
@@ -271,19 +313,67 @@ function PhoneField({
           }}
         />
       </div>
+      {showError ? <ErrorLine id={errorId}>{error}</ErrorLine> : null}
     </div>
   );
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+function LabelText({
+  children,
+  required = false,
+}: {
+  children: React.ReactNode;
+  required?: boolean;
+}) {
+  // Span (not <p>) so this renders as phrasing content inside a
+  // wrapping <label>. Adds a visible required marker plus a
+  // hidden "(required)" string so screen readers announce
+  // "Last name (required)" rather than "Last name star".
   return (
-    <p
+    <span
       style={{
-        margin: 0,
+        display: 'block',
         marginBottom: theme.space[1],
         fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.semibold,
         color: theme.color.ink,
+      }}
+    >
+      {children}
+      {required ? (
+        <>
+          <span aria-hidden style={{ color: theme.color.alert, marginLeft: 4 }}>
+            *
+          </span>
+          <span style={SR_ONLY}> (required)</span>
+        </>
+      ) : null}
+    </span>
+  );
+}
+
+const SR_ONLY: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
+
+function ErrorLine({ children, id }: { children: React.ReactNode; id?: string }) {
+  return (
+    <p
+      id={id}
+      role="alert"
+      style={{
+        margin: `${theme.space[1]}px 0 0`,
+        fontSize: theme.type.size.xs,
+        color: theme.color.alert,
+        fontWeight: theme.type.weight.semibold,
       }}
     >
       {children}
