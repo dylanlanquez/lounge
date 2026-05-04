@@ -44,9 +44,11 @@ const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
 // dev sender without redeploying.
 const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
 const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
-// Used to build the {{manageUrl}} variable. Override via env if a
-// future deploy hosts the widget on a different domain.
-const WIDGET_PUBLIC_URL = (Deno.env.get('WIDGET_PUBLIC_URL') ?? 'https://lounge.venneir.com').replace(/\/+$/, '');
+// Used to build the {{manageUrl}} variable. Defaults to the
+// customer-facing book.venneir.com domain so links land on the
+// widget-only deployment with no staff code in scope. Override
+// via env if a future deploy moves the widget elsewhere.
+const WIDGET_PUBLIC_URL = (Deno.env.get('WIDGET_PUBLIC_URL') ?? 'https://book.venneir.com').replace(/\/+$/, '');
 
 Deno.serve(async (req) => {
   // Top-level try/catch so any unhandled exception surfaces as a 200
@@ -818,7 +820,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     // are rare, but the merger drops empty values cleanly so
     // {{manageUrl}} renders as nothing in that case).
     manageUrl: apt.manage_token
-      ? `${WIDGET_PUBLIC_URL}/widget/manage?token=${apt.manage_token}`
+      ? `${WIDGET_PUBLIC_URL}/manage?token=${apt.manage_token}`
       : '',
     googleCalendarUrl: googleCalendarUrl(apt, location),
     patientFacingDuration: formatPatientFacingDurationForEmail(
