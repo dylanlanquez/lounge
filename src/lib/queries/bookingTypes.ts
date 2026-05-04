@@ -567,23 +567,26 @@ export async function deleteBookingTypeChildOverride(args: {
 
 // Display label for a row in the booking-type tree. Admin-set
 // display_label always wins. Otherwise: parents read as the service
-// display name; children read as the child key value (Title Case
-// for product keys; raw for repair variants; archLabel for arches).
+// display name; children render every pinned axis joined by " · " in
+// declared priority order (variant > product > arch). Multi-axis rows
+// (post-ADR-007) come out as "Whitening Tray · Upper" rather than
+// dropping one of the dimensions.
 export function bookingTypeRowLabel(row: BookingTypeConfigRow): string {
   if (row.display_label && row.display_label.trim()) return row.display_label.trim();
-  if (row.repair_variant) return row.repair_variant;
-  if (row.product_key) return humaniseProductKey(row.product_key);
-  if (row.arch) return archLabel(row.arch);
-  return BOOKING_SERVICE_TYPES.find((s) => s.value === row.service_type)?.label ?? row.service_type;
+  return bookingTypeRowDerivedLabel(row);
 }
 
 // The auto-derived label, ignoring any admin override. Used by the
 // editor to show "Use catalogue default (X)" link copy. Pure
-// derivation — no DB lookup.
+// derivation — no DB lookup. Renders all pinned axes in priority
+// order, falling back to the service display name when nothing's
+// pinned (parent rows).
 export function bookingTypeRowDerivedLabel(row: BookingTypeConfigRow): string {
-  if (row.repair_variant) return row.repair_variant;
-  if (row.product_key) return humaniseProductKey(row.product_key);
-  if (row.arch) return archLabel(row.arch);
+  const parts: string[] = [];
+  if (row.repair_variant) parts.push(row.repair_variant);
+  if (row.product_key) parts.push(humaniseProductKey(row.product_key));
+  if (row.arch) parts.push(archLabel(row.arch));
+  if (parts.length > 0) return parts.join(' · ');
   return BOOKING_SERVICE_TYPES.find((s) => s.value === row.service_type)?.label ?? row.service_type;
 }
 

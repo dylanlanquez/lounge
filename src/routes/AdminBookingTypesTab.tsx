@@ -39,7 +39,14 @@ import {
   useBookingTypePhases,
   useResourcePools,
 } from '../lib/queries/bookingTypes.ts';
-import { supabase } from '../lib/supabase.ts';
+import {
+  type AxisDef,
+  type AxisPin,
+  type AxisValueOption,
+  axesForService,
+  loadAxisValues,
+  pinnedAxesLabel,
+} from '../lib/queries/bookingTypeAxes.ts';
 
 // Service-family palette. Matches the Visitor Heatmap markers
 // (src/lib/visitorMapStyling.ts) so a service's identity reads
@@ -93,9 +100,11 @@ type EditTarget =
   | {
       kind: 'new-child';
       service_type: BookingServiceType;
-      childKind: 'repair_variant' | 'product_key' | 'arch';
-      key: string;
-      label: string;
+      // Multi-axis pins (ADR-007). One pin per axis the admin chose
+      // a value for; axes left as "Any" are absent from this array.
+      // Order is presentational only; the editor maps each pin to
+      // its column when writing the row.
+      pins: AxisPin[];
     };
 
 export function AdminBookingTypesTab() {
@@ -397,33 +406,12 @@ function ServiceNode({
       throw e;
     }
   };
-  // Children-set we can EXPOSE to the "Add override" dropdown — i.e.
-  // the catalogue (or arch enum) entries that don't yet have a row
-  // in lng_booking_type_config.
-  const [available, setAvailable] = useState<{ key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const all = await listAvailableChildren(serviceType);
-      if (cancelled) return;
-      const taken = new Set(
-        children.map((c) =>
-          c.repair_variant
-            ? `repair_variant:${c.repair_variant}`
-            : c.product_key
-            ? `product_key:${c.product_key}`
-            : c.arch
-            ? `arch:${c.arch}`
-            : '',
-        ),
-      );
-      setAvailable(all.filter((a) => !taken.has(`${a.kind}:${a.key}`)));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [serviceType, children]);
+  // Axes this service supports. Drives whether the Add-override
+  // button is shown at all and what the AddOverrideSheet renders
+  // when opened. Single source of truth: bookingTypeAxes registry.
+  const axes = useMemo(() => axesForService(serviceType), [serviceType]);
+  const canAddOverride = axes.length > 0;
+  const [addSheetOpen, setAddSheetOpen] = useState(false);
 
   const dot = SERVICE_DOT_COLOUR[serviceType];
 
@@ -514,9 +502,8 @@ function ServiceNode({
         expanded={expanded}
         onToggle={() => setExpanded((v) => !v)}
         count={children.length}
-        canAdd={available.length > 0}
+        canAdd={canAddOverride}
         serviceLabel={serviceLabel}
-        childKindWord={childKindLabel(serviceType)}
       />
 
       <Collapse open={expanded}>
@@ -530,7 +517,7 @@ function ServiceNode({
           {children.length === 0 ? (
             <EmptyOverrides
               serviceLabel={serviceLabel}
-              canAdd={available.length > 0}
+              canAdd={canAddOverride}
             />
           ) : (
             <ul
@@ -562,31 +549,8 @@ function ServiceNode({
             </ul>
           )}
 
-          {available.length > 0 ? (
-            <AddOverrideRow
-              parentLabel={childKindLabel(serviceType)}
-              available={available}
-              onAdd={(picked) =>
-                onAddChild({
-                  kind: 'new-child',
-                  service_type: serviceType,
-                  childKind: picked.kind,
-                  key: picked.key,
-                  label: picked.label,
-                })
-              }
-            />
-          ) : children.length > 0 ? (
-            <p
-              style={{
-                margin: `${theme.space[3]}px 0 0`,
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkSubtle,
-                fontStyle: 'italic',
-              }}
-            >
-              Every {childKindLabel(serviceType)} already has an override.
-            </p>
+          {canAddOverride ? (
+            <AddOverrideButton onClick={() => setAddSheetOpen(true)} />
           ) : null}
         </div>
       </Collapse>
@@ -610,6 +574,23 @@ function ServiceNode({
         onClose={() => setPatientFacingOpen(false)}
         onSave={handlePatientFacingSave}
       />
+
+      <AddOverrideSheet
+        open={addSheetOpen}
+        serviceLabel={serviceLabel}
+        serviceType={serviceType}
+        axes={axes}
+        existingChildren={children}
+        onClose={() => setAddSheetOpen(false)}
+        onCreate={(pins) => {
+          setAddSheetOpen(false);
+          onAddChild({
+            kind: 'new-child',
+            service_type: serviceType,
+            pins,
+          });
+        }}
+      />
     </li>
   );
 }
@@ -620,8 +601,8 @@ function ServiceNode({
 // a button (chevron + label) and announces state via aria-expanded.
 //
 // Copy switches based on count:
-//   0 + can-add → "Add an override for a specific {kind}"
-//   0 + cannot   → null (no children pickable, nothing to expand)
+//   0 + can-add → "Add an override"
+//   0 + cannot   → null (no axes for this service, nothing to expand)
 //   N            → "1 override · Show" / "N overrides · Show" /
 //                  "Hide" when expanded
 function OverridesDisclosure({
@@ -630,20 +611,18 @@ function OverridesDisclosure({
   count,
   canAdd,
   serviceLabel,
-  childKindWord,
 }: {
   expanded: boolean;
   onToggle: () => void;
   count: number;
   canAdd: boolean;
   serviceLabel: string;
-  childKindWord: string;
 }) {
   if (count === 0 && !canAdd) return null;
 
   const labelWhenExpanded = count === 0 ? 'Hide' : 'Hide overrides';
   const labelWhenCollapsed = count === 0
-    ? `Add an override for a specific ${childKindWord}`
+    ? 'Add an override'
     : `${count} ${count === 1 ? 'override' : 'overrides'}`;
 
   return (
@@ -1098,95 +1077,266 @@ function InheritChip({
   );
 }
 
-// "+ Add override" affordance. Single-step interaction: click the
-// pill → reveals the picker → choosing a value creates the override
-// immediately and closes the picker. No separate Add button.
-function AddOverrideRow({
-  parentLabel,
-  available,
-  onAdd,
-}: {
-  parentLabel: string;
-  available: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[];
-  onAdd: (picked: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }) => void;
-}) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [picked, setPicked] = useState<string>('');
-
-  // When the picker opens and a value is selected, fire onAdd
-  // immediately on change. We track the selection separately from
-  // the dropdown's controlled value so the onChange handler can
-  // commit and reset in one go.
-  const handlePick = (next: string) => {
-    setPicked(next);
-    const found = available.find((a) => `${a.kind}:${a.key}` === next);
-    if (found) {
-      onAdd(found);
-      setPickerOpen(false);
-      setPicked('');
-    }
-  };
-
-  if (!pickerOpen) {
-    return (
-      <button
-        type="button"
-        onClick={() => setPickerOpen(true)}
-        style={{
-          appearance: 'none',
-          border: `1px dashed ${theme.color.border}`,
-          background: 'transparent',
-          cursor: 'pointer',
-          fontFamily: 'inherit',
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.medium,
-          color: theme.color.inkMuted,
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
-          borderRadius: theme.radius.input,
-          marginTop: theme.space[3],
-          width: '100%',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: theme.space[2],
-          WebkitTapHighlightColor: 'transparent',
-        }}
-      >
-        <Plus size={14} aria-hidden /> Add an override for a specific {parentLabel}
-      </button>
-    );
-  }
-
+// "+ Add override" trigger button. Always full-width with a dashed
+// border so it reads as a "create something new" affordance, not a
+// primary action. Same visual language as the empty-state cards
+// elsewhere in the app.
+function AddOverrideButton({ onClick }: { onClick: () => void }) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       style={{
+        appearance: 'none',
+        border: `1px dashed ${theme.color.border}`,
+        background: 'transparent',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.medium,
+        color: theme.color.inkMuted,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
         marginTop: theme.space[3],
-        display: 'flex',
+        width: '100%',
+        display: 'inline-flex',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: theme.space[2],
+        WebkitTapHighlightColor: 'transparent',
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <Plus size={14} aria-hidden /> Add an override
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AddOverrideSheet — multi-axis picker for creating a new override row.
+// Renders one DropdownSelect per axis the service declares, each with
+// an "Any" option meaning "leave this axis unpinned". On Save, calls
+// back with the AxisPin[] for the non-"Any" picks. Refuses to save
+// when no axis is pinned (that would be the parent), and detects
+// duplicate combinations against the existing children list so the
+// admin gets a clear "you already have this" error instead of a DB
+// unique-constraint failure.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ANY_VALUE = '__any__';
+
+function AddOverrideSheet({
+  open,
+  serviceLabel,
+  serviceType,
+  axes,
+  existingChildren,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  serviceLabel: string;
+  serviceType: BookingServiceType;
+  axes: readonly AxisDef[];
+  existingChildren: BookingTypeConfigRow[];
+  onClose: () => void;
+  onCreate: (pins: AxisPin[]) => void;
+}) {
+  // picks: per-axis selection. ANY_VALUE = "Any" (axis stays unpinned).
+  // Empty string = "not yet picked" (forces the admin to commit a
+  // choice, even if it's "Any", before Save activates).
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [optionsByAxis, setOptionsByAxis] = useState<Record<string, AxisValueOption[]>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset state every time the sheet opens. Loading axis values
+  // happens here so a service reconfiguration doesn't need a remount
+  // to refresh the dropdowns.
+  useEffect(() => {
+    if (!open) return;
+    setError(null);
+    setPicks({});
+    setLoading(true);
+    let cancelled = false;
+    void (async () => {
+      const map: Record<string, AxisValueOption[]> = {};
+      for (const axis of axes) {
+        map[axis.key] = await loadAxisValues(axis);
+      }
+      if (cancelled) return;
+      setOptionsByAxis(map);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, axes]);
+
+  // Compute the candidate pin set from current picks. ANY_VALUE picks
+  // and unpicked axes both mean "axis stays unpinned" → not in pins.
+  const candidatePins: AxisPin[] = axes
+    .map((a) => {
+      const v = picks[a.key];
+      if (!v || v === ANY_VALUE) return null;
+      return { key: a.key, value: v } as AxisPin;
+    })
+    .filter((p): p is AxisPin => p !== null);
+
+  const allChosen = axes.every((a) => picks[a.key] !== undefined && picks[a.key] !== '');
+  const hasAtLeastOnePin = candidatePins.length > 0;
+
+  // Duplicate detection: an existing child row has the same axis
+  // pinning when, for every axis the registry declares, both rows
+  // pin the same value (or both leave it unpinned).
+  const duplicate = existingChildren.find((c) => {
+    return axes.every((a) => {
+      const cVal =
+        a.key === 'repair_variant' ? c.repair_variant
+        : a.key === 'product_key' ? c.product_key
+        : a.key === 'arch' ? c.arch
+        : null;
+      const pickedVal = picks[a.key] === ANY_VALUE ? null : (picks[a.key] || null);
+      return (cVal ?? null) === (pickedVal ?? null);
+    });
+  });
+
+  const canSave = allChosen && hasAtLeastOnePin && !duplicate && !loading;
+
+  const handleSave = () => {
+    if (!hasAtLeastOnePin) {
+      setError('Pick a specific value for at least one dimension. "Any" everywhere is the parent default.');
+      return;
+    }
+    if (duplicate) {
+      setError('An override with this exact combination already exists.');
+      return;
+    }
+    onCreate(candidatePins);
+  };
+
+  // Each axis option is the registry-supplied list plus an "Any" entry
+  // at the top. Memoised so the DropdownSelect doesn't see a new array
+  // identity on every render.
+  const renderAxis = (axis: AxisDef) => {
+    const opts = optionsByAxis[axis.key] ?? [];
+    const dropdownOptions = [
+      { value: ANY_VALUE, label: `Any ${axis.label.toLowerCase()}` },
+      ...opts.map((o) => ({ value: o.key, label: o.label })),
+    ];
+    return (
+      <div key={axis.key} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+        <label
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {axis.label}
+        </label>
         <DropdownSelect<string>
-          ariaLabel={`Pick a ${parentLabel} to override`}
-          value={picked}
-          options={available.map((a) => ({ value: `${a.kind}:${a.key}`, label: a.label }))}
-          placeholder={`Choose a ${parentLabel}…`}
-          onChange={handlePick}
+          ariaLabel={`Pick ${axis.label}`}
+          value={picks[axis.key] ?? ''}
+          placeholder={`Choose a ${axis.label.toLowerCase()}…`}
+          options={dropdownOptions}
+          onChange={(v) => {
+            setError(null);
+            setPicks((prev) => ({ ...prev, [axis.key]: v }));
+          }}
         />
       </div>
-      <Button
-        variant="tertiary"
-        size="sm"
-        onClick={() => {
-          setPickerOpen(false);
-          setPicked('');
-        }}
-      >
-        Cancel
-      </Button>
-    </div>
+    );
+  };
+
+  return (
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title={`Add an override for ${serviceLabel.toLowerCase()}`}
+      description={
+        axes.length > 1
+          ? `Pick a value for any combination of dimensions below. "Any" leaves a dimension unpinned so the override applies broadly across it.`
+          : `Pick the specific ${axes[0]?.label.toLowerCase() ?? 'value'} this override applies to.`
+      }
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[3] }}>
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.alert, minHeight: 16 }}>
+            {error ?? (duplicate ? 'This combination already exists.' : '')}
+          </span>
+          <div style={{ display: 'flex', gap: theme.space[2] }}>
+            <Button variant="tertiary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleSave} disabled={!canSave}>
+              Add override
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      {loading ? (
+        <Skeleton height={120} />
+      ) : axes.length === 0 ? (
+        <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          {serviceLabel} doesn't support overrides.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          {axes.map(renderAxis)}
+          {/* Live preview of what this override will be called once
+              saved. Helps the admin sanity-check before committing. */}
+          {hasAtLeastOnePin ? (
+            <div
+              style={{
+                marginTop: theme.space[2],
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                background: theme.color.bg,
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  letterSpacing: theme.type.tracking.wide,
+                  textTransform: 'uppercase',
+                  fontWeight: theme.type.weight.semibold,
+                }}
+              >
+                Override label
+              </p>
+              <p
+                style={{
+                  margin: `${theme.space[1]}px 0 0`,
+                  fontSize: theme.type.size.md,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                }}
+              >
+                {pinnedAxesLabel(serviceType, candidatePinsToRow(candidatePins))}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </BottomSheet>
   );
+}
+
+// Helper: shape the pin list back into a partial config-row so
+// pinnedAxesLabel can read it. Inverse of axesPinned.
+function candidatePinsToRow(pins: AxisPin[]): {
+  repair_variant: string | null;
+  product_key: string | null;
+  arch: string | null;
+} {
+  return {
+    repair_variant: pins.find((p) => p.key === 'repair_variant')?.value ?? null,
+    product_key: pins.find((p) => p.key === 'product_key')?.value ?? null,
+    arch: pins.find((p) => p.key === 'arch')?.value ?? null,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1240,11 +1390,27 @@ function BookingTypeEditorDialog({
     }
   };
 
+  // Title for the editor sheet. For new multi-axis children, the
+  // axes are joined into the same "Whitening Tray · Upper" chain
+  // the override list uses, so the editor's header is consistent
+  // with how the row will appear once saved.
+  const newChildPinsLabel = (() => {
+    if (target.kind !== 'new-child') return '';
+    const stub = candidatePinsToRow(target.pins);
+    return pinnedAxesLabel(target.service_type, stub);
+  })();
   const title = isParent
     ? BOOKING_SERVICE_TYPES.find((s) => s.value === (row as BookingTypeConfigRow).service_type)?.label ?? 'Booking type'
     : isNew
-    ? `${labelOfService((target as { service_type: BookingServiceType }).service_type)} · ${(target as { label: string }).label}`
+    ? `${labelOfService((target as { service_type: BookingServiceType }).service_type)} · ${newChildPinsLabel}`
     : `${labelOfService((row as BookingTypeConfigRow).service_type)} · ${bookingTypeRowLabel(row as BookingTypeConfigRow)}`;
+
+  // For new-child targets, look up which axes were pinned. The
+  // editor maps these into the appropriate columns at write time.
+  const newChildPinValue = (axisKey: AxisPin['key']): string | null => {
+    if (target.kind !== 'new-child') return null;
+    return target.pins.find((p) => p.key === axisKey)?.value ?? null;
+  };
 
   const save = async () => {
     setBusy(true);
@@ -1257,21 +1423,15 @@ function BookingTypeEditorDialog({
             : (target as { row: BookingTypeConfigRow }).row.service_type,
         repair_variant:
           target.kind === 'new-child'
-            ? target.childKind === 'repair_variant'
-              ? target.key
-              : null
+            ? newChildPinValue('repair_variant')
             : (target as { row: BookingTypeConfigRow }).row.repair_variant,
         product_key:
           target.kind === 'new-child'
-            ? target.childKind === 'product_key'
-              ? target.key
-              : null
+            ? newChildPinValue('product_key')
             : (target as { row: BookingTypeConfigRow }).row.product_key,
         arch:
           target.kind === 'new-child'
-            ? target.childKind === 'arch'
-              ? (target.key as 'upper' | 'lower' | 'both')
-              : null
+            ? (newChildPinValue('arch') as 'upper' | 'lower' | 'both' | null)
             : ((target as { row: BookingTypeConfigRow }).row.arch),
         working_hours: hoursInherits ? null : hours,
         // display_label only meaningful for non-parent rows; the
@@ -1402,7 +1562,9 @@ function BookingTypeEditorDialog({
 // current edit target, ignoring any admin override. Used by the
 // Title section's "Use catalogue default" link copy.
 function derivedLabelForTarget(target: EditTarget): string {
-  if (target.kind === 'new-child') return target.label;
+  if (target.kind === 'new-child') {
+    return pinnedAxesLabel(target.service_type, candidatePinsToRow(target.pins));
+  }
   return bookingTypeRowDerivedLabel(target.row);
 }
 
@@ -1747,64 +1909,3 @@ function labelOfService(s: BookingServiceType): string {
   return BOOKING_SERVICE_TYPES.find((x) => x.value === s)?.label ?? s;
 }
 
-function childKindLabel(s: BookingServiceType): string {
-  switch (s) {
-    case 'denture_repair':
-      return 'repair variant';
-    case 'same_day_appliance':
-      return 'product';
-    case 'click_in_veneers':
-    case 'impression_appointment':
-    case 'virtual_impression_appointment':
-      return 'arch';
-    case 'other':
-      return 'child';
-  }
-}
-
-// Returns the catalogue (or arch enum) entries that can be added as
-// child overrides for the given service. The caller filters out the
-// ones that already have a row in lng_booking_type_config.
-async function listAvailableChildren(
-  service: BookingServiceType,
-): Promise<{ key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[]> {
-  if (service === 'click_in_veneers' || service === 'impression_appointment') {
-    return [
-      { key: 'upper', label: 'Upper arch', kind: 'arch' },
-      { key: 'lower', label: 'Lower arch', kind: 'arch' },
-      { key: 'both', label: 'Both arches', kind: 'arch' },
-    ];
-  }
-  if (service === 'other') return [];
-  // denture_repair → distinct repair_variant; same_day_appliance →
-  // distinct product_key. Pulled from active catalogue rows so admins
-  // can't add overrides for dead inventory.
-  const column = service === 'denture_repair' ? 'repair_variant' : 'product_key';
-  const { data, error } = await supabase
-    .from('lwo_catalogue')
-    .select(column)
-    .eq('service_type', service)
-    .eq('active', true)
-    .not(column, 'is', null);
-  if (error) return [];
-  const seen = new Set<string>();
-  const out: { key: string; label: string; kind: 'repair_variant' | 'product_key' | 'arch' }[] = [];
-  for (const r of (data ?? []) as Record<string, string>[]) {
-    const v = r[column];
-    if (!v || seen.has(v)) continue;
-    seen.add(v);
-    out.push({
-      key: v,
-      label: column === 'product_key' ? humanise(v) : v,
-      kind: column as 'repair_variant' | 'product_key',
-    });
-  }
-  return out.sort((a, b) => a.label.localeCompare(b.label));
-}
-
-function humanise(s: string): string {
-  return s
-    .split('_')
-    .map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p))
-    .join(' ');
-}
