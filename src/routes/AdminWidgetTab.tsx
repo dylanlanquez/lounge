@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState, type ReactNode } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -20,6 +20,16 @@ import {
   type WidgetAdminProduct,
   type WidgetAdminService,
 } from '../lib/queries/widgetAdmin.ts';
+
+// Toggle `window.LNG_DEBUG = true` from the dev console to see
+// per-render / per-event diagnostics from this admin page. Off by
+// default so production logs stay clean.
+function dlog(...args: unknown[]) {
+  if (typeof window !== 'undefined' && (window as { LNG_DEBUG?: boolean }).LNG_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log('[Widget admin]', ...args);
+  }
+}
 
 // Admin → Widget tab.
 //
@@ -141,15 +151,17 @@ export function AdminWidgetTab() {
         </p>
       </Card>
 
-      <ServicesEditor
-        onSaved={() => {
-          reloadPreview();
-          setToast({ tone: 'success', title: 'Saved' });
-        }}
-        onError={(message) =>
-          setToast({ tone: 'error', title: 'Could not save', description: message })
-        }
-      />
+      <EditorBoundary>
+        <ServicesEditor
+          onSaved={() => {
+            reloadPreview();
+            setToast({ tone: 'success', title: 'Saved' });
+          }}
+          onError={(message) =>
+            setToast({ tone: 'error', title: 'Could not save', description: message })
+          }
+        />
+      </EditorBoundary>
 
       <Card padding="md">
         <p
@@ -449,6 +461,69 @@ function dotStyle(color: string): React.CSSProperties {
 // nested product list for services that have a product axis.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Local error boundary — catches render exceptions inside the
+// editor so the rest of the page (preview iframe, embed snippet,
+// header) stays mounted. The global ErrorBoundary in App.tsx is a
+// last resort that nukes the whole admin route; this one fences
+// the editor in particular.
+interface BoundaryState {
+  err: Error | null;
+}
+class EditorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
+  override state: BoundaryState = { err: null };
+  static getDerivedStateFromError(err: Error): BoundaryState {
+    return { err };
+  }
+  override componentDidCatch(err: Error, info: { componentStack: string }) {
+    // eslint-disable-next-line no-console
+    console.error('[Widget admin] Editor render exception', err, info.componentStack);
+  }
+  override render() {
+    if (this.state.err) {
+      return (
+        <Card padding="lg">
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.alert,
+            }}
+          >
+            Editor crashed
+          </p>
+          <pre
+            style={{
+              margin: `${theme.space[3]}px 0 0`,
+              padding: theme.space[3],
+              background: '#FFEEEC',
+              border: `1px solid #F5C2C2`,
+              borderRadius: theme.radius.input,
+              fontSize: theme.type.size.xs,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              color: theme.color.alert,
+              whiteSpace: 'pre-wrap',
+              overflowX: 'auto',
+            }}
+          >
+            {this.state.err.message}
+          </pre>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => this.setState({ err: null })}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <RefreshCcw size={14} aria-hidden /> Retry
+            </span>
+          </Button>
+        </Card>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function ServicesEditor({
   onSaved,
   onError,
@@ -457,6 +532,7 @@ function ServicesEditor({
   onError: (message: string) => void;
 }) {
   const { data, loading, error, refresh } = useWidgetAdminServices();
+  dlog('ServicesEditor render', { loading, error, count: data.length });
 
   return (
     <Card padding="md">
@@ -699,6 +775,15 @@ function ServiceCardBody({
     depositPence !== service.widgetDepositPence ||
     changedProductIds.length > 0;
 
+  dlog('ServiceCardBody render', {
+    serviceId: service.id,
+    label: service.label,
+    visible,
+    dirty,
+    changedProducts: changedProductIds.length,
+    productCount: service.products.length,
+  });
+
   // Browser-level navigation guard. Whenever this card is dirty the
   // tab close / refresh / back button gets the standard
   // "Are you sure?" prompt. Doesn't catch in-app navigation —
@@ -728,6 +813,12 @@ function ServiceCardBody({
   };
 
   const onSave = async () => {
+    dlog('Save start', {
+      serviceId: service.id,
+      visible,
+      depositPence,
+      changedProductIds,
+    });
     setSaving(true);
     try {
       // Commit the parent service config + every changed product row
@@ -745,8 +836,10 @@ function ServiceCardBody({
           saveProductVisibility({ id, widgetVisible: productVis[id] === true }),
         ),
       ]);
+      dlog('Save success', { serviceId: service.id });
       onSaved();
     } catch (e) {
+      dlog('Save error', e);
       onError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setSaving(false);
@@ -1031,17 +1124,46 @@ function Toggle({
   onLabel: string;
   offLabel: string;
 }) {
+  // Real-button switch (not a hidden-checkbox + visible-label
+  // sandwich). The previous implementation used a `<label>` with
+  // `display: inline-flex` wrapping a `position: absolute` input
+  // — but the label had no `position: relative`, so the
+  // absolutely-positioned input escaped layout up to the initial
+  // containing block. Combined with React's reconciliation around
+  // the controlled checkbox, this seems to have been the culprit
+  // behind the page-collapses-on-toggle bug. Switched to a button
+  // with role="switch", which has zero positioning surface area
+  // and fewer moving parts.
+  const handleClick = () => {
+    if (typeof window !== 'undefined' && (window as { LNG_DEBUG?: boolean }).LNG_DEBUG) {
+      // eslint-disable-next-line no-console
+      console.log('[Widget admin] Toggle clicked', { from: checked, to: !checked });
+    }
+    onChange(!checked);
+  };
+
   return (
-    <label
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={handleClick}
       style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        padding: 0,
+        cursor: 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
         gap: theme.space[3],
-        cursor: 'pointer',
+        fontFamily: 'inherit',
         userSelect: 'none',
+        textAlign: 'left',
       }}
     >
       <span
+        aria-hidden
         style={{
           width: 40,
           height: 22,
@@ -1066,12 +1188,6 @@ function Toggle({
           }}
         />
       </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
-      />
       <span
         style={{
           fontSize: theme.type.size.sm,
@@ -1081,7 +1197,7 @@ function Toggle({
       >
         {checked ? onLabel : offLabel}
       </span>
-    </label>
+    </button>
   );
 }
 
