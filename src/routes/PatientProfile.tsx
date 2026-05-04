@@ -30,6 +30,7 @@ import {
   bucketCase,
   humaniseEventTypeLabel,
   usePatientCases,
+  usePatientDeliveryFiles,
   usePatientProfile,
   usePatientProfileFiles,
   usePatientScheduledAppointments,
@@ -478,6 +479,43 @@ function Hero({
           ? 'Lower scan'
           : null;
 
+  // Click-in veneer files-on-record pill: same idea as the scan
+  // pill above but for the delivery surface. Tells reception at a
+  // glance "we have the patient's veneers ready as a 3D file" so
+  // a return visit can re-print without re-designing. Reads from
+  // usePatientDeliveryFiles, filtered to click-in veneer groups,
+  // then walks accepted entries to figure out which arch(es) are
+  // present using the same Upper / Lower / Both heuristic the
+  // delivery card uses.
+  const { groups: deliveryGroups } = usePatientDeliveryFiles(patient.id);
+  const veneerArches = useMemo(() => {
+    let upper = false;
+    let lower = false;
+    for (const g of deliveryGroups) {
+      if (!/click[-\s]?in.*veneer/i.test(g.applianceLabel)) continue;
+      for (const e of g.accepted) {
+        const arch = inferArchFromFile(e.file);
+        if (arch === 'upper') upper = true;
+        else if (arch === 'lower') lower = true;
+        else if (arch === 'both') {
+          upper = true;
+          lower = true;
+        }
+        if (upper && lower) break;
+      }
+      if (upper && lower) break;
+    }
+    return { upper, lower };
+  }, [deliveryGroups]);
+  const veneerPillLabel =
+    veneerArches.upper && veneerArches.lower
+      ? 'Upper & Lower Click-in Veneer Files'
+      : veneerArches.upper
+        ? 'Upper Click-in Veneer File'
+        : veneerArches.lower
+          ? 'Lower Click-in Veneer File'
+          : null;
+
   return (
     <Card padding="lg">
       <div
@@ -522,6 +560,7 @@ function Hero({
               ) : null}
               {linkedToShopify ? <ShopifyLinkedPill /> : null}
               {scanPillLabel ? <ScanOnFilePill label={scanPillLabel} /> : null}
+              {veneerPillLabel ? <ScanOnFilePill label={veneerPillLabel} /> : null}
             </div>
           </div>
         </div>
@@ -2355,6 +2394,19 @@ function ListPager({
       </button>
     </nav>
   );
+}
+
+/** Read upper / lower / both arch from a delivery file's
+ *  metadata. Mirrors the heuristic FinalDeliveries' shortLabel
+ *  uses — case-insensitive search across label_key, label_display,
+ *  custom_label, and file_name. Returns null when no arch can be
+ *  inferred. */
+function inferArchFromFile(file: PatientFileEntry): 'upper' | 'lower' | 'both' | null {
+  const haystack = `${file.label_key ?? ''} ${file.label_display ?? ''} ${file.custom_label ?? ''} ${file.file_name}`.toLowerCase();
+  if (/\bboth\b/.test(haystack)) return 'both';
+  if (/\bupper\b/.test(haystack)) return 'upper';
+  if (/\blower\b/.test(haystack)) return 'lower';
+  return null;
 }
 
 function pagerButtonStyle(disabled: boolean): CSSProperties {

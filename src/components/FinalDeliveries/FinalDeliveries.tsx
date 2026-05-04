@@ -71,7 +71,7 @@ export function FinalDeliveries({
     <>
       <CollapsibleCard
         icon={<ShoppingBag size={18} color={theme.color.ink} aria-hidden />}
-        title="Final deliveries"
+        title="3D Click-in Veneer Files"
         meta={`${accepted.length} ${accepted.length === 1 ? 'file' : 'files'}`}
       >
         {error ? (
