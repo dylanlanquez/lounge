@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { BarChart3, Settings } from 'lucide-react';
-import { ReceiptPoundIcon } from '../Icons/ReceiptPoundIcon.tsx';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
@@ -39,7 +38,6 @@ export function KioskStatusBar() {
   if (authLoading || !user) return null;
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
   const showReportsButton = !!account && account.can_view_reports;
-  const showFinancialsButton = !!account && account.can_view_financials;
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -86,19 +84,16 @@ export function KioskStatusBar() {
         />
       </span>
 
-      {/* Right cluster: Reports · Financials · Settings · Wi-Fi · Battery
-          · Date · Time. Each entry is gated on the matching permission
-          flag — receptionists never see the doors they can't open. The
-          routes themselves enforce the same gate as defense-in-depth. */}
+      {/* Right cluster: Reports · Settings · Wi-Fi · Battery · Date ·
+          Time. Each entry is gated on the matching permission flag —
+          receptionists never see the doors they can't open. The
+          routes themselves enforce the same gate as defense-in-depth.
+          Financial reports are tabs inside /reports gated by
+          can_view_financials, so no separate icon. */}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
         {showReportsButton ? (
           <KioskIconButton label="Reports" onClick={() => navigate('/reports')}>
             <BarChart3 size={15} />
-          </KioskIconButton>
-        ) : null}
-        {showFinancialsButton ? (
-          <KioskIconButton label="Financials" onClick={() => navigate('/financials')}>
-            <ReceiptPoundIcon size={15} />
           </KioskIconButton>
         ) : null}
         {showAdminButton ? (
@@ -106,7 +101,7 @@ export function KioskStatusBar() {
             <Settings size={15} />
           </KioskIconButton>
         ) : null}
-        {showReportsButton || showFinancialsButton || showAdminButton ? <Divider /> : null}
+        {showReportsButton || showAdminButton ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}

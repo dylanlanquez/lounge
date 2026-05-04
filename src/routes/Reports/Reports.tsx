@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   Card,
@@ -20,9 +20,20 @@ import { DemographicsTab } from './DemographicsTab.tsx';
 import { MarketingTab } from './MarketingTab.tsx';
 import { ServiceMixTab } from './ServiceMixTab.tsx';
 import { LifetimeValueTab } from './LifetimeValueTab.tsx';
+import { OverviewTab as FinancialOverviewTab } from '../Financials/OverviewTab.tsx';
+import { SalesTab } from '../Financials/SalesTab.tsx';
+import { DiscountsTab } from '../Financials/DiscountsTab.tsx';
+import { VoidsTab } from '../Financials/VoidsTab.tsx';
+import { AnomaliesTab } from '../Financials/AnomaliesTab.tsx';
+import { CashReconciliationTab } from '../Financials/CashReconciliationTab.tsx';
 
-// Reports — operational dashboards. Visible to anyone with
-// can_view_reports (default true for every Lounge staff member).
+// Reports — combined operational + financial dashboards.
+//
+// Operational tabs are visible to anyone with can_view_reports
+// (default true for every Lounge staff member). Financial tabs are
+// gated behind can_view_financials and only appear if the signed-in
+// account has the flag set in Admin → Staff. The single page hosts
+// both so the user has one destination for "show me the numbers."
 //
 // Sub-pages live in their own files for readability and to keep this
 // route from growing into another 2000-line beast like Admin. Each
@@ -30,20 +41,37 @@ import { LifetimeValueTab } from './LifetimeValueTab.tsx';
 // as a prop and owns its own data fetch + filters + charts.
 
 type Tab =
+  // ── Operational (everyone with can_view_reports) ────────────────
   | 'overview'
   | 'bookings_vs_walkins'
   | 'demographics'
   | 'marketing'
   | 'service_mix'
-  | 'lifetime_value';
+  | 'lifetime_value'
+  // ── Financial (gated by can_view_financials) ────────────────────
+  | 'fin_overview'
+  | 'sales'
+  | 'discounts'
+  | 'voids'
+  | 'anomalies'
+  | 'cash_reconciliation';
 
-const TABS: { value: Tab; label: string }[] = [
+const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
   { value: 'overview', label: 'Overview' },
   { value: 'bookings_vs_walkins', label: 'Bookings vs walk-ins' },
   { value: 'demographics', label: 'Demographics' },
   { value: 'marketing', label: 'Marketing' },
   { value: 'service_mix', label: 'Service mix' },
   { value: 'lifetime_value', label: 'Lifetime value' },
+];
+
+const FINANCIAL_TABS: { value: Tab; label: string }[] = [
+  { value: 'fin_overview', label: 'Financial overview' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'discounts', label: 'Discounts' },
+  { value: 'voids', label: 'Voids' },
+  { value: 'anomalies', label: 'Anomaly flags' },
+  { value: 'cash_reconciliation', label: 'Cash reconciliation' },
 ];
 
 export function Reports() {
@@ -56,6 +84,16 @@ export function Reports() {
   // the last 30 days — long enough for trends, short enough for a
   // snappy first paint.
   const [range, setRange] = useState<DateRange>(() => defaultDateRange());
+
+  // Build the visible tab list based on permissions. Operational
+  // tabs are always present; financial tabs only appear when the
+  // signed-in account has can_view_financials.
+  const tabs = useMemo(() => {
+    if (!account) return OPERATIONAL_TABS;
+    return account.can_view_financials
+      ? [...OPERATIONAL_TABS, ...FINANCIAL_TABS]
+      : OPERATIONAL_TABS;
+  }, [account]);
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -109,15 +147,16 @@ export function Reports() {
                 maxWidth: 640,
               }}
             >
-              Live operational reports. Every signed-in staff member sees these.
-              Money-side reports live in <strong>Financials</strong> — gated separately.
+              {account.can_view_financials
+                ? 'Operational and money-side reports together. Tabs after Lifetime value are gated behind your financials permission.'
+                : 'Live operational reports. Every signed-in staff member sees these. Money-side reports require an additional permission, granted in Admin → Staff.'}
             </p>
           </div>
           <DateRangePicker value={range} onChange={setRange} />
         </div>
 
         <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5] }}>
-          <SegmentedControl<Tab> scrollable value={tab} onChange={setTab} options={TABS} />
+          <SegmentedControl<Tab> scrollable value={tab} onChange={setTab} options={tabs} />
         </div>
 
         {tab === 'overview' ? (
@@ -132,8 +171,20 @@ export function Reports() {
           <ServiceMixTab range={range} />
         ) : tab === 'lifetime_value' ? (
           <LifetimeValueTab range={range} />
+        ) : tab === 'fin_overview' ? (
+          <FinancialOverviewTab range={range} />
+        ) : tab === 'sales' ? (
+          <SalesTab range={range} />
+        ) : tab === 'discounts' ? (
+          <DiscountsTab range={range} />
+        ) : tab === 'voids' ? (
+          <VoidsTab range={range} />
+        ) : tab === 'anomalies' ? (
+          <AnomaliesTab range={range} />
+        ) : tab === 'cash_reconciliation' ? (
+          <CashReconciliationTab />
         ) : (
-          <ComingSoon section={TABS.find((t) => t.value === tab)?.label ?? 'Section'} />
+          <ComingSoon section={tabs.find((t) => t.value === tab)?.label ?? 'Section'} />
         )}
       </div>
     </main>

@@ -1,6 +1,5 @@
 import { type ReactNode } from 'react';
 import { ArrowLeft, BarChart3, LogOut, Settings } from 'lucide-react';
-import { ReceiptPoundIcon } from '../Icons/ReceiptPoundIcon.tsx';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -25,7 +24,6 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
   const { account } = useCurrentAccount();
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
   const showReportsButton = !!account && account.can_view_reports;
-  const showFinancialsButton = !!account && account.can_view_financials;
 
   if (variant === 'subpage') {
     return (
@@ -93,17 +91,6 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
               <BarChart3 size={18} />
             </button>
           ) : null}
-          {showFinancialsButton ? (
-            <button
-              type="button"
-              aria-label="Financials"
-              title="Financials"
-              onClick={() => navigate('/financials')}
-              style={iconButtonStyle}
-            >
-              <ReceiptPoundIcon size={18} />
-            </button>
-          ) : null}
           {showAdminButton ? (
             <button
               type="button"
@@ -129,13 +116,6 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
             <Button variant="tertiary" size="sm" onClick={() => navigate('/reports')}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                 <BarChart3 size={16} /> Reports
-              </span>
-            </Button>
-          ) : null}
-          {showFinancialsButton ? (
-            <Button variant="tertiary" size="sm" onClick={() => navigate('/financials')}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                <ReceiptPoundIcon size={16} /> Financials
               </span>
             </Button>
           ) : null}

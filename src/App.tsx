@@ -20,7 +20,6 @@ const AppointmentDetail = lazy(() => import('./routes/AppointmentDetail.tsx').th
 const InClinic = lazy(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })));
 const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })));
 const Reports = lazy(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })));
-const Financials = lazy(() => import('./routes/Financials/Financials.tsx').then((m) => ({ default: m.Financials })));
 const Arrival = lazy(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })));
 const NotFound = lazy(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })));
 
@@ -149,7 +148,9 @@ function RoutedErrorBoundary() {
           <Route path="/in-clinic" element={<RequireStaff><InClinic /></RequireStaff>} />
           <Route path="/admin" element={<RequireStaff><Admin /></RequireStaff>} />
           <Route path="/reports" element={<RequireStaff><Reports /></RequireStaff>} />
-          <Route path="/financials" element={<RequireStaff><Financials /></RequireStaff>} />
+          {/* /financials merged into /reports — keep the alias so old
+              bookmarks and existing TopBar shortcuts still land. */}
+          <Route path="/financials" element={<Navigate to="/reports" replace />} />
           <Route path="/arrival/appointment/:id" element={<RequireStaff><Arrival /></RequireStaff>} />
           <Route path="/arrival/walk-in/:id" element={<RequireStaff><Arrival /></RequireStaff>} />
           {/* old aliases */}
