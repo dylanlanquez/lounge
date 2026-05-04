@@ -28,15 +28,20 @@ export interface WidgetBookingType {
    *  'denture_repair', 'same_day_appliance', etc). Drives the axis
    *  registry — see SERVICE_AXES in lib/queries/bookingTypeAxes.ts. */
   serviceType: string;
+  /** Display label, sourced from `lng_booking_type_config.display_label`.
+   *  No widget-specific override — the staff app and widget show the
+   *  same name for the same service. */
   label: string;
   description: string;
-  pricePence: number;
-  /** Pence required up-front. 0 means no deposit step. */
+  /** Deposit captured at booking time, in pence. 0 means no payment
+   *  step. Widget-specific; sourced from
+   *  lng_booking_type_config.widget_deposit_pence. */
   depositPence: number;
   /** Whether the patient picks a specific dentist. False routes
    *  every booking of this type to "any available". */
   allowStaffPick: boolean;
-  /** Default appointment length, used for slot generation in v1. */
+  /** Default appointment length. Phase 2c will resolve this to the
+   *  most-specific lng_booking_type_config row once axes are pinned. */
   durationMinutes: number;
 }
 
@@ -115,7 +120,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_widget_booking_types')
-        .select('id, service_type, label, description, price_pence, deposit_pence, allow_staff_pick, duration_minutes')
+        .select('id, service_type, label, description, deposit_pence, allow_staff_pick, duration_minutes')
         .order('label', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -128,7 +133,6 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
         serviceType: (r.service_type as string) ?? '',
         label: (r.label as string) ?? '',
         description: (r.description as string) ?? '',
-        pricePence: (r.price_pence as number | null) ?? 0,
         depositPence: (r.deposit_pence as number) ?? 0,
         allowStaffPick: (r.allow_staff_pick as boolean) ?? true,
         durationMinutes: (r.duration_minutes as number) ?? 30,

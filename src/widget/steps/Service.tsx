@@ -52,7 +52,7 @@ export function ServiceStep({ api }: { api: BookingStateApi }) {
               border: `1px solid ${selected ? theme.color.accent : theme.color.border}`,
               boxShadow: selected ? theme.shadow.card : 'none',
               display: 'grid',
-              gridTemplateColumns: '1fr auto auto',
+              gridTemplateColumns: '1fr auto',
               alignItems: 'center',
               gap: theme.space[4],
               transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
@@ -104,18 +104,6 @@ export function ServiceStep({ api }: { api: BookingStateApi }) {
                 </p>
               ) : null}
             </div>
-            <span
-              style={{
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                fontVariantNumeric: 'tabular-nums',
-                letterSpacing: theme.type.tracking.tight,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {formatPrice(bt.pricePence)}
-            </span>
             <ChevronRight size={18} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
           </button>
         );

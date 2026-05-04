@@ -32,10 +32,12 @@ export function Summary({
   const hasAnything =
     state.location || state.service || state.dentist || state.slotIso;
   const total = state.service ? state.service.depositPence : 0;
-  const remaining =
-    state.service && state.service.depositPence > 0
-      ? state.service.pricePence - state.service.depositPence
-      : 0;
+  // Per-axis pricing comes from lwo_catalogue (resolved after the
+  // axis steps lock down which row applies). Until that lands in
+  // phase 2c, we only render the deposit total — no "remaining"
+  // line, no "pay at appointment" amount. Better to show nothing
+  // than a wrong number.
+  const remaining = 0;
 
   return (
     <div
@@ -85,12 +87,9 @@ export function Summary({
                 const priceLine =
                   state.service.depositPence > 0
                     ? `Deposit today: ${formatPrice(state.service.depositPence)}`
-                    : state.service.pricePence > 0
-                      ? `Pay at appointment: ${formatPrice(state.service.pricePence)}`
-                      : null;
+                    : null;
                 return [chain, priceLine].filter(Boolean).join(' · ') || undefined;
               })()}
-              right={state.service.pricePence > 0 ? formatPrice(state.service.pricePence) : undefined}
             />
           ) : null}
           {state.dentist && state.dentist !== 'any' ? (
