@@ -472,11 +472,11 @@ function Hero({
   const hasLowerScan = files.some((f) => f.label_key === 'lower_arch' || f.label_key === 'lower_arch_opposing');
   const scanPillLabel =
     hasUpperScan && hasLowerScan
-      ? 'Upper & lower scan'
+      ? 'Upper & Lower Scans'
       : hasUpperScan
-        ? 'Upper scan'
+        ? 'Upper Scan'
         : hasLowerScan
-          ? 'Lower scan'
+          ? 'Lower Scan'
           : null;
 
   // Click-in veneer files-on-record pill: same idea as the scan
