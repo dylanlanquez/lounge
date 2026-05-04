@@ -456,19 +456,24 @@ export async function upsertResourcePool(input: {
   }
   // capacity is a generated column server-side (units × per_unit_
   // capacity). Don't write to it; the DB rejects.
+  //
+  // For staff_role pools, units is owned by the recompute helper that
+  // fires after lng_staff_pool_assignments changes — writing it here
+  // would trip the units guard. Omit units from the payload; the
+  // assignment save path that runs immediately after will reconcile.
+  const payload: Record<string, unknown> = {
+    id: input.id,
+    display_name: input.display_name,
+    per_unit_capacity: input.per_unit_capacity,
+    kind: input.kind,
+    notes: input.notes ?? null,
+  };
+  if (input.kind !== 'staff_role') {
+    payload.units = input.units;
+  }
   const { error } = await supabase
     .from('lng_booking_resource_pools')
-    .upsert(
-      {
-        id: input.id,
-        display_name: input.display_name,
-        units: input.units,
-        per_unit_capacity: input.per_unit_capacity,
-        kind: input.kind,
-        notes: input.notes ?? null,
-      },
-      { onConflict: 'id' },
-    );
+    .upsert(payload, { onConflict: 'id' });
   if (error) throw new Error(error.message);
 }
 

@@ -171,9 +171,9 @@ export function Admin() {
         {tab === 'calendly' ? (
           <CalendlyTab />
         ) : tab === 'services' ? (
-          <CatalogueTab mode="services" />
+          <CatalogueTab key="services" mode="services" />
         ) : tab === 'products' ? (
-          <CatalogueTab mode="products" />
+          <CatalogueTab key="products" mode="products" />
         ) : tab === 'booking_types' ? (
           <AdminBookingTypesTab />
         ) : tab === 'conflicts' ? (
