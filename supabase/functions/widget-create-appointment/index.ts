@@ -37,6 +37,8 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+const STRIPE_BASE = 'https://api.stripe.com/v1';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -52,6 +54,11 @@ interface SubmitBody {
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
   upgradeIds?: string[];
+  /** Set when the service has a deposit and the patient has just
+   *  confirmed a Stripe PaymentIntent. The endpoint verifies the PI
+   *  with Stripe before populating the appointment's deposit_*
+   *  fields — never trust the client to claim payment. */
+  paymentIntentId?: string | null;
   details: {
     firstName: string;
     lastName: string;
@@ -62,6 +69,15 @@ interface SubmitBody {
     rememberMe?: boolean;
     agreeTerms?: boolean;
   };
+}
+
+interface DepositFields {
+  deposit_status: 'paid';
+  deposit_pence: number;
+  deposit_currency: string;
+  deposit_provider: 'stripe';
+  deposit_external_id: string;
+  deposit_paid_at: string;
 }
 
 Deno.serve(async (req) => {
@@ -138,6 +154,49 @@ Deno.serve(async (req) => {
   }
   if (Array.isArray(conflictRows) && conflictRows.length > 0) {
     return jsonResponse(409, { error: 'slot_unavailable', conflicts: conflictRows });
+  }
+
+  // ── Deposit verification ────────────────────────────────────────
+  // Read the expected deposit server-side so a malicious client
+  // can't claim "0" for a service that costs £25 to hold a slot.
+  // When the service has a deposit configured, paymentIntentId is
+  // required AND must verify against Stripe — status=succeeded,
+  // amount matches expected deposit, currency=gbp, metadata.source=
+  // widget (so a PI from another flow can't be replayed).
+  let depositFields: DepositFields | null = null;
+  const { data: depositRow } = await supabase
+    .from('lng_widget_booking_types')
+    .select('deposit_pence')
+    .eq('service_type', body.serviceType)
+    .maybeSingle();
+  const expectedDepositPence =
+    (depositRow as { deposit_pence: number } | null)?.deposit_pence ?? 0;
+
+  if (expectedDepositPence > 0) {
+    if (!body.paymentIntentId) {
+      return jsonResponse(400, { error: 'payment_intent_required' });
+    }
+    if (!STRIPE_SECRET_KEY) {
+      await logFailure('stripe_secret_key_missing', { paymentIntentId: body.paymentIntentId });
+      return jsonResponse(500, { error: 'stripe_not_configured' });
+    }
+    const verify = await verifyPaymentIntent(body.paymentIntentId, expectedDepositPence);
+    if (!verify.ok) {
+      await logFailure('payment_intent_verify_failed', {
+        paymentIntentId: body.paymentIntentId,
+        reason: verify.reason,
+        body,
+      });
+      return jsonResponse(verify.status, { error: verify.reason });
+    }
+    depositFields = {
+      deposit_status: 'paid',
+      deposit_pence: verify.amount,
+      deposit_currency: verify.currency,
+      deposit_provider: 'stripe',
+      deposit_external_id: body.paymentIntentId,
+      deposit_paid_at: verify.paidAt,
+    };
   }
 
   // ── Patient identity ────────────────────────────────────────────
@@ -237,6 +296,7 @@ Deno.serve(async (req) => {
       repair_variant: body.repairVariant ?? null,
       product_key: body.productKey ?? null,
       arch: body.arch ?? null,
+      ...(depositFields ?? {}),
     })
     .select('id, appointment_ref')
     .single();
@@ -263,6 +323,25 @@ Deno.serve(async (req) => {
       upgrade_ids: body.upgradeIds ?? [],
     },
   });
+
+  // Mirror calendly-webhook's deposit_paid event so the patient
+  // timeline shows the £-charge alongside the booking, and reports
+  // can find widget deposits without a special-case query.
+  if (depositFields) {
+    await supabase.from('patient_events').insert({
+      patient_id: patientId,
+      event_type: 'deposit_paid',
+      payload: {
+        appointment_id: appointmentId,
+        appointment_ref: appointmentRef,
+        amount_pence: depositFields.deposit_pence,
+        currency: depositFields.deposit_currency,
+        provider: depositFields.deposit_provider,
+        external_id: depositFields.deposit_external_id,
+        source: 'widget',
+      },
+    });
+  }
 
   // ── Confirmation email ─────────────────────────────────────────
   // Fire-and-forget invoke of send-appointment-confirmation. The
@@ -411,6 +490,71 @@ async function resolveDefaultAccountId(
     throw new Error(`no active location_members for location ${locationId}`);
   }
   return (rows[0] as { account_id: string }).account_id;
+}
+
+type VerifyResult =
+  | {
+      ok: true;
+      amount: number;
+      currency: string;
+      paidAt: string;
+    }
+  | {
+      ok: false;
+      status: number;
+      reason: string;
+    };
+
+async function verifyPaymentIntent(
+  paymentIntentId: string,
+  expectedAmount: number,
+): Promise<VerifyResult> {
+  const r = await fetch(`${STRIPE_BASE}/payment_intents/${encodeURIComponent(paymentIntentId)}`, {
+    headers: {
+      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+      'Stripe-Version': '2024-10-28.acacia',
+    },
+  });
+  if (!r.ok) {
+    return { ok: false, status: 502, reason: 'payment_intent_fetch_failed' };
+  }
+  const pi = (await r.json().catch(() => null)) as
+    | {
+        id?: string;
+        status?: string;
+        amount?: number;
+        amount_received?: number;
+        currency?: string;
+        created?: number;
+        metadata?: Record<string, string | undefined>;
+      }
+    | null;
+  if (!pi) return { ok: false, status: 502, reason: 'payment_intent_unparseable' };
+  if (pi.status !== 'succeeded') {
+    return { ok: false, status: 402, reason: 'payment_not_succeeded' };
+  }
+  const amount = typeof pi.amount === 'number' ? pi.amount : 0;
+  if (amount !== expectedAmount) {
+    return { ok: false, status: 400, reason: 'payment_amount_mismatch' };
+  }
+  if ((pi.currency ?? '').toLowerCase() !== 'gbp') {
+    return { ok: false, status: 400, reason: 'payment_currency_mismatch' };
+  }
+  // Defence-in-depth: only accept PIs minted by the widget flow.
+  // A PI from another flow (terminal, future channels) shouldn't be
+  // replayable here.
+  if (pi.metadata?.source !== 'widget') {
+    return { ok: false, status: 400, reason: 'payment_metadata_mismatch' };
+  }
+  const paidAt = pi.created
+    ? new Date(pi.created * 1000).toISOString()
+    : new Date().toISOString();
+  return {
+    ok: true,
+    amount,
+    currency: (pi.currency ?? 'gbp').toUpperCase(),
+    paidAt,
+  };
 }
 
 async function logFailure(

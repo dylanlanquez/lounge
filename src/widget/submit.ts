@@ -30,7 +30,10 @@ export class SubmitError extends Error {
   }
 }
 
-export async function submitBooking(state: WidgetState): Promise<SubmitResult> {
+export async function submitBooking(
+  state: WidgetState,
+  paymentIntentId: string | null = null,
+): Promise<SubmitResult> {
   if (!state.location) throw new SubmitError('no_location', null);
   if (!state.service) throw new SubmitError('no_service', null);
   if (!state.slotIso) throw new SubmitError('no_slot', null);
@@ -43,6 +46,7 @@ export async function submitBooking(state: WidgetState): Promise<SubmitResult> {
     productKey: state.axes.product_key ?? null,
     arch: state.axes.arch ?? null,
     upgradeIds: state.upgradeIds,
+    paymentIntentId,
     details: state.details,
   };
 

@@ -1,8 +1,12 @@
-import { useState } from 'react';
-import { CreditCard, HelpCircle, Lock } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Lock } from 'lucide-react';
+import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
+import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { theme } from '../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { formatPrice } from '../state.ts';
+import { env } from '../../lib/env.ts';
+import { supabase } from '../../lib/supabase.ts';
 
 // Payment step.
 //
@@ -10,142 +14,247 @@ import { formatPrice } from '../state.ts';
 // `depositPence > 0`. Free services skip straight from Details to
 // the confirmation.
 //
-// Phase 2c (current): visual stub for the card inputs, but the Pay
-// button calls the real submit() handler from the widget shell —
-// which posts to widget-create-appointment and creates the
-// lng_appointments row. The deposit isn't actually charged yet;
-// phase 4 wires Stripe and only triggers submit() once the
-// PaymentIntent confirms.
+// Two-stage flow:
 //
-// Phase 4 wires this to a Stripe PaymentIntent created server-
-// side via a new edge function. The card inputs become
-// <PaymentElement /> from @stripe/react-stripe-js. Apple/Google
-// Pay come for free via PaymentRequestButton.
+//   1. On mount, POST to widget-create-payment-intent with the
+//      service + axes + email. The endpoint resolves the deposit
+//      amount server-side (never trust the client) and creates a
+//      Stripe PaymentIntent with receipt_email set so Stripe
+//      auto-emails the receipt.
+//
+//   2. Render Stripe's PaymentElement against the returned
+//      clientSecret. The element handles card / Apple Pay / Google
+//      Pay / wallets automatically based on the Stripe dashboard
+//      config. Pay button calls stripe.confirmPayment with
+//      redirect: 'if_required' (most cards stay in-page; 3DS-
+//      required cards bounce out and back).
+//
+//   3. On confirmation success, the wrapped onPaid handler hands
+//      paymentIntent.id back to the widget shell, which calls
+//      widget-create-appointment with paymentIntentId. That edge
+//      function re-verifies the PI with Stripe before populating
+//      deposit_* fields on the appointment row.
 
-type PaymentMethod = 'card' | 'apple' | 'google';
+// Lazy-loaded once at module level, per Stripe's recommendation.
+// loadStripe returns a singleton promise the Elements provider
+// awaits. If VITE_STRIPE_PUBLISHABLE_KEY isn't configured the step
+// renders a helpful warning instead of the form.
+const stripePromise: Promise<Stripe | null> | null = env.STRIPE_PUBLISHABLE_KEY
+  ? loadStripe(env.STRIPE_PUBLISHABLE_KEY)
+  : null;
 
 export function PaymentStep({
   api,
-  onSubmit,
+  onPaid,
   submitting,
 }: {
   api: BookingStateApi;
-  onSubmit: () => void;
+  /** Fired once Stripe confirms the PaymentIntent succeeded. The
+   *  widget shell takes the id and calls widget-create-appointment
+   *  to actually persist the booking. */
+  onPaid: (paymentIntentId: string) => void;
+  /** True while widget-create-appointment is running (the post-pay
+   *  step). Keeps the Pay button disabled so a double-tap doesn't
+   *  re-confirm. */
   submitting: boolean;
 }) {
-  const [method, setMethod] = useState<PaymentMethod>('card');
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiry, setExpiry] = useState('');
-  const [cvc, setCvc] = useState('');
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch clientSecret on mount + whenever the booking inputs that
+  // affect the deposit change. Stripe's idempotency key is keyed on
+  // (email + slot + service + axes) server-side, so re-running this
+  // for the same booking returns the same PI.
+  const locationId = api.state.location?.id;
+  const serviceType = api.state.service?.serviceType;
+  const slotIso = api.state.slotIso;
+  const email = api.state.details.email.toLowerCase().trim();
+  const repairVariant = api.state.axes.repair_variant ?? null;
+  const productKey = api.state.axes.product_key ?? null;
+  const arch = api.state.axes.arch ?? null;
+  useEffect(() => {
+    if (!locationId || !serviceType || !slotIso || !email) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      const { data, error: invokeErr } = await supabase.functions.invoke<{
+        clientSecret?: string;
+        depositPence?: number;
+        error?: string;
+      }>('widget-create-payment-intent', {
+        body: {
+          locationId,
+          serviceType,
+          startAt: slotIso,
+          email,
+          repairVariant,
+          productKey,
+          arch,
+        },
+      });
+      if (cancelled) return;
+      if (invokeErr || !data?.clientSecret) {
+        setError("Couldn't initialise payment. Refresh the page and try again.");
+        setLoading(false);
+        return;
+      }
+      setClientSecret(data.clientSecret);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch]);
 
   const deposit = api.state.service?.depositPence ?? 0;
-  const inputsBlock = method === 'card' && (!cardNumber || !expiry || !cvc);
-  const disabled = submitting || inputsBlock;
 
-  return (
-    <div
-      style={{
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[4],
-        boxShadow: theme.shadow.card,
-      }}
-    >
-      <MethodPicker active={method} onChange={setMethod} />
+  if (!stripePromise) {
+    return (
+      <Card>
+        <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          Payment isn't configured for this site (missing Stripe key). Please contact the
+          clinic to complete your booking.
+        </p>
+      </Card>
+    );
+  }
 
-      {method === 'card' ? (
-        <>
-          <div>
-            <Label>Card number</Label>
-            <div style={{ position: 'relative' }}>
-              <input
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                placeholder="1234 1234 1234 1234"
-                inputMode="numeric"
-                style={inputStyle}
-                onFocus={(e) => {
-                  e.currentTarget.style.borderColor = theme.color.ink;
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.borderColor = theme.color.border;
-                }}
-              />
-              <span
-                style={{
-                  position: 'absolute',
-                  right: theme.space[3],
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  fontSize: 11,
-                  color: theme.color.inkSubtle,
-                  fontWeight: theme.type.weight.semibold,
-                  letterSpacing: theme.type.tracking.wide,
-                  textTransform: 'uppercase',
-                }}
-              >
-                VISA · MC · AMEX
-              </span>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: theme.space[3],
-            }}
-          >
-            <div>
-              <Label>Expiry</Label>
-              <CardInputWithHint
-                value={expiry}
-                onChange={setExpiry}
-                placeholder="MM / YY"
-                hint="The expiry date on the front of your card."
-              />
-            </div>
-            <div>
-              <Label>CVC</Label>
-              <CardInputWithHint
-                value={cvc}
-                onChange={setCvc}
-                placeholder="123"
-                hint="The 3-digit code on the back of your card."
-              />
-            </div>
-          </div>
-        </>
-      ) : (
-        <div
+  if (error) {
+    return (
+      <Card>
+        <p
           style={{
-            padding: theme.space[5],
-            background: theme.color.bg,
-            borderRadius: theme.radius.input,
-            border: `1px dashed ${theme.color.border}`,
-            textAlign: 'center',
-            color: theme.color.inkMuted,
+            margin: 0,
+            color: theme.color.alert,
             fontSize: theme.type.size.sm,
-            lineHeight: theme.type.leading.snug,
+            fontWeight: theme.type.weight.semibold,
           }}
         >
-          {method === 'apple' ? (
-            <>Tap Pay to bring up Apple Pay.</>
-          ) : (
-            <>Tap Pay to bring up Google Pay.</>
-          )}
-        </div>
-      )}
+          {error}
+        </p>
+      </Card>
+    );
+  }
+
+  if (loading || !clientSecret) {
+    return (
+      <Card>
+        <p
+          style={{
+            margin: 0,
+            color: theme.color.inkMuted,
+            fontSize: theme.type.size.sm,
+          }}
+        >
+          Preparing payment…
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Elements
+      stripe={stripePromise}
+      options={{
+        clientSecret,
+        appearance: {
+          theme: 'stripe',
+          variables: {
+            colorPrimary: theme.color.accent,
+            colorBackground: theme.color.surface,
+            colorText: theme.color.ink,
+            colorDanger: theme.color.alert,
+            fontFamily: 'inherit',
+            spacingUnit: '6px',
+            borderRadius: `${theme.radius.input}px`,
+          },
+        },
+      }}
+    >
+      <PaymentForm onPaid={onPaid} submitting={submitting} deposit={deposit} />
+    </Elements>
+  );
+}
+
+function PaymentForm({
+  onPaid,
+  submitting,
+  deposit,
+}: {
+  onPaid: (paymentIntentId: string) => void;
+  submitting: boolean;
+  deposit: number;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [payError, setPayError] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
+  const ready = Boolean(stripe && elements);
+  const disabled = !ready || paying || submitting;
+
+  const onPay = async () => {
+    if (!stripe || !elements) return;
+    setPayError(null);
+    setPaying(true);
+    const result = await stripe.confirmPayment({
+      elements,
+      redirect: 'if_required',
+      confirmParams: {
+        // 3DS-required cards will bounce here. We don't try to
+        // resume mid-flow — the patient lands back on the page and
+        // can re-enter the booking. v2 of the widget can persist
+        // step state in URL params if 3DS is common.
+        return_url: window.location.href,
+      },
+    });
+    if (result.error) {
+      setPayError(result.error.message ?? 'Payment failed. Please try a different card.');
+      setPaying(false);
+      return;
+    }
+    const pi = result.paymentIntent;
+    if (pi && pi.status === 'succeeded') {
+      // Hand off to the widget shell — keep paying=true so the
+      // button stays in its disabled state until the appointment
+      // insert finishes (submitting flips to true on the next
+      // render).
+      onPaid(pi.id);
+    } else {
+      setPayError('Payment did not complete.');
+      setPaying(false);
+    }
+  };
+
+  return (
+    <Card>
+      <PaymentElement
+        options={{
+          layout: 'tabs',
+          paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
+        }}
+      />
+
+      {payError ? (
+        <p
+          style={{
+            margin: `${theme.space[3]}px 0 0`,
+            color: theme.color.alert,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+          }}
+        >
+          {payError}
+        </p>
+      ) : null}
 
       <button
         type="button"
-        onClick={onSubmit}
+        onClick={onPay}
         disabled={disabled}
         style={{
+          marginTop: theme.space[4],
           appearance: 'none',
           border: 'none',
           background: theme.color.ink,
@@ -161,14 +270,16 @@ export function PaymentStep({
           alignItems: 'center',
           justifyContent: 'center',
           gap: theme.space[2],
+          width: '100%',
         }}
       >
-        <Lock size={14} aria-hidden /> {submitting ? 'Booking…' : `Pay ${formatPrice(deposit)}`}
+        <Lock size={14} aria-hidden />{' '}
+        {paying || submitting ? 'Processing…' : `Pay ${formatPrice(deposit)}`}
       </button>
 
       <p
         style={{
-          margin: 0,
+          margin: `${theme.space[3]}px 0 0`,
           fontSize: theme.type.size.xs,
           color: theme.color.inkMuted,
           textAlign: 'center',
@@ -177,176 +288,25 @@ export function PaymentStep({
       >
         Payments handled by Stripe. We never see or store your card number.
       </p>
-    </div>
+    </Card>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Method picker — three tabs at the top
-// ─────────────────────────────────────────────────────────────────────────────
-
-function MethodPicker({
-  active,
-  onChange,
-}: {
-  active: PaymentMethod;
-  onChange: (m: PaymentMethod) => void;
-}) {
+function Card({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: theme.space[2],
-      }}
-    >
-      <MethodTab
-        active={active === 'card'}
-        onClick={() => onChange('card')}
-        icon={<CreditCard size={18} aria-hidden />}
-        label="Card"
-      />
-      <MethodTab
-        active={active === 'apple'}
-        onClick={() => onChange('apple')}
-        icon={
-          <span aria-hidden style={{ fontSize: 16, fontWeight: 700, lineHeight: 1 }}>
-
-          </span>
-        }
-        label="Apple Pay"
-      />
-      <MethodTab
-        active={active === 'google'}
-        onClick={() => onChange('google')}
-        icon={
-          <span aria-hidden style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>
-            G
-          </span>
-        }
-        label="Google Pay"
-      />
-    </div>
-  );
-}
-
-function MethodTab({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      style={{
-        appearance: 'none',
-        border: `1px solid ${active ? theme.color.accent : theme.color.border}`,
         background: theme.color.surface,
-        borderRadius: theme.radius.input,
-        padding: `${theme.space[3]}px ${theme.space[3]}px`,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
-        color: active ? theme.color.ink : theme.color.inkMuted,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[5],
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        gap: theme.space[2],
-        boxShadow: active ? theme.shadow.card : 'none',
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-      }}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function CardInputWithHint({
-  value,
-  onChange,
-  placeholder,
-  hint,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  hint: string;
-}) {
-  return (
-    <div style={{ position: 'relative' }}>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        inputMode="numeric"
-        style={{ ...inputStyle, paddingRight: 36 }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = theme.color.ink;
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = theme.color.border;
-        }}
-      />
-      <button
-        type="button"
-        title={hint}
-        aria-label={hint}
-        style={{
-          position: 'absolute',
-          right: 8,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          appearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          color: theme.color.inkMuted,
-          cursor: 'help',
-          padding: 4,
-          display: 'inline-flex',
-        }}
-      >
-        <HelpCircle size={14} />
-      </button>
-    </div>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <p
-      style={{
-        margin: 0,
-        marginBottom: theme.space[1],
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
-        color: theme.color.ink,
+        gap: theme.space[3],
+        boxShadow: theme.shadow.card,
       }}
     >
       {children}
-    </p>
+    </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  height: 44,
-  padding: `0 ${theme.space[3]}px`,
-  borderRadius: theme.radius.input,
-  border: `1px solid ${theme.color.border}`,
-  background: theme.color.surface,
-  color: theme.color.ink,
-  fontFamily: 'inherit',
-  fontSize: theme.type.size.base,
-  outline: 'none',
-  boxSizing: 'border-box',
-};

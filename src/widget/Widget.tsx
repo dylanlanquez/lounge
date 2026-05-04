@@ -62,18 +62,19 @@ export function Widget() {
   //   • Summary CTA on Details step when no Payment step follows
   //     (free service — book straight away).
   //   • Mobile dock CTA, same conditions.
-  //   • Payment step's "Pay" button after the (currently-stubbed)
-  //     payment confirms.
+  //   • Payment step's onPaid handler after Stripe confirms the
+  //     PaymentIntent — paymentIntentId is forwarded so the edge
+  //     function can verify the charge before persisting.
   //
   // On 'slot_unavailable' the slot was taken between time pick and
   // submit — bounce back to the time step so the patient picks
   // again. Other errors surface as a banner + leave them where
   // they are.
-  const submit = async () => {
+  const submit = async (paymentIntentId: string | null = null) => {
     if (submission.state === 'submitting') return;
     setSubmission({ state: 'submitting', appointmentRef: null, error: null });
     try {
-      const result = await submitBooking(api.state);
+      const result = await submitBooking(api.state, paymentIntentId);
       setSubmission({
         state: 'done',
         appointmentRef: result.appointmentRef,
@@ -105,7 +106,7 @@ export function Widget() {
   // The Summary / Dock CTA submits directly when Details is the last
   // step. Otherwise it advances to whatever step (Payment) comes next.
   const isPaymentNext = (api.activeSteps[api.currentIdx + 1] ?? null) === 'payment';
-  const onCtaClick = isPaymentNext ? api.goNext : submit;
+  const onCtaClick = isPaymentNext ? api.goNext : () => submit(null);
   const ctaBusy = !isPaymentNext && submission.state === 'submitting';
   const ctaDisabled = api.stepKey === 'details' && !api.state.details.agreeTerms;
 
@@ -349,7 +350,7 @@ function StepContent({
   submitting,
 }: {
   api: BookingStateApi;
-  onSubmit: () => void;
+  onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
 }) {
   // Axis steps are dynamic — one per axis declared on the chosen
@@ -371,7 +372,9 @@ function StepContent({
     case 'details':
       return <DetailsStep api={api} />;
     case 'payment':
-      return <PaymentStep api={api} onSubmit={onSubmit} submitting={submitting} />;
+      return (
+        <PaymentStep api={api} onPaid={(pi) => onSubmit(pi)} submitting={submitting} />
+      );
   }
   return null;
 }
@@ -543,6 +546,15 @@ function messageForCode(code: string): string | null {
       return 'This service is currently unavailable. Please try a different option.';
     case 'no_location_resolved':
       return "We couldn't find an available location.";
+    case 'payment_intent_required':
+      return "Please complete payment before booking.";
+    case 'payment_not_succeeded':
+    case 'payment_amount_mismatch':
+    case 'payment_currency_mismatch':
+    case 'payment_metadata_mismatch':
+    case 'payment_intent_fetch_failed':
+    case 'payment_intent_unparseable':
+      return "We couldn't verify your payment. Please contact the clinic before retrying.";
     default:
       return null;
   }

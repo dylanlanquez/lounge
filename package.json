@@ -20,7 +20,8 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
-    "@stripe/stripe-js": "5.4.0",
+    "@stripe/react-stripe-js": "^6.3.0",
+    "@stripe/stripe-js": "^9.4.0",
     "@supabase/supabase-js": "^2.50.0",
     "@tiptap/core": "^3.22.5",
     "@tiptap/extension-color": "^3.22.5",
