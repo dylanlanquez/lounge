@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarChart3, Settings } from 'lucide-react';
+import { BarChart3, Settings, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
@@ -38,6 +38,8 @@ export function KioskStatusBar() {
   if (authLoading || !user) return null;
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
   const showReportsButton = !!account && account.can_view_reports;
+  const showCashCountsButton =
+    !!account && (account.can_count_cash || account.can_view_financials);
 
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -84,13 +86,19 @@ export function KioskStatusBar() {
         />
       </span>
 
-      {/* Right cluster: Reports · Settings · Wi-Fi · Battery · Date ·
-          Time. Each entry is gated on the matching permission flag —
-          receptionists never see the doors they can't open. The
-          routes themselves enforce the same gate as defense-in-depth.
-          Financial reports are tabs inside /reports gated by
-          can_view_financials, so no separate icon. */}
+      {/* Right cluster: Cash counts · Reports · Settings · Wi-Fi ·
+          Battery · Date · Time. Each entry is gated on the matching
+          permission flag — receptionists never see the doors they
+          can't open. Routes themselves enforce the same gate as
+          defense-in-depth. Cash counts is a top-level destination
+          because it's the only money-side surface staff use every
+          shift; financial reports stay tucked inside Reports. */}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
+        {showCashCountsButton ? (
+          <KioskIconButton label="Cash counts" onClick={() => navigate('/cash-counts')}>
+            <Wallet size={15} />
+          </KioskIconButton>
+        ) : null}
         {showReportsButton ? (
           <KioskIconButton label="Reports" onClick={() => navigate('/reports')}>
             <BarChart3 size={15} />
@@ -101,7 +109,7 @@ export function KioskStatusBar() {
             <Settings size={15} />
           </KioskIconButton>
         ) : null}
-        {showReportsButton || showAdminButton ? <Divider /> : null}
+        {showReportsButton || showAdminButton || showCashCountsButton ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}

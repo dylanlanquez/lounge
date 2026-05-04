@@ -25,7 +25,6 @@ import { SalesTab } from '../Financials/SalesTab.tsx';
 import { DiscountsTab } from '../Financials/DiscountsTab.tsx';
 import { VoidsTab } from '../Financials/VoidsTab.tsx';
 import { AnomaliesTab } from '../Financials/AnomaliesTab.tsx';
-import { CashReconciliationTab } from '../Financials/CashReconciliationTab.tsx';
 
 // Reports — combined operational + financial dashboards.
 //
@@ -53,8 +52,7 @@ type Tab =
   | 'sales'
   | 'discounts'
   | 'voids'
-  | 'anomalies'
-  | 'cash_reconciliation';
+  | 'anomalies';
 
 const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
   { value: 'overview', label: 'Overview' },
@@ -65,13 +63,15 @@ const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
   { value: 'lifetime_value', label: 'Lifetime value' },
 ];
 
+// Cash reconciliation lives at /cash-counts (top-level route, kiosk
+// nav button) — staff use it every shift, so it deserves its own
+// destination instead of being buried as a tab here.
 const FINANCIAL_TABS: { value: Tab; label: string }[] = [
   { value: 'fin_overview', label: 'Financial overview' },
   { value: 'sales', label: 'Sales' },
   { value: 'discounts', label: 'Discounts' },
   { value: 'voids', label: 'Voids' },
   { value: 'anomalies', label: 'Anomaly flags' },
-  { value: 'cash_reconciliation', label: 'Cash reconciliation' },
 ];
 
 export function Reports() {
@@ -181,8 +181,6 @@ export function Reports() {
           <VoidsTab range={range} />
         ) : tab === 'anomalies' ? (
           <AnomaliesTab range={range} />
-        ) : tab === 'cash_reconciliation' ? (
-          <CashReconciliationTab />
         ) : (
           <ComingSoon section={tabs.find((t) => t.value === tab)?.label ?? 'Section'} />
         )}

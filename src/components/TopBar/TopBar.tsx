@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { ArrowLeft, BarChart3, LogOut, Settings } from 'lucide-react';
+import { ArrowLeft, BarChart3, LogOut, Settings, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -24,6 +24,8 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
   const { account } = useCurrentAccount();
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
   const showReportsButton = !!account && account.can_view_reports;
+  const showCashCountsButton =
+    !!account && (account.can_count_cash || account.can_view_financials);
 
   if (variant === 'subpage') {
     return (
@@ -80,6 +82,17 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
       {user ? <Avatar name={user.email ?? 'You'} size={isMobile ? 'sm' : 'md'} badge="online" /> : null}
       {isMobile ? (
         <>
+          {showCashCountsButton ? (
+            <button
+              type="button"
+              aria-label="Cash counts"
+              title="Cash counts"
+              onClick={() => navigate('/cash-counts')}
+              style={iconButtonStyle}
+            >
+              <Wallet size={18} />
+            </button>
+          ) : null}
           {showReportsButton ? (
             <button
               type="button"
@@ -112,6 +125,13 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
         </>
       ) : (
         <>
+          {showCashCountsButton ? (
+            <Button variant="tertiary" size="sm" onClick={() => navigate('/cash-counts')}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <Wallet size={16} /> Cash counts
+              </span>
+            </Button>
+          ) : null}
           {showReportsButton ? (
             <Button variant="tertiary" size="sm" onClick={() => navigate('/reports')}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
