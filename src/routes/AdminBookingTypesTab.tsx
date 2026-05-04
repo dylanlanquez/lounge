@@ -1149,13 +1149,18 @@ function AddOverrideSheet({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset state every time the sheet opens. Loading axis values
-  // happens here so a service reconfiguration doesn't need a remount
-  // to refresh the dropdowns.
+  // Reset state every time the sheet opens. Each axis defaults to
+  // ANY_VALUE so the dropdowns read "Any product / Any arch" out of
+  // the box — the admin only has to touch the dimensions they want
+  // to pin. Without this default, Save stayed disabled until they
+  // explicitly clicked "Any" on every axis they didn't care about,
+  // which made arch-only overrides feel like extra work.
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setPicks({});
+    const seed: Record<string, string> = {};
+    for (const a of axes) seed[a.key] = ANY_VALUE;
+    setPicks(seed);
     setLoading(true);
     let cancelled = false;
     void (async () => {
@@ -1173,7 +1178,7 @@ function AddOverrideSheet({
   }, [open, axes]);
 
   // Compute the candidate pin set from current picks. ANY_VALUE picks
-  // and unpicked axes both mean "axis stays unpinned" → not in pins.
+  // mean "axis stays unpinned" → not in pins.
   const candidatePins: AxisPin[] = axes
     .map((a) => {
       const v = picks[a.key];
@@ -1182,7 +1187,6 @@ function AddOverrideSheet({
     })
     .filter((p): p is AxisPin => p !== null);
 
-  const allChosen = axes.every((a) => picks[a.key] !== undefined && picks[a.key] !== '');
   const hasAtLeastOnePin = candidatePins.length > 0;
 
   // Duplicate detection: an existing child row has the same axis
@@ -1200,7 +1204,7 @@ function AddOverrideSheet({
     });
   });
 
-  const canSave = allChosen && hasAtLeastOnePin && !duplicate && !loading;
+  const canSave = hasAtLeastOnePin && !duplicate && !loading;
 
   const handleSave = () => {
     if (!hasAtLeastOnePin) {
@@ -1236,8 +1240,8 @@ function AddOverrideSheet({
         </label>
         <DropdownSelect<string>
           ariaLabel={`Pick ${axis.label}`}
-          value={picks[axis.key] ?? ''}
-          placeholder={`Choose a ${axis.label.toLowerCase()}…`}
+          value={picks[axis.key] ?? ANY_VALUE}
+          placeholder={`Any ${axis.label.toLowerCase()}`}
           options={dropdownOptions}
           onChange={(v) => {
             setError(null);
