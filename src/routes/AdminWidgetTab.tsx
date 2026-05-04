@@ -899,13 +899,13 @@ function ServiceCardBody({
         <PoundsInput value={depositText} onChange={setDepositText} />
       </Section>
 
-      {service.hasProductAxis ? (
+      {service.hasOptions ? (
         <Section
-          title="Products in this service"
+          title={`${service.optionsLabel} in this service`}
           description={
             service.products.length === 0
-              ? "No products in your catalogue match this service yet. Add them in Admin → Products."
-              : 'Tick which products patients can choose. Hidden products simply don\'t appear in the widget.'
+              ? "No options in your catalogue match this service yet. Add them in Admin → Products / Services first."
+              : `Tick which ${service.optionsLabel.toLowerCase()} patients can choose. Hidden options simply don't appear in the widget.`
           }
         >
           {service.products.length === 0 ? null : (
@@ -1265,12 +1265,13 @@ function summaryLine(
 ): string {
   const parts: string[] = [];
   parts.push(`${service.durationMinutes} min`);
-  if (service.hasProductAxis) {
+  if (service.hasOptions) {
+    const noun = service.optionsLabel.toLowerCase();
     if (totalProductCount === 0) {
-      parts.push('no products');
+      parts.push(`no ${noun}`);
     } else {
       parts.push(
-        `${visibleProductCount} of ${totalProductCount} product${totalProductCount === 1 ? '' : 's'} on`,
+        `${visibleProductCount} of ${totalProductCount} ${noun.endsWith('s') ? noun : noun + 's'} on`,
       );
     }
   }

@@ -49,12 +49,19 @@ export interface WidgetAdminService {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
-  /** Axis keys this service supports (registry-driven). Used to
-   *  decide whether the product list is even relevant — services
-   *  without a product axis don't have a product list. */
-  hasProductAxis: boolean;
+  /** Whether the admin should see a per-option list. True when the
+   *  service has an axis that indexes catalogue rows (`product_key`
+   *  for same-day-appliance / virtual-impression, `repair_variant`
+   *  for denture-repair). False for services where there's only one
+   *  catalogue row covering everything (click-in veneers, plain
+   *  impression appointment) — the parent visibility toggle is the
+   *  whole switch. */
+  hasOptions: boolean;
+  /** Patient-facing label for the option group. "Repair types" for
+   *  denture_repair, "Products" for product_key axes. */
+  optionsLabel: string;
   /** Catalogue rows for this service. Empty when the service has
-   *  no products (e.g. a flat impression appointment). */
+   *  no axis-indexed rows (a flat single-row service). */
   products: WidgetAdminProduct[];
 }
 
@@ -148,16 +155,30 @@ export function useWidgetAdminServices(): ReadResult {
       const services: WidgetAdminService[] = (btResult.data ?? []).map((bt) => {
         const serviceType = (bt.service_type as string) ?? '';
         const axes = axesForService(serviceType as BookingServiceType);
-        const hasProductAxis = axes.some((a) => a.key === 'product_key');
-        const allProducts = catByService.get(serviceType) ?? [];
-        // For services where the axis registry asks for a product,
-        // the catalogue row set is THE product list. Services
-        // without a product axis (denture_repair has variants;
-        // click_in_veneers has just arch; impression has nothing)
-        // get an empty product list — the catalogue rows there
-        // aren't a "menu of products" the patient picks from,
-        // they're the row that gets matched after axes are pinned.
-        const products = hasProductAxis ? allProducts : [];
+        // Any axis that drills into catalogue rows — product_key
+        // (same-day appliance, virtual impression) or repair_variant
+        // (denture repair) — gives the admin a per-option list to
+        // tick on/off. arch alone doesn't, because arch is encoded
+        // on a single catalogue row via arch_match (the patient
+        // picks at booking time, not the admin).
+        const catalogueAxis =
+          axes.find((a) => a.key === 'product_key') ??
+          axes.find((a) => a.key === 'repair_variant') ??
+          null;
+        const allProducts = catalogueAxis
+          ? (catByService.get(serviceType) ?? []).filter((p) =>
+              catalogueAxis.key === 'product_key'
+                ? p.productKey !== null
+                : p.repairVariant !== null,
+            )
+          : [];
+        const hasOptions = allProducts.length > 1;
+        const optionsLabel =
+          catalogueAxis?.key === 'repair_variant'
+            ? 'Repair types'
+            : catalogueAxis?.key === 'product_key'
+              ? 'Products'
+              : 'Options';
         return {
           id: bt.id as string,
           serviceType,
@@ -169,8 +190,9 @@ export function useWidgetAdminServices(): ReadResult {
           widgetVisible: (bt.widget_visible as boolean) ?? false,
           widgetDescription: (bt.widget_description as string | null) ?? '',
           widgetDepositPence: (bt.widget_deposit_pence as number) ?? 0,
-          hasProductAxis,
-          products,
+          hasOptions,
+          optionsLabel,
+          products: allProducts,
         };
       });
 
