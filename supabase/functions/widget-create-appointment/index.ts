@@ -298,13 +298,15 @@ Deno.serve(async (req) => {
       arch: body.arch ?? null,
       ...(depositFields ?? {}),
     })
-    .select('id, appointment_ref')
+    .select('id, appointment_ref, manage_token')
     .single();
   if (apptErr || !appt) {
     await logFailure('appointment_insert_failed', { error: apptErr?.message, patientId });
     return jsonResponse(500, { error: 'appointment_insert_failed' });
   }
-  const appointmentId = (appt as { id: string }).id;
+  const apptRow = appt as { id: string; appointment_ref: string | null; manage_token: string | null };
+  const appointmentId = apptRow.id;
+  const manageToken = apptRow.manage_token;
 
   await supabase.from('patient_events').insert({
     patient_id: patientId,
@@ -380,6 +382,7 @@ Deno.serve(async (req) => {
   return jsonResponse(200, {
     appointmentId,
     appointmentRef,
+    manageToken,
   });
 });
 

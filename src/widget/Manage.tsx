@@ -8,6 +8,10 @@ import {
   useManagedBooking,
   type ManagedBooking,
 } from './manage.ts';
+import {
+  forgetBookingToken,
+  replaceBookingToken,
+} from './rememberedBookings.ts';
 import { SlotPicker } from './SlotPicker.tsx';
 
 // Customer self-serve manage page — /widget/manage?token=<uuid>.
@@ -218,6 +222,9 @@ function BookingPanel({
     setCancelling(true);
     try {
       await cancelBooking(token);
+      // Drop the token from localStorage — a future visit's
+      // welcome screen shouldn't list a cancelled booking.
+      forgetBookingToken(token);
       setJustCancelled(true);
       // Re-pull the booking so any subsequent reload renders the
       // cancelled state without stale data.
@@ -534,6 +541,10 @@ function ReschedulePanel({
     setError(null);
     try {
       const res = await rescheduleBooking(token, pickedIso);
+      // Swap the old token for the new one in localStorage so a
+      // future visit's welcome screen lists the rescheduled
+      // booking, not the now-stale parent row.
+      replaceBookingToken(token, res.newManageToken);
       onSuccess({ newAppointmentRef: res.newAppointmentRef, newStartAt: pickedIso });
     } catch (e: unknown) {
       const code = (e as { code?: string }).code ?? 'reschedule_failed';

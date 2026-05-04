@@ -14,6 +14,7 @@ import type { WidgetState } from './state.ts';
 export interface SubmitResult {
   appointmentId: string;
   appointmentRef: string | null;
+  manageToken: string | null;
 }
 
 /** Submit failure classes. The widget shell uses `code` to decide
@@ -53,6 +54,7 @@ export async function submitBooking(
   const { data, error } = await supabase.functions.invoke<{
     appointmentId?: string;
     appointmentRef?: string | null;
+    manageToken?: string | null;
     error?: string;
     detail?: unknown;
   }>('widget-create-appointment', { body });
@@ -74,6 +76,7 @@ export async function submitBooking(
   return {
     appointmentId: data.appointmentId,
     appointmentRef: data.appointmentRef ?? null,
+    manageToken: data.manageToken ?? null,
   };
 }
 

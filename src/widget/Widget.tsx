@@ -20,6 +20,11 @@ import { PaymentStep } from './steps/Payment.tsx';
 import { SuccessScreen } from './steps/Success.tsx';
 import { Summary } from './Summary.tsx';
 import { submitBooking, SubmitError } from './submit.ts';
+import {
+  loadRememberedIdentity,
+} from './state.ts';
+import { rememberBookingToken, useRememberedBookings } from './rememberedBookings.ts';
+import { WelcomeBack } from './WelcomeBack.tsx';
 import { isDetailsValid } from './validation.ts';
 import type { AxisKey } from '../lib/queries/bookingTypeAxes.ts';
 
@@ -94,6 +99,25 @@ function WidgetReady({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Returning-patient gate: when localStorage holds tokens that
+  // resolve to upcoming-active bookings, we show a welcome screen
+  // first. The patient picks "Manage" to deep-link into the manage
+  // page, or "Book another" to drop into the normal flow. Skipped
+  // for ?location= deep-links — those embeds are pinned to a single
+  // clinic-page CTA and a welcome screen would feel like a detour.
+  const remembered = useRememberedBookings();
+  const [mode, setMode] = useState<'welcome' | 'booking'>('welcome');
+  const showWelcome =
+    mode === 'welcome' && !preSelected && !remembered.loading && remembered.data.length > 0;
+  const greetingName = useMemo(() => {
+    const stored = loadRememberedIdentity();
+    if (stored?.firstName?.trim()) return stored.firstName.trim();
+    const fromBooking = remembered.data.find((b) => b.patientFirstName);
+    return fromBooking?.patientFirstName ?? null;
+  }, [remembered.data]);
+
+  // Hooks below run for both modes — calling useBookingState
+  // unconditionally keeps the hook order stable across renders.
   const api = useBookingState(locations, preSelected);
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
@@ -118,6 +142,9 @@ function WidgetReady({
     setSubmission({ state: 'submitting', appointmentRef: null, error: null });
     try {
       const result = await submitBooking(api.state, paymentIntentId);
+      // Stash the manage token locally so a returning visit can
+      // recall this booking on Step 1 — see WelcomeBack screen.
+      if (result.manageToken) rememberBookingToken(result.manageToken);
       setSubmission({
         state: 'done',
         appointmentRef: result.appointmentRef,
@@ -144,6 +171,16 @@ function WidgetReady({
 
   if (submission.state === 'done') {
     return <SuccessScreen state={api.state} appointmentRef={submission.appointmentRef} />;
+  }
+
+  if (showWelcome) {
+    return (
+      <WelcomeBack
+        bookings={remembered.data}
+        onStartNew={() => setMode('booking')}
+        greetingName={greetingName}
+      />
+    );
   }
 
   // The Summary / Dock CTA submits directly when Details is the last
