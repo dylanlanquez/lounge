@@ -18,6 +18,7 @@ import { DetailsStep } from './steps/Details.tsx';
 import { PaymentStep } from './steps/Payment.tsx';
 import { SuccessScreen } from './steps/Success.tsx';
 import { Summary } from './Summary.tsx';
+import { submitBooking, SubmitError } from './submit.ts';
 import type { AxisKey } from '../lib/queries/bookingTypeAxes.ts';
 
 // Public booking widget — embedded on the practice's website.
@@ -51,11 +52,62 @@ export function Widget() {
   const api = useBookingState();
   const { copy } = useWidgetCopy();
   const isMobile = useIsMobile(TWO_COLUMN_BREAKPOINT);
-  const [submitted, setSubmitted] = useSubmitted();
+  const [submission, setSubmission] = useState<{
+    state: 'idle' | 'submitting' | 'done';
+    appointmentRef: string | null;
+    error: string | null;
+  }>({ state: 'idle', appointmentRef: null, error: null });
 
-  if (submitted) {
-    return <SuccessScreen state={api.state} />;
+  // Single submission entry-point. Called from:
+  //   • Summary CTA on Details step when no Payment step follows
+  //     (free service — book straight away).
+  //   • Mobile dock CTA, same conditions.
+  //   • Payment step's "Pay" button after the (currently-stubbed)
+  //     payment confirms.
+  //
+  // On 'slot_unavailable' the slot was taken between time pick and
+  // submit — bounce back to the time step so the patient picks
+  // again. Other errors surface as a banner + leave them where
+  // they are.
+  const submit = async () => {
+    if (submission.state === 'submitting') return;
+    setSubmission({ state: 'submitting', appointmentRef: null, error: null });
+    try {
+      const result = await submitBooking(api.state);
+      setSubmission({
+        state: 'done',
+        appointmentRef: result.appointmentRef,
+        error: null,
+      });
+    } catch (e) {
+      const err = e as SubmitError;
+      if (err.code === 'slot_unavailable') {
+        setSubmission({
+          state: 'idle',
+          appointmentRef: null,
+          error: 'That slot was just taken — pick another time.',
+        });
+        api.goTo('time');
+        return;
+      }
+      setSubmission({
+        state: 'idle',
+        appointmentRef: null,
+        error: messageForCode(err.code) ?? "Couldn't book your appointment. Please try again.",
+      });
+    }
+  };
+
+  if (submission.state === 'done') {
+    return <SuccessScreen state={api.state} appointmentRef={submission.appointmentRef} />;
   }
+
+  // The Summary / Dock CTA submits directly when Details is the last
+  // step. Otherwise it advances to whatever step (Payment) comes next.
+  const isPaymentNext = (api.activeSteps[api.currentIdx + 1] ?? null) === 'payment';
+  const onCtaClick = isPaymentNext ? api.goNext : submit;
+  const ctaBusy = !isPaymentNext && submission.state === 'submitting';
+  const ctaDisabled = api.stepKey === 'details' && !api.state.details.agreeTerms;
 
   return (
     <div
@@ -96,11 +148,21 @@ export function Widget() {
         }}
       >
         <section>
-          <StepContent api={api} onSubmit={() => setSubmitted(true)} />
+          {submission.error ? (
+            <ErrorBanner message={submission.error} onDismiss={() => setSubmission((s) => ({ ...s, error: null }))} />
+          ) : null}
+          <StepContent api={api} onSubmit={submit} submitting={submission.state === 'submitting'} />
         </section>
 
         {isMobile ? (
-          <MobileSummaryDock api={api} copy={copy} />
+          <MobileSummaryDock
+            api={api}
+            copy={copy}
+            onCtaClick={onCtaClick}
+            ctaBusy={ctaBusy}
+            ctaDisabled={ctaDisabled}
+            isPaymentNext={isPaymentNext}
+          />
         ) : (
           <aside style={{ position: 'sticky', top: theme.space[5] }}>
             <Summary
@@ -110,8 +172,10 @@ export function Widget() {
               breakdown={api.priceBreakdown}
               copy={copy}
               showCta={api.stepKey === 'details'}
-              onCtaClick={api.goNext}
-              isPaymentNext={(api.activeSteps[api.currentIdx + 1] ?? null) === 'payment'}
+              onCtaClick={onCtaClick}
+              ctaBusy={ctaBusy}
+              ctaDisabled={ctaDisabled}
+              isPaymentNext={isPaymentNext}
             />
             <PoweredByLounge label={copy.footerPoweredBy} />
           </aside>
@@ -282,9 +346,11 @@ function ProgressDot({
 function StepContent({
   api,
   onSubmit,
+  submitting,
 }: {
   api: BookingStateApi;
   onSubmit: () => void;
+  submitting: boolean;
 }) {
   // Axis steps are dynamic — one per axis declared on the chosen
   // service, encoded as `axis:<key>` strings (axis:product_key,
@@ -305,7 +371,7 @@ function StepContent({
     case 'details':
       return <DetailsStep api={api} />;
     case 'payment':
-      return <PaymentStep api={api} onSubmit={onSubmit} />;
+      return <PaymentStep api={api} onSubmit={onSubmit} submitting={submitting} />;
   }
   return null;
 }
@@ -314,7 +380,21 @@ function StepContent({
 // Mobile summary dock — sticky bottom bar that expands on tap
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MobileSummaryDock({ api, copy }: { api: BookingStateApi; copy: WidgetCopy }) {
+function MobileSummaryDock({
+  api,
+  copy,
+  onCtaClick,
+  ctaBusy,
+  ctaDisabled,
+  isPaymentNext,
+}: {
+  api: BookingStateApi;
+  copy: WidgetCopy;
+  onCtaClick: () => void;
+  ctaBusy: boolean;
+  ctaDisabled: boolean;
+  isPaymentNext: boolean;
+}) {
   const { priceBreakdown } = api;
   const total =
     priceBreakdown.depositPence > 0
@@ -327,7 +407,6 @@ function MobileSummaryDock({ api, copy }: { api: BookingStateApi; copy: WidgetCo
   // The details step hosts the primary CTA; on mobile it lives in
   // the dock so it sits above the keyboard.
   const showDetailsCta = api.stepKey === 'details';
-  const isPaymentNext = (api.activeSteps[api.currentIdx + 1] ?? null) === 'payment';
 
   if (!showSummary && !showDetailsCta) return null;
 
@@ -387,10 +466,15 @@ function MobileSummaryDock({ api, copy }: { api: BookingStateApi; copy: WidgetCo
           {showDetailsCta ? (
             <button
               type="button"
-              onClick={api.goNext}
-              style={primaryCtaStyle}
+              onClick={onCtaClick}
+              disabled={ctaBusy || ctaDisabled}
+              style={{
+                ...primaryCtaStyle,
+                opacity: ctaBusy || ctaDisabled ? 0.5 : 1,
+                cursor: ctaBusy || ctaDisabled ? 'default' : 'pointer',
+              }}
             >
-              {isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
+              {ctaBusy ? 'Booking…' : isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
             </button>
           ) : null}
         </div>
@@ -403,9 +487,65 @@ function MobileSummaryDock({ api, copy }: { api: BookingStateApi; copy: WidgetCo
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function useSubmitted(): [boolean, (next: boolean) => void] {
-  const [submitted, setSubmitted] = useState(false);
-  return [submitted, setSubmitted];
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        marginBottom: theme.space[4],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        background: 'rgba(184, 58, 42, 0.08)',
+        border: `1px solid ${theme.color.alert}`,
+        borderRadius: theme.radius.input,
+        color: theme.color.alert,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+      }}
+    >
+      <span>{message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          color: 'inherit',
+          fontSize: theme.type.size.lg,
+          fontWeight: theme.type.weight.semibold,
+          cursor: 'pointer',
+          padding: 0,
+          lineHeight: 1,
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+function messageForCode(code: string): string | null {
+  switch (code) {
+    case 'terms_not_accepted':
+      return 'Please tick the terms and conditions to continue.';
+    case 'invalid':
+    case 'firstName_missing':
+    case 'lastName_missing':
+    case 'email_invalid':
+    case 'phone_invalid':
+      return 'Some details are missing or invalid. Check the form and try again.';
+    case 'no_booking_config':
+      return 'This service is currently unavailable. Please try a different option.';
+    case 'no_location_resolved':
+      return "We couldn't find an available location.";
+    default:
+      return null;
+  }
 }
 
 const primaryCtaStyle = {

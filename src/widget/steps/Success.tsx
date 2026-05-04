@@ -10,7 +10,13 @@ import type { WidgetState } from '../state.ts';
 // confirmation email send. For phase 1 it's a visual end-state
 // only.
 
-export function SuccessScreen({ state }: { state: WidgetState }) {
+export function SuccessScreen({
+  state,
+  appointmentRef,
+}: {
+  state: WidgetState;
+  appointmentRef: string | null;
+}) {
   const slot = state.slotIso ? new Date(state.slotIso) : null;
   const slotLabel = slot
     ? slot.toLocaleDateString('en-GB', {
@@ -96,6 +102,21 @@ export function SuccessScreen({ state }: { state: WidgetState }) {
           <Calendar size={14} aria-hidden />
           {slotLabel}
         </p>
+        {appointmentRef ? (
+          <p
+            style={{
+              margin: `${theme.space[4]}px 0 0`,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.semibold,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            Booking reference {appointmentRef}
+          </p>
+        ) : null}
         <p
           style={{
             margin: `${theme.space[5]}px 0 0`,

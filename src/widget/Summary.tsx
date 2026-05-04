@@ -32,6 +32,8 @@ export function Summary({
   copy,
   showCta,
   onCtaClick,
+  ctaBusy,
+  ctaDisabled,
   isPaymentNext,
 }: {
   state: WidgetState;
@@ -47,6 +49,12 @@ export function Summary({
   copy: WidgetCopy;
   showCta: boolean;
   onCtaClick: () => void;
+  /** True while the booking is being submitted — disables the CTA
+   *  and swaps the label to "Booking…". */
+  ctaBusy: boolean;
+  /** True when the CTA should be disabled (e.g. terms not yet
+   *  accepted on the Details step). */
+  ctaDisabled: boolean;
   isPaymentNext: boolean;
 }) {
   const selectedUpgrades = upgrades.filter((u) => state.upgradeIds.includes(u.id));
@@ -190,6 +198,7 @@ export function Summary({
         <button
           type="button"
           onClick={onCtaClick}
+          disabled={ctaBusy || ctaDisabled}
           style={{
             marginTop: theme.space[4],
             width: '100%',
@@ -202,10 +211,12 @@ export function Summary({
             fontFamily: 'inherit',
             fontSize: theme.type.size.sm,
             fontWeight: theme.type.weight.semibold,
-            cursor: 'pointer',
+            cursor: ctaBusy || ctaDisabled ? 'default' : 'pointer',
+            opacity: ctaBusy || ctaDisabled ? 0.5 : 1,
             transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
           }}
           onMouseDown={(e) => {
+            if (ctaBusy || ctaDisabled) return;
             e.currentTarget.style.transform = 'scale(0.98)';
           }}
           onMouseUp={(e) => {
@@ -215,7 +226,7 @@ export function Summary({
             e.currentTarget.style.transform = 'scale(1)';
           }}
         >
-          {isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
+          {ctaBusy ? 'Booking…' : isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
         </button>
       ) : null}
     </div>

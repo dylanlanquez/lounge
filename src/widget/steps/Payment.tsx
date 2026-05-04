@@ -4,18 +4,20 @@ import { theme } from '../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { formatPrice } from '../state.ts';
 
-// Step 6 — Payment.
+// Payment step.
 //
 // Conditional: only appears when the chosen service has
-// `depositPence > 0`. Free / pay-at-appointment services skip
-// straight from Details to a confirmation.
+// `depositPence > 0`. Free services skip straight from Details to
+// the confirmation.
 //
-// Phase 1 (this PR): visual stub. Three tabs (Card / Apple Pay /
-// Google Pay), card number / expiry / CVC inputs, single Pay
-// button. The Pay button calls `onSubmit()` to advance to the
-// success screen — it does NOT hit Stripe.
+// Phase 2c (current): visual stub for the card inputs, but the Pay
+// button calls the real submit() handler from the widget shell —
+// which posts to widget-create-appointment and creates the
+// lng_appointments row. The deposit isn't actually charged yet;
+// phase 4 wires Stripe and only triggers submit() once the
+// PaymentIntent confirms.
 //
-// Phase 3 wires this to a Stripe PaymentIntent created server-
+// Phase 4 wires this to a Stripe PaymentIntent created server-
 // side via a new edge function. The card inputs become
 // <PaymentElement /> from @stripe/react-stripe-js. Apple/Google
 // Pay come for free via PaymentRequestButton.
@@ -25,26 +27,20 @@ type PaymentMethod = 'card' | 'apple' | 'google';
 export function PaymentStep({
   api,
   onSubmit,
+  submitting,
 }: {
   api: BookingStateApi;
   onSubmit: () => void;
+  submitting: boolean;
 }) {
   const [method, setMethod] = useState<PaymentMethod>('card');
   const [cardNumber, setCardNumber] = useState('');
   const [expiry, setExpiry] = useState('');
   const [cvc, setCvc] = useState('');
-  const [busy, setBusy] = useState(false);
 
   const deposit = api.state.service?.depositPence ?? 0;
-
-  const fakePay = async () => {
-    setBusy(true);
-    // Simulate a network call so the button's loading state is
-    // visible. Phase 3 replaces with Stripe confirmCardPayment().
-    await new Promise((r) => setTimeout(r, 800));
-    setBusy(false);
-    onSubmit();
-  };
+  const inputsBlock = method === 'card' && (!cardNumber || !expiry || !cvc);
+  const disabled = submitting || inputsBlock;
 
   return (
     <div
@@ -147,8 +143,8 @@ export function PaymentStep({
 
       <button
         type="button"
-        onClick={fakePay}
-        disabled={busy || (method === 'card' && (!cardNumber || !expiry || !cvc))}
+        onClick={onSubmit}
+        disabled={disabled}
         style={{
           appearance: 'none',
           border: 'none',
@@ -159,19 +155,15 @@ export function PaymentStep({
           fontFamily: 'inherit',
           fontSize: theme.type.size.md,
           fontWeight: theme.type.weight.semibold,
-          cursor:
-            busy || (method === 'card' && (!cardNumber || !expiry || !cvc))
-              ? 'default'
-              : 'pointer',
-          opacity:
-            busy || (method === 'card' && (!cardNumber || !expiry || !cvc)) ? 0.5 : 1,
+          cursor: disabled ? 'default' : 'pointer',
+          opacity: disabled ? 0.5 : 1,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: theme.space[2],
         }}
       >
-        <Lock size={14} aria-hidden /> {busy ? 'Processing…' : `Pay ${formatPrice(deposit)}`}
+        <Lock size={14} aria-hidden /> {submitting ? 'Booking…' : `Pay ${formatPrice(deposit)}`}
       </button>
 
       <p
