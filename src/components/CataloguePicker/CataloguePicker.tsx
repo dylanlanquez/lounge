@@ -27,9 +27,7 @@ import {
   type CatalogueAddOptions,
 } from '../../lib/queries/carts.ts';
 import {
-  useAllUpgradeLinks,
-  useUpgradesActive,
-  type UpgradeLinkRow,
+  useAllActiveUpgrades,
   type UpgradeRow,
 } from '../../lib/queries/upgrades.ts';
 
@@ -105,8 +103,7 @@ export function CataloguePicker({
   onItemAdded,
 }: CataloguePickerProps) {
   const { rows, loading, error } = useCatalogueActive();
-  const { rows: upgrades } = useUpgradesActive();
-  const { links: upgradeLinks } = useAllUpgradeLinks();
+  const { rows: upgrades } = useAllActiveUpgrades();
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
@@ -141,10 +138,16 @@ export function CataloguePicker({
     return () => observer.disconnect();
   }, [open]);
 
-  // Upgrade lookup by id — small map keeps ProductRow render cheap.
-  const upgradeById = useMemo(() => {
-    const m = new Map<string, UpgradeRow>();
-    for (const u of upgrades) m.set(u.id, u);
+  // Group active upgrades by their owning catalogue row so each
+  // ProductRow can pull its list with one map lookup. Upgrades are
+  // already sorted by sort_order from the query.
+  const upgradesByCatalogue = useMemo(() => {
+    const m = new Map<string, UpgradeRow[]>();
+    for (const u of upgrades) {
+      const list = m.get(u.catalogue_id) ?? [];
+      list.push(u);
+      m.set(u.catalogue_id, list);
+    }
     return m;
   }, [upgrades]);
 
@@ -209,18 +212,9 @@ export function CataloguePicker({
   };
 
   const renderRow = (row: CatalogueRow) => {
-    // Resolve the upgrade options applicable to this row by joining the
-    // global links list against the upgrades registry. Keeps the
-    // ProductRow itself focused on rendering — it doesn't talk to
-    // Supabase directly.
-    const linksForRow = upgradeLinks.filter((l) => l.catalogue_id === row.id);
-    const rowUpgrades = linksForRow
-      .map((l) => {
-        const u = upgradeById.get(l.upgrade_id);
-        return u && u.active ? { upgrade: u, link: l } : null;
-      })
-      .filter((x): x is { upgrade: UpgradeRow; link: UpgradeLinkRow } => x !== null)
-      .sort((a, b) => a.upgrade.sort_order - b.upgrade.sort_order);
+    // Each catalogue row owns its own upgrade rows now — one lookup,
+    // already sorted, already filtered to active.
+    const rowUpgrades = upgradesByCatalogue.get(row.id) ?? [];
     return (
       <li key={row.id}>
         <ProductRow
@@ -653,7 +647,7 @@ function ProductRow({
   onError,
 }: {
   row: CatalogueRow;
-  rowUpgrades: { upgrade: UpgradeRow; link: UpgradeLinkRow }[];
+  rowUpgrades: UpgradeRow[];
   expanded: boolean;
   onToggle: () => void;
   cartId: string | null;
@@ -718,12 +712,12 @@ function ProductRow({
   // the cart will eventually persist.
   const appliedUpgrades: AppliedUpgrade[] = useMemo(() => {
     const list: AppliedUpgrade[] = [];
-    for (const { upgrade, link } of rowUpgrades) {
+    for (const upgrade of rowUpgrades) {
       if (!selectedUpgradeIds.has(upgrade.id)) continue;
       const pricePounds =
-        isBothArches && link.both_arches_price != null
-          ? link.both_arches_price
-          : link.price;
+        isBothArches && upgrade.both_arches_price != null
+          ? upgrade.both_arches_price
+          : upgrade.price;
       list.push({
         upgrade_id: upgrade.id,
         code: upgrade.code,
@@ -977,12 +971,12 @@ function ProductRow({
             {rowUpgrades.length > 0 ? (
               <ConfigRow label="Upgrades" hint="optional" stack first={firstSection === 'upgrades'}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {rowUpgrades.map(({ upgrade, link }, i) => {
+                  {rowUpgrades.map((upgrade, i) => {
                     const checked = selectedUpgradeIds.has(upgrade.id);
                     const tierPrice =
-                      isBothArches && link.both_arches_price != null
-                        ? link.both_arches_price
-                        : link.price;
+                      isBothArches && upgrade.both_arches_price != null
+                        ? upgrade.both_arches_price
+                        : upgrade.price;
                     return (
                       <label
                         key={upgrade.id}

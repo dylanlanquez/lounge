@@ -86,7 +86,7 @@ import {
 import { useCatalogueActive } from '../lib/queries/catalogue.ts';
 import {
   composeUpgradeLabel,
-  useUpgradesActive,
+  useAllActiveUpgrades,
   type UpgradeDisplayPosition,
 } from '../lib/queries/upgrades.ts';
 import {
@@ -122,9 +122,10 @@ export function VisitDetail() {
     for (const r of catalogueRows) m.set(r.id, r);
     return m;
   }, [catalogueRows]);
-  // Live registry of upgrade display_position so cart subtitle + LWO
-  // can place each upgrade where admin wants it.
-  const { rows: upgradeRows } = useUpgradesActive();
+  // Live id → display_position lookup so cart subtitle + LWO can place
+  // each upgrade where admin wants it. Upgrades are now per-product, but
+  // this map is just by id so a flat fetch of all active rows is fine.
+  const { rows: upgradeRows } = useAllActiveUpgrades();
   const upgradePositionById = useMemo(() => {
     const m = new Map<string, UpgradeDisplayPosition>();
     for (const u of upgradeRows) m.set(u.id, u.display_position);

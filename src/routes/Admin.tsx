@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Sparkles, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -86,13 +86,10 @@ import {
   type WaiverSectionDraft,
 } from '../lib/queries/waiver.ts';
 import {
-  removeUpgradeLink,
+  deleteUpgrade,
   setUpgradeActive,
-  setUpgradeLink,
   upsertUpgrade,
-  useUpgradeLinksForCatalogue,
-  useUpgradesActive,
-  useUpgradesAll,
+  useUpgradesForCatalogue,
   type UpgradeDisplayPosition,
   type UpgradeRow,
 } from '../lib/queries/upgrades.ts';
@@ -102,7 +99,7 @@ import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'receipts' | 'testing' | 'waivers' | 'upgrades' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
 
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
@@ -155,7 +152,6 @@ export function Admin() {
               { value: 'booking_types', label: 'Booking types' },
               { value: 'conflicts', label: 'Resources' },
               { value: 'emails', label: 'Emails' },
-              { value: 'upgrades', label: 'Upgrades' },
               { value: 'waivers', label: 'Waivers' },
               { value: 'receipts', label: 'Receipts' },
               { value: 'reports', label: 'Reports' },
@@ -180,8 +176,6 @@ export function Admin() {
           <AdminConflictsTab />
         ) : tab === 'emails' ? (
           <AdminEmailTemplatesTab />
-        ) : tab === 'upgrades' ? (
-          <UpgradesTab />
         ) : tab === 'waivers' ? (
           <WaiversTab />
         ) : tab === 'receipts' ? (
@@ -2755,7 +2749,7 @@ function CatalogueRowEditor({
       ) : null}
 
       {draft.id ? (
-        <UpgradeLinksEditor
+        <ProductUpgradesEditor
           catalogueId={draft.id}
           archEnabled={draft.arch_match !== 'any'}
         />
@@ -2788,244 +2782,42 @@ function CatalogueRowEditor({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Upgrade links subsection — sits inside CatalogueRowEditor when editing
-// an existing product. Each active upgrade gets a row: checkbox, price
-// input, and (when the parent product has arch options) a both-arches
-// price. Per-link save: each row commits independently so a network
-// blip on one upgrade can't lose another's price.
+// Per-product upgrades editor — sits inside CatalogueRowEditor when
+// editing an existing product. Each product owns its own upgrade rows
+// (no shared registry). Add new ones inline, edit / delete / toggle
+// active per row. Both-arches price input only renders when the parent
+// product has arch options.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function UpgradeLinksEditor({
+function ProductUpgradesEditor({
   catalogueId,
   archEnabled,
 }: {
   catalogueId: string;
   archEnabled: boolean;
 }) {
-  const { rows: upgrades, loading: upLoading } = useUpgradesActive();
-  const { links, loading: linkLoading, refresh } = useUpgradeLinksForCatalogue(catalogueId);
-
-  const linkByUpgrade = new Map(links.map((l) => [l.upgrade_id, l]));
-
-  return (
-    <section
-      style={{
-        borderTop: `1px solid ${theme.color.border}`,
-        paddingTop: theme.space[4],
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[3],
-      }}
-    >
-      <div>
-        <h3
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xs,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkSubtle,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          Upgrades
-        </h3>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-          }}
-        >
-          Tick the upgrades you want available on this product, then set the price.
-          {archEnabled
-            ? ' Both-arches price is used when the receptionist picks both arches.'
-            : ''}
-        </p>
-      </div>
-
-      {upLoading || linkLoading ? (
-        <Skeleton height={48} radius={12} />
-      ) : upgrades.length === 0 ? (
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontStyle: 'italic' }}>
-          No upgrades defined yet. Add some in the Upgrades tab.
-        </p>
-      ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {upgrades.map((u) => (
-            <li key={u.id}>
-              <UpgradeLinkRow
-                upgrade={u}
-                link={linkByUpgrade.get(u.id) ?? null}
-                archEnabled={archEnabled}
-                onSave={async (price, bothArches) => {
-                  await setUpgradeLink(catalogueId, u.id, price, bothArches);
-                  refresh();
-                }}
-                onRemove={async () => {
-                  await removeUpgradeLink(catalogueId, u.id);
-                  refresh();
-                }}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function UpgradeLinkRow({
-  upgrade,
-  link,
-  archEnabled,
-  onSave,
-  onRemove,
-}: {
-  upgrade: UpgradeRow;
-  link: { price: number; both_arches_price: number | null } | null;
-  archEnabled: boolean;
-  onSave: (price: number, bothArchesPrice: number | null) => Promise<void>;
-  onRemove: () => Promise<void>;
-}) {
-  const [linked, setLinked] = useState(link != null);
-  const [price, setPrice] = useState(link != null ? link.price.toFixed(2) : '');
-  const [bothArches, setBothArches] = useState(
-    link?.both_arches_price != null ? link.both_arches_price.toFixed(2) : ''
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Re-sync local state when the link changes underneath (e.g. after a
-  // sibling row's refresh re-fetches the list).
-  useEffect(() => {
-    setLinked(link != null);
-    setPrice(link != null ? link.price.toFixed(2) : '');
-    setBothArches(link?.both_arches_price != null ? link.both_arches_price.toFixed(2) : '');
-  }, [link]);
-
-  const onToggle = async (checked: boolean) => {
-    setError(null);
-    if (!checked && link) {
-      setBusy(true);
-      try {
-        await onRemove();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not remove');
-        setLinked(true);
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    setLinked(checked);
-  };
-
-  const dirty =
-    linked &&
-    (price.trim() !== (link != null ? link.price.toFixed(2) : '') ||
-      bothArches.trim() !== (link?.both_arches_price != null ? link.both_arches_price.toFixed(2) : ''));
-
-  const canSave =
-    linked &&
-    price.trim() !== '' &&
-    !Number.isNaN(parseFloat(price)) &&
-    (!archEnabled || bothArches.trim() === '' || !Number.isNaN(parseFloat(bothArches)));
-
-  const submit = async () => {
-    setError(null);
-    if (!canSave) return;
-    setBusy(true);
-    try {
-      const priceNum = parseFloat(price);
-      const bothNum = archEnabled && bothArches.trim() ? parseFloat(bothArches) : null;
-      await onSave(priceNum, bothNum);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.input,
-        padding: theme.space[3],
-        background: linked ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-      }}
-    >
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-        <Checkbox
-          checked={linked}
-          onChange={onToggle}
-          disabled={busy}
-          ariaLabel={upgrade.name}
-          label={
-            <span style={{ fontWeight: theme.type.weight.medium, fontSize: theme.type.size.sm, color: theme.color.ink }}>
-              {upgrade.name}
-            </span>
-          }
-        />
-        <code style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>{upgrade.code}</code>
-      </div>
-      {linked ? (
-        <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <Input
-            label="Price (£)"
-            inputMode="decimal"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            style={{ maxWidth: 140 }}
-          />
-          {archEnabled ? (
-            <Input
-              label="Both arches price (£)"
-              inputMode="decimal"
-              value={bothArches}
-              onChange={(e) => setBothArches(e.target.value)}
-              placeholder="optional"
-              style={{ maxWidth: 200 }}
-            />
-          ) : null}
-          <Button variant="secondary" size="sm" onClick={submit} loading={busy} disabled={!dirty || !canSave}>
-            Save
-          </Button>
-        </div>
-      ) : null}
-      {error ? (
-        <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.xs }}>{error}</p>
-      ) : null}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Upgrades tab — CRUD for the lng_catalogue_upgrades registry.
-// Pricing per-product lives on the link table (edited inside each
-// catalogue row), so this tab just owns names + activity.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function UpgradesTab() {
-  const { rows, loading, error, refresh } = useUpgradesAll();
+  const { rows, loading, error, refresh } = useUpgradesForCatalogue(catalogueId);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
 
-  const onSave = async (draft: UpgradeDraft) => {
+  const onSave = async (draft: UpgradeDraftLocal) => {
     try {
       await upsertUpgrade({
         id: draft.id,
+        catalogue_id: catalogueId,
         code: draft.code.trim(),
         name: draft.name.trim(),
         description: draft.description.trim() || null,
         display_position: draft.display_position,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
+        price: parseFloat(draft.price),
+        both_arches_price:
+          archEnabled && draft.both_arches_price.trim() !== ''
+            ? parseFloat(draft.both_arches_price)
+            : null,
       });
       setEditingId(null);
       setAdding(false);
@@ -3041,6 +2833,7 @@ function UpgradesTab() {
   };
 
   const onToggleActive = async (row: UpgradeRow) => {
+    setBusyId(row.id);
     try {
       await setUpgradeActive(row.id, !row.active);
       refresh();
@@ -3050,27 +2843,61 @@ function UpgradesTab() {
         title: 'Could not toggle active',
         description: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDelete = async (row: UpgradeRow) => {
+    setBusyId(row.id);
+    try {
+      await deleteUpgrade(row.id);
+      refresh();
+      setToast({ tone: 'success', title: 'Removed.' });
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not remove',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyId(null);
     }
   };
 
   return (
-    <Card padding="md">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: theme.space[3],
-          marginBottom: theme.space[4],
-          flexWrap: 'wrap',
-        }}
-      >
+    <section
+      style={{
+        borderTop: `1px solid ${theme.color.border}`,
+        paddingTop: theme.space[4],
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
             Upgrades
-          </h2>
-          <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-            Pure registry. Per-product pricing is set inside each catalogue row, on the Upgrades subsection.
+          </h3>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+            }}
+          >
+            Add the upgrades patients can pick on this product.
+            {archEnabled
+              ? ' Both-arches price applies when the receptionist picks both arches.'
+              : ''}
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding}>
@@ -3081,46 +2908,80 @@ function UpgradesTab() {
       </div>
 
       {error ? (
-        <p style={{ color: theme.color.alert, margin: 0 }}>Could not load upgrades: {error}</p>
+        <p style={{ color: theme.color.alert, margin: 0, fontSize: theme.type.size.sm }}>
+          Could not load upgrades: {error}
+        </p>
       ) : loading ? (
-        <Skeleton height={120} radius={12} />
-      ) : adding ? (
-        <UpgradeEditor initial={emptyUpgradeDraft()} onSave={onSave} onCancel={() => setAdding(false)} />
-      ) : rows.length === 0 ? (
-        <EmptyState
-          icon={<Sparkles size={24} />}
-          title="No upgrades yet"
-          description="Tap Add upgrade to define one (e.g. Scalloped)."
-        />
+        <Skeleton height={64} radius={12} />
       ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+          }}
+        >
           {rows.map((row) =>
             editingId === row.id ? (
               <li key={row.id}>
-                <UpgradeEditor initial={draftFromUpgrade(row)} onSave={onSave} onCancel={() => setEditingId(null)} />
+                <UpgradeEditor
+                  initial={draftFromUpgrade(row)}
+                  archEnabled={archEnabled}
+                  onSave={onSave}
+                  onCancel={() => setEditingId(null)}
+                />
               </li>
             ) : (
               <UpgradeDisplayRow
                 key={row.id}
                 row={row}
+                archEnabled={archEnabled}
+                busy={busyId === row.id}
                 onEdit={() => setEditingId(row.id)}
                 onToggleActive={() => onToggleActive(row)}
+                onDelete={() => onDelete(row)}
               />
             )
           )}
+          {adding ? (
+            <li>
+              <UpgradeEditor
+                initial={emptyUpgradeDraft()}
+                archEnabled={archEnabled}
+                onSave={onSave}
+                onCancel={() => setAdding(false)}
+              />
+            </li>
+          ) : null}
+          {!adding && rows.length === 0 ? (
+            <li>
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontStyle: 'italic' }}>
+                No upgrades on this product yet. Tap Add upgrade.
+              </p>
+            </li>
+          ) : null}
         </ul>
       )}
 
       {toast ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
-          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+          <Toast
+            tone={toast.tone}
+            title={toast.title}
+            description={toast.description}
+            duration={4000}
+            onDismiss={() => setToast(null)}
+          />
         </div>
       ) : null}
-    </Card>
+    </section>
   );
 }
 
-interface UpgradeDraft {
+interface UpgradeDraftLocal {
   id?: string;
   code: string;
   name: string;
@@ -3128,13 +2989,24 @@ interface UpgradeDraft {
   display_position: UpgradeDisplayPosition;
   sort_order: string;
   active: boolean;
+  price: string;
+  both_arches_price: string;
 }
 
-function emptyUpgradeDraft(): UpgradeDraft {
-  return { code: '', name: '', description: '', display_position: 'after_device', sort_order: '0', active: true };
+function emptyUpgradeDraft(): UpgradeDraftLocal {
+  return {
+    code: '',
+    name: '',
+    description: '',
+    display_position: 'after_device',
+    sort_order: '0',
+    active: true,
+    price: '',
+    both_arches_price: '',
+  };
 }
 
-function draftFromUpgrade(row: UpgradeRow): UpgradeDraft {
+function draftFromUpgrade(row: UpgradeRow): UpgradeDraftLocal {
   return {
     id: row.id,
     code: row.code,
@@ -3143,6 +3015,8 @@ function draftFromUpgrade(row: UpgradeRow): UpgradeDraft {
     display_position: row.display_position,
     sort_order: String(row.sort_order),
     active: row.active,
+    price: row.price.toFixed(2),
+    both_arches_price: row.both_arches_price != null ? row.both_arches_price.toFixed(2) : '',
   };
 }
 
@@ -3154,13 +3028,22 @@ const UPGRADE_DISPLAY_POSITION_OPTIONS: ReadonlyArray<{ value: UpgradeDisplayPos
 
 function UpgradeDisplayRow({
   row,
+  archEnabled,
+  busy,
   onEdit,
   onToggleActive,
+  onDelete,
 }: {
   row: UpgradeRow;
+  archEnabled: boolean;
+  busy: boolean;
   onEdit: () => void;
   onToggleActive: () => void;
+  onDelete: () => void;
 }) {
+  const priceLabel = `£${row.price.toFixed(2)}`;
+  const bothLabel =
+    archEnabled && row.both_arches_price != null ? `£${row.both_arches_price.toFixed(2)} both` : null;
   return (
     <li
       style={{
@@ -3188,6 +3071,16 @@ function UpgradeDisplayRow({
             </StatusPill>
           ) : null}
         </div>
+        <div style={{ display: 'flex', gap: theme.space[3], flexWrap: 'wrap', marginTop: theme.space[1] }}>
+          <span style={{ color: theme.color.ink, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
+            {priceLabel}
+          </span>
+          {bothLabel ? (
+            <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums' }}>
+              {bothLabel}
+            </span>
+          ) : null}
+        </div>
         {row.description ? (
           <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
             {row.description}
@@ -3195,10 +3088,15 @@ function UpgradeDisplayRow({
         ) : null}
       </div>
       <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
-        <Button variant="tertiary" size="sm" onClick={onToggleActive}>
+        <Button variant="tertiary" size="sm" onClick={onToggleActive} disabled={busy}>
           {row.active ? 'Deactivate' : 'Reactivate'}
         </Button>
-        <Button variant="secondary" size="sm" onClick={onEdit}>
+        <Button variant="tertiary" size="sm" onClick={onDelete} disabled={busy}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: theme.color.alert }}>
+            <X size={14} /> Delete
+          </span>
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onEdit} disabled={busy}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Pencil size={14} /> Edit
           </span>
@@ -3210,19 +3108,29 @@ function UpgradeDisplayRow({
 
 function UpgradeEditor({
   initial,
+  archEnabled,
   onSave,
   onCancel,
 }: {
-  initial: UpgradeDraft;
-  onSave: (draft: UpgradeDraft) => Promise<void>;
+  initial: UpgradeDraftLocal;
+  archEnabled: boolean;
+  onSave: (draft: UpgradeDraftLocal) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState<UpgradeDraft>(initial);
+  const [draft, setDraft] = useState<UpgradeDraftLocal>(initial);
   const [busy, setBusy] = useState(false);
-  const set = <K extends keyof UpgradeDraft>(k: K, v: UpgradeDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const set = <K extends keyof UpgradeDraftLocal>(k: K, v: UpgradeDraftLocal[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+
+  const priceValid = draft.price.trim() !== '' && !Number.isNaN(parseFloat(draft.price));
+  const bothValid =
+    !archEnabled ||
+    draft.both_arches_price.trim() === '' ||
+    !Number.isNaN(parseFloat(draft.both_arches_price));
+  const canSubmit = draft.code.trim() !== '' && draft.name.trim() !== '' && priceValid && bothValid;
 
   const submit = async () => {
-    if (!draft.code.trim() || !draft.name.trim()) return;
+    if (!canSubmit) return;
     setBusy(true);
     try {
       await onSave(draft);
@@ -3259,6 +3167,29 @@ function UpgradeEditor({
         options={UPGRADE_DISPLAY_POSITION_OPTIONS}
         onChange={(v) => set('display_position', v)}
       />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: archEnabled ? '1fr 1fr' : '1fr',
+          gap: theme.space[3],
+        }}
+      >
+        <Input
+          label="Price (£)"
+          inputMode="decimal"
+          value={draft.price}
+          onChange={(e) => set('price', e.target.value)}
+        />
+        {archEnabled ? (
+          <Input
+            label="Both arches price (£)"
+            inputMode="decimal"
+            value={draft.both_arches_price}
+            onChange={(e) => set('both_arches_price', e.target.value)}
+            placeholder="optional"
+          />
+        ) : null}
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
         <Input
           label="Sort order"
@@ -3267,11 +3198,7 @@ function UpgradeEditor({
           onChange={(e) => set('sort_order', e.target.value)}
           style={{ maxWidth: 140 }}
         />
-        <Checkbox
-          checked={draft.active}
-          onChange={(v) => set('active', v)}
-          label="Active"
-        />
+        <Checkbox checked={draft.active} onChange={(v) => set('active', v)} label="Active" />
       </div>
       <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', marginTop: theme.space[2] }}>
         <Button variant="tertiary" onClick={onCancel} disabled={busy}>
@@ -3279,7 +3206,7 @@ function UpgradeEditor({
             <X size={16} /> Cancel
           </span>
         </Button>
-        <Button variant="primary" onClick={submit} loading={busy}>
+        <Button variant="primary" onClick={submit} loading={busy} disabled={!canSubmit}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Check size={16} /> {draft.id ? 'Save' : 'Add'}
           </span>
