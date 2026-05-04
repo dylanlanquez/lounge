@@ -287,7 +287,6 @@ function ResourcesSection({
             <PoolCard
               key={p.id}
               pool={p}
-              consumers={usageByPool.get(p.id) ?? []}
               assignedStaff={
                 p.kind === 'staff_role'
                   ? (staffAssignments.byPoolId[p.id] ?? [])
@@ -500,42 +499,33 @@ function RemovePoolImpactList({
 // equipment, accent green for staff roles. No eyebrow header needed.
 function PoolCard({
   pool,
-  consumers,
   assignedStaff,
   onEdit,
   onRemove,
 }: {
   pool: ResourcePoolRow;
-  consumers: BookingServiceType[];
   /** Active staff assigned to this pool. Empty for non-staff-role pools. */
   assignedStaff: StaffRow[];
   onEdit: () => void;
   onRemove: () => void;
 }) {
   const isStaffRole = pool.kind === 'staff_role';
-  // Staff-role rows lead with the people in the role and treat
-  // capacity as a derived consequence ("Sarah & Tom · 2 in this
-  // role"), since that's how an admin scans the list. Resource rows
-  // keep the original "We have N" copy because there's no list of
-  // human names to render.
-  // Resource pools surface "how many we have" and, when each unit
-  // holds more than 1 patient, the per-unit factor too. Staff-role
-  // rows lead with the people in the role.
-  const resourceCountLine =
-    pool.per_unit_capacity > 1
-      ? `${pool.units} ${pool.units === 1 ? 'unit' : 'units'} · ${pool.per_unit_capacity} patients each · capacity ${pool.capacity}`
-      : `We have ${pool.units}`;
-  const summaryLine = isStaffRole
-    ? assignedStaff.length === 0
-      ? 'No staff assigned yet · the booking checker will block any service that needs this role'
-      : pool.per_unit_capacity > 1
-        ? `${formatStaffList(assignedStaff)} · ${assignedStaff.length} in this role · each handles ${pool.per_unit_capacity} at a time · capacity ${pool.capacity}`
-        : `${formatStaffList(assignedStaff)} · ${assignedStaff.length} in this role`
-    : `${resourceCountLine}${
-        consumers.length > 0
-          ? ` · used by ${consumers.length} booking type${consumers.length === 1 ? '' : 's'}`
-          : ' · not in use yet'
-      }`;
+  // Subtitle is the human-readable description, in the operator's own
+  // words. The pill on the right already carries the count, and tapping
+  // the row opens the editor where capacity / assigned staff / per-unit
+  // numbers live in full. So the subtitle stays focused on "what is
+  // this thing for" — the question someone scanning the page for the
+  // first time actually has.
+  //
+  // Falls back to a generic "Spaces & equipment" / "Staff role" label
+  // if the admin never wrote a description. Better to read as obviously
+  // unfilled than to construct a sentence out of database rows.
+  const summaryLine =
+    pool.notes && pool.notes.trim() !== ''
+      ? pool.notes
+      : isStaffRole
+        ? 'Staff role · tap to add a description'
+        : 'Space or equipment · tap to add a description';
   // Pill copy: staff_role at 0 reads "0 assigned" (alarming on
   // purpose); resource rows keep the original "Only 1" / "N of these".
   const pillCopy = isStaffRole
@@ -641,8 +631,6 @@ function PoolCard({
             }}
           >
             {summaryLine}
-            {!isStaffRole && consumers.length === 0 ? '' : null}
-            {pool.notes ? ` · ${pool.notes}` : ''}
           </span>
         </div>
         <StatusPill tone={pillTone} size="sm">
@@ -669,20 +657,6 @@ function PoolCard({
       </div>
     </li>
   );
-}
-
-// Two names join with "and"; three or more get the Oxford-comma + "and"
-// treatment so the row reads naturally at a glance: "Sarah, Tom and Mira"
-// instead of "Sarah, Tom, Mira" (which reads like a list mid-sentence)
-// or "Sarah, Tom, and Mira" (heavier punctuation). Single name renders
-// alone.
-function formatStaffList(staff: StaffRow[]): string {
-  const names = staff.map((s) => s.display_name);
-  if (names.length === 0) return '';
-  if (names.length === 1) return names[0]!;
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  const head = names.slice(0, -1).join(', ');
-  return `${head} and ${names[names.length - 1]}`;
 }
 
 function PoolEditorDialog({
