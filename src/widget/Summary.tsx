@@ -1,4 +1,4 @@
-import { Calendar, MapPin, PoundSterling } from 'lucide-react';
+import { Calendar, MapPin, Plus, PoundSterling } from 'lucide-react';
 import { theme } from '../theme/index.ts';
 import { formatPrice, type WidgetState } from './state.ts';
 import {
@@ -7,6 +7,7 @@ import {
   type AxisKey,
 } from '../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
+import type { WidgetUpgrade } from './data.ts';
 
 // Summary panel — the right-hand "Booking Summary" card.
 //
@@ -20,16 +21,22 @@ import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 
 export function Summary({
   state,
+  upgrades,
   showCta,
   onCtaClick,
   isPaymentNext,
 }: {
   state: WidgetState;
+  /** Upgrade list resolved against the current axis pins. The
+   *  Summary picks the rows the patient has ticked. */
+  upgrades: WidgetUpgrade[];
   showCta: boolean;
   onCtaClick: () => void;
   isPaymentNext: boolean;
 }) {
-  const hasAnything = state.location || state.service || state.slotIso;
+  const selectedUpgrades = upgrades.filter((u) => state.upgradeIds.includes(u.id));
+  const hasAnything =
+    state.location || state.service || state.slotIso || selectedUpgrades.length > 0;
   const total = state.service ? state.service.depositPence : 0;
   // Per-axis pricing comes from lwo_catalogue (resolved after the
   // axis steps lock down which row applies). Until that lands in
@@ -91,6 +98,21 @@ export function Summary({
               })()}
             />
           ) : null}
+          {selectedUpgrades.map((u) => {
+            const archIsBoth = state.axes.arch === 'both';
+            const price =
+              archIsBoth && u.bothArchesPricePence !== null
+                ? u.bothArchesPricePence
+                : u.unitPricePence;
+            return (
+              <Row
+                key={u.id}
+                icon={<Plus size={14} />}
+                primary={u.name}
+                right={`+${formatPrice(price)}`}
+              />
+            );
+          })}
           {state.slotIso ? (
             <Row icon={<Calendar size={14} />} primary={formatSlotLong(state.slotIso)} />
           ) : null}

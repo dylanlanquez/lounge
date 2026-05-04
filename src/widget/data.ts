@@ -47,6 +47,14 @@ export const WIDGET_LOCATIONS: WidgetLocation[] = [
   },
 ];
 
+export interface WidgetUpgrade {
+  id: string;
+  name: string;
+  description: string;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Live booking-type read
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,4 +182,83 @@ export function firstAvailable(
     if (slots.length > 0) return { date: d, slot: slots[0]! };
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live upgrade read
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface UpgradeReadResult {
+  data: WidgetUpgrade[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/** Reads `lng_widget_upgrades` filtered to the catalogue row the
+ *  patient has resolved to via their axis pins. Returns null while
+ *  the inputs are incomplete (no service / no required axes pinned
+ *  yet) so the consumer can decide whether to render an upgrades
+ *  step at all. */
+export function useWidgetUpgrades(input: {
+  serviceType: string | null;
+  productKey: string | null;
+  repairVariant: string | null;
+}): UpgradeReadResult {
+  const [data, setData] = useState<WidgetUpgrade[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!input.serviceType) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      let q = supabase
+        .from('lng_widget_upgrades')
+        .select('id, name, description, unit_price, both_arches_price, sort_order')
+        .eq('service_type', input.serviceType);
+      // Narrow by whichever axis dimension applies. is-null comparison
+      // for the other axis: the same upgrade row is keyed on EITHER
+      // product_key OR repair_variant, never both.
+      if (input.productKey) {
+        q = q.eq('product_key', input.productKey);
+      } else {
+        q = q.is('product_key', null);
+      }
+      if (input.repairVariant) {
+        q = q.eq('repair_variant', input.repairVariant);
+      } else {
+        q = q.is('repair_variant', null);
+      }
+      const { data: rows, error: err } = await q.order('sort_order', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setData(null);
+        setLoading(false);
+        return;
+      }
+      const shaped: WidgetUpgrade[] = (rows ?? []).map((r) => ({
+        id: r.id as string,
+        name: (r.name as string) ?? '',
+        description: (r.description as string) ?? '',
+        unitPricePence: Math.round(Number(r.unit_price) * 100),
+        bothArchesPricePence:
+          r.both_arches_price === null ? null : Math.round(Number(r.both_arches_price) * 100),
+      }));
+      setData(shaped);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [input.serviceType, input.productKey, input.repairVariant]);
+
+  return { data, loading, error };
 }

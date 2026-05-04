@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  useWidgetUpgrades,
   WIDGET_LOCATIONS,
   type WidgetBookingType,
   type WidgetLocation,
@@ -38,6 +39,7 @@ import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 export type StepKey =
   | 'location'
   | 'service'
+  | 'upgrades'
   | 'time'
   | 'details'
   | 'payment'
@@ -58,6 +60,11 @@ export interface WidgetState {
   location: WidgetLocation | null;
   service: WidgetBookingType | null;
   axes: AxisPinState;
+  /** Upgrade ids the patient has ticked on the Upgrades step. The
+   *  widget loads upgrades for the resolved catalogue row only when
+   *  axes are complete enough to identify it; this set stays empty
+   *  for services with no upgrades available. */
+  upgradeIds: string[];
   slotIso: string | null;
   details: WidgetDetails;
 }
@@ -137,14 +144,22 @@ export function clearRememberedIdentity(): void {
  *    location
  *    service
  *    axis:<each axis the chosen service declares, in registry order>
+ *    upgrades (when the resolved catalogue row has any visible upgrades —
+ *              hasUpgrades flag flipped by the widget shell when its
+ *              useWidgetUpgrades query returns rows)
  *    time
  *    details
  *    payment (only when service.depositPence > 0)
  *
  *  Axis ordering matches SERVICE_AXES — variant > product > arch.
  *  The arch axis is dropped when the picked product's arch_match
- *  isn't 'single' (a "both"-only product needs no arch question). */
-export function activeStepsFor(state: WidgetState): StepKey[] {
+ *  isn't 'single' (a "both"-only product needs no arch question).
+ *
+ *  `hasUpgrades` is passed in (rather than read from state) because
+ *  it depends on a network query the engine can't make synchronously.
+ *  The widget shell holds the upgrade-list result and feeds the flag
+ *  in. */
+export function activeStepsFor(state: WidgetState, hasUpgrades: boolean): StepKey[] {
   const out: StepKey[] = [];
   if (WIDGET_LOCATIONS.length > 1) out.push('location');
   out.push('service');
@@ -164,6 +179,7 @@ export function activeStepsFor(state: WidgetState): StepKey[] {
       out.push(`axis:${axis.key}`);
     }
   }
+  if (hasUpgrades) out.push('upgrades');
   out.push('time');
   out.push('details');
   if (state.service && state.service.depositPence > 0) out.push('payment');
@@ -171,7 +187,10 @@ export function activeStepsFor(state: WidgetState): StepKey[] {
 }
 
 /** Hook that owns the booking state, the current-step pointer, and
- *  the navigation helpers. Call from the route component once. */
+ *  the navigation helpers. Call from the route component once. The
+ *  hook also runs the live upgrades query against the patient's
+ *  resolved axes; the Upgrades step becomes part of the active
+ *  list whenever the query returns rows. */
 export function useBookingState() {
   const [state, setState] = useState<WidgetState>(() => {
     const remembered = loadRememberedIdentity();
@@ -179,6 +198,7 @@ export function useBookingState() {
       location: WIDGET_LOCATIONS.length === 1 ? WIDGET_LOCATIONS[0]! : null,
       service: null,
       axes: {},
+      upgradeIds: [],
       slotIso: null,
       details: { ...EMPTY_DETAILS, ...(remembered ?? {}) },
     };
@@ -187,7 +207,16 @@ export function useBookingState() {
     WIDGET_LOCATIONS.length === 1 ? 'service' : 'location',
   );
 
-  const activeSteps = useMemo(() => activeStepsFor(state), [state]);
+  // Upgrades query lives inside the hook so the active step list
+  // can flip on / off cleanly as the patient drills through axes.
+  const upgradesResult = useWidgetUpgrades({
+    serviceType: state.service?.serviceType ?? null,
+    productKey: state.axes.product_key ?? null,
+    repairVariant: state.axes.repair_variant ?? null,
+  });
+  const upgrades = upgradesResult.data ?? [];
+  const hasUpgrades = upgrades.length > 0;
+  const activeSteps = useMemo(() => activeStepsFor(state, hasUpgrades), [state, hasUpgrades]);
   const currentIdx = activeSteps.indexOf(stepKey);
   const totalSteps = activeSteps.length;
 
@@ -215,15 +244,19 @@ export function useBookingState() {
       ...prev,
       service,
       // Switching service invalidates every axis pin from the
-      // previous service. Reset to a clean axes block.
+      // previous service AND any upgrades that were tied to the
+      // old service's catalogue row. Reset both.
       axes: {},
+      upgradeIds: [],
     }));
   };
 
   /** Update one axis pin and advance to the next active step. The
    *  step engine recomputes the list before navigating, so picking
    *  a "both"-only product correctly skips straight past the arch
-   *  step. */
+   *  step. Also clears the upgrade picks — switching axes can land
+   *  the patient on a different catalogue row whose upgrade set
+   *  doesn't include what was previously chosen. */
   const setAxisPin = (
     axisKey: AxisKey,
     value: string,
@@ -245,8 +278,19 @@ export function useBookingState() {
       } else if (axisKey === 'arch') {
         nextAxes.arch = value as 'upper' | 'lower' | 'both';
       }
-      return { ...prev, axes: nextAxes };
+      return { ...prev, axes: nextAxes, upgradeIds: [] };
     });
+  };
+
+  /** Toggle a single upgrade in the patient's selection. Used by
+   *  the Upgrades step's checkbox cards. */
+  const toggleUpgrade = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      upgradeIds: prev.upgradeIds.includes(id)
+        ? prev.upgradeIds.filter((x) => x !== id)
+        : [...prev.upgradeIds, id],
+    }));
   };
 
   return {
@@ -254,6 +298,8 @@ export function useBookingState() {
     setState,
     setService,
     setAxisPin,
+    toggleUpgrade,
+    upgrades,
     stepKey,
     activeSteps,
     currentIdx,
@@ -280,6 +326,8 @@ export function stepTitle(key: StepKey): string {
       return 'Location';
     case 'service':
       return 'What you need';
+    case 'upgrades':
+      return 'Optional extras';
     case 'time':
       return 'Date and time';
     case 'details':

@@ -11,6 +11,7 @@ import {
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
+import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
 import { PaymentStep } from './steps/Payment.tsx';
@@ -102,6 +103,7 @@ export function Widget() {
           <aside style={{ position: 'sticky', top: theme.space[5] }}>
             <Summary
               state={api.state}
+              upgrades={api.upgrades}
               showCta={api.stepKey === 'details'}
               onCtaClick={api.goNext}
               isPaymentNext={(api.activeSteps[api.currentIdx + 1] ?? null) === 'payment'}
@@ -291,6 +293,8 @@ function StepContent({
       return <LocationStep api={api} />;
     case 'service':
       return <ServiceStep api={api} />;
+    case 'upgrades':
+      return <UpgradesStep api={api} upgrades={api.upgrades} />;
     case 'time':
       return <TimeStep api={api} />;
     case 'details':
