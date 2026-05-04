@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
-import { firstAvailable, generateSlots, type WidgetSlot } from '../data.ts';
+import {
+  firstAvailable,
+  isClosedDay,
+  useWidgetAvailableSlots,
+  type WidgetSlot,
+} from '../data.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 // Step 4 — Date and Time.
@@ -43,10 +48,20 @@ export function TimeStep({ api }: { api: BookingStateApi }) {
     [service?.durationMinutes],
   );
 
-  const slots = useMemo(() => {
-    if (!service) return [];
-    return generateSlots(selectedDate, service.durationMinutes);
-  }, [selectedDate, service]);
+  // Live availability for the selected date — driven by the RPC
+  // lng_widget_available_slots, which generates the candidate grid
+  // server-side and filters each candidate through the same conflict
+  // check the staff app uses. Loading state surfaces in the slot
+  // list (faded out while a fetch is in flight).
+  const availability = useWidgetAvailableSlots({
+    locationId: api.state.location?.id ?? null,
+    serviceType: service?.serviceType ?? null,
+    date: selectedDate,
+    repairVariant: api.state.axes.repair_variant ?? null,
+    productKey: api.state.axes.product_key ?? null,
+    arch: api.state.axes.arch ?? null,
+  });
+  const slots = availability.data ?? [];
 
   // When the cursor moves to a month with no in-month selected day,
   // keep the calendar visually consistent — don't move the
@@ -109,11 +124,12 @@ export function TimeStep({ api }: { api: BookingStateApi }) {
           setMonthCursor(next);
         }}
         twoMonths={!isMobile}
-        durationMinutes={service?.durationMinutes ?? 30}
       />
 
       <SlotList
         slots={slots}
+        loading={availability.loading}
+        error={availability.error}
         selectedIso={api.state.slotIso}
         onPick={(iso) => {
           api.setState((prev) => ({ ...prev, slotIso: iso }));
@@ -134,14 +150,12 @@ function CalendarGrid({
   onSelectDate,
   onShiftMonth,
   twoMonths,
-  durationMinutes,
 }: {
   monthCursor: Date;
   selectedDate: Date;
   onSelectDate: (d: Date) => void;
   onShiftMonth: (delta: -1 | 1) => void;
   twoMonths: boolean;
-  durationMinutes: number;
 }) {
   const monthA = monthCursor;
   const monthB = useMemo(() => {
@@ -192,19 +206,9 @@ function CalendarGrid({
           gap: theme.space[5],
         }}
       >
-        <Month
-          monthDate={monthA}
-          selectedDate={selectedDate}
-          onSelectDate={onSelectDate}
-          durationMinutes={durationMinutes}
-        />
+        <Month monthDate={monthA} selectedDate={selectedDate} onSelectDate={onSelectDate} />
         {twoMonths ? (
-          <Month
-            monthDate={monthB}
-            selectedDate={selectedDate}
-            onSelectDate={onSelectDate}
-            durationMinutes={durationMinutes}
-          />
+          <Month monthDate={monthB} selectedDate={selectedDate} onSelectDate={onSelectDate} />
         ) : null}
       </div>
     </div>
@@ -215,12 +219,10 @@ function Month({
   monthDate,
   selectedDate,
   onSelectDate,
-  durationMinutes,
 }: {
   monthDate: Date;
   selectedDate: Date;
   onSelectDate: (d: Date) => void;
-  durationMinutes: number;
 }) {
   const cells = useMemo(() => buildMonthCells(monthDate), [monthDate]);
   const today = startOfDay(new Date());
@@ -267,8 +269,13 @@ function Month({
         {cells.map((c, i) => {
           const inMonth = c.date.getMonth() === monthDate.getMonth();
           const isPast = c.date < today;
-          const noSlots = generateSlots(c.date, durationMinutes).length === 0;
-          const disabled = isPast || noSlots;
+          // Closed-day check is client-side (Sunday) so the calendar
+          // grid doesn't fan out one availability RPC per cell. The
+          // *empty-day* case (every slot booked) shows up when the
+          // patient picks the date — the SlotList renders a "no
+          // openings" empty state when the live data comes back blank.
+          const closed = isClosedDay(c.date);
+          const disabled = isPast || closed;
           const selected = sameDay(c.date, selectedDate);
           return (
             <button
@@ -354,10 +361,14 @@ function ArrowButton({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => vo
 
 function SlotList({
   slots,
+  loading,
+  error,
   selectedIso,
   onPick,
 }: {
   slots: WidgetSlot[];
+  loading: boolean;
+  error: string | null;
   selectedIso: string | null;
   onPick: (iso: string) => void;
 }) {
@@ -367,6 +378,25 @@ function SlotList({
   useEffect(() => {
     forceRerender((t) => t + 1);
   }, [slots.length]);
+
+  if (error) {
+    return (
+      <div
+        style={{
+          background: theme.color.surface,
+          border: `1px solid ${theme.color.alert}`,
+          borderRadius: theme.radius.card,
+          padding: theme.space[5],
+          textAlign: 'center',
+          color: theme.color.alert,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+        }}
+      >
+        Couldn't load availability. Try refreshing the page.
+      </div>
+    );
+  }
 
   if (slots.length === 0) {
     return (
@@ -381,7 +411,7 @@ function SlotList({
           fontSize: theme.type.size.sm,
         }}
       >
-        Nothing free on this day. Pick another date.
+        {loading ? 'Checking availability…' : 'Nothing free on this day. Pick another date.'}
       </div>
     );
   }
@@ -403,6 +433,8 @@ function SlotList({
         flexDirection: 'column',
         gap: theme.space[4],
         boxShadow: theme.shadow.card,
+        opacity: loading ? 0.5 : 1,
+        transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
       <Bucket label="Morning" slots={buckets.morning} selectedIso={selectedIso} onPick={onPick} />

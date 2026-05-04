@@ -177,7 +177,10 @@ export function generateSlots(date: Date, durationMinutes: number): WidgetSlot[]
 
 /** First future date that has at least one slot for the given
  *  booking-type duration. Used to power the "Our first availability"
- *  banner. */
+ *  banner. The banner is best-effort — if the picked slot turns out
+ *  to be booked already, the live slot picker on the date page will
+ *  show that, and the submit-time conflict check is the final
+ *  guarantee. Phase 6 will add a server-side first-available RPC. */
 export function firstAvailable(
   durationMinutes: number,
   from: Date = new Date(),
@@ -190,6 +193,134 @@ export function firstAvailable(
     if (slots.length > 0) return { date: d, slot: slots[0]! };
   }
   return null;
+}
+
+/** Closed-day check used by the calendar grid to dim un-bookable
+ *  dates without firing one availability RPC per cell. The clinic
+ *  is closed on Sundays — the rest of the dimming (no free slots
+ *  for this duration on a given day) reads from the live RPC once
+ *  the patient picks a date. */
+export function isClosedDay(date: Date): boolean {
+  return date.getDay() === 0;
+}
+
+/** Build a WidgetSlot from a raw ISO 8601 timestamptz returned by
+ *  lng_widget_available_slots. Reads in the patient's local
+ *  timezone — fine for UK patients (the Glasgow clinic's only
+ *  market today). Multi-region rollout will revisit. */
+export function slotFromIso(iso: string): WidgetSlot {
+  const d = new Date(iso);
+  const hour = d.getHours();
+  const minute = d.getMinutes();
+  const period = hour < 12 ? 'am' : 'pm';
+  const displayHour = hour <= 12 ? hour : hour - 12;
+  return {
+    iso,
+    label: `${displayHour}:${String(minute).padStart(2, '0')} ${period}`,
+    bucket: hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live availability resolver
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Calls public.lng_widget_available_slots — a SECURITY DEFINER RPC
+// that generates the same candidate grid the stub did, then filters
+// each candidate through lng_booking_check_conflict. The patient
+// only ever sees real availability.
+//
+// Loading-state contract: while a fetch is in flight `data` keeps
+// the previous date's slots visible, so the day-shift doesn't blink.
+// The consumer can show a faint "Checking…" footer if they want to
+// surface the in-flight state.
+
+interface AvailableSlotsInput {
+  locationId: string | null;
+  serviceType: string | null;
+  date: Date | null;
+  repairVariant: string | null;
+  productKey: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+}
+
+interface AvailableSlotsResult {
+  data: WidgetSlot[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useWidgetAvailableSlots(input: AvailableSlotsInput): AvailableSlotsResult {
+  const [data, setData] = useState<WidgetSlot[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Memoise the date as YYYY-MM-DD so we don't refetch on identical
+  // dates expressed as different Date instances.
+  const dateKey = input.date ? toIsoDate(input.date) : null;
+
+  useEffect(() => {
+    if (!input.locationId || !input.serviceType || !dateKey) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      // Stub locations (id="loc-1") fall through to the RPC's
+      // default-location resolver. Phase 6 (multi-location) will
+      // make the WIDGET_LOCATIONS list a live read so the client
+      // always has a real UUID.
+      const realLocationId = UUID_RE.test(input.locationId ?? '') ? input.locationId : null;
+      const { data: rows, error: err } = await supabase.rpc('lng_widget_available_slots', {
+        p_location_id: realLocationId,
+        p_service_type: input.serviceType,
+        p_date: dateKey,
+        p_repair_variant: input.repairVariant,
+        p_product_key: input.productKey,
+        p_arch: input.arch,
+      });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      const shaped: WidgetSlot[] = Array.isArray(rows)
+        ? rows
+            .map((r) => (typeof r === 'object' && r && 'start_at' in r ? (r as { start_at: string }).start_at : null))
+            .filter((iso): iso is string => typeof iso === 'string')
+            .map(slotFromIso)
+        : [];
+      setData(shaped);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    input.locationId,
+    input.serviceType,
+    dateKey,
+    input.repairVariant,
+    input.productKey,
+    input.arch,
+  ]);
+
+  return { data, loading, error };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function toIsoDate(d: Date): string {
+  // Local-date YYYY-MM-DD — matches what the RPC's `date` parameter
+  // expects when treated as Europe/London civil time.
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
