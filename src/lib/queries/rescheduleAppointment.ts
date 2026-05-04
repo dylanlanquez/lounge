@@ -69,17 +69,25 @@ interface AppointmentRowMin {
   service_type: string | null;
   event_type_label: string | null;
   staff_account_id: string | null;
+  repair_variant: string | null;
+  product_key: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
 }
 
 // Pre-flight conflict check — used by the reschedule sheet to give
 // live feedback before the user submits. Returns the conflicts list
-// (empty = slot is free).
+// (empty = slot is free). Optional axis pins are forwarded to the RPC
+// so the conflict-checker resolves the right child config (durations
+// can shift between the parent row and a (product, arch) override).
 export async function checkBookingConflict(args: {
   locationId: string;
   serviceType: BookingServiceType;
   startAt: string; // ISO
   endAt: string;   // ISO
   excludeAppointmentId?: string;
+  repairVariant?: string | null;
+  productKey?: string | null;
+  arch?: 'upper' | 'lower' | 'both' | null;
 }): Promise<RescheduleConflict[]> {
   const { data, error } = await supabase.rpc('lng_booking_check_conflict', {
     p_location_id: args.locationId,
@@ -87,6 +95,9 @@ export async function checkBookingConflict(args: {
     p_start_at: args.startAt,
     p_end_at: args.endAt,
     p_exclude_appointment_id: args.excludeAppointmentId ?? null,
+    p_repair_variant: args.repairVariant ?? null,
+    p_product_key: args.productKey ?? null,
+    p_arch: args.arch ?? null,
   });
   if (error) throw new Error(error.message);
   if (!Array.isArray(data)) return [];
@@ -127,7 +138,7 @@ export async function rescheduleAppointment(input: {
   const { data: existingRaw, error: readErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status',
+      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch',
     )
     .eq('id', input.appointmentId)
     .maybeSingle();
@@ -151,8 +162,16 @@ export async function rescheduleAppointment(input: {
   }
 
   // ── 3. Resolve booking type to know the new slot's duration ────
+  // Pins inherited from the existing row so a (product, arch) override's
+  // duration carries through the reschedule rather than collapsing back
+  // to the parent's default.
   const serviceType = (existing.service_type ?? 'other') as BookingServiceType;
-  const config = await resolveBookingTypeConfig({ service_type: serviceType });
+  const config = await resolveBookingTypeConfig({
+    service_type: serviceType,
+    repair_variant: existing.repair_variant,
+    product_key: existing.product_key,
+    arch: existing.arch,
+  });
   if (!config) {
     throw new Error(
       `No booking config for service "${serviceType}". Set the parent defaults in Admin → Booking types first.`,
@@ -170,6 +189,9 @@ export async function rescheduleAppointment(input: {
     startAt: newStart.toISOString(),
     endAt: newEnd.toISOString(),
     excludeAppointmentId: existing.id,
+    repairVariant: existing.repair_variant,
+    productKey: existing.product_key,
+    arch: existing.arch,
   });
   if (conflicts.length > 0) {
     throw new RescheduleConflictError(conflicts);
@@ -188,6 +210,9 @@ export async function rescheduleAppointment(input: {
       service_type: serviceType,
       event_type_label: existing.event_type_label,
       staff_account_id: existing.staff_account_id,
+      repair_variant: existing.repair_variant,
+      product_key: existing.product_key,
+      arch: existing.arch,
     })
     .select('id')
     .single();

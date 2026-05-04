@@ -195,9 +195,20 @@ export function pinnedAxesLabel(
 
 // ── Loading axis values from the catalogue ───────────────────────
 
+// Catalogue arch_match values: 'single' = the receptionist must pick
+// upper/lower/both; 'both' = the row is preset to both; 'any' = the
+// product has no arch concept (whitening kits, etc.). Surfaced on
+// product-axis options so the new-booking flow can skip the arch
+// question for products that don't expose one.
+export type CatalogueArchMatch = 'single' | 'both' | 'any';
+
 export interface AxisValueOption {
   key: string;       // the value stored on the row (e.g. 'whitening_tray', 'upper')
   label: string;     // the human label shown in the picker
+  // Only set for product-axis options (catalogue_for). NewBookingSheet
+  // reads this to decide whether to ask the arch question after the
+  // product is picked. undefined for arch / variant axes.
+  archMatch?: CatalogueArchMatch;
 }
 
 export async function loadAxisValues(axis: AxisDef): Promise<AxisValueOption[]> {
@@ -230,22 +241,25 @@ export async function loadAxisValues(axis: AxisDef): Promise<AxisValueOption[]> 
     if (axis.source.productKeys.length === 0) return [];
     const { data, error } = await supabase
       .from('lwo_catalogue')
-      .select('product_key, name')
+      .select('product_key, name, arch_match')
       .in('product_key', [...axis.source.productKeys])
       .eq('active', true);
     if (error) return [];
-    const seen = new Map<string, string>();
-    for (const r of (data ?? []) as Array<{ product_key: string; name: string }>) {
+    const seen = new Map<string, { label: string; archMatch: CatalogueArchMatch }>();
+    for (const r of (data ?? []) as Array<{ product_key: string; name: string; arch_match: CatalogueArchMatch }>) {
       if (!seen.has(r.product_key)) {
-        seen.set(r.product_key, r.name ?? humanise(r.product_key));
+        seen.set(r.product_key, {
+          label: r.name ?? humanise(r.product_key),
+          archMatch: r.arch_match,
+        });
       }
     }
     // Order matches the registry's declared productKeys order so admins
     // see them in a predictable, intentional sequence (not alphabetical
     // shuffle when the catalogue gets reseeded).
     return axis.source.productKeys.flatMap((pk) => {
-      const label = seen.get(pk);
-      return label ? [{ key: pk, label }] : [];
+      const meta = seen.get(pk);
+      return meta ? [{ key: pk, label: meta.label, archMatch: meta.archMatch }] : [];
     });
   }
   return [];

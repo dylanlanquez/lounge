@@ -54,6 +54,14 @@ export async function createAppointment(input: {
   // the row. When omitted we derive from the service type so
   // schedule cards / emails still read sensibly.
   eventTypeLabel?: string;
+  // Booking-type axis pins. Forwarded into resolveBookingTypeConfig
+  // and the conflict check so child overrides apply (e.g. a different
+  // duration for "Whitening Tray, Upper" than the same-day-appliance
+  // parent default), and persisted on the appointment row so reschedule
+  // and visit detail can use them later.
+  repairVariant?: string | null;
+  productKey?: string | null;
+  arch?: 'upper' | 'lower' | 'both' | null;
 }): Promise<CreateAppointmentResult> {
   // ── 1. Input validation ────────────────────────────────────────
   if (!input.patientId) throw new Error('Pick a patient first.');
@@ -63,7 +71,12 @@ export async function createAppointment(input: {
   if (Number.isNaN(start.getTime())) throw new Error('Invalid start time.');
 
   // ── 2. Resolve duration ────────────────────────────────────────
-  const config = await resolveBookingTypeConfig({ service_type: input.serviceType });
+  const config = await resolveBookingTypeConfig({
+    service_type: input.serviceType,
+    repair_variant: input.repairVariant ?? null,
+    product_key: input.productKey ?? null,
+    arch: input.arch ?? null,
+  });
   if (!config) {
     throw new Error(
       `No booking config for service "${input.serviceType}". Set the parent defaults in Admin, Booking types first.`,
@@ -86,6 +99,9 @@ export async function createAppointment(input: {
       p_start_at: start.toISOString(),
       p_end_at: end.toISOString(),
       p_exclude_appointment_id: null,
+      p_repair_variant: input.repairVariant ?? null,
+      p_product_key: input.productKey ?? null,
+      p_arch: input.arch ?? null,
     },
   );
   if (conflictErr) throw new Error(conflictErr.message);
@@ -110,6 +126,9 @@ export async function createAppointment(input: {
       event_type_label: eventLabel,
       staff_account_id: input.staffAccountId ?? null,
       notes: input.notes?.trim() || null,
+      repair_variant: input.repairVariant ?? null,
+      product_key: input.productKey ?? null,
+      arch: input.arch ?? null,
     })
     .select('id')
     .single();
@@ -129,6 +148,9 @@ export async function createAppointment(input: {
     payload: {
       appointment_id: appointmentId,
       service_type: input.serviceType,
+      repair_variant: input.repairVariant ?? null,
+      product_key: input.productKey ?? null,
+      arch: input.arch ?? null,
       start_at: start.toISOString(),
       end_at: end.toISOString(),
       duration_minutes: durationMin,

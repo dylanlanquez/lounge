@@ -31,6 +31,15 @@ import {
   resolveBookingTypeConfig,
 } from '../../lib/queries/bookingTypes.ts';
 import {
+  type AxisDef,
+  type AxisKey,
+  type AxisValueOption,
+  type ArchValue,
+  axesForService,
+  axisValueLabel,
+  loadAxisValues,
+} from '../../lib/queries/bookingTypeAxes.ts';
+import {
   type RescheduleConflict,
   RescheduleConflictError,
   checkBookingConflict,
@@ -96,6 +105,19 @@ export function NewBookingSheet({
   const [creatingPatient, setCreatingPatient] = useState(false);
   const [createPatientError, setCreatePatientError] = useState<string | null>(null);
   const [serviceType, setServiceType] = useState<BookingServiceType | ''>('');
+  // Axis pins for the picked service (e.g. denture variant, product key,
+  // arch). Order is fixed per service via SERVICE_AXES; values are kept
+  // in a single object so resetting on service change is one assignment.
+  const [axisValues, setAxisValues] = useState<{
+    repair_variant: string | null;
+    product_key: string | null;
+    arch: ArchValue | null;
+  }>({ repair_variant: null, product_key: null, arch: null });
+  // Loaded option lists per axis. Keyed by AxisKey so multi-axis
+  // services (same_day_appliance, virtual_impression_appointment) can
+  // share the cache without re-querying when a sibling axis changes.
+  const [axisOptions, setAxisOptions] = useState<Partial<Record<AxisKey, AxisValueOption[]>>>({});
+  const [axisOptionsLoading, setAxisOptionsLoading] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>('');
   // Default sendEmail to true, then re-derive once a patient is
   // picked (it stays on if they have an email, off if not). The
@@ -133,6 +155,9 @@ export function NewBookingSheet({
     setPatientCreate(null);
     setCreatePatientError(null);
     setServiceType('');
+    setAxisValues({ repair_variant: null, product_key: null, arch: null });
+    setAxisOptions({});
+    setAxisOptionsLoading(false);
     setNotes('');
     setSendEmail(true);
     setSendEmailUserOverride(false);
@@ -149,9 +174,79 @@ export function NewBookingSheet({
     setSendEmail(!!patient?.email);
   }, [patient, sendEmailUserOverride]);
 
-  // ── Resolve booking-type config when the service changes ───────
+  // ── Reset axis pins whenever the service changes ───────────────
+  // The pins for "same_day_appliance" don't carry over to
+  // "denture_repair", so any switch wipes the previously chosen
+  // axes. Options for the new service load in the next effect.
+  useEffect(() => {
+    setAxisValues({ repair_variant: null, product_key: null, arch: null });
+    setAxisOptions({});
+  }, [serviceType]);
+
+  // ── Load axis option lists for the picked service ──────────────
   useEffect(() => {
     if (!open || !serviceType) {
+      setAxisOptionsLoading(false);
+      return;
+    }
+    const axes = axesForService(serviceType);
+    if (axes.length === 0) {
+      setAxisOptionsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAxisOptionsLoading(true);
+    (async () => {
+      const entries = await Promise.all(
+        axes.map(async (a) => [a.key, await loadAxisValues(a)] as const),
+      );
+      if (cancelled) return;
+      const next: Partial<Record<AxisKey, AxisValueOption[]>> = {};
+      for (const [k, v] of entries) next[k] = v;
+      setAxisOptions(next);
+      setAxisOptionsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, serviceType]);
+
+  // ── Effective axes for the current pick ────────────────────────
+  // SERVICE_AXES declares what *could* apply for a service. We drop
+  // the arch axis when the picked product's catalogue row has
+  // arch_match='any' (e.g. whitening kit), so the receptionist isn't
+  // asked an arch question that doesn't apply to that product.
+  const effectiveAxes = useMemo<readonly AxisDef[]>(() => {
+    if (!serviceType) return [];
+    const axes = axesForService(serviceType);
+    const productAxis = axes.find((a) => a.key === 'product_key');
+    if (!productAxis || !axisValues.product_key) return axes;
+    const productOptions = axisOptions.product_key ?? [];
+    const picked = productOptions.find((o) => o.key === axisValues.product_key);
+    if (picked?.archMatch === 'any') {
+      return axes.filter((a) => a.key !== 'arch');
+    }
+    return axes;
+  }, [serviceType, axisOptions.product_key, axisValues.product_key]);
+
+  // Clear an arch pin that's no longer relevant (e.g. user picked
+  // whitening_kit after picking aligner). Without this the row would
+  // persist a stale arch that's hidden from the UI.
+  useEffect(() => {
+    const archIsEffective = effectiveAxes.some((a) => a.key === 'arch');
+    if (!archIsEffective && axisValues.arch !== null) {
+      setAxisValues((v) => ({ ...v, arch: null }));
+    }
+  }, [effectiveAxes, axisValues.arch]);
+
+  const allAxesPinned = effectiveAxes.every((a) => {
+    const v = axisValues[a.key];
+    return v != null && v !== '';
+  });
+
+  // ── Resolve booking-type config when service / pins change ─────
+  useEffect(() => {
+    if (!open || !serviceType || !allAxesPinned) {
       setConfig(null);
       setConfigError(null);
       return;
@@ -161,7 +256,12 @@ export function NewBookingSheet({
     setConfigError(null);
     (async () => {
       try {
-        const c = await resolveBookingTypeConfig({ service_type: serviceType });
+        const c = await resolveBookingTypeConfig({
+          service_type: serviceType,
+          repair_variant: axisValues.repair_variant,
+          product_key: axisValues.product_key,
+          arch: axisValues.arch,
+        });
         if (cancelled) return;
         if (!c) {
           setConfigError(
@@ -178,7 +278,14 @@ export function NewBookingSheet({
     return () => {
       cancelled = true;
     };
-  }, [open, serviceType]);
+  }, [
+    open,
+    serviceType,
+    allAxesPinned,
+    axisValues.repair_variant,
+    axisValues.product_key,
+    axisValues.arch,
+  ]);
 
   // ── Live conflict check — debounced 250ms ──────────────────────
   useEffect(() => {
@@ -201,6 +308,9 @@ export function NewBookingSheet({
           serviceType: serviceType as BookingServiceType,
           startAt: newStart,
           endAt: newEnd,
+          repairVariant: axisValues.repair_variant,
+          productKey: axisValues.product_key,
+          arch: axisValues.arch,
         });
         if (cancelled) return;
         setConflicts(result);
@@ -216,7 +326,17 @@ export function NewBookingSheet({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [open, config, date, time, locationId, serviceType]);
+  }, [
+    open,
+    config,
+    date,
+    time,
+    locationId,
+    serviceType,
+    axisValues.repair_variant,
+    axisValues.product_key,
+    axisValues.arch,
+  ]);
 
   // ── Working-hours check ────────────────────────────────────────
   const hoursForDate = useMemo(() => {
@@ -235,12 +355,33 @@ export function NewBookingSheet({
   const canSave =
     !!patient &&
     !!serviceType &&
+    allAxesPinned &&
     slotIsValid &&
     conflicts.length === 0 &&
     !checkingConflicts &&
     !saving &&
     !configError &&
     !conflictError;
+
+  // Build the human-readable event_type_label that goes onto the row.
+  // Receptionists see this on schedule cards, patients see it on
+  // confirmation emails, and the catalogue picker on visit detail
+  // re-infers from it. Including the axis labels (e.g. "Same-day
+  // appliance · Whitening Tray · Upper") keeps every downstream
+  // surface aligned with what the receptionist actually picked.
+  const eventTypeLabel = useMemo(() => {
+    if (!serviceType) return undefined;
+    const base = BOOKING_SERVICE_TYPES.find((s) => s.value === serviceType)?.label ?? null;
+    const axisLabels: string[] = [];
+    for (const axis of effectiveAxes) {
+      const value = axisValues[axis.key];
+      if (!value) continue;
+      const opts = axisOptions[axis.key] ?? [];
+      const opt = opts.find((o) => o.key === value);
+      axisLabels.push(opt?.label ?? axisValueLabel(axis, value));
+    }
+    return [base, ...axisLabels].filter(Boolean).join(' · ') || undefined;
+  }, [serviceType, effectiveAxes, axisValues, axisOptions]);
 
   const onSave = async () => {
     if (!canSave || !patient || !serviceType) return;
@@ -255,6 +396,10 @@ export function NewBookingSheet({
         startAt: newStart,
         notes,
         sendEmail,
+        eventTypeLabel,
+        repairVariant: axisValues.repair_variant,
+        productKey: axisValues.product_key,
+        arch: axisValues.arch,
       });
       onCreated(result.appointmentId, {
         emailSent: result.emailSent,
@@ -392,6 +537,37 @@ export function NewBookingSheet({
               </div>
             ) : null}
           </Section>
+
+          {effectiveAxes.map((axis) => {
+            const options = axisOptions[axis.key] ?? [];
+            const value = axisValues[axis.key] ?? '';
+            return (
+              <Section
+                key={axis.key}
+                title={axis.label}
+                required
+                info={infoForAxis(axis.key)}
+              >
+                <DropdownSelect<string>
+                  ariaLabel={axis.label}
+                  value={value}
+                  onChange={(v) => {
+                    setAxisValues((prev) => ({
+                      ...prev,
+                      [axis.key]: axis.key === 'arch' ? (v as ArchValue) : v,
+                    }));
+                  }}
+                  options={options.map((o) => ({ value: o.key, label: o.label }))}
+                  placeholder={
+                    axisOptionsLoading && options.length === 0
+                      ? 'Loading…'
+                      : placeholderForAxis(axis.key)
+                  }
+                  disabled={axisOptionsLoading && options.length === 0}
+                />
+              </Section>
+            );
+          })}
 
           <Section
             title="When"
@@ -776,6 +952,25 @@ function formatDateLong(iso: string): string {
     month: 'short',
     year: 'numeric',
   });
+}
+
+// Per-axis copy. Kept inline rather than moved to the registry because
+// the wording is specific to the new-booking flow's tone (other axis
+// surfaces, like the admin override picker, use shorter labels).
+function infoForAxis(key: AxisKey): string {
+  if (key === 'repair_variant') {
+    return 'Which type of repair the patient is in for. Drives slot length and resources.';
+  }
+  if (key === 'product_key') {
+    return 'Which appliance the patient is in for. Drives slot length and which arch options apply.';
+  }
+  return 'Which arch the patient is having work on.';
+}
+
+function placeholderForAxis(key: AxisKey): string {
+  if (key === 'repair_variant') return 'Choose a variant';
+  if (key === 'product_key') return 'Choose a product';
+  return 'Choose an arch';
 }
 
 function clampHour(hhmm: string, endRoundUp = false): number {
