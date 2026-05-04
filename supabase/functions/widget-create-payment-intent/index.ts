@@ -117,13 +117,31 @@ Deno.serve(async (req) => {
     ].join('|'),
   );
 
+  // Restrict to card-based methods only. Two reasons:
+  //
+  //   1. Redirect-based methods (Klarna, Amazon Pay, Revolut Pay)
+  //      bounce the patient out to a third-party site and return
+  //      via the return_url — but the widget is a single-page app
+  //      with no URL state, so on return we'd have lost the
+  //      booking inputs and never call widget-create-appointment.
+  //      Money taken, no booking. To support these we'd need to
+  //      persist the booking inputs in localStorage on submit and
+  //      a "resume" flow on mount. Out of scope for v1.
+  //
+  //   2. Klarna is BNPL. Per the project working agreement BNPL
+  //      is never suggested, never advised, never quoted. Showing
+  //      it as a deposit option is a direct violation.
+  //
+  // 'card' implicitly includes Apple Pay / Google Pay (the
+  // PaymentElement surfaces them inside the card tab on supported
+  // devices), so we don't lose the in-page wallet flows.
   const piRes = await stripeFetch(
     'POST',
     '/payment_intents',
     {
       amount: String(depositPence),
       currency: 'gbp',
-      'automatic_payment_methods[enabled]': 'true',
+      'payment_method_types[]': 'card',
       receipt_email: body.email,
       'metadata[source]': 'widget',
       'metadata[service_type]': body.serviceType,
