@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Eye, FileSignature, Files, Info, Layers, Pencil, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
+import { CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye, FileSignature, Files, Info, Layers, Pencil, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import {
   Avatar,
   BeforeAfterGallery,
@@ -576,7 +576,7 @@ function ScanOnFilePill({ label }: { label: string }) {
         letterSpacing: 0.1,
       }}
     >
-      <Check size={12} aria-hidden style={{ flexShrink: 0 }} />
+      <CheckCircle2 size={12} aria-hidden style={{ flexShrink: 0 }} />
       {label}
     </span>
   );
