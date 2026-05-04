@@ -349,26 +349,20 @@ function PaymentForm({
 
   return (
     <Card>
-      <Section
-        eyebrow="How would you like to pay?"
-        heading="Choose a payment method"
-        description="Apple Pay and Google Pay appear automatically on supported devices."
-      >
-        <PaymentElement
-          options={{
-            layout: 'tabs',
-            paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
-            fields: {
-              billingDetails: {
-                address: {
-                  country: 'never',
-                  postalCode: 'auto',
-                },
+      <PaymentElement
+        options={{
+          layout: 'tabs',
+          paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
+          fields: {
+            billingDetails: {
+              address: {
+                country: 'never',
+                postalCode: 'auto',
               },
             },
-          }}
-        />
-      </Section>
+          },
+        }}
+      />
 
       {payError ? (
         <p
@@ -416,79 +410,7 @@ function PaymentForm({
         {paying || submitting ? 'Processing…' : `Pay ${formatPrice(deposit)}`}
       </button>
 
-      <p
-        style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: 11,
-          color: theme.color.inkSubtle,
-          textAlign: 'center',
-          lineHeight: theme.type.leading.snug,
-          fontWeight: theme.type.weight.semibold,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-        }}
-      >
-        Secured by Stripe · We never see your card number
-      </p>
     </Card>
-  );
-}
-
-function Section({
-  eyebrow,
-  heading,
-  description,
-  children,
-}: {
-  eyebrow?: string;
-  heading: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <div>
-        {eyebrow ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: 11,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
-              textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
-              marginBottom: theme.space[1],
-            }}
-          >
-            {eyebrow}
-          </p>
-        ) : null}
-        <h2
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
-          }}
-        >
-          {heading}
-        </h2>
-        {description ? (
-          <p
-            style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.snug,
-            }}
-          >
-            {description}
-          </p>
-        ) : null}
-      </div>
-      {children}
-    </div>
   );
 }
 

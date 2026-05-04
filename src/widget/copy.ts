@@ -129,7 +129,7 @@ export const DEFAULT_COPY: WidgetCopy = {
   summaryCtaBook: 'Book appointment',
   summaryCtaPayment: 'Continue to payment',
 
-  footerPoweredBy: 'Powered by Lounge',
+  footerPoweredBy: '',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

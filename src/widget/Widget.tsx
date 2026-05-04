@@ -267,7 +267,6 @@ function WidgetReady({
               ctaDisabled={ctaDisabled}
               isPaymentNext={isPaymentNext}
             />
-            <PoweredByLounge label={copy.footerPoweredBy} />
           </aside>
         )}
       </main>
@@ -725,20 +724,3 @@ export function PrimaryCta({
   );
 }
 
-function PoweredByLounge({ label }: { label: string }) {
-  if (!label) return null;
-  return (
-    <p
-      style={{
-        margin: `${theme.space[5]}px 0 0`,
-        fontSize: 11,
-        color: theme.color.inkSubtle,
-        textAlign: 'center',
-        textTransform: 'uppercase',
-        letterSpacing: theme.type.tracking.wide,
-      }}
-    >
-      {label}
-    </p>
-  );
-}
