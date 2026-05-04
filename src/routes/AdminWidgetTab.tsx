@@ -657,45 +657,94 @@ function ServiceCardBody({
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
-  // Local draft for the parent service's widget-* fields. Save
-  // commits these in one shot.
+  // Local draft for the WHOLE form — parent service fields and the
+  // per-product visibility toggles. Nothing writes to the database
+  // until the admin clicks Save. Cancel reverts everything.
   const [visible, setVisible] = useState(service.widgetVisible);
   const [description, setDescription] = useState(service.widgetDescription);
   const [depositText, setDepositText] = useState(formatPoundsText(service.widgetDepositPence));
+  const [productVis, setProductVis] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
+  );
   const [saving, setSaving] = useState(false);
 
-  // Re-seed when the parent row changes underneath us.
+  // Re-seed when the parent row changes underneath us (e.g. after a
+  // sibling card saves and the parent refreshes the data list).
   useEffect(() => {
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
+    setProductVis(
+      Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
+    );
   }, [
     service.widgetVisible,
     service.widgetDescription,
     service.widgetDepositPence,
+    service.products,
   ]);
 
   const depositPence = parsePoundsToPence(depositText) ?? 0;
+
+  // Which product IDs differ from the saved row state? Saved as a
+  // list so we can iterate it for the batched commit and count it
+  // for the dirty check.
+  const changedProductIds = service.products
+    .filter((p) => productVis[p.id] !== p.widgetVisible)
+    .map((p) => p.id);
+
   const dirty =
     visible !== service.widgetVisible ||
     description !== service.widgetDescription ||
-    depositPence !== service.widgetDepositPence;
+    depositPence !== service.widgetDepositPence ||
+    changedProductIds.length > 0;
+
+  // Browser-level navigation guard. Whenever this card is dirty the
+  // tab close / refresh / back button gets the standard
+  // "Are you sure?" prompt. Doesn't catch in-app navigation —
+  // React Router users would need a separate guard for that — but
+  // covers the common "I closed the tab and lost my work" case.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Modern browsers ignore the message and show their own
+      // generic prompt, but returning a non-empty string is still
+      // required for the prompt to fire on older WebKit / Firefox.
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
 
   const reset = () => {
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
+    setProductVis(
+      Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
+    );
   };
 
   const onSave = async () => {
     setSaving(true);
     try {
-      await saveServiceConfig({
-        id: service.id,
-        widgetVisible: visible,
-        widgetDescription: description,
-        widgetDepositPence: depositPence,
-      });
+      // Commit the parent service config + every changed product row
+      // in parallel. If any single write fails, surface the error
+      // and leave the rest of the local draft intact so the admin
+      // can fix it.
+      await Promise.all([
+        saveServiceConfig({
+          id: service.id,
+          widgetVisible: visible,
+          widgetDescription: description,
+          widgetDepositPence: depositPence,
+        }),
+        ...changedProductIds.map((id) =>
+          saveProductVisibility({ id, widgetVisible: productVis[id] === true }),
+        ),
+      ]);
       onSaved();
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Unknown error');
@@ -715,7 +764,6 @@ function ServiceCardBody({
         gap: theme.space[5],
       }}
     >
-      {/* ── Visibility + sticky settings ──────────────────────── */}
       <Section title="Show this service in the widget?">
         <Toggle
           checked={visible}
@@ -780,7 +828,13 @@ function ServiceCardBody({
             >
               {service.products.map((p) => (
                 <li key={p.id}>
-                  <ProductRow product={p} onSaved={onSaved} onError={onError} />
+                  <ProductRow
+                    product={p}
+                    checked={productVis[p.id] ?? false}
+                    onChange={(next) =>
+                      setProductVis((prev) => ({ ...prev, [p.id]: next }))
+                    }
+                  />
                 </li>
               ))}
             </ul>
@@ -788,12 +842,30 @@ function ServiceCardBody({
         </Section>
       ) : null}
 
+      {dirty ? (
+        <div
+          role="status"
+          style={{
+            margin: 0,
+            padding: `${theme.space[2]}px ${theme.space[3]}px`,
+            background: '#FFF6E5',
+            color: theme.color.warn,
+            border: `1px solid #F5DCA0`,
+            borderRadius: theme.radius.input,
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          You have unsaved changes. Hit Save changes to publish them, or Cancel to
+          discard.
+        </div>
+      ) : null}
+
       <div
         style={{
           display: 'flex',
           justifyContent: 'flex-end',
           gap: theme.space[2],
-          marginTop: theme.space[2],
           paddingTop: theme.space[3],
           borderTop: `1px solid ${theme.color.border}`,
         }}
@@ -811,25 +883,13 @@ function ServiceCardBody({
 
 function ProductRow({
   product,
-  onSaved,
-  onError,
+  checked,
+  onChange,
 }: {
   product: WidgetAdminProduct;
-  onSaved: () => void;
-  onError: (message: string) => void;
+  checked: boolean;
+  onChange: (next: boolean) => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const onToggle = async (next: boolean) => {
-    setBusy(true);
-    try {
-      await saveProductVisibility({ id: product.id, widgetVisible: next });
-      onSaved();
-    } catch (e) {
-      onError(e instanceof Error ? e.message : 'Unknown error');
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <label
       style={{
@@ -840,20 +900,18 @@ function ProductRow({
         border: `1px solid ${theme.color.border}`,
         borderRadius: theme.radius.input,
         background: theme.color.surface,
-        cursor: busy ? 'progress' : 'pointer',
-        opacity: busy ? 0.6 : 1,
+        cursor: 'pointer',
       }}
     >
       <input
         type="checkbox"
-        checked={product.widgetVisible}
-        onChange={(e) => onToggle(e.target.checked)}
-        disabled={busy}
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
         style={{
           width: 18,
           height: 18,
           accentColor: theme.color.ink,
-          cursor: busy ? 'progress' : 'pointer',
+          cursor: 'pointer',
           flexShrink: 0,
         }}
       />
