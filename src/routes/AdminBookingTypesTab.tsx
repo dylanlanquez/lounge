@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Clock, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react';
 import {
+  BottomSheet,
   Button,
   Card,
   Checkbox,
-  Dialog,
   DropdownSelect,
   Input,
   PatientFacingDurationEditor,
@@ -1301,10 +1301,9 @@ function BookingTypeEditorDialog({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onClose}
-      width={620}
       title={title}
       description={
         isParent
@@ -1318,15 +1317,6 @@ function BookingTypeEditorDialog({
             justifyContent: 'flex-end',
             alignItems: 'center',
             gap: theme.space[2],
-            // Hairline separator anchors the footer as a footer the
-            // way Stripe / Linear modals do — content above scrolls,
-            // actions stay pinned visually.
-            borderTop: `1px solid ${theme.color.border}`,
-            marginInline: -theme.space[5],
-            marginBottom: -theme.space[5],
-            paddingInline: theme.space[5],
-            paddingBlock: theme.space[4],
-            background: theme.color.bg,
           }}
         >
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
@@ -1403,7 +1393,7 @@ function BookingTypeEditorDialog({
           />
         </DialogSection>
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
