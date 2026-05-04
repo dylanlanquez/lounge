@@ -720,7 +720,115 @@ These do not block Phase 0 sign-off but must be resolved before the slice they t
 
 ---
 
-## 10. Sign-off
+## 7. ADR-007 — Multi-axis booking-type overrides
+
+### 7.1 Status
+
+**Decided.** Generalises the override model in `lng_booking_type_config` from "exactly one of {repair_variant, product_key, arch}" to "any subset of a per-service axis registry". Migration M15 carries the schema change. No deprecation of existing single-axis rows — they remain valid (chain length = 2).
+
+### 7.2 Context
+
+The original override model gave each booking type a single child-override dimension:
+
+- `denture_repair` → per `repair_variant`.
+- `click_in_veneers` → per `arch`.
+- `impression_appointment` → per `arch`.
+- `same_day_appliance` → per `product_key`.
+
+This was enforced in three places: the `at_most_one_child_key` check constraint on `lng_booking_type_config`, the resolver function `lng_booking_type_resolve` (which picks one branch by `if p_repair_variant is not null then … elsif p_product_key is not null then … elsif p_arch is not null …`), and the per-service `childKindLabel` helper in `AdminBookingTypesTab.tsx`.
+
+It breaks the moment a booking type genuinely spans two dimensions. The first concrete case is **Virtual impression appointment**, which can be for any of six products (Retainers, Whitening Trays, Night Guards, Day Guards, Click-in Veneers, Missing Tooth Retainer) and any of three arches (Upper, Lower, Both). The same shape applies to in-person impression. A patch that gives virtual a second `childKindLabel` would only postpone the next collision.
+
+### 7.3 Decision
+
+**A booking type declares its axes in priority order. An override row pins values on any subset of those axes (zero pinned = parent / defaults). The resolver walks rows from most-specific to least-specific and coalesces field-by-field; same-specificity ties are broken by axis priority.**
+
+#### 7.3.1 The axis registry
+
+Lives in code, in a new module `src/lib/queries/bookingTypeAxes.ts`. The registry is the source of truth for "what dimensions does this service have, what values can each take, and in what priority". The DB stays a dumb store; validation happens at write time.
+
+Schema in TypeScript:
+
+```ts
+type AxisKey = 'repair_variant' | 'product_key' | 'arch';
+
+interface AxisDef {
+  key: AxisKey;                                // column name on lng_booking_type_config
+  label: string;                               // UI label, e.g. "Product", "Arch"
+  source: AxisSource;                          // how to enumerate valid values
+}
+
+type AxisSource =
+  | { kind: 'arch_enum' }                      // upper | lower | both
+  | { kind: 'denture_variants' }               // catalogue lookup of denture repair variants
+  | { kind: 'catalogue_for'; serviceKey: string } // catalogue products tagged for this service
+  ;
+
+const SERVICE_AXES: Record<BookingServiceType, AxisDef[]>;
+```
+
+Order in the array IS the priority order. First entry = highest priority for tie-breaks.
+
+#### 7.3.2 Resolver semantics
+
+Given a request `(service_type, repair_variant?, product_key?, arch?)`:
+
+1. **Candidate set**: every config row where `service_type` matches and, for each axis, the row's value is either NULL (matches anything) or equal to the request's value.
+2. **Specificity**: for each candidate, count the number of axes whose row value is non-null AND matches the request value.
+3. **Sort**: specificity DESC. Ties broken by axis priority — the row that pins the higher-priority axis wins. (Concrete: with axes [product_key, arch] and a request pinning both, an override pinning only product_key beats an override pinning only arch at specificity 1.)
+4. **Walk**: for each field on the resolved row (working_hours, durations, max_concurrent, patient_facing_*, notes), use the first non-null value down the chain. The parent (specificity 0, all axes null) is the final fallback.
+
+Phase resolution follows the same pattern, scoped per `phase_index`. The parent's phase set defines the canvas (number of phases, ordering, label). Child rows in the chain override per-phase fields by phase_index. Most-specific match per field wins, with axis-priority tie-break.
+
+Pool consumption per phase chains the same way: the most-specific row that has any pool assignment wins (replace, not merge — pool sets aren't additive across the chain because that would be confusing).
+
+#### 7.3.3 Database changes
+
+- **Drop** `at_most_one_child_key` check constraint. Existing single-axis rows remain valid.
+- **Keep** the unique index `(service_type, repair_variant, product_key, arch) NULLS NOT DISTINCT` — already supports multi-axis combos.
+- **Rewrite** `lng_booking_type_resolve(text, text, text, text)` to implement the chain semantics above.
+- **Rewrite** the phase-pool resolver in `20260501000004_lng_booking_resource_pools.sql` (function: `lng_booking_resolve_pool_ids`) to walk the chain.
+- **Rewrite** the per-phase override resolver added in `20260503000010_lng_phase_label_override.sql` to walk the chain by phase_index.
+
+No data migration needed. Existing rows have at most one axis pinned, so the new resolver returns identical values for them.
+
+#### 7.3.4 Catalogue ↔ booking-type linkage
+
+The `catalogue_for:X` axis source needs to enumerate "which products can be the subject of this booking type". Two implementations:
+
+- **Phase 1 (now)**: a code-side allow-list keyed by service_type, in the same registry module. Hardcoded, type-safe, ships with this ADR.
+- **Phase 2 (post-Calendly)**: a `lng_booking_type_product_keys (service_type, product_key)` join table editable from admin. The registry's `source: 'catalogue_for:X'` is the seam — flipping A→B later only changes how that source resolves at the UI/validation layer.
+
+Per-service product lists are independent; in-person impression and virtual impression have different lists. Dylan supplies them.
+
+#### 7.3.5 UI changes
+
+**Add override** (per service card): single button "Add an override" → opens a BottomSheet with one picker per axis the service declares. Each picker has an "Any" option meaning "leave this axis unpinned". After picking, save creates the row (or jumps straight to edit if a row with that exact axis combination exists). Services with zero axes (`other`) hide the button.
+
+**Override list** (under each service card): each row displays its pinned axes as a label string, e.g. `Whitening Tray · Upper`, `Upper`, or `Whitening Tray`. Sorted most-specific first, with a subtle indent so the chain reads visually.
+
+**Edit override**: opens the existing PhaseEditor / config editor unchanged. Phase canvas still comes from parent.
+
+**One-axis services** behave identically to today's UX (the picker collapses to a single field, list rendering shows just that one axis's value).
+
+### 7.4 Alternatives considered
+
+- **Patch virtual_impression_appointment with a second `childKindLabel`**: rejected — would postpone the same collision to the next two-axis service.
+- **Compose chain field-by-field instead of row-by-row** (each field independently picks the most specific row that sets it): rejected — produces "frankenrows" where a config blends fields from several different override rows. Hard for an admin to predict; hard to display in the UI.
+- **Replace single-row override with a join table per axis** (e.g. `lng_booking_type_arch_override`): rejected — N tables for N axes, heavyweight, breaks the unique-key clean-up of the existing model.
+- **Move axis declarations into the database** (a `lng_booking_service_axes` table): deferred to Phase 2 alongside the catalogue allow-list table.
+
+### 7.5 Consequences
+
+- Existing override rows keep working unchanged.
+- The Booking Types admin tab gets a new "Add override" sheet. List rows render axis chips instead of single-axis labels.
+- Adding a new booking type with multi-axis overrides is a one-line addition to the registry.
+- The DB stays loose — same row schema for one-axis or multi-axis. Validation lives in the registry.
+- Resolver complexity goes from "lookup parent + lookup one child" to "lookup all candidates + sort + walk". For typical N (≤ 6 rows per service), the cost is a single indexed scan + an in-memory sort. Negligible.
+
+---
+
+## 8. Sign-off
 
 By signing off this ADR, you accept:
 
@@ -730,6 +838,7 @@ By signing off this ADR, you accept:
 - ADR-004: `receptionist` added to `lab_role_enum`, with the boolean overrides specified.
 - ADR-005: Inline styles + theme system, no CSS framework.
 - ADR-006: Booking phases — phase sequence with per-phase pool consumption + patient-facing duration as a separate, admin-controlled field. Slice spec at `docs/slices/booking-phases.md`.
+- ADR-007: Multi-axis booking-type overrides — service axes declared in code registry, override rows pin any subset, resolver walks specificity-sorted chain.
 
 Open architecture questions AQ1–AQ5 will be resolved at the slice they block, not as a Phase 0 sign-off prerequisite. AQ6–AQ11 (booking-phases) are resolved in the slice doc at sign-off.
 
