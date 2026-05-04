@@ -446,7 +446,7 @@ function ServiceNode({
           top: 0,
           bottom: 0,
           left: 0,
-          width: 4,
+          width: 8,
           background: dot,
         }}
       />
@@ -454,7 +454,7 @@ function ServiceNode({
         style={{
           width: '100%',
           padding: `${theme.space[4]}px ${theme.space[5]}px`,
-          paddingLeft: theme.space[5] + 4,
+          paddingLeft: theme.space[5] + 8,
           display: 'flex',
           alignItems: 'center',
           gap: theme.space[3],
