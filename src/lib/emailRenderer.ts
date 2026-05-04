@@ -99,11 +99,13 @@ export function substituteVariables(
 // Markdown-ish → HTML
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Convert raw newlines to <br> in groups of two-or-more (paragraph
- * breaks) vs single (line breaks). Mirrors Checkpoint behaviour. */
+/** Convert raw newlines to <br> linearly — each \n becomes one <br>.
+ * `\n` is a soft line break, `\n\n` is a paragraph break, and each
+ * additional `\n` beyond that represents one empty paragraph the
+ * editor preserved as visual spacing. */
 function toBr(text: string): string {
   if (!text) return '';
-  return text.trim().replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+  return text.trim().replace(/\n/g, '<br>');
 }
 
 /**

@@ -188,12 +188,24 @@ export function syntaxToHtml(text: string): string {
 
   let html = '';
   let currentP: string[] = [];
+  // Counts consecutive empty htmlLines once the previous paragraph
+  // has been flushed. The 1st empty line is the block separator;
+  // each additional one becomes a `<p></p>` so vertical spacing the
+  // user added with extra Enters survives the round trip.
+  let emptyStreak = 0;
+  const flushEmpties = () => {
+    if (emptyStreak > 1) {
+      for (let i = 0; i < emptyStreak - 1; i++) html += '<p></p>';
+    }
+    emptyStreak = 0;
+  };
   for (const line of htmlLines) {
     if (line === '') {
       if (currentP.length) {
         html += `<p>${currentP.join('<br>')}</p>`;
         currentP = [];
       }
+      emptyStreak++;
       continue;
     }
     if (/^<(h[23]|hr|ul|li|\/ul|img)/.test(line)) {
@@ -201,9 +213,11 @@ export function syntaxToHtml(text: string): string {
         html += `<p>${currentP.join('<br>')}</p>`;
         currentP = [];
       }
+      flushEmpties();
       html += line;
       continue;
     }
+    flushEmpties();
     currentP.push(line);
   }
   if (currentP.length) html += `<p>${currentP.join('<br>')}</p>`;
@@ -271,10 +285,16 @@ export function htmlToSyntax(html: string): string {
     const el = node as Element;
     const tag = el.nodeName;
     if (tag === 'BR') return '\n';
-    if (tag === 'HR') return '---';
-    if (tag === 'H2') return '## ' + wc(el);
-    if (tag === 'H3') return '### ' + wc(el);
-    if (tag === 'P') return wc(el) + '\n\n';
+    if (tag === 'HR') return '---\n\n';
+    if (tag === 'H2') return '## ' + wc(el) + '\n\n';
+    if (tag === 'H3') return '### ' + wc(el) + '\n\n';
+    if (tag === 'P') {
+      const inner = wc(el);
+      // Empty paragraphs are visual spacers — encode as a single
+      // newline so consecutive empty <p>s survive the round trip.
+      // A non-empty paragraph terminates with \n\n (block separator).
+      return inner === '' ? '\n' : inner + '\n\n';
+    }
     if (tag === 'UL') {
       const lis = Array.from(el.children).map((li) => '- ' + wc(li));
       return lis.join('\n') + '\n\n';
@@ -290,7 +310,7 @@ export function htmlToSyntax(html: string): string {
     if (tag === 'IMG') {
       const src = el.getAttribute('src') ?? '';
       const alt = el.getAttribute('alt') ?? '';
-      return `![${alt}](${src})`;
+      return `![${alt}](${src})\n\n`;
     }
     if (tag === 'SPAN') {
       if (el.getAttribute('data-type') === 'styled-button') {
@@ -318,7 +338,10 @@ export function htmlToSyntax(html: string): string {
   };
   const wc = (node: globalThis.Node): string =>
     Array.from(node.childNodes).map(walk).join('');
-  return wc(d).replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '');
+  // Trim only leading/trailing newlines. Internal runs are
+  // intentional: \n\n is a block separator, and each extra \n beyond
+  // that represents one preserved empty paragraph.
+  return wc(d).replace(/^\n+|\n+$/g, '');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
