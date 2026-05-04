@@ -116,8 +116,8 @@ export function Reports() {
           <DateRangePicker value={range} onChange={setRange} />
         </div>
 
-        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5], overflowX: 'auto' }}>
-          <SegmentedControl<Tab> value={tab} onChange={setTab} options={TABS} />
+        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5] }}>
+          <SegmentedControl<Tab> scrollable value={tab} onChange={setTab} options={TABS} />
         </div>
 
         {tab === 'overview' ? (

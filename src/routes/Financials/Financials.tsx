@@ -103,8 +103,9 @@ export function Financials() {
           <DateRangePicker value={range} onChange={setRange} />
         </div>
 
-        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5], overflowX: 'auto' }}>
+        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5] }}>
           <SegmentedControl<Tab>
+            scrollable
             value={tab}
             onChange={setTab}
             options={TABS.filter((t) =>

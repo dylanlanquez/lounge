@@ -142,8 +142,9 @@ export function Admin() {
           Admin
         </h1>
 
-        <div style={{ marginBottom: theme.space[5], overflowX: 'auto' }}>
+        <div style={{ marginBottom: theme.space[5] }}>
           <SegmentedControl<Tab>
+            scrollable
             value={tab}
             onChange={setTab}
             options={[
