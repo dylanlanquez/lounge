@@ -773,51 +773,118 @@ function DayRow({
   onChange: (next: OpeningHoursDay) => void;
 }) {
   const closed = value.closed === true;
+  const hasBreak = !closed && Array.isArray(value.break);
+  // Spread current open/close so toggling break or editing one of
+  // open/close preserves the rest of the day's shape.
+  const open = closed ? '09:00' : value.open ?? '09:00';
+  const close = closed ? '18:00' : value.close ?? '18:00';
+  const breakStart = hasBreak ? value.break![0] : '13:00';
+  const breakEnd = hasBreak ? value.break![1] : '14:00';
+
+  const setOpen = (v: string) => {
+    onChange({
+      open: v,
+      close,
+      ...(hasBreak ? { break: [breakStart, breakEnd] as [string, string] } : {}),
+    });
+  };
+  const setClose = (v: string) => {
+    onChange({
+      open,
+      close: v,
+      ...(hasBreak ? { break: [breakStart, breakEnd] as [string, string] } : {}),
+    });
+  };
+  const toggleClosed = (c: boolean) => {
+    onChange(c ? { closed: true } : { open, close });
+  };
+  const toggleBreak = (b: boolean) => {
+    onChange(b ? { open, close, break: [breakStart, breakEnd] } : { open, close });
+  };
+  const setBreakStart = (v: string) => {
+    onChange({ open, close, break: [v, breakEnd] });
+  };
+  const setBreakEnd = (v: string) => {
+    onChange({ open, close, break: [breakStart, v] });
+  };
+
   return (
     <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: '60px 1fr 1fr 100px',
-        alignItems: 'center',
-        gap: theme.space[3],
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+        padding: `${theme.space[3]}px 0`,
+        borderBottom: `1px solid ${theme.color.border}`,
       }}
     >
-      <span
+      <div
         style={{
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
+          display: 'grid',
+          gridTemplateColumns: '60px 1fr 1fr 100px',
+          alignItems: 'center',
+          gap: theme.space[3],
         }}
       >
-        {label}
-      </span>
-      <Input
-        label=""
-        value={closed ? '' : value.open ?? ''}
-        onChange={(e) =>
-          onChange({ open: e.target.value, close: closed ? '17:00' : value.close ?? '17:00' })
-        }
-        placeholder="09:00"
-        type="time"
-        disabled={closed}
-      />
-      <Input
-        label=""
-        value={closed ? '' : value.close ?? ''}
-        onChange={(e) =>
-          onChange({ open: closed ? '09:00' : value.open ?? '09:00', close: e.target.value })
-        }
-        placeholder="18:00"
-        type="time"
-        disabled={closed}
-      />
-      <Checkbox
-        label="Closed"
-        checked={closed}
-        onChange={(c) =>
-          onChange(c ? { closed: true } : { open: '09:00', close: '18:00' })
-        }
-      />
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {label}
+        </span>
+        <Input
+          label=""
+          value={closed ? '' : open}
+          onChange={(e) => setOpen(e.target.value)}
+          placeholder="09:00"
+          type="time"
+          disabled={closed}
+        />
+        <Input
+          label=""
+          value={closed ? '' : close}
+          onChange={(e) => setClose(e.target.value)}
+          placeholder="18:00"
+          type="time"
+          disabled={closed}
+        />
+        <Checkbox label="Closed" checked={closed} onChange={toggleClosed} />
+      </div>
+      {!closed ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '60px 1fr 1fr 100px',
+            alignItems: 'center',
+            gap: theme.space[3],
+            paddingLeft: theme.space[1],
+          }}
+        >
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+            Lunch
+          </span>
+          <Input
+            label=""
+            value={hasBreak ? breakStart : ''}
+            onChange={(e) => setBreakStart(e.target.value)}
+            placeholder="13:00"
+            type="time"
+            disabled={!hasBreak}
+          />
+          <Input
+            label=""
+            value={hasBreak ? breakEnd : ''}
+            onChange={(e) => setBreakEnd(e.target.value)}
+            placeholder="14:00"
+            type="time"
+            disabled={!hasBreak}
+          />
+          <Checkbox label="Has break" checked={hasBreak} onChange={toggleBreak} />
+        </div>
+      ) : null}
     </div>
   );
 }

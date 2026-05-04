@@ -18,10 +18,12 @@ import { supabase } from '../supabase.ts';
 
 /** A single day's opening times. `closed: true` means the clinic is
  *  shut that day; otherwise the day has open + close times in 24h
- *  HH:mm format (no timezone — assumed local). */
+ *  HH:mm format (no timezone — assumed local). The optional `break`
+ *  tuple captures a mid-day closure (typically lunch) — when set,
+ *  the widget skips slot starts that fall inside the window. */
 export type OpeningHoursDay =
-  | { closed: true; open?: undefined; close?: undefined }
-  | { closed?: false; open: string; close: string };
+  | { closed: true; open?: undefined; close?: undefined; break?: undefined }
+  | { closed?: false; open: string; close: string; break?: [string, string] };
 
 /** Mon=0 .. Sun=6, exactly seven entries. */
 export type OpeningHoursWeek = readonly [
@@ -56,11 +58,11 @@ export interface ClinicSettings {
 }
 
 const DEFAULT_OPENING: OpeningHoursWeek = [
-  { open: '09:00', close: '18:00' },
-  { open: '09:00', close: '18:00' },
-  { open: '09:00', close: '18:00' },
-  { open: '09:00', close: '18:00' },
-  { open: '09:00', close: '18:00' },
+  { open: '09:00', close: '18:00', break: ['13:00', '14:00'] },
+  { open: '09:00', close: '18:00', break: ['13:00', '14:00'] },
+  { open: '09:00', close: '18:00', break: ['13:00', '14:00'] },
+  { open: '09:00', close: '18:00', break: ['13:00', '14:00'] },
+  { open: '09:00', close: '18:00', break: ['13:00', '14:00'] },
   { open: '10:00', close: '16:00' },
   { closed: true },
 ];
