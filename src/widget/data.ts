@@ -24,6 +24,10 @@ export interface WidgetLocation {
 
 export interface WidgetBookingType {
   id: string;
+  /** The closed-enum service identifier ('click_in_veneers',
+   *  'denture_repair', 'same_day_appliance', etc). Drives the axis
+   *  registry — see SERVICE_AXES in lib/queries/bookingTypeAxes.ts. */
+  serviceType: string;
   label: string;
   description: string;
   pricePence: number;
@@ -111,7 +115,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_widget_booking_types')
-        .select('id, label, description, price_pence, deposit_pence, allow_staff_pick, duration_minutes')
+        .select('id, service_type, label, description, price_pence, deposit_pence, allow_staff_pick, duration_minutes')
         .order('label', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -121,6 +125,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
       }
       const shaped: WidgetBookingType[] = (rows ?? []).map((r) => ({
         id: r.id as string,
+        serviceType: (r.service_type as string) ?? '',
         label: (r.label as string) ?? '',
         description: (r.description as string) ?? '',
         pricePence: (r.price_pence as number | null) ?? 0,

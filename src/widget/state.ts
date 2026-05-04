@@ -5,6 +5,12 @@ import {
   type WidgetDentist,
   type WidgetLocation,
 } from './data.ts';
+import {
+  axesForService,
+  type AxisKey,
+  type CatalogueArchMatch,
+} from '../lib/queries/bookingTypeAxes.ts';
+import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 
 // Booking-widget state + step engine.
 //
@@ -19,11 +25,35 @@ import {
 // sees the truth about how many screens are left, not a static
 // upper bound.
 
-export type StepKey = 'location' | 'service' | 'dentist' | 'time' | 'details' | 'payment';
+// The fixed top-level steps. Axis steps live alongside as
+// `axis:<key>` strings (e.g. `axis:product_key`, `axis:arch`) — the
+// step engine inserts one per axis declared on the chosen service.
+// The widget shell branches on the `axis:` prefix to render the
+// AxisStep component.
+export type StepKey =
+  | 'location'
+  | 'service'
+  | 'dentist'
+  | 'time'
+  | 'details'
+  | 'payment'
+  | `axis:${AxisKey}`;
+
+export interface AxisPinState {
+  repair_variant?: string;
+  product_key?: string;
+  arch?: 'upper' | 'lower' | 'both';
+  /** When the patient picks a product, we capture its arch_match so
+   *  the step engine can decide whether to ask the arch question.
+   *  arch_match='single' → ask. 'both' / 'any' → skip and (for
+   *  'both') auto-set arch='both'. */
+  product_arch_match?: CatalogueArchMatch;
+}
 
 export interface WidgetState {
   location: WidgetLocation | null;
   service: WidgetBookingType | null;
+  axes: AxisPinState;
   dentist: WidgetDentist | 'any' | null;
   slotIso: string | null;
   details: WidgetDetails;
@@ -97,12 +127,41 @@ export function clearRememberedIdentity(): void {
 // Step engine
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Compute the active step list from the current state. The order is
- *  fixed; only the inclusion of each step varies. */
+/** Compute the active step list from the current state.
+ *
+ *  Order is:
+ *
+ *    location
+ *    service
+ *    axis:<each axis the chosen service declares, in registry order>
+ *    dentist (only when service.allowStaffPick)
+ *    time
+ *    details
+ *    payment (only when service.depositPence > 0)
+ *
+ *  Axis ordering matches SERVICE_AXES — variant > product > arch.
+ *  The arch axis is dropped when the picked product's arch_match
+ *  isn't 'single' (a "both"-only product needs no arch question). */
 export function activeStepsFor(state: WidgetState): StepKey[] {
   const out: StepKey[] = [];
   if (WIDGET_LOCATIONS.length > 1) out.push('location');
   out.push('service');
+  if (state.service) {
+    const axes = axesForService(state.service.serviceType as BookingServiceType);
+    for (const axis of axes) {
+      // Conditional skip: if the patient picked a product whose
+      // arch_match is anything other than 'single', the arch step
+      // is meaningless and we drop it.
+      if (
+        axis.key === 'arch' &&
+        state.axes.product_arch_match &&
+        state.axes.product_arch_match !== 'single'
+      ) {
+        continue;
+      }
+      out.push(`axis:${axis.key}`);
+    }
+  }
   if (state.service?.allowStaffPick) out.push('dentist');
   out.push('time');
   out.push('details');
@@ -118,6 +177,7 @@ export function useBookingState() {
     return {
       location: WIDGET_LOCATIONS.length === 1 ? WIDGET_LOCATIONS[0]! : null,
       service: null,
+      axes: {},
       dentist: null,
       slotIso: null,
       details: { ...EMPTY_DETAILS, ...(remembered ?? {}) },
@@ -152,7 +212,13 @@ export function useBookingState() {
   // (the step the engine now expects after Service).
   const setService = (service: WidgetBookingType | null) => {
     setState((prev) => {
-      const next = { ...prev, service };
+      const next: WidgetState = {
+        ...prev,
+        service,
+        // Switching service invalidates every axis pin from the
+        // previous service. Reset to a clean axes block.
+        axes: {},
+      };
       // If the service no longer allows staff selection, drop any
       // dentist they had picked.
       if (!service?.allowStaffPick) {
@@ -162,10 +228,40 @@ export function useBookingState() {
     });
   };
 
+  /** Update one axis pin and advance to the next active step. The
+   *  step engine recomputes the list before navigating, so picking
+   *  a "both"-only product correctly skips straight past the arch
+   *  step. */
+  const setAxisPin = (
+    axisKey: AxisKey,
+    value: string,
+    productArchMatch?: CatalogueArchMatch,
+  ) => {
+    setState((prev) => {
+      const nextAxes: AxisPinState = { ...prev.axes };
+      if (axisKey === 'repair_variant') nextAxes.repair_variant = value;
+      else if (axisKey === 'product_key') {
+        nextAxes.product_key = value;
+        nextAxes.product_arch_match = productArchMatch;
+        // If the product is "both"-only, auto-pin arch and skip
+        // the question entirely. 'any' leaves arch blank.
+        if (productArchMatch === 'both') nextAxes.arch = 'both';
+        if (productArchMatch !== 'single') {
+          // Clear any stale arch pin from a prior product choice.
+          if (productArchMatch !== 'both') delete nextAxes.arch;
+        }
+      } else if (axisKey === 'arch') {
+        nextAxes.arch = value as 'upper' | 'lower' | 'both';
+      }
+      return { ...prev, axes: nextAxes };
+    });
+  };
+
   return {
     state,
     setState,
     setService,
+    setAxisPin,
     stepKey,
     activeSteps,
     currentIdx,
@@ -183,6 +279,10 @@ export type BookingStateApi = ReturnType<typeof useBookingState>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function stepTitle(key: StepKey): string {
+  if (key.startsWith('axis:')) {
+    const axisKey = key.slice(5) as AxisKey;
+    return AXIS_QUESTION[axisKey];
+  }
   switch (key) {
     case 'location':
       return 'Location';
@@ -196,8 +296,20 @@ export function stepTitle(key: StepKey): string {
       return 'Your details';
     case 'payment':
       return 'Payment';
+    default:
+      return '';
   }
 }
+
+/** Patient-friendly question per axis. The registry's labels
+ *  ("Repair type", "Product", "Arch") are operator-facing and read
+ *  too clinical for someone booking from their phone. The widget
+ *  asks plain-English questions instead. */
+export const AXIS_QUESTION: Record<AxisKey, string> = {
+  repair_variant: 'What needs fixing?',
+  product_key: 'What kind?',
+  arch: 'Which teeth?',
+};
 
 export function formatPrice(pence: number): string {
   if (pence === 0) return 'Free';

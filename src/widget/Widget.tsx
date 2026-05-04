@@ -10,12 +10,14 @@ import {
 } from './state.ts';
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
+import { AxisStep } from './steps/Axis.tsx';
 import { DentistStep } from './steps/Dentist.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
 import { PaymentStep } from './steps/Payment.tsx';
 import { SuccessScreen } from './steps/Success.tsx';
 import { Summary } from './Summary.tsx';
+import type { AxisKey } from '../lib/queries/bookingTypeAxes.ts';
 
 // Public booking widget — embedded on the practice's website.
 //
@@ -278,6 +280,13 @@ function StepContent({
   api: BookingStateApi;
   onSubmit: () => void;
 }) {
+  // Axis steps are dynamic — one per axis declared on the chosen
+  // service, encoded as `axis:<key>` strings (axis:product_key,
+  // axis:arch, etc). Branch on the prefix and pull the axis key out.
+  if (api.stepKey.startsWith('axis:')) {
+    const axisKey = api.stepKey.slice(5) as AxisKey;
+    return <AxisStep api={api} axisKey={axisKey} />;
+  }
   switch (api.stepKey) {
     case 'location':
       return <LocationStep api={api} />;
@@ -292,6 +301,7 @@ function StepContent({
     case 'payment':
       return <PaymentStep api={api} onSubmit={onSubmit} />;
   }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

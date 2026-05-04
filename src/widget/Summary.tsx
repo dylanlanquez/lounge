@@ -1,6 +1,12 @@
 import { Calendar, MapPin, PoundSterling, User } from 'lucide-react';
 import { theme } from '../theme/index.ts';
 import { formatPrice, type WidgetState } from './state.ts';
+import {
+  axesForService,
+  axisValueLabel,
+  type AxisKey,
+} from '../lib/queries/bookingTypeAxes.ts';
+import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 
 // Summary panel — the right-hand "Booking Summary" card.
 //
@@ -71,13 +77,19 @@ export function Summary({
             <Row
               icon={<PoundSterling size={14} />}
               primary={state.service.label}
-              secondary={
-                state.service.depositPence > 0
-                  ? `Deposit today: ${formatPrice(state.service.depositPence)}`
-                  : state.service.pricePence > 0
-                    ? `Pay at appointment: ${formatPrice(state.service.pricePence)}`
-                    : undefined
-              }
+              secondary={(() => {
+                // Build a "Whitening tray · Upper arch" chain from
+                // the pinned axes, so the summary reflects every
+                // drill-down decision the patient has made.
+                const chain = axisChainLabel(state);
+                const priceLine =
+                  state.service.depositPence > 0
+                    ? `Deposit today: ${formatPrice(state.service.depositPence)}`
+                    : state.service.pricePence > 0
+                      ? `Pay at appointment: ${formatPrice(state.service.pricePence)}`
+                      : null;
+                return [chain, priceLine].filter(Boolean).join(' · ') || undefined;
+              })()}
               right={state.service.pricePence > 0 ? formatPrice(state.service.pricePence) : undefined}
             />
           ) : null}
@@ -341,4 +353,27 @@ function formatSlotLong(iso: string): string {
   const period = hour < 12 ? 'am' : 'pm';
   const display = hour <= 12 ? hour : hour - 12;
   return `${day}, ${display}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+/** Builds a "Whitening tray · Upper arch" chain from the booking
+ *  state's pinned axes. Returns null if the service has no axes
+ *  declared, or no axes have been picked yet. */
+function axisChainLabel(state: WidgetState): string | null {
+  if (!state.service) return null;
+  const axes = axesForService(state.service.serviceType as BookingServiceType);
+  if (axes.length === 0) return null;
+  const pieces: string[] = [];
+  for (const axis of axes) {
+    const value = readAxisPin(state, axis.key);
+    if (!value) continue;
+    pieces.push(axisValueLabel(axis, value));
+  }
+  return pieces.length > 0 ? pieces.join(' · ') : null;
+}
+
+function readAxisPin(state: WidgetState, key: AxisKey): string | undefined {
+  if (key === 'repair_variant') return state.axes.repair_variant;
+  if (key === 'product_key') return state.axes.product_key;
+  if (key === 'arch') return state.axes.arch;
+  return undefined;
 }
