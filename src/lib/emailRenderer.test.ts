@@ -128,6 +128,41 @@ describe('parseFormatting', () => {
   it('returns empty string for empty input', () => {
     expect(parseFormatting('')).toBe('');
   });
+
+  // ─── Symmetric block spacing ───────────────────────────────────────────
+  // Each block element (heading, hr, image) renders with margin:0 so the
+  // surrounding `<br><br>` controls the gap. Prevents the asymmetric
+  // "headers feel weird" spacing where headings used to have their own
+  // margins on top of the <br> rhythm.
+
+  it('preserves the trailing <br> after a heading so gap below matches gap above', () => {
+    // Storage `## Title\n\nBody` → `## Title<br><br>Body`. The H2
+    // regex used to consume one <br>, leaving only one above the
+    // body. Now both <br>s survive.
+    const out = parseFormatting('## Title<br><br>Body');
+    // Two <br>s after the heading close, before "Body".
+    expect(out).toMatch(/<\/h2><br><br>Body/);
+  });
+
+  it('renders headings with margin:0 (let <br>s do the spacing)', () => {
+    const out = parseFormatting('## Hello<br>');
+    expect(out).toContain('margin:0');
+    // No legacy 18px / 8px / 14px / 6px margins.
+    expect(out).not.toMatch(/margin:1[48]px/);
+  });
+
+  it('renders HR with margin:0', () => {
+    const out = parseFormatting('above<br>---<br>below');
+    expect(out).toContain('margin:0');
+    expect(out).not.toMatch(/margin:20px/);
+  });
+
+  it('renders images with margin:0', () => {
+    const out = parseFormatting('![alt](https://x.png)');
+    expect(out).toContain('<img');
+    expect(out).toContain('margin:0');
+    expect(out).not.toMatch(/margin:10px/);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -118,20 +118,25 @@ export function parseFormatting(html: string): string {
   if (!html) return '';
   let out = html;
 
-  // Horizontal rule
+  // Horizontal rule. margin:0 — surrounding `<br>`s do all spacing,
+  // so a divider drops into the same vertical rhythm as a paragraph
+  // break (one blank line above, one blank line below). Universally
+  // supported across Apple Mail, Gmail and Outlook.
   out = out.replace(
     /---/g,
-    '<hr style="border:none;border-top:1px solid #E5E2DC;margin:20px 0">',
+    '<hr style="border:none;border-top:1px solid #E5E2DC;margin:0">',
   );
 
-  // Headings — H2 / H3. Match the line up to a <br> or end of string.
+  // Headings — H2 / H3. The trailing <br> is preserved via $2 so the
+  // gap below a heading matches the gap above it. margin:0 keeps the
+  // heading flush against the surrounding <br>s.
   out = out.replace(
     /### (.+?)(<br>|$)/g,
-    '<h3 style="font-size:16px;font-weight:600;margin:14px 0 6px;color:#0E1414;letter-spacing:-0.01em">$1</h3>',
+    '<h3 style="font-size:16px;font-weight:600;margin:0;color:#0E1414;letter-spacing:-0.01em">$1</h3>$2',
   );
   out = out.replace(
     /## (.+?)(<br>|$)/g,
-    '<h2 style="font-size:20px;font-weight:600;margin:18px 0 8px;color:#0E1414;letter-spacing:-0.01em">$1</h2>',
+    '<h2 style="font-size:20px;font-weight:600;margin:0;color:#0E1414;letter-spacing:-0.01em">$1</h2>$2',
   );
 
   // Inline emphasis. Bold first so its inner text isn't eaten by
@@ -146,10 +151,11 @@ export function parseFormatting(html: string): string {
     '<span style="color:$1">$2</span>',
   );
 
-  // Image
+  // Image. margin:0 — surrounding `<br>`s do the spacing, same as
+  // every other block-level element.
   out = out.replace(
     /!\[([^\]]*)\]\((.+?)\)/g,
-    '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:10px 0;display:block">',
+    '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:0;display:block">',
   );
 
   // 6-param styled button: [button:label|bg|tc|rad|mt|mb](url)

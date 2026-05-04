@@ -81,6 +81,31 @@ describe('SnippetEditor round-trip', () => {
   });
 });
 
+describe('SnippetEditor self-heals pre-fix corruption', () => {
+  it('splits "---**bold**" glued lines into a clean HR + paragraph', () => {
+    // Old saves dropped the newline after HR, gluing the divider
+    // onto the next line's content. The editor used to render this
+    // as literal `---` text. Now it should resurface as a real HR.
+    const html = syntaxToHtml('---**Need to make a change?**');
+    expect(html).toContain('<hr>');
+    expect(html).toContain('<strong>Need to make a change?</strong>');
+    expect(html).not.toContain('---');
+  });
+
+  it('splits "---plain text" too', () => {
+    const html = syntaxToHtml('---continued');
+    expect(html).toContain('<hr>');
+    expect(html).toContain('<p>continued</p>');
+  });
+
+  it('leaves a clean --- on its own line untouched', () => {
+    const html = syntaxToHtml('Before\n---\nAfter');
+    expect(html).toContain('<hr>');
+    expect(html).toContain('<p>Before</p>');
+    expect(html).toContain('<p>After</p>');
+  });
+});
+
 describe('SnippetEditor storage syntax', () => {
   it('saves a heading + paragraph with a single block separator', () => {
     expect(htmlToSyntax('<h2>Title</h2><p>Body</p>')).toBe('## Title\n\nBody');

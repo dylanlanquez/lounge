@@ -127,7 +127,23 @@ const StyledButton = TiptapNode.create({
 export function syntaxToHtml(text: string): string {
   if (!text) return '<p></p>';
   const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const lines = escaped.split('\n');
+  // Self-heal old corruption from before the block-separator fix:
+  // HR used to walk to bare '---' with no trailing newline, so a
+  // divider followed by anything (e.g. **Need to make a change?**)
+  // was saved glued to the next line's content. Split any line that
+  // starts with --- + non-dash content into a clean HR line plus
+  // the remainder, so the editor stops showing literal `---`.
+  const rawLines = escaped.split('\n');
+  const lines: string[] = [];
+  for (const raw of rawLines) {
+    const m = raw.match(/^(\s*-{3,})([^-].*)$/);
+    if (m && m[1] && m[2] && m[2].trim()) {
+      lines.push(m[1].trimStart());
+      lines.push(m[2]);
+    } else {
+      lines.push(raw);
+    }
+  }
   const htmlLines: string[] = [];
   let inList = false;
 
@@ -1001,6 +1017,21 @@ export function SnippetEditor({
           codeBlock: false,
           code: false,
           strike: false,
+          // Inline margins on every block so the editor's vertical
+          // rhythm matches the rendered email — one consistent gap
+          // between any two blocks (paragraph, heading, list, hr,
+          // button). Mirrors the margin:0 + <br><br> approach the
+          // email renderer uses; users see the same shape they'll
+          // get in Apple Mail / Gmail / Outlook.
+          paragraph: { HTMLAttributes: { style: 'margin:0 0 16px 0' } },
+          heading: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
+          horizontalRule: {
+            HTMLAttributes: {
+              style:
+                'border:none;border-top:1px solid #E5E2DC;margin:16px 0',
+            },
+          },
+          bulletList: { HTMLAttributes: { style: 'margin:0 0 16px 0' } },
         }),
         Link.configure({
           openOnClick: false,
@@ -1010,7 +1041,13 @@ export function SnippetEditor({
         TextStyle,
         Color,
         TextAlign.configure({ types: ['heading', 'paragraph'] }),
-        Image.configure({ inline: false, allowBase64: false }),
+        Image.configure({
+          inline: false,
+          allowBase64: false,
+          HTMLAttributes: {
+            style: 'max-width:100%;border-radius:8px;margin:0 0 16px 0;display:block',
+          },
+        }),
         StyledButton,
       ],
       content: syntaxToHtml(value || ''),
