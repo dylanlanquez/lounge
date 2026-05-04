@@ -44,7 +44,7 @@ export interface AxisDef {
 // add-override button entirely.
 export const SERVICE_AXES: Record<BookingServiceType, readonly AxisDef[]> = {
   denture_repair: [
-    { key: 'repair_variant', label: 'Variant', source: { kind: 'denture_variants' } },
+    { key: 'repair_variant', label: 'Repair type', source: { kind: 'denture_variants' } },
   ],
   click_in_veneers: [
     { key: 'arch', label: 'Arch', source: { kind: 'arch_enum' } },

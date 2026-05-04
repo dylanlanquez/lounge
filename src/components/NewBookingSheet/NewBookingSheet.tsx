@@ -968,7 +968,7 @@ function infoForAxis(key: AxisKey): string {
 }
 
 function placeholderForAxis(key: AxisKey): string {
-  if (key === 'repair_variant') return 'Choose a variant';
+  if (key === 'repair_variant') return 'Choose a repair type';
   if (key === 'product_key') return 'Choose a product';
   return 'Choose an arch';
 }
