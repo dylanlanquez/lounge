@@ -206,10 +206,19 @@ export function PaymentStep({
               borderColor: theme.color.accent,
               backgroundColor: theme.color.accentBg,
               boxShadow: '0 1px 2px rgba(14, 20, 20, 0.04)',
+              // Stripe's default selected-tab text colour goes
+              // near-white against the light-green tinted bg —
+              // illegible. Force ink so the label stays readable
+              // and the accent green only carries the chrome.
+              color: theme.color.ink,
             },
             '.Tab--selected:focus': {
               borderColor: theme.color.accent,
               boxShadow: '0 0 0 3px rgba(31, 77, 58, 0.18)',
+              color: theme.color.ink,
+            },
+            '.Tab--selected:hover': {
+              color: theme.color.ink,
             },
             '.TabLabel': {
               fontWeight: '600',
@@ -308,7 +317,14 @@ function PaymentForm({
   const elements = useElements();
   const [payError, setPayError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
-  const ready = Boolean(stripe && elements);
+  // Stripe's PaymentElement renders into nested iframes that
+  // mount asynchronously — the parent <Elements> resolves
+  // immediately but the actual form chrome takes another beat
+  // to appear. Without this gate the Pay button flashes onto
+  // an empty card before the inputs render. onReady fires once
+  // the iframes are visible and interactive.
+  const [elementReady, setElementReady] = useState(false);
+  const ready = Boolean(stripe && elements && elementReady);
   const disabled = !ready || paying || submitting;
 
   const onPay = async () => {
@@ -349,22 +365,36 @@ function PaymentForm({
 
   return (
     <Card>
-      <PaymentElement
-        options={{
-          layout: 'tabs',
-          paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
-          fields: {
-            billingDetails: {
-              address: {
-                country: 'never',
-                postalCode: 'auto',
+      {!elementReady ? (
+        <p
+          style={{
+            margin: 0,
+            color: theme.color.inkMuted,
+            fontSize: theme.type.size.sm,
+          }}
+        >
+          Preparing payment…
+        </p>
+      ) : null}
+      <div style={{ display: elementReady ? 'block' : 'none' }}>
+        <PaymentElement
+          onReady={() => setElementReady(true)}
+          options={{
+            layout: 'tabs',
+            paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
+            fields: {
+              billingDetails: {
+                address: {
+                  country: 'never',
+                  postalCode: 'auto',
+                },
               },
             },
-          },
-        }}
-      />
+          }}
+        />
+      </div>
 
-      {payError ? (
+      {payError && elementReady ? (
         <p
           role="alert"
           style={{
@@ -382,34 +412,35 @@ function PaymentForm({
         </p>
       ) : null}
 
-      <button
-        type="button"
-        onClick={onPay}
-        disabled={disabled}
-        style={{
-          marginTop: theme.space[4],
-          appearance: 'none',
-          border: 'none',
-          background: theme.color.ink,
-          color: theme.color.surface,
-          height: 52,
-          borderRadius: theme.radius.pill,
-          fontFamily: 'inherit',
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          cursor: disabled ? 'default' : 'pointer',
-          opacity: disabled ? 0.5 : 1,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: theme.space[2],
-          width: '100%',
-        }}
-      >
-        <Lock size={14} aria-hidden />{' '}
-        {paying || submitting ? 'Processing…' : `Pay ${formatPrice(deposit)}`}
-      </button>
-
+      {elementReady ? (
+        <button
+          type="button"
+          onClick={onPay}
+          disabled={disabled}
+          style={{
+            marginTop: theme.space[4],
+            appearance: 'none',
+            border: 'none',
+            background: theme.color.ink,
+            color: theme.color.surface,
+            height: 52,
+            borderRadius: theme.radius.pill,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            cursor: disabled ? 'default' : 'pointer',
+            opacity: disabled ? 0.5 : 1,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: theme.space[2],
+            width: '100%',
+          }}
+        >
+          <Lock size={14} aria-hidden />{' '}
+          {paying || submitting ? 'Processing…' : `Pay ${formatPrice(deposit)}`}
+        </button>
+      ) : null}
     </Card>
   );
 }
