@@ -365,6 +365,8 @@ function PaymentForm({
 
   return (
     <Card>
+      <PaymentHeader deposit={deposit} />
+
       {!elementReady ? (
         <p
           style={{
@@ -442,6 +444,53 @@ function PaymentForm({
         </button>
       ) : null}
     </Card>
+  );
+}
+
+function PaymentHeader({ deposit }: { deposit: number }) {
+  // Frames what the patient is paying for. Without this the form
+  // is just a card-input slab — patients arriving on a payment
+  // step can wonder "wait, am I paying the full amount? a
+  // deposit?". The booking-summary panel on the right shows the
+  // numbers, but the form needs its own header so it reads as a
+  // single self-contained surface.
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+      <p
+        style={{
+          margin: 0,
+          fontSize: 11,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        Deposit · Refundable per cancellation policy
+      </p>
+      <h2
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.lg,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+        }}
+      >
+        Pay {formatPrice(deposit)} to secure your slot
+      </h2>
+      <p
+        style={{
+          margin: `${theme.space[1]}px 0 0`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        The remaining balance is paid at your appointment. We'll send a confirmation email
+        with everything you need.
+      </p>
+    </div>
   );
 }
 
