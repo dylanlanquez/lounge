@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Box, Check, ChevronDown, ChevronRight, Layers, Plus, Settings2, Trash2, UserCircle2 } from 'lucide-react';
+import { Box, Check, ChevronDown, ChevronRight, Layers, Plus, Trash2, UserCircle2 } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -613,75 +613,91 @@ function PoolRow({
     <li
       style={{
         display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
-        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        alignItems: 'stretch',
         borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      <span
-        aria-hidden
+      {/* The body of the row is the edit affordance — tap anywhere on
+          the avatar / title / pill area to open the editor. Making the
+          whole row tappable removes the ambiguity that came from a
+          tiny cog icon sitting next to the trash, where neither read
+          obviously as buttons. */}
+      <button
+        type="button"
+        onClick={onEdit}
+        aria-label={`Edit ${pool.display_name}`}
         style={{
-          width: 32,
-          height: 32,
-          borderRadius: theme.radius.input,
-          background: theme.color.bg,
-          display: 'inline-flex',
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          color: theme.color.inkMuted,
-          flexShrink: 0,
+          gap: theme.space[3],
+          padding: `${theme.space[4]}px ${theme.space[4]}px ${theme.space[4]}px ${theme.space[5]}px`,
+          background: 'transparent',
+          border: 'none',
+          appearance: 'none',
+          textAlign: 'left',
+          cursor: 'pointer',
+          color: 'inherit',
+          font: 'inherit',
         }}
       >
-        {isStaffRole ? <UserCircle2 size={16} aria-hidden /> : <Box size={16} aria-hidden />}
-      </span>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span
+          aria-hidden
           style={{
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
-          }}
-        >
-          {pool.display_name}
-        </span>
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
+            width: 32,
+            height: 32,
+            borderRadius: theme.radius.input,
+            background: theme.color.bg,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             color: theme.color.inkMuted,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
+            flexShrink: 0,
           }}
         >
-          {summaryLine}
-          {!isStaffRole && consumers.length === 0 ? '' : null}
-          {pool.notes ? ` · ${pool.notes}` : ''}
+          {isStaffRole ? <UserCircle2 size={16} aria-hidden /> : <Box size={16} aria-hidden />}
         </span>
-      </div>
-      <StatusPill tone={pillTone} size="sm">
-        {pillCopy}
-      </StatusPill>
-      {/* Visible divider separates the informational pill on the left
-          from the row-action buttons on the right. Without it the pill
-          and the icon buttons all read as the same control cluster
-          and it isn't obvious what's tappable. */}
-      <span
-        aria-hidden
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {pool.display_name}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {summaryLine}
+            {!isStaffRole && consumers.length === 0 ? '' : null}
+            {pool.notes ? ` · ${pool.notes}` : ''}
+          </span>
+        </div>
+        <StatusPill tone={pillTone} size="sm">
+          {pillCopy}
+        </StatusPill>
+        <ChevronRight size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+      </button>
+      {/* Trash sits in its own column with a left border. Visually it's
+          a distinct destructive action, not a sibling icon to a cog. */}
+      <div
         style={{
-          width: 1,
-          alignSelf: 'stretch',
-          background: theme.color.border,
-          marginInline: theme.space[2],
+          display: 'flex',
+          alignItems: 'center',
+          paddingInline: theme.space[4],
+          borderLeft: `1px solid ${theme.color.border}`,
         }}
-      />
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-        <IconAction
-          ariaLabel={`Edit ${pool.display_name}`}
-          onClick={onEdit}
-          icon={<Settings2 size={16} aria-hidden />}
-        />
+      >
         <IconAction
           ariaLabel={`Remove ${pool.display_name}`}
           onClick={onRemove}
