@@ -264,6 +264,40 @@ Deno.serve(async (req) => {
     },
   });
 
+  // ── Confirmation email ─────────────────────────────────────────
+  // Fire-and-forget invoke of send-appointment-confirmation. The
+  // function recognises our service-role Bearer token and skips the
+  // user-auth check it normally enforces for staff callers. Email
+  // failures (paused template, missing RESEND_API_KEY, etc) are
+  // logged to lng_system_failures by the email function itself; we
+  // additionally log here if the invoke transport fails so the
+  // booking still succeeds even if the email pipe is down.
+  try {
+    const { data: emailResult, error: emailErr } = await supabase.functions.invoke(
+      'send-appointment-confirmation',
+      { body: { appointmentId } },
+    );
+    if (emailErr) {
+      await logFailure('confirmation_invoke_failed', {
+        appointmentId,
+        error: emailErr.message,
+      }, 'warning');
+    } else if (emailResult && typeof emailResult === 'object' && 'ok' in emailResult && !emailResult.ok) {
+      // The function ran but reported a delivery failure (e.g.
+      // template paused, no email on patient). Still a warning, not
+      // a booking failure.
+      await logFailure('confirmation_delivery_failed', {
+        appointmentId,
+        result: emailResult,
+      }, 'warning');
+    }
+  } catch (e) {
+    await logFailure('confirmation_invoke_threw', {
+      appointmentId,
+      error: e instanceof Error ? e.message : String(e),
+    }, 'warning');
+  }
+
   return jsonResponse(200, {
     appointmentId,
     appointmentRef,

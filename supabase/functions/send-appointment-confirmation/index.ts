@@ -71,12 +71,23 @@ async function handle(req: Request): Promise<Response> {
     return jsonResponse(401, { ok: false, error: 'No bearer token' });
   }
 
-  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: userJwt } },
-  });
-  const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return jsonResponse(401, { ok: false, error: 'Not signed in' });
-  const callerAccountAuthId = who.user.id;
+  // Two callers: a signed-in user (the staff Lounge app) or another
+  // edge function on this same project (widget-create-appointment).
+  // The internal path is recognised by a Bearer token equal to the
+  // service-role key — only callers that already hold the service-
+  // role secret can construct that, which keeps the bypass safe.
+  // For internal calls there's no caller account to attribute
+  // failure rows to; the logger downgrades to user_id=null.
+  const isInternal = userJwt === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+  let callerAccountAuthId: string | null = null;
+  if (!isInternal) {
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: userJwt } },
+    });
+    const { data: who } = await userClient.auth.getUser();
+    if (!who?.user) return jsonResponse(401, { ok: false, error: 'Not signed in' });
+    callerAccountAuthId = who.user.id;
+  }
 
   let body: {
     appointmentId?: string;
@@ -525,25 +536,30 @@ async function logFailure(
     severity: 'warning' | 'error';
     message: string;
     context: Record<string, unknown>;
-    callerAccountAuthId: string;
+    callerAccountAuthId: string | null;
   },
 ): Promise<void> {
   // Best-effort. We don't want failure-logging itself to throw.
   try {
     // Translate the auth user id to the accounts.id (FK target). If
-    // it can't be resolved, we just leave the user_id null — the
-    // failure row is still useful.
-    const { data: acc } = await admin
-      .from('accounts')
-      .select('id')
-      .eq('auth_user_id', args.callerAccountAuthId)
-      .maybeSingle();
+    // it can't be resolved, or if there's no caller (internal call
+    // from another edge function), the failure row carries user_id
+    // null — still useful as a record.
+    let userId: string | null = null;
+    if (args.callerAccountAuthId) {
+      const { data: acc } = await admin
+        .from('accounts')
+        .select('id')
+        .eq('auth_user_id', args.callerAccountAuthId)
+        .maybeSingle();
+      userId = (acc as { id: string } | null)?.id ?? null;
+    }
     await admin.from('lng_system_failures').insert({
       source: 'send-appointment-confirmation',
       severity: args.severity,
       message: args.message,
       context: args.context,
-      user_id: (acc as { id: string } | null)?.id ?? null,
+      user_id: userId,
     });
   } catch {
     // intentionally swallowed — failure of failure-logging shouldn't break the response
