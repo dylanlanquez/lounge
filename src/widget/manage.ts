@@ -16,12 +16,16 @@ export interface ManagedBooking {
   serviceLabel: string;
   startAt: string;
   endAt: string;
+  locationId: string | null;
   locationName: string;
   locationAddress: string;
   patientFirstName: string | null;
   depositStatus: string | null;
   depositPence: number | null;
   depositCurrency: string | null;
+  repairVariant: string | null;
+  productKey: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
   cancellable: boolean;
 }
 
@@ -83,12 +87,16 @@ export function useManagedBooking(token: string | null): LookupResult {
         serviceLabel: (r.service_label as string) ?? '',
         startAt: (r.start_at as string) ?? '',
         endAt: (r.end_at as string) ?? '',
+        locationId: (r.location_id as string | null) ?? null,
         locationName: (r.location_name as string) ?? '',
         locationAddress: (r.location_address as string) ?? '',
         patientFirstName: (r.patient_first_name as string | null) ?? null,
         depositStatus: (r.deposit_status as string | null) ?? null,
         depositPence: (r.deposit_pence as number | null) ?? null,
         depositCurrency: (r.deposit_currency as string | null) ?? null,
+        repairVariant: (r.repair_variant as string | null) ?? null,
+        productKey: (r.product_key as string | null) ?? null,
+        arch: (r.arch as 'upper' | 'lower' | 'both' | null) ?? null,
         cancellable: Boolean(r.cancellable),
       });
       setLoading(false);
@@ -145,6 +153,53 @@ export async function cancelBooking(token: string): Promise<CancelResult> {
   return {
     appointmentId: data.appointmentId,
     alreadyCancelled: Boolean(data.already_cancelled),
+  };
+}
+
+export interface RescheduleResult {
+  newAppointmentId: string;
+  newManageToken: string;
+  newAppointmentRef: string | null;
+}
+
+export class RescheduleError extends Error {
+  code: string;
+  constructor(code: string, message?: string) {
+    super(message ?? code);
+    this.name = 'RescheduleError';
+    this.code = code;
+  }
+}
+
+export async function rescheduleBooking(token: string, newStartAtIso: string): Promise<RescheduleResult> {
+  if (!UUID_RE.test(token)) throw new RescheduleError('invalid_token');
+  if (!newStartAtIso) throw new RescheduleError('newStartAt_missing');
+
+  const { data, error } = await supabase.functions.invoke<{
+    ok?: boolean;
+    newAppointmentId?: string;
+    newManageToken?: string;
+    newAppointmentRef?: string | null;
+    error?: string;
+  }>('widget-reschedule-booking', {
+    body: { token, newStartAt: newStartAtIso },
+  });
+
+  if (error) {
+    const detail = await readErrorBody(error as Error & { context?: Response });
+    const code =
+      (detail && typeof detail === 'object' && 'error' in detail
+        ? String((detail as { error: string }).error)
+        : null) ?? 'reschedule_failed';
+    throw new RescheduleError(code, error.message);
+  }
+  if (!data || !data.ok || !data.newAppointmentId || !data.newManageToken) {
+    throw new RescheduleError('reschedule_failed', 'Empty response from reschedule endpoint.');
+  }
+  return {
+    newAppointmentId: data.newAppointmentId,
+    newManageToken: data.newManageToken,
+    newAppointmentRef: data.newAppointmentRef ?? null,
   };
 }
 

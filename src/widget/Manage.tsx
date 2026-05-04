@@ -1,8 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Calendar, Check, MapPin, PoundSterling, X } from 'lucide-react';
+import { ArrowLeft, Calendar, Check, MapPin, PoundSterling, X } from 'lucide-react';
 import { theme } from '../theme/index.ts';
-import { cancelBooking, useManagedBooking, type ManagedBooking } from './manage.ts';
+import {
+  cancelBooking,
+  rescheduleBooking,
+  useManagedBooking,
+  type ManagedBooking,
+} from './manage.ts';
+import { SlotPicker } from './SlotPicker.tsx';
 
 // Customer self-serve manage page — /widget/manage?token=<uuid>.
 //
@@ -19,10 +25,22 @@ import { cancelBooking, useManagedBooking, type ManagedBooking } from './manage.
 // email, phone, notes, staff assignments, or any other patient's
 // data, even if the calling client is malicious.
 
+type View =
+  | { kind: 'summary' }
+  | { kind: 'reschedule' }
+  | { kind: 'rescheduled'; newRef: string | null; newStartAt: string };
+
 export function Manage() {
   const [params] = useSearchParams();
   const token = params.get('token');
   const lookup = useManagedBooking(token);
+  const [view, setView] = useState<View>({ kind: 'summary' });
+
+  // The "back to summary" affordance from inside the reschedule
+  // view should land back on the booking card. We don't refresh
+  // the lookup on back — only on a successful reschedule, which
+  // re-binds to the new manage_token via setView({ kind: 'rescheduled' }).
+  const wider = view.kind === 'reschedule';
 
   return (
     <div
@@ -33,11 +51,15 @@ export function Manage() {
         fontFamily: theme.type.family,
       }}
     >
-      <Header />
+      <Header
+        title={view.kind === 'reschedule' ? 'Pick a new time' : 'Manage your booking'}
+        onBack={view.kind === 'reschedule' ? () => setView({ kind: 'summary' }) : undefined}
+        wider={wider}
+      />
 
       <main
         style={{
-          maxWidth: 560,
+          maxWidth: wider ? 880 : 560,
           margin: '0 auto',
           padding: `${theme.space[5]}px ${theme.space[5]}px ${theme.space[8]}px`,
         }}
@@ -57,8 +79,36 @@ export function Manage() {
           </BodyMessage>
         ) : null}
 
-        {lookup.data ? (
-          <BookingPanel booking={lookup.data} token={token!} onChanged={lookup.refresh} />
+        {lookup.data && view.kind === 'summary' ? (
+          <BookingPanel
+            booking={lookup.data}
+            token={token!}
+            onChanged={lookup.refresh}
+            onAskReschedule={() => setView({ kind: 'reschedule' })}
+          />
+        ) : null}
+
+        {lookup.data && view.kind === 'reschedule' ? (
+          <ReschedulePanel
+            booking={lookup.data}
+            token={token!}
+            onCancel={() => setView({ kind: 'summary' })}
+            onSuccess={(res) =>
+              setView({
+                kind: 'rescheduled',
+                newRef: res.newAppointmentRef,
+                newStartAt: res.newStartAt,
+              })
+            }
+          />
+        ) : null}
+
+        {lookup.data && view.kind === 'rescheduled' ? (
+          <RescheduledPanel
+            booking={lookup.data}
+            newRef={view.newRef}
+            newStartAt={view.newStartAt}
+          />
         ) : null}
       </main>
     </div>
@@ -69,7 +119,15 @@ export function Manage() {
 // Header — minimal, not the booking-flow header
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Header() {
+function Header({
+  title,
+  onBack,
+  wider,
+}: {
+  title: string;
+  onBack?: () => void;
+  wider: boolean;
+}) {
   return (
     <header
       style={{
@@ -79,21 +137,56 @@ function Header() {
     >
       <div
         style={{
-          maxWidth: 560,
+          maxWidth: wider ? 880 : 560,
           margin: '0 auto',
           padding: `${theme.space[4]}px ${theme.space[5]}px`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
         }}
       >
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back"
+            style={{
+              appearance: 'none',
+              border: 'none',
+              background: 'transparent',
+              width: 36,
+              height: 36,
+              borderRadius: theme.radius.pill,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: theme.color.ink,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = theme.color.surface;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <ArrowLeft size={18} aria-hidden />
+          </button>
+        ) : null}
         <h1
+          aria-live="polite"
           style={{
             margin: 0,
             fontSize: theme.type.size.xl,
             fontWeight: theme.type.weight.semibold,
             letterSpacing: theme.type.tracking.tight,
             color: theme.color.ink,
+            flex: 1,
+            minWidth: 0,
           }}
         >
-          Manage your booking
+          {title}
         </h1>
       </div>
     </header>
@@ -108,10 +201,12 @@ function BookingPanel({
   booking,
   token,
   onChanged,
+  onAskReschedule,
 }: {
   booking: ManagedBooking;
   token: string;
   onChanged: () => void;
+  onAskReschedule: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -211,17 +306,37 @@ function BookingPanel({
       </div>
 
       {booking.cancellable && !justCancelled ? (
-        <CancelControls
-          confirming={confirming}
-          cancelling={cancelling}
-          error={error}
-          onAsk={() => setConfirming(true)}
-          onConfirm={onCancel}
-          onAbort={() => {
-            setConfirming(false);
-            setError(null);
-          }}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <button
+            type="button"
+            onClick={onAskReschedule}
+            style={{
+              appearance: 'none',
+              height: 48,
+              border: 'none',
+              background: theme.color.ink,
+              color: theme.color.surface,
+              borderRadius: theme.radius.pill,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              cursor: 'pointer',
+            }}
+          >
+            Reschedule
+          </button>
+          <CancelControls
+            confirming={confirming}
+            cancelling={cancelling}
+            error={error}
+            onAsk={() => setConfirming(true)}
+            onConfirm={onCancel}
+            onAbort={() => {
+              setConfirming(false);
+              setError(null);
+            }}
+          />
+        </div>
       ) : null}
 
       {!booking.cancellable && booking.status === 'booked' ? (
@@ -387,6 +502,252 @@ function CancelControls({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reschedule panel — slot picker + confirm
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ReschedulePanel({
+  booking,
+  token,
+  onCancel,
+  onSuccess,
+}: {
+  booking: ManagedBooking;
+  token: string;
+  onCancel: () => void;
+  onSuccess: (res: { newAppointmentRef: string | null; newStartAt: string }) => void;
+}) {
+  const [pickedIso, setPickedIso] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Patient already booked this once. We keep the existing
+  // duration as-is rather than re-resolving via the booking-type
+  // resolver — the new slot is the same length as the old.
+  const durationMinutes = useMemo(() => {
+    if (!booking.startAt || !booking.endAt) return 30;
+    const ms = new Date(booking.endAt).getTime() - new Date(booking.startAt).getTime();
+    return Math.max(15, Math.round(ms / 60_000));
+  }, [booking.startAt, booking.endAt]);
+
+  const onConfirm = async () => {
+    if (!pickedIso) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await rescheduleBooking(token, pickedIso);
+      onSuccess({ newAppointmentRef: res.newAppointmentRef, newStartAt: pickedIso });
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code ?? 'reschedule_failed';
+      setError(messageForRescheduleCode(code));
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        Currently booked for{' '}
+        <strong style={{ color: theme.color.ink }}>{formatSlotLong(booking.startAt)}</strong>.
+        Pick a new time below.
+      </p>
+
+      <SlotPicker
+        locationId={booking.locationId}
+        serviceType={booking.serviceType}
+        durationMinutes={durationMinutes}
+        repairVariant={booking.repairVariant}
+        productKey={booking.productKey}
+        arch={booking.arch}
+        selectedIso={pickedIso}
+        onPick={(iso) => setPickedIso(iso)}
+        showFirstAvailableBanner={false}
+      />
+
+      {error ? (
+        <p
+          role="alert"
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.alert,
+            fontWeight: theme.type.weight.semibold,
+          }}
+        >
+          {error}
+        </p>
+      ) : null}
+
+      <div
+        style={{
+          position: 'sticky',
+          bottom: 0,
+          background: theme.color.bg,
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          paddingTop: theme.space[3],
+          display: 'flex',
+          gap: theme.space[3],
+          borderTop: `1px solid ${theme.color.border}`,
+        }}
+      >
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={submitting}
+          style={{
+            appearance: 'none',
+            flex: 1,
+            height: 48,
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
+            color: theme.color.ink,
+            borderRadius: theme.radius.pill,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            cursor: submitting ? 'default' : 'pointer',
+            opacity: submitting ? 0.5 : 1,
+          }}
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={submitting || !pickedIso}
+          style={{
+            appearance: 'none',
+            flex: 2,
+            height: 48,
+            border: 'none',
+            background: theme.color.ink,
+            color: theme.color.surface,
+            borderRadius: theme.radius.pill,
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            cursor: submitting || !pickedIso ? 'default' : 'pointer',
+            opacity: submitting || !pickedIso ? 0.5 : 1,
+          }}
+        >
+          {submitting
+            ? 'Rescheduling…'
+            : pickedIso
+              ? `Confirm ${formatSlotShort(pickedIso)}`
+              : 'Pick a slot to continue'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RescheduledPanel({
+  booking,
+  newRef,
+  newStartAt,
+}: {
+  booking: ManagedBooking;
+  newRef: string | null;
+  newStartAt: string;
+}) {
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[6],
+        boxShadow: theme.shadow.card,
+        textAlign: 'center',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: '50%',
+          background: theme.color.accent,
+          color: theme.color.surface,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Check size={28} strokeWidth={2.5} aria-hidden />
+      </div>
+      <h2
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.xl,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+        }}
+      >
+        You're rescheduled
+      </h2>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          color: theme.color.ink,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        {booking.serviceLabel} at {booking.locationName}
+      </p>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          color: theme.color.inkMuted,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+        }}
+      >
+        <Calendar size={14} aria-hidden />
+        {formatSlotLong(newStartAt)}
+      </p>
+      {newRef ? (
+        <p
+          style={{
+            margin: `${theme.space[3]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.semibold,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          New booking reference {newRef}
+        </p>
+      ) : null}
+      <p
+        style={{
+          margin: `${theme.space[4]}px 0 0`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        Your calendar invite has been updated. A fresh confirmation email is on its way.
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -534,6 +895,36 @@ function formatSlotLong(iso: string): string {
   const period = hour < 12 ? 'am' : 'pm';
   const display = hour <= 12 ? hour : hour - 12;
   return `${day}, ${display}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+function formatSlotShort(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const day = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const hour = d.getHours();
+  const minute = d.getMinutes();
+  const period = hour < 12 ? 'am' : 'pm';
+  const display = hour <= 12 ? hour : hour - 12;
+  return `${day}, ${display}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+function messageForRescheduleCode(code: string): string {
+  switch (code) {
+    case 'token_not_found':
+      return 'This booking link is no longer valid.';
+    case 'too_late_to_reschedule':
+      return "It's too close to the appointment to reschedule online — please call the clinic.";
+    case 'not_reschedulable':
+      return "This booking can't be rescheduled from here. Please contact the clinic.";
+    case 'calendly_source_not_supported':
+      return 'This booking was made through a different system. Please contact the clinic to amend.';
+    case 'slot_unavailable':
+      return 'That slot was just taken — pick another time.';
+    case 'invalid_token':
+      return 'The booking link is invalid.';
+    default:
+      return "We couldn't reschedule the booking. Please refresh and try again.";
+  }
 }
 
 function formatPrice(pence: number, currency: string | null): string {
