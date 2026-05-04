@@ -1370,7 +1370,6 @@ function StaffTab() {
   // and are super-admin-grant only. Sheet shows all three so an admin
   // can read what's set even if they can't change everything.
   const [permsOpen, setPermsOpen] = useState<StaffRow | null>(null);
-  const [permsBusy, setPermsBusy] = useState<string | null>(null);
 
   const canEditAdmin = currentAccount?.is_super_admin === true;
   const canEditFinancialPerms = currentAccount?.is_super_admin === true;
@@ -1487,32 +1486,49 @@ function StaffTab() {
     }
   };
 
-  // Generic toggle helper for the three new permission flags. Centralises
-  // the busy/error/refresh handling so the sheet's three rows stay tidy.
-  const togglePerm = async (
+  // Optimistic toggle for the three permission flags. The old version
+  // awaited the Supabase write + a full staff refetch before the
+  // checkbox visually updated, which made every click feel like a
+  // 300-500ms freeze and ate rapid taps. Now: flip the local state
+  // first so the checkbox responds instantly, then mirror the change
+  // to the server in the background. On error, revert and surface a
+  // toast.
+  const togglePerm = (
     staffMemberId: string,
     flag: 'reports' | 'financials' | 'cash',
     next: boolean,
   ) => {
-    setPermsBusy(`${staffMemberId}:${flag}`);
+    const field =
+      flag === 'reports'
+        ? 'can_view_reports'
+        : flag === 'financials'
+          ? 'can_view_financials'
+          : 'can_count_cash';
+    const prev = !next;
+    // Optimistic: update the open sheet immediately so the user sees
+    // the click land. The full staff list refresh happens after the
+    // server confirms.
+    setPermsOpen((cur) =>
+      cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: next } : cur,
+    );
     setError(null);
-    try {
-      if (flag === 'reports') await setCanViewReports(staffMemberId, next);
-      else if (flag === 'financials') await setCanViewFinancials(staffMemberId, next);
-      else if (flag === 'cash') await setCanCountCash(staffMemberId, next);
-      staff.refresh();
-      // Re-seed the open sheet from the refreshed list — keeps the sheet
-      // checkboxes in lock-step with the underlying row.
-      setPermsOpen((cur) => {
-        if (!cur || cur.staff_member_id !== staffMemberId) return cur;
-        const refreshed = staff.data.find((s) => s.staff_member_id === staffMemberId);
-        return refreshed ?? cur;
+    const mutation =
+      flag === 'reports'
+        ? setCanViewReports(staffMemberId, next)
+        : flag === 'financials'
+          ? setCanViewFinancials(staffMemberId, next)
+          : setCanCountCash(staffMemberId, next);
+    mutation
+      .then(() => {
+        staff.refresh();
+      })
+      .catch((e) => {
+        // Revert the optimistic update so the checkbox snaps back.
+        setPermsOpen((cur) =>
+          cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: prev } : cur,
+        );
+        setError(e instanceof Error ? e.message : String(e));
       });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPermsBusy(null);
-    }
   };
 
   return (
@@ -1763,13 +1779,12 @@ function StaffTab() {
 
       <BottomSheet
         open={permsOpen !== null}
-        onClose={() => permsBusy === null && setPermsOpen(null)}
-        dismissable={permsBusy === null}
+        onClose={() => setPermsOpen(null)}
         title={permsOpen ? `${permsOpen.display_name} — Permissions` : 'Permissions'}
         description="Granular access. Reports is operational and on by default; Financials and Cash counting are super-admin-grants only."
         footer={
           <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={() => setPermsOpen(null)} disabled={permsBusy !== null}>
+            <Button variant="secondary" onClick={() => setPermsOpen(null)}>
               Done
             </Button>
           </div>
@@ -1781,14 +1796,12 @@ function StaffTab() {
               title="Reports"
               description="Opens the Reports tab — operational dashboards covering bookings, demographics, marketing, service mix, lifetime value."
               checked={permsOpen.can_view_reports}
-              busy={permsBusy === `${permsOpen.staff_member_id}:reports`}
               onChange={(v) => togglePerm(permsOpen.staff_member_id, 'reports', v)}
             />
             <PermissionRow
               title="Financials"
               description="Opens the Financials tab — sales, discounts, voids, anomaly flags, cash reconciliation. Super-admin-grant only."
               checked={permsOpen.can_view_financials}
-              busy={permsBusy === `${permsOpen.staff_member_id}:financials`}
               disabled={!canEditFinancialPerms}
               disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Financials access.'}
               onChange={(v) => togglePerm(permsOpen.staff_member_id, 'financials', v)}
@@ -1797,7 +1810,6 @@ function StaffTab() {
               title="Cash counting"
               description="Lets this person initiate a cash reconciliation count. Sign-off still requires a different manager. Super-admin-grant only."
               checked={permsOpen.can_count_cash}
-              busy={permsBusy === `${permsOpen.staff_member_id}:cash`}
               disabled={!canEditFinancialPerms}
               disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
               onChange={(v) => togglePerm(permsOpen.staff_member_id, 'cash', v)}
@@ -1820,7 +1832,6 @@ function PermissionRow({
   description,
   checked,
   onChange,
-  busy,
   disabled = false,
   disabledReason,
 }: {
@@ -1828,7 +1839,6 @@ function PermissionRow({
   description: string;
   checked: boolean;
   onChange: (next: boolean) => void;
-  busy: boolean;
   disabled?: boolean;
   disabledReason?: string;
 }) {
@@ -1861,7 +1871,7 @@ function PermissionRow({
       <Checkbox
         checked={checked}
         onChange={onChange}
-        disabled={disabled || busy}
+        disabled={disabled}
         ariaLabel={title}
       />
     </div>
