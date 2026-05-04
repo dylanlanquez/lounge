@@ -234,11 +234,16 @@ export function PaymentStep({
               boxShadow: 'none',
             },
             '.Label': {
-              color: theme.color.ink,
+              // Eyebrow treatment so the form's field labels read
+              // as the same kind of small caps that head every
+              // other section of the widget (booking summary
+              // tile, manage page card, etc).
+              color: 'rgba(14, 20, 20, 0.6)',
               fontWeight: '600',
-              fontSize: '13px',
+              fontSize: '11px',
               marginBottom: '6px',
-              letterSpacing: '-0.005em',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
             },
             '.Error': {
               color: theme.color.alert,
@@ -344,17 +349,36 @@ function PaymentForm({
 
   return (
     <Card>
-      <PaymentElement
-        options={{
-          layout: 'tabs',
-          paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
-        }}
-      />
+      <Section
+        eyebrow="How would you like to pay?"
+        heading="Choose a payment method"
+        description="Apple Pay and Google Pay appear automatically on supported devices."
+      >
+        <PaymentElement
+          options={{
+            layout: 'tabs',
+            paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
+            fields: {
+              billingDetails: {
+                address: {
+                  country: 'never',
+                  postalCode: 'auto',
+                },
+              },
+            },
+          }}
+        />
+      </Section>
 
       {payError ? (
         <p
+          role="alert"
           style={{
-            margin: `${theme.space[3]}px 0 0`,
+            margin: 0,
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            background: 'rgba(184, 58, 42, 0.08)',
+            border: `1px solid ${theme.color.alert}`,
+            borderRadius: theme.radius.input,
             color: theme.color.alert,
             fontSize: theme.type.size.sm,
             fontWeight: theme.type.weight.semibold,
@@ -394,16 +418,77 @@ function PaymentForm({
 
       <p
         style={{
-          margin: `${theme.space[3]}px 0 0`,
-          fontSize: theme.type.size.xs,
-          color: theme.color.inkMuted,
+          margin: `${theme.space[2]}px 0 0`,
+          fontSize: 11,
+          color: theme.color.inkSubtle,
           textAlign: 'center',
           lineHeight: theme.type.leading.snug,
+          fontWeight: theme.type.weight.semibold,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
         }}
       >
-        Payments handled by Stripe. We never see or store your card number.
+        Secured by Stripe · We never see your card number
       </p>
     </Card>
+  );
+}
+
+function Section({
+  eyebrow,
+  heading,
+  description,
+  children,
+}: {
+  eyebrow?: string;
+  heading: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div>
+        {eyebrow ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+              marginBottom: theme.space[1],
+            }}
+          >
+            {eyebrow}
+          </p>
+        ) : null}
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          {heading}
+        </h2>
+        {description ? (
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {children}
+    </div>
   );
 }
 
