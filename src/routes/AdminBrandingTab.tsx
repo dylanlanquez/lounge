@@ -915,6 +915,30 @@ function LegalCard({
 // Reusable bits
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Both ColorRow and SliderRow render an Eyebrow label + a control
+// row of the SAME fixed height so they vertically align when sat
+// next to each other in a 2-column grid (e.g. logo max-width vs
+// accent colour).
+const CONTROL_ROW_HEIGHT = 38;
+
+function ControlEyebrow({ label }: { label: string }) {
+  return (
+    <span
+      style={{
+        display: 'block',
+        fontSize: 11,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.inkMuted,
+        textTransform: 'uppercase',
+        letterSpacing: theme.type.tracking.wide,
+        marginBottom: theme.space[1],
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function ColorRow({
   label,
   value,
@@ -926,33 +950,32 @@ function ColorRow({
 }) {
   return (
     <div>
-      <span
+      <ControlEyebrow label={label} />
+      <div
         style={{
-          display: 'block',
-          fontSize: 11,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          marginBottom: theme.space[1],
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          height: CONTROL_ROW_HEIGHT,
         }}
       >
-        {label}
-      </span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
         <input
           type="color"
           value={value || '#0E1414'}
           onChange={(e) => onChange(e.target.value)}
+          // padding: 0 + the global pseudo-element resets in
+          // globalStyles.ts make the chosen colour fill the entire
+          // button. No surrounding white frame around the swatch.
           style={{
-            width: 38,
-            height: 38,
+            width: CONTROL_ROW_HEIGHT,
+            height: CONTROL_ROW_HEIGHT,
             border: `1px solid ${theme.color.border}`,
             borderRadius: 6,
             cursor: 'pointer',
-            padding: 2,
-            background: theme.color.surface,
+            padding: 0,
+            background: 'transparent',
             flexShrink: 0,
+            overflow: 'hidden',
           }}
         />
         <input
@@ -962,7 +985,8 @@ function ColorRow({
           style={{
             flex: 1,
             minWidth: 0,
-            padding: `${theme.space[2]}px ${theme.space[3]}px`,
+            height: CONTROL_ROW_HEIGHT,
+            padding: `0 ${theme.space[3]}px`,
             borderRadius: theme.radius.input,
             border: `1px solid ${theme.color.border}`,
             background: theme.color.surface,
@@ -995,20 +1019,15 @@ function SliderRow({
 }) {
   return (
     <div>
-      <span
+      <ControlEyebrow label={label} />
+      <div
         style={{
-          display: 'block',
-          fontSize: 11,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          marginBottom: theme.space[1],
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          height: CONTROL_ROW_HEIGHT,
         }}
       >
-        {label}
-      </span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
         <input
           type="range"
           min={min}

@@ -72,6 +72,13 @@ export function applyGlobalStyles(): void {
     button, [role="button"] { user-select: none; -webkit-user-select: none; }
     /* No iOS tap highlight */
     * { -webkit-tap-highlight-color: transparent; }
+    /* Full-bleed colour swatch — the browser-default <input type="color">
+       has internal padding around the swatch so the chosen colour ends
+       up framed by white. We want the colour to fill the whole control. */
+    input[type="color"] { padding: 0; }
+    input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+    input[type="color"]::-webkit-color-swatch { border: none; border-radius: inherit; }
+    input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
   `;
   document.head.appendChild(style);
 }
