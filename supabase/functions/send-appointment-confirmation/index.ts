@@ -44,6 +44,9 @@ const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
 // dev sender without redeploying.
 const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
 const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
+// Used to build the {{manageUrl}} variable. Override via env if a
+// future deploy hosts the widget on a different domain.
+const WIDGET_PUBLIC_URL = (Deno.env.get('WIDGET_PUBLIC_URL') ?? 'https://lounge.venneir.com').replace(/\/+$/, '');
 
 Deno.serve(async (req) => {
   // Top-level try/catch so any unhandled exception surfaces as a 200
@@ -415,6 +418,7 @@ interface AppointmentRow {
   event_type_label: string | null;
   appointment_ref: string | null;
   join_url: string | null;
+  manage_token: string | null;
 }
 
 interface PatientRow {
@@ -510,7 +514,7 @@ async function readAppointment(
   const { data } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, appointment_ref, join_url',
+      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, appointment_ref, join_url, manage_token',
     )
     .eq('id', id)
     .maybeSingle();
@@ -808,6 +812,14 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     openingHoursToday: contact.openingHoursToday,
     openingHoursWeek: contact.openingHoursWeek,
     appointmentRef: apt.appointment_ref ?? '',
+    // Customer-facing self-serve cancel/reschedule link. Empty
+    // string when the row predates the manage_token column (an
+    // older Calendly import before the migration backfill — those
+    // are rare, but the merger drops empty values cleanly so
+    // {{manageUrl}} renders as nothing in that case).
+    manageUrl: apt.manage_token
+      ? `${WIDGET_PUBLIC_URL}/widget/manage?token=${apt.manage_token}`
+      : '',
     googleCalendarUrl: googleCalendarUrl(apt, location),
     patientFacingDuration: formatPatientFacingDurationForEmail(
       ctx.patientFacingMinMinutes,

@@ -22,6 +22,7 @@ const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.
 const Reports = lazy(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })));
 const CashCounts = lazy(() => import('./routes/CashCounts.tsx').then((m) => ({ default: m.CashCounts })));
 const Widget = lazy(() => import('./widget/Widget.tsx').then((m) => ({ default: m.Widget })));
+const WidgetManage = lazy(() => import('./widget/Manage.tsx').then((m) => ({ default: m.Manage })));
 const Arrival = lazy(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })));
 const NotFound = lazy(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })));
 
@@ -156,6 +157,12 @@ function RoutedErrorBoundary() {
               nav. Lives at /widget/* so the bar-suppression rule in
               BottomNav can target it as a path family. */}
           <Route path="/widget/book" element={<Widget />} />
+          {/* Customer self-serve manage page — links here arrive
+              from the booking confirmation email's manageUrl
+              variable. Anon, no internal chrome (the /widget/*
+              path family already excludes BottomNav and the
+              KioskStatusBar disappears for unauth'd users). */}
+          <Route path="/widget/manage" element={<WidgetManage />} />
           {/* /financials merged into /reports — keep the alias so old
               bookmarks and existing TopBar shortcuts still land. */}
           <Route path="/financials" element={<Navigate to="/reports" replace />} />
