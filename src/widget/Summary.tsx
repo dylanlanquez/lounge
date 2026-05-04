@@ -1,4 +1,4 @@
-import { Calendar, MapPin, PoundSterling, User } from 'lucide-react';
+import { Calendar, MapPin, PoundSterling } from 'lucide-react';
 import { theme } from '../theme/index.ts';
 import { formatPrice, type WidgetState } from './state.ts';
 import {
@@ -29,8 +29,7 @@ export function Summary({
   onCtaClick: () => void;
   isPaymentNext: boolean;
 }) {
-  const hasAnything =
-    state.location || state.service || state.dentist || state.slotIso;
+  const hasAnything = state.location || state.service || state.slotIso;
   const total = state.service ? state.service.depositPence : 0;
   // Per-axis pricing comes from lwo_catalogue (resolved after the
   // axis steps lock down which row applies). Until that lands in
@@ -91,15 +90,6 @@ export function Summary({
                 return [chain, priceLine].filter(Boolean).join(' · ') || undefined;
               })()}
             />
-          ) : null}
-          {state.dentist && state.dentist !== 'any' ? (
-            <Row
-              icon={<DentistAvatar name={state.dentist.name} avatarUrl={state.dentist.avatarUrl} />}
-              primary={state.dentist.name}
-              secondary={state.dentist.role || undefined}
-            />
-          ) : state.dentist === 'any' ? (
-            <Row icon={<User size={14} />} primary="Any available dentist" />
           ) : null}
           {state.slotIso ? (
             <Row icon={<Calendar size={14} />} primary={formatSlotLong(state.slotIso)} />
@@ -279,44 +269,6 @@ function Row({
         </span>
       ) : null}
     </li>
-  );
-}
-
-function DentistAvatar({ name, avatarUrl }: { name: string; avatarUrl: string }) {
-  if (avatarUrl) {
-    return (
-      <img
-        src={avatarUrl}
-        alt=""
-        aria-hidden
-        style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }}
-      />
-    );
-  }
-  const initials = name
-    .split(/\s+/)
-    .filter((w) => /[A-Za-z]/.test(w[0] ?? ''))
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join('');
-  return (
-    <span
-      aria-hidden
-      style={{
-        width: 28,
-        height: 28,
-        borderRadius: '50%',
-        background: theme.color.accentBg,
-        color: theme.color.accent,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: 11,
-        fontWeight: theme.type.weight.semibold,
-      }}
-    >
-      {initials || '·'}
-    </span>
   );
 }
 

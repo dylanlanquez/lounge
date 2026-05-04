@@ -1,20 +1,14 @@
 // Booking-widget data layer.
 //
-// Booking types now come live from the public `lng_widget_booking_types`
-// view (phase 2a — see useWidgetBookingTypes below). Locations,
-// dentists and slots are still in-file constants (phase 2b/c will
-// swap them in turn):
+// Booking types come live from the public `lng_widget_booking_types`
+// view; products + per-arch prices come from `lng_widget_catalogue`.
+// Locations are still hard-coded for the single-clinic footprint
+// and slots are stub-generated (phase 2c will land a server-side
+// resolver that respects existing appointments + opening hours).
 //
-//   • locations  → public.locations (RLS already off, just needs
-//                  a hook)
-//   • dentists   → either a Lounge-owned lng_widget_dentists table
-//                  or a view over public.accounts. TBD; the
-//                  widget reads the same shape either way.
-//   • slots      → server-side RPC that walks lng_appointments for
-//                  conflicts and respects clinic.opening_hours.
-//
-// The shapes below stay stable across phases — the swap is just at
-// the read site.
+// Dentist selection isn't a customer-facing concept — the practice
+// assigns staff internally based on availability. No dentist step
+// in the widget; previous prototype removed.
 
 export interface WidgetLocation {
   id: string;
@@ -37,22 +31,9 @@ export interface WidgetBookingType {
    *  step. Widget-specific; sourced from
    *  lng_booking_type_config.widget_deposit_pence. */
   depositPence: number;
-  /** Whether the patient picks a specific dentist. False routes
-   *  every booking of this type to "any available". */
-  allowStaffPick: boolean;
   /** Default appointment length. Phase 2c will resolve this to the
    *  most-specific lng_booking_type_config row once axes are pinned. */
   durationMinutes: number;
-}
-
-export interface WidgetDentist {
-  id: string;
-  name: string;
-  /** Title shown under the name on the picker — "Principal dentist",
-   *  "Hygienist", etc. Empty hides the line. */
-  role: string;
-  /** Public photo URL. Falls back to initials when empty. */
-  avatarUrl: string;
 }
 
 // Locations stay static for phase 2a; they'll move to a live read
@@ -63,33 +44,6 @@ export const WIDGET_LOCATIONS: WidgetLocation[] = [
     id: 'loc-1',
     name: 'Venneir Lounge',
     addressLine: '138 Main Street, Glasgow, G1 2QA',
-  },
-];
-
-export const WIDGET_DENTISTS: WidgetDentist[] = [
-  {
-    id: 'dr-1',
-    name: 'Dr Sarah Mackay',
-    role: 'Principal dentist',
-    avatarUrl: '',
-  },
-  {
-    id: 'dr-2',
-    name: 'Dr James Lin',
-    role: 'Cosmetic &amp; restorative',
-    avatarUrl: '',
-  },
-  {
-    id: 'dr-3',
-    name: 'Dr Aisha Patel',
-    role: 'Implant lead',
-    avatarUrl: '',
-  },
-  {
-    id: 'hyg-1',
-    name: 'Erin Walsh',
-    role: 'Hygienist',
-    avatarUrl: '',
   },
 ];
 
@@ -120,7 +74,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_widget_booking_types')
-        .select('id, service_type, label, description, deposit_pence, allow_staff_pick, duration_minutes')
+        .select('id, service_type, label, description, deposit_pence, duration_minutes')
         .order('label', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -134,7 +88,6 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
         label: (r.label as string) ?? '',
         description: (r.description as string) ?? '',
         depositPence: (r.deposit_pence as number) ?? 0,
-        allowStaffPick: (r.allow_staff_pick as boolean) ?? true,
         durationMinutes: (r.duration_minutes as number) ?? 30,
       }));
       setData(shaped);

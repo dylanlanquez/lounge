@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import {
   WIDGET_LOCATIONS,
   type WidgetBookingType,
-  type WidgetDentist,
   type WidgetLocation,
 } from './data.ts';
 import {
@@ -14,12 +13,18 @@ import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 
 // Booking-widget state + step engine.
 //
-// Six possible steps. The step engine recomputes the active list
-// every render based on:
+// Up to five top-level steps + one axis step per axis the chosen
+// service declares. The engine recomputes the active list every
+// render based on:
 //
 //   • the number of locations         (skip Step 1 if exactly one)
-//   • the chosen booking type         (skip Step 3 if !allowStaffPick;
-//                                      skip Step 6 if depositPence===0)
+//   • the chosen booking type         (skip the axis steps the
+//                                      service doesn't declare; skip
+//                                      Payment if depositPence===0)
+//
+// Dentist selection is not exposed to the patient. The practice
+// assigns staff internally based on availability — booking through
+// the widget always lands as "any available".
 //
 // `progress` returns "Step 2 of 4" not "Step 2 of 6" so the patient
 // sees the truth about how many screens are left, not a static
@@ -33,7 +38,6 @@ import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 export type StepKey =
   | 'location'
   | 'service'
-  | 'dentist'
   | 'time'
   | 'details'
   | 'payment'
@@ -54,7 +58,6 @@ export interface WidgetState {
   location: WidgetLocation | null;
   service: WidgetBookingType | null;
   axes: AxisPinState;
-  dentist: WidgetDentist | 'any' | null;
   slotIso: string | null;
   details: WidgetDetails;
 }
@@ -134,7 +137,6 @@ export function clearRememberedIdentity(): void {
  *    location
  *    service
  *    axis:<each axis the chosen service declares, in registry order>
- *    dentist (only when service.allowStaffPick)
  *    time
  *    details
  *    payment (only when service.depositPence > 0)
@@ -162,7 +164,6 @@ export function activeStepsFor(state: WidgetState): StepKey[] {
       out.push(`axis:${axis.key}`);
     }
   }
-  if (state.service?.allowStaffPick) out.push('dentist');
   out.push('time');
   out.push('details');
   if (state.service && state.service.depositPence > 0) out.push('payment');
@@ -178,7 +179,6 @@ export function useBookingState() {
       location: WIDGET_LOCATIONS.length === 1 ? WIDGET_LOCATIONS[0]! : null,
       service: null,
       axes: {},
-      dentist: null,
       slotIso: null,
       details: { ...EMPTY_DETAILS, ...(remembered ?? {}) },
     };
@@ -211,21 +211,13 @@ export function useBookingState() {
   // includes the step they were on, snap them to the right place
   // (the step the engine now expects after Service).
   const setService = (service: WidgetBookingType | null) => {
-    setState((prev) => {
-      const next: WidgetState = {
-        ...prev,
-        service,
-        // Switching service invalidates every axis pin from the
-        // previous service. Reset to a clean axes block.
-        axes: {},
-      };
-      // If the service no longer allows staff selection, drop any
-      // dentist they had picked.
-      if (!service?.allowStaffPick) {
-        next.dentist = null;
-      }
-      return next;
-    });
+    setState((prev) => ({
+      ...prev,
+      service,
+      // Switching service invalidates every axis pin from the
+      // previous service. Reset to a clean axes block.
+      axes: {},
+    }));
   };
 
   /** Update one axis pin and advance to the next active step. The
@@ -288,8 +280,6 @@ export function stepTitle(key: StepKey): string {
       return 'Location';
     case 'service':
       return 'What you need';
-    case 'dentist':
-      return 'Pick a dentist';
     case 'time':
       return 'Date and time';
     case 'details':

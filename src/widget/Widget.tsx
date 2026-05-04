@@ -11,7 +11,6 @@ import {
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
-import { DentistStep } from './steps/Dentist.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
 import { PaymentStep } from './steps/Payment.tsx';
@@ -33,8 +32,8 @@ import type { AxisKey } from '../lib/queries/bookingTypeAxes.ts';
 //   ├──────────────────────────────────────┬─────────────────────┤
 //   │                                      │                     │
 //   │ Step content                         │ Booking summary     │
-//   │ (Location / Service / Dentist /      │ (location, service, │
-//   │  Time / Details / Payment)           │  dentist, time)     │
+//   │ (Location / Service / Axis steps /   │ (location, service, │
+//   │  Time / Details / Payment)           │  axes chain, time)  │
 //   │                                      │                     │
 //   └──────────────────────────────────────┴─────────────────────┘
 //
@@ -292,8 +291,6 @@ function StepContent({
       return <LocationStep api={api} />;
     case 'service':
       return <ServiceStep api={api} />;
-    case 'dentist':
-      return <DentistStep api={api} />;
     case 'time':
       return <TimeStep api={api} />;
     case 'details':

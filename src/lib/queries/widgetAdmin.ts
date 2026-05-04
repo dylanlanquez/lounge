@@ -19,8 +19,7 @@ import type { BookingServiceType } from './bookingTypes.ts';
 //                                products that belong to it.
 //   saveServiceConfig()        — write the widget_visible /
 //                                widget_description / widget_deposit
-//                                / widget_allow_staff_pick fields
-//                                back to lng_booking_type_config.
+//                                fields back to lng_booking_type_config.
 //   saveProductVisibility()    — flip widget_visible on a single
 //                                lwo_catalogue row.
 
@@ -50,7 +49,6 @@ export interface WidgetAdminService {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
-  widgetAllowStaffPick: boolean;
   /** Axis keys this service supports (registry-driven). Used to
    *  decide whether the product list is even relevant — services
    *  without a product axis don't have a product list. */
@@ -89,7 +87,7 @@ export function useWidgetAdminServices(): ReadResult {
         supabase
           .from('lng_booking_type_config')
           .select(
-            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence, widget_allow_staff_pick',
+            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence',
           )
           .is('repair_variant', null)
           .is('product_key', null)
@@ -171,7 +169,6 @@ export function useWidgetAdminServices(): ReadResult {
           widgetVisible: (bt.widget_visible as boolean) ?? false,
           widgetDescription: (bt.widget_description as string | null) ?? '',
           widgetDepositPence: (bt.widget_deposit_pence as number) ?? 0,
-          widgetAllowStaffPick: (bt.widget_allow_staff_pick as boolean) ?? true,
           hasProductAxis,
           products,
         };
@@ -199,7 +196,6 @@ export async function saveServiceConfig(input: {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
-  widgetAllowStaffPick: boolean;
 }): Promise<void> {
   const { error } = await supabase
     .from('lng_booking_type_config')
@@ -207,7 +203,6 @@ export async function saveServiceConfig(input: {
       widget_visible: input.widgetVisible,
       widget_description: input.widgetDescription.trim() || null,
       widget_deposit_pence: input.widgetDepositPence,
-      widget_allow_staff_pick: input.widgetAllowStaffPick,
     })
     .eq('id', input.id);
   if (error) throw new Error(`Couldn't save: ${error.message}`);

@@ -662,7 +662,6 @@ function ServiceCardBody({
   const [visible, setVisible] = useState(service.widgetVisible);
   const [description, setDescription] = useState(service.widgetDescription);
   const [depositText, setDepositText] = useState(formatPoundsText(service.widgetDepositPence));
-  const [allowStaffPick, setAllowStaffPick] = useState(service.widgetAllowStaffPick);
   const [saving, setSaving] = useState(false);
 
   // Re-seed when the parent row changes underneath us.
@@ -670,26 +669,22 @@ function ServiceCardBody({
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
-    setAllowStaffPick(service.widgetAllowStaffPick);
   }, [
     service.widgetVisible,
     service.widgetDescription,
     service.widgetDepositPence,
-    service.widgetAllowStaffPick,
   ]);
 
   const depositPence = parsePoundsToPence(depositText) ?? 0;
   const dirty =
     visible !== service.widgetVisible ||
     description !== service.widgetDescription ||
-    depositPence !== service.widgetDepositPence ||
-    allowStaffPick !== service.widgetAllowStaffPick;
+    depositPence !== service.widgetDepositPence;
 
   const reset = () => {
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
-    setAllowStaffPick(service.widgetAllowStaffPick);
   };
 
   const onSave = async () => {
@@ -700,7 +695,6 @@ function ServiceCardBody({
         widgetVisible: visible,
         widgetDescription: description,
         widgetDepositPence: depositPence,
-        widgetAllowStaffPick: allowStaffPick,
       });
       onSaved();
     } catch (e) {
@@ -757,28 +751,12 @@ function ServiceCardBody({
         />
       </Section>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: theme.space[4],
-        }}
+      <Section
+        title="Deposit at booking"
+        description="Captured upfront via Stripe. £0 means no payment step."
       >
-        <Section
-          title="Deposit at booking"
-          description="Captured upfront via Stripe. £0 means no payment step."
-        >
-          <PoundsInput value={depositText} onChange={setDepositText} />
-        </Section>
-        <Section title="Dentist preference" description="Show patients the dentist picker for this service.">
-          <Toggle
-            checked={allowStaffPick}
-            onChange={setAllowStaffPick}
-            onLabel="Patient picks a dentist"
-            offLabel="We'll match them with anyone"
-          />
-        </Section>
-      </div>
+        <PoundsInput value={depositText} onChange={setDepositText} />
+      </Section>
 
       {service.hasProductAxis ? (
         <Section
