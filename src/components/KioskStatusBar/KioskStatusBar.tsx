@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BarChart3, Settings, Wallet } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
@@ -33,7 +33,16 @@ export function KioskStatusBar() {
   const { level, charging, supported: batterySupported } = useBattery();
   const network = useNetwork();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // Customer-facing widget routes never see the staff status bar,
+  // even when the staff happen to be signed in to Lounge in this
+  // same browser. The widget is embedded in iframes on third-party
+  // websites (the practice's Shopify pages); a leaking strip with
+  // battery, signed-in avatar, internal links to Admin / Reports /
+  // Cash counts would be a privacy and brand disaster.
+  if (pathname.startsWith('/widget/')) return null;
 
   if (authLoading || !user) return null;
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
