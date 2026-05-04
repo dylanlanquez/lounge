@@ -216,11 +216,14 @@ function PaymentForm({
     }
     const pi = result.paymentIntent;
     if (pi && pi.status === 'succeeded') {
-      // Hand off to the widget shell — keep paying=true so the
-      // button stays in its disabled state until the appointment
-      // insert finishes (submitting flips to true on the next
-      // render).
+      // Hand off to the widget shell. Reset our local paying flag
+      // immediately — the parent's `submitting` prop takes over
+      // as the disable signal during widget-create-appointment.
+      // If that call fails the shell flips submitting back to
+      // false and surfaces an error banner; the patient can then
+      // hit Pay again with paying already cleared.
       onPaid(pi.id);
+      setPaying(false);
     } else {
       setPayError('Payment did not complete.');
       setPaying(false);
