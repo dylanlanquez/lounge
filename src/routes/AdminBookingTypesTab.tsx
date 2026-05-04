@@ -50,6 +50,7 @@ const SERVICE_DOT_COLOUR: Record<BookingServiceType, string> = {
   click_in_veneers: '#2D3539',
   same_day_appliance: theme.color.accent,
   impression_appointment: '#B36815',
+  virtual_impression_appointment: theme.category.virtualImpression,
   other: '#6B7378',
 };
 
@@ -1754,6 +1755,7 @@ function childKindLabel(s: BookingServiceType): string {
       return 'product';
     case 'click_in_veneers':
     case 'impression_appointment':
+    case 'virtual_impression_appointment':
       return 'arch';
     case 'other':
       return 'child';

@@ -21,6 +21,7 @@ export type BookingServiceType =
   | 'click_in_veneers'
   | 'same_day_appliance'
   | 'impression_appointment'
+  | 'virtual_impression_appointment'
   | 'other';
 
 export const BOOKING_SERVICE_TYPES: { value: BookingServiceType; label: string }[] = [
@@ -28,6 +29,7 @@ export const BOOKING_SERVICE_TYPES: { value: BookingServiceType; label: string }
   { value: 'click_in_veneers', label: 'Click-in veneers' },
   { value: 'same_day_appliance', label: 'Same-day appliance' },
   { value: 'impression_appointment', label: 'Impression appointment' },
+  { value: 'virtual_impression_appointment', label: 'Virtual impression appointment' },
   { value: 'other', label: 'Other' },
 ];
 

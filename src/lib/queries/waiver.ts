@@ -284,15 +284,19 @@ export function requiredSectionsForServiceTypes(
 // inference in CataloguePicker so a pre-arrival flag works. Falls back to
 // null when the label is ambiguous; in that case only 'general' applies.
 //
-// Order of checks matters: "impression" is tested first so a label
-// like "In-person Impression Appointment for Whitening Trays" maps
-// to the impression_appointment waiver (which covers the act of
-// capturing the impression), not the same_day_appliance waiver
-// (which covers the finished appliance). Patients sign the appliance
-// waiver later at collection.
+// Order of checks matters: "virtual impression" must beat the generic
+// "impression" rule so a Calendly "Virtual Impression Appointment"
+// resolves to the dedicated service_type rather than collapsing into
+// the in-person bucket. After that, "impression" is tested before any
+// modality keyword so a label like "In-person Impression Appointment
+// for Whitening Trays" maps to the impression_appointment waiver
+// (which covers the act of capturing the impression), not the
+// same_day_appliance waiver (which covers the finished appliance).
+// Patients sign the appliance waiver later at collection.
 export function inferServiceTypeFromEventLabel(label: string | null): string | null {
   if (!label) return null;
   const l = label.toLowerCase();
+  if (/virtual.*impression|impression.*virtual/i.test(l)) return 'virtual_impression_appointment';
   if (/impression/i.test(l)) return 'impression_appointment';
   if (/denture\s+repair|repair/i.test(l)) return 'denture_repair';
   if (/click[\s-]?in\s+veneer|veneer/i.test(l)) return 'click_in_veneers';
