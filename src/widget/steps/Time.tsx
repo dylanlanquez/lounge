@@ -6,6 +6,7 @@ import {
   firstAvailable,
   isClosedDay,
   useWidgetAvailableSlots,
+  useWidgetFirstAvailable,
   type WidgetSlot,
 } from '../data.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
@@ -42,11 +43,22 @@ export function TimeStep({ api }: { api: BookingStateApi }) {
   });
   const [monthCursor, setMonthCursor] = useState<Date>(() => startOfMonth(selectedDate));
 
-  // First-availability banner stays in sync with the chosen service.
-  const earliest = useMemo(
+  // First-availability banner: fall back to the client-side stub
+  // generator while the live RPC is in flight so the banner
+  // doesn't pop in mid-render. Once the live hook resolves we
+  // replace with the real first opening.
+  const stubEarliest = useMemo(
     () => firstAvailable(service?.durationMinutes ?? 30),
     [service?.durationMinutes],
   );
+  const liveFirstAvailable = useWidgetFirstAvailable({
+    locationId: api.state.location?.id ?? null,
+    serviceType: service?.serviceType ?? null,
+    repairVariant: api.state.axes.repair_variant ?? null,
+    productKey: api.state.axes.product_key ?? null,
+    arch: api.state.axes.arch ?? null,
+  });
+  const earliest = liveFirstAvailable.data ?? stubEarliest;
 
   // Live availability for the selected date — driven by the RPC
   // lng_widget_available_slots, which generates the candidate grid

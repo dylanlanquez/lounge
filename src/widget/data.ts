@@ -222,11 +222,9 @@ export function generateSlots(date: Date, durationMinutes: number): WidgetSlot[]
 }
 
 /** First future date that has at least one slot for the given
- *  booking-type duration. Used to power the "Our first availability"
- *  banner. The banner is best-effort — if the picked slot turns out
- *  to be booked already, the live slot picker on the date page will
- *  show that, and the submit-time conflict check is the final
- *  guarantee. Phase 6 will add a server-side first-available RPC. */
+ *  booking-type duration. Kept on a stub generator for the
+ *  optimistic banner placement before live data arrives — the live
+ *  hook below replaces this once the patient's axes resolve. */
 export function firstAvailable(
   durationMinutes: number,
   from: Date = new Date(),
@@ -239,6 +237,78 @@ export function firstAvailable(
     if (slots.length > 0) return { date: d, slot: slots[0]! };
   }
   return null;
+}
+
+interface FirstAvailableInput {
+  locationId: string | null;
+  serviceType: string | null;
+  repairVariant: string | null;
+  productKey: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+}
+
+interface FirstAvailableResult {
+  data: { date: Date; slot: WidgetSlot } | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/** Live first-available read. Calls public.lng_widget_first_available
+ *  which scans up to 60 days forward server-side, calling the
+ *  conflict check per candidate. Returns null while the inputs are
+ *  incomplete; the consumer falls back to the stub from
+ *  firstAvailable() so the banner has *something* to show
+ *  optimistically before the live data arrives. */
+export function useWidgetFirstAvailable(input: FirstAvailableInput): FirstAvailableResult {
+  const [data, setData] = useState<{ date: Date; slot: WidgetSlot } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!input.serviceType) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const realLocationId = UUID_RE.test(input.locationId ?? '') ? input.locationId : null;
+      const { data: rows, error: err } = await supabase.rpc('lng_widget_first_available', {
+        p_location_id: realLocationId,
+        p_service_type: input.serviceType,
+        p_repair_variant: input.repairVariant,
+        p_product_key: input.productKey,
+        p_arch: input.arch,
+      });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+      if (!row || typeof (row as { start_at?: string }).start_at !== 'string') {
+        setData(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      const startAtIso = (row as { start_at: string }).start_at;
+      setData({
+        date: new Date(startAtIso),
+        slot: slotFromIso(startAtIso),
+      });
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [input.locationId, input.serviceType, input.repairVariant, input.productKey, input.arch]);
+
+  return { data, loading, error };
 }
 
 /** Closed-day check used by the calendar grid to dim un-bookable
