@@ -68,7 +68,7 @@ export interface RenderedEmail {
 export function renderEmail(input: RenderEmailInput): RenderedEmail {
   const subject = substituteVariables(input.subject, input.variables);
   const bodyAfterVars = substituteVariables(input.bodySyntax, input.variables);
-  const bodyHtml = parseFormatting(toBr(bodyAfterVars));
+  const bodyHtml = parseFormatting(bodyAfterVars);
   const text = bodyToText(bodyAfterVars);
   const html =
     input.shell === 'bare'
@@ -96,69 +96,140 @@ export function substituteVariables(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Markdown-ish → HTML
+// Storage syntax → HTML
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Paragraph-based renderer. Every block (paragraph, heading, hr,
+// list, image) is wrapped in its own element with the same fixed
+// bottom margin (BLOCK_MARGIN_BOTTOM). That gives one predictable
+// gap between every two blocks — same rhythm whether the user goes
+// paragraph→paragraph, heading→paragraph, paragraph→hr, anywhere.
+// Universally supported across Apple Mail, Gmail and Outlook because
+// the only spacing primitive is `margin-bottom` on a `<p>` / `<h2>`
+// / etc., not `<br><br>` stacks.
+//
+// Newline semantics in storage syntax:
+//
+//   \n          soft line break inside the same paragraph (<br>)
+//   \n\n        paragraph break (one BLOCK_MARGIN_BOTTOM gap)
+//   \n\n\n      paragraph break + 1 empty paragraph (an extra blank
+//               line of visual spacing for the user)
+//   \n\n\n\n    paragraph break + 2 empty paragraphs
+//   …           each additional \n adds one more empty <p> spacer
 
-/** Convert raw newlines to <br> linearly — each \n becomes one <br>.
- * `\n` is a soft line break, `\n\n` is a paragraph break, and each
- * additional `\n` beyond that represents one empty paragraph the
- * editor preserved as visual spacing. */
-function toBr(text: string): string {
-  if (!text) return '';
-  return text.trim().replace(/\n/g, '<br>');
+const BLOCK_MARGIN_BOTTOM = '0 0 8px 0';
+const STYLE_PARA = `margin:${BLOCK_MARGIN_BOTTOM}`;
+const STYLE_H2 = `font-size:20px;font-weight:600;margin:${BLOCK_MARGIN_BOTTOM};color:#0E1414;letter-spacing:-0.01em`;
+const STYLE_H3 = `font-size:16px;font-weight:600;margin:${BLOCK_MARGIN_BOTTOM};color:#0E1414;letter-spacing:-0.01em`;
+const STYLE_HR = `border:none;border-top:1px solid #E5E2DC;margin:${BLOCK_MARGIN_BOTTOM}`;
+const STYLE_IMG = `max-width:100%;border-radius:8px;margin:${BLOCK_MARGIN_BOTTOM};display:block`;
+const STYLE_LIST = `margin:${BLOCK_MARGIN_BOTTOM}`;
+const STYLE_LIST_ITEM = 'display:block;padding-left:16px;position:relative;margin:0';
+const STYLE_BULLET = 'position:absolute;left:0;top:0;color:#0E1414';
+
+export function parseFormatting(syntax: string): string {
+  if (!syntax) return '';
+  const trimmed = syntax.replace(/^\n+|\n+$/g, '');
+  if (!trimmed) return '';
+
+  const lines = trimmed.split('\n');
+  const blocks: string[] = [];
+  let buffer: string[] = [];
+  let listItems: string[] = [];
+  let emptyStreak = 0;
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    blocks.push(`<p style="${STYLE_PARA}">${applyInlines(buffer.join('<br>'))}</p>`);
+    buffer = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    // Manual <span>-based bullets — Outlook desktop strips
+    // <ul>/<li> styling unpredictably, but inline-styled spans
+    // render identically across every client.
+    const items = listItems
+      .map(
+        (item) =>
+          `<span style="${STYLE_LIST_ITEM}"><span style="${STYLE_BULLET}">•</span>${applyInlines(item)}</span>`,
+      )
+      .join('');
+    blocks.push(`<div style="${STYLE_LIST}">${items}</div>`);
+    listItems = [];
+  };
+
+  for (const line of lines) {
+    if (line === '') {
+      flushBuffer();
+      flushList();
+      emptyStreak++;
+      continue;
+    }
+    // Each empty line *beyond the first* in a streak becomes one
+    // empty paragraph spacer — that's how the user buys extra
+    // vertical space by pressing Enter more than once.
+    if (emptyStreak > 1) {
+      for (let i = 0; i < emptyStreak - 1; i++) {
+        blocks.push(`<p style="${STYLE_PARA}">&nbsp;</p>`);
+      }
+    }
+    emptyStreak = 0;
+
+    if (/^---+$/.test(line.trim())) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<hr style="${STYLE_HR}">`);
+      continue;
+    }
+    const h2 = line.match(/^## (.+)$/);
+    if (h2 && h2[1]) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<h2 style="${STYLE_H2}">${applyInlines(h2[1])}</h2>`);
+      continue;
+    }
+    const h3 = line.match(/^### (.+)$/);
+    if (h3 && h3[1]) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<h3 style="${STYLE_H3}">${applyInlines(h3[1])}</h3>`);
+      continue;
+    }
+    const img = line.trim().match(/^!\[([^\]]*)\]\((.+?)\)$/);
+    if (img && img[2] !== undefined) {
+      flushBuffer();
+      flushList();
+      blocks.push(
+        `<img src="${img[2]}" alt="${img[1] ?? ''}" style="${STYLE_IMG}">`,
+      );
+      continue;
+    }
+    const li = line.match(/^- (.+)$/);
+    if (li && li[1]) {
+      flushBuffer();
+      listItems.push(li[1]);
+      continue;
+    }
+    flushList();
+    buffer.push(line);
+  }
+  flushBuffer();
+  flushList();
+
+  return blocks.join('');
 }
 
-/**
- * Apply the markdown-ish transformations to text that's already been
- * <br>-converted. Order matters — buttons must run before plain
- * links because the button regex's URL fragment would otherwise be
- * eaten by the link regex.
- */
-export function parseFormatting(html: string): string {
-  if (!html) return '';
-  let out = html;
-
-  // Horizontal rule. margin:0 — surrounding `<br>`s do all spacing,
-  // so a divider drops into the same vertical rhythm as a paragraph
-  // break (one blank line above, one blank line below). Universally
-  // supported across Apple Mail, Gmail and Outlook.
-  out = out.replace(
-    /---/g,
-    '<hr style="border:none;border-top:1px solid #E5E2DC;margin:0">',
-  );
-
-  // Headings — H2 / H3. The trailing <br> is preserved via $2 so the
-  // gap below a heading matches the gap above it. margin:0 keeps the
-  // heading flush against the surrounding <br>s.
-  out = out.replace(
-    /### (.+?)(<br>|$)/g,
-    '<h3 style="font-size:16px;font-weight:600;margin:0;color:#0E1414;letter-spacing:-0.01em">$1</h3>$2',
-  );
-  out = out.replace(
-    /## (.+?)(<br>|$)/g,
-    '<h2 style="font-size:20px;font-weight:600;margin:0;color:#0E1414;letter-spacing:-0.01em">$1</h2>$2',
-  );
-
-  // Inline emphasis. Bold first so its inner text isn't eaten by
-  // italic. The italic regex uses negative-lookbehind/lookahead on *
-  // so ** doesn't trigger italic.
+/** Apply inline-only transforms (bold, italic, color, link, button)
+ *  to a single line / paragraph's content. Buttons run before plain
+ *  links so the button regex consumes its own URL pattern first. */
+function applyInlines(text: string): string {
+  let out = text;
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
-
-  // Inline coloured text
   out = out.replace(
     /\{color:([^}]+)\}(.+?)\{\/color\}/g,
     '<span style="color:$1">$2</span>',
   );
-
-  // Image. margin:0 — surrounding `<br>`s do the spacing, same as
-  // every other block-level element.
-  out = out.replace(
-    /!\[([^\]]*)\]\((.+?)\)/g,
-    '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:0;display:block">',
-  );
-
-  // 6-param styled button: [button:label|bg|tc|rad|mt|mb](url)
   out = out.replace(
     /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
     (
@@ -179,8 +250,6 @@ export function parseFormatting(html: string): string {
       return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em">${label}</a>`;
     },
   );
-
-  // Backward-compat 3-param button: [button:label|bg|tc|rad](url)
   out = out.replace(
     /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
     (
@@ -197,26 +266,10 @@ export function parseFormatting(html: string): string {
       return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:12px 0;letter-spacing:-0.005em">${label}</a>`;
     },
   );
-
-  // Plain link — runs AFTER buttons so the button regex consumes its
-  // own URL pattern first.
   out = out.replace(
     /\[(.+?)\]\((.+?)\)/g,
     '<a href="$2" style="color:#0E1414;text-decoration:underline">$1</a>',
   );
-
-  // Bullet list. Matches `- item<br>` and renders as a styled list
-  // row. Consecutive bullet lines render as multiple rows; the
-  // renderer doesn't try to wrap them in a <ul> because email
-  // clients (Outlook in particular) reset list styling
-  // unpredictably. Each row stands on its own.
-  out = out.replace(
-    /^- (.+?)(<br>)/gm,
-    '<span style="display:block;padding-left:16px;position:relative;margin:4px 0">' +
-      '<span style="position:absolute;left:0;top:0;color:#0E1414">•</span>$1' +
-      '</span>',
-  );
-
   return out;
 }
 

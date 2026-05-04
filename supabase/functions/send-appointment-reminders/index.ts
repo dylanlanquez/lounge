@@ -262,7 +262,7 @@ async function processOne(
   // Render via the inline parser (same pipeline as src/lib/emailRenderer.ts).
   const subject = substituteVariables(template.subject, variables);
   const bodyAfterVars = substituteVariables(template.body_syntax, variables);
-  const bodyHtml = parseFormatting(toBr(bodyAfterVars));
+  const bodyHtml = parseFormatting(bodyAfterVars);
   const html = wrapInLoungeShell(bodyHtml);
   const text = bodyToText(bodyAfterVars);
 
@@ -521,21 +521,27 @@ function substituteVariables(template: string, variables: Record<string, string>
   });
 }
 
-function toBr(text: string): string {
-  if (!text) return '';
-  return text.trim().replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
-}
+// Paragraph-based renderer — mirror of src/lib/emailRenderer.ts.
+// Every block (paragraph, heading, hr, list, image) wraps with the
+// same margin so each gap reads as one consistent paragraph break.
+// Keep these functions byte-for-byte aligned with the browser copy
+// or sent emails will drift from the in-app preview.
 
-function parseFormatting(html: string): string {
-  if (!html) return '';
-  let out = html;
-  out = out.replace(/---/g, '<hr style="border:none;border-top:1px solid #E5E2DC;margin:20px 0">');
-  out = out.replace(/### (.+?)(<br>|$)/g, '<h3 style="font-size:16px;font-weight:600;margin:14px 0 6px;color:#0E1414;letter-spacing:-0.01em">$1</h3>');
-  out = out.replace(/## (.+?)(<br>|$)/g, '<h2 style="font-size:20px;font-weight:600;margin:18px 0 8px;color:#0E1414;letter-spacing:-0.01em">$1</h2>');
+const _BLOCK_MB = '0 0 8px 0';
+const _STYLE_PARA = `margin:${_BLOCK_MB}`;
+const _STYLE_H2 = `font-size:20px;font-weight:600;margin:${_BLOCK_MB};color:#0E1414;letter-spacing:-0.01em`;
+const _STYLE_H3 = `font-size:16px;font-weight:600;margin:${_BLOCK_MB};color:#0E1414;letter-spacing:-0.01em`;
+const _STYLE_HR = `border:none;border-top:1px solid #E5E2DC;margin:${_BLOCK_MB}`;
+const _STYLE_IMG = `max-width:100%;border-radius:8px;margin:${_BLOCK_MB};display:block`;
+const _STYLE_LIST = `margin:${_BLOCK_MB}`;
+const _STYLE_LI = 'display:block;padding-left:16px;position:relative;margin:0';
+const _STYLE_BUL = 'position:absolute;left:0;top:0;color:#0E1414';
+
+function _applyInlines(text: string): string {
+  let out = text;
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
   out = out.replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>');
-  out = out.replace(/!\[([^\]]*)\]\((.+?)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:10px 0;display:block">');
   out = out.replace(
     /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
     (_: string, label: string, bg: string | undefined, tc: string | undefined, rad: string | undefined, mt: string | undefined, mb: string | undefined, url: string) => {
@@ -557,8 +563,81 @@ function parseFormatting(html: string): string {
     },
   );
   out = out.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" style="color:#0E1414;text-decoration:underline">$1</a>');
-  out = out.replace(/^- (.+?)(<br>)/gm, '<span style="display:block;padding-left:16px;position:relative;margin:4px 0"><span style="position:absolute;left:0;top:0;color:#0E1414">•</span>$1</span>');
   return out;
+}
+
+function parseFormatting(syntax: string): string {
+  if (!syntax) return '';
+  const trimmed = syntax.replace(/^\n+|\n+$/g, '');
+  if (!trimmed) return '';
+  const lines = trimmed.split('\n');
+  const blocks: string[] = [];
+  let buffer: string[] = [];
+  let listItems: string[] = [];
+  let emptyStreak = 0;
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    blocks.push(`<p style="${_STYLE_PARA}">${_applyInlines(buffer.join('<br>'))}</p>`);
+    buffer = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    const items = listItems
+      .map((item) => `<span style="${_STYLE_LI}"><span style="${_STYLE_BUL}">•</span>${_applyInlines(item)}</span>`)
+      .join('');
+    blocks.push(`<div style="${_STYLE_LIST}">${items}</div>`);
+    listItems = [];
+  };
+  for (const line of lines) {
+    if (line === '') {
+      flushBuffer();
+      flushList();
+      emptyStreak++;
+      continue;
+    }
+    if (emptyStreak > 1) {
+      for (let i = 0; i < emptyStreak - 1; i++) blocks.push(`<p style="${_STYLE_PARA}">&nbsp;</p>`);
+    }
+    emptyStreak = 0;
+    if (/^---+$/.test(line.trim())) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<hr style="${_STYLE_HR}">`);
+      continue;
+    }
+    const h2 = line.match(/^## (.+)$/);
+    if (h2 && h2[1]) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<h2 style="${_STYLE_H2}">${_applyInlines(h2[1])}</h2>`);
+      continue;
+    }
+    const h3 = line.match(/^### (.+)$/);
+    if (h3 && h3[1]) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<h3 style="${_STYLE_H3}">${_applyInlines(h3[1])}</h3>`);
+      continue;
+    }
+    const img = line.trim().match(/^!\[([^\]]*)\]\((.+?)\)$/);
+    if (img && img[2] !== undefined) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<img src="${img[2]}" alt="${img[1] ?? ''}" style="${_STYLE_IMG}">`);
+      continue;
+    }
+    const li = line.match(/^- (.+)$/);
+    if (li && li[1]) {
+      flushBuffer();
+      listItems.push(li[1]);
+      continue;
+    }
+    flushList();
+    buffer.push(line);
+  }
+  flushBuffer();
+  flushList();
+  return blocks.join('');
 }
 
 function bodyToText(syntax: string): string {

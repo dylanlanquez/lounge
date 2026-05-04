@@ -1017,21 +1017,19 @@ export function SnippetEditor({
           codeBlock: false,
           code: false,
           strike: false,
-          // Inline margins on every block so the editor's vertical
-          // rhythm matches the rendered email — one consistent gap
-          // between any two blocks (paragraph, heading, list, hr,
-          // button). Mirrors the margin:0 + <br><br> approach the
-          // email renderer uses; users see the same shape they'll
-          // get in Apple Mail / Gmail / Outlook.
-          paragraph: { HTMLAttributes: { style: 'margin:0 0 16px 0' } },
+          // Inline margins on every block, byte-for-byte identical
+          // to the email renderer's BLOCK_MARGIN_BOTTOM. Editor
+          // preview = sent email; what you see is what your patient
+          // sees. One consistent paragraph gap, no asymmetry between
+          // headings, paragraphs, or dividers.
+          paragraph: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
           heading: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
           horizontalRule: {
             HTMLAttributes: {
-              style:
-                'border:none;border-top:1px solid #E5E2DC;margin:16px 0',
+              style: 'border:none;border-top:1px solid #E5E2DC;margin:0 0 8px 0',
             },
           },
-          bulletList: { HTMLAttributes: { style: 'margin:0 0 16px 0' } },
+          bulletList: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
         }),
         Link.configure({
           openOnClick: false,
@@ -1045,7 +1043,7 @@ export function SnippetEditor({
           inline: false,
           allowBase64: false,
           HTMLAttributes: {
-            style: 'max-width:100%;border-radius:8px;margin:0 0 16px 0;display:block',
+            style: 'max-width:100%;border-radius:8px;margin:0 0 8px 0;display:block',
           },
         }),
         StyledButton,

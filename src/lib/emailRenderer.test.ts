@@ -52,13 +52,13 @@ describe('substituteVariables', () => {
 
 describe('parseFormatting', () => {
   it('renders an H2', () => {
-    const out = parseFormatting('## Hello<br>');
+    const out = parseFormatting('## Hello');
     expect(out).toContain('<h2');
     expect(out).toContain('Hello');
   });
 
   it('renders an H3', () => {
-    const out = parseFormatting('### Sub<br>');
+    const out = parseFormatting('### Sub');
     expect(out).toContain('<h3');
     expect(out).toContain('Sub');
   });
@@ -74,7 +74,7 @@ describe('parseFormatting', () => {
   });
 
   it('renders horizontal rule', () => {
-    expect(parseFormatting('above<br>---<br>below')).toContain('<hr');
+    expect(parseFormatting('above\n\n---\n\nbelow')).toContain('<hr');
   });
 
   it('renders inline coloured text', () => {
@@ -119,7 +119,7 @@ describe('parseFormatting', () => {
   });
 
   it('renders bullet list rows with bullet characters', () => {
-    const out = parseFormatting('- one<br>- two<br>');
+    const out = parseFormatting('- one\n- two');
     expect(out).toContain('•');
     expect(out).toContain('one');
     expect(out).toContain('two');
@@ -129,39 +129,54 @@ describe('parseFormatting', () => {
     expect(parseFormatting('')).toBe('');
   });
 
-  // ─── Symmetric block spacing ───────────────────────────────────────────
-  // Each block element (heading, hr, image) renders with margin:0 so the
-  // surrounding `<br><br>` controls the gap. Prevents the asymmetric
-  // "headers feel weird" spacing where headings used to have their own
-  // margins on top of the <br> rhythm.
+  // ─── Consistent paragraph rhythm ────────────────────────────────────
+  // Every block (paragraph, heading, hr, list, image) wraps with the
+  // same `margin: 0 0 8px 0` so the gap between any two blocks reads
+  // as one normal-feeling paragraph break — no asymmetric spacing.
 
-  it('preserves the trailing <br> after a heading so gap below matches gap above', () => {
-    // Storage `## Title\n\nBody` → `## Title<br><br>Body`. The H2
-    // regex used to consume one <br>, leaving only one above the
-    // body. Now both <br>s survive.
-    const out = parseFormatting('## Title<br><br>Body');
-    // Two <br>s after the heading close, before "Body".
-    expect(out).toMatch(/<\/h2><br><br>Body/);
+  it('wraps plain text in a <p> with normal paragraph margin', () => {
+    const out = parseFormatting('Hello world');
+    expect(out).toBe('<p style="margin:0 0 8px 0">Hello world</p>');
   });
 
-  it('renders headings with margin:0 (let <br>s do the spacing)', () => {
-    const out = parseFormatting('## Hello<br>');
-    expect(out).toContain('margin:0');
-    // No legacy 18px / 8px / 14px / 6px margins.
-    expect(out).not.toMatch(/margin:1[48]px/);
+  it('renders two paragraphs separated by \\n\\n with one consistent margin between them', () => {
+    const out = parseFormatting('First paragraph\n\nSecond paragraph');
+    expect(out).toBe(
+      '<p style="margin:0 0 8px 0">First paragraph</p>' +
+        '<p style="margin:0 0 8px 0">Second paragraph</p>',
+    );
   });
 
-  it('renders HR with margin:0', () => {
-    const out = parseFormatting('above<br>---<br>below');
-    expect(out).toContain('margin:0');
-    expect(out).not.toMatch(/margin:20px/);
+  it('preserves a soft line break inside a paragraph as <br>', () => {
+    const out = parseFormatting('Line one\nLine two');
+    expect(out).toBe('<p style="margin:0 0 8px 0">Line one<br>Line two</p>');
   });
 
-  it('renders images with margin:0', () => {
+  it('inserts an empty paragraph spacer for each extra \\n beyond the first paragraph break', () => {
+    // \n\n\n  = paragraph break + 1 empty <p>
+    // \n\n\n\n = paragraph break + 2 empty <p>s
+    const out = parseFormatting('A\n\n\nB');
+    expect(out).toBe(
+      '<p style="margin:0 0 8px 0">A</p>' +
+        '<p style="margin:0 0 8px 0">&nbsp;</p>' +
+        '<p style="margin:0 0 8px 0">B</p>',
+    );
+  });
+
+  it('renders headings with the same margin as paragraphs', () => {
+    const out = parseFormatting('## Hello');
+    expect(out).toContain('margin:0 0 8px 0');
+  });
+
+  it('renders HR with the same margin as paragraphs', () => {
+    const out = parseFormatting('above\n\n---\n\nbelow');
+    expect(out).toContain('<hr style="border:none;border-top:1px solid #E5E2DC;margin:0 0 8px 0">');
+  });
+
+  it('renders images with the same margin as paragraphs', () => {
     const out = parseFormatting('![alt](https://x.png)');
     expect(out).toContain('<img');
-    expect(out).toContain('margin:0');
-    expect(out).not.toMatch(/margin:10px/);
+    expect(out).toContain('margin:0 0 8px 0');
   });
 });
 
