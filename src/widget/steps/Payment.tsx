@@ -159,16 +159,128 @@ export function PaymentStep({
       stripe={stripePromise}
       options={{
         clientSecret,
+        // Heavy customisation so the Stripe form reads as part of
+        // the widget rather than a third-party drop-in. theme:
+        // 'flat' strips Stripe's defaults; we then rebuild every
+        // affordance with our own tokens.
         appearance: {
-          theme: 'stripe',
+          theme: 'flat',
           variables: {
+            fontFamily: theme.type.family,
+            fontSizeBase: '15px',
+            fontLineHeight: '1.4',
+            fontWeightNormal: '400',
+            fontWeightMedium: '500',
+            fontWeightBold: '600',
+
             colorPrimary: theme.color.accent,
             colorBackground: theme.color.surface,
             colorText: theme.color.ink,
             colorDanger: theme.color.alert,
-            fontFamily: 'inherit',
-            spacingUnit: '6px',
-            borderRadius: `${theme.radius.input}px`,
+            colorSuccess: theme.color.accent,
+            colorTextSecondary: 'rgba(14, 20, 20, 0.6)',
+            colorTextPlaceholder: 'rgba(14, 20, 20, 0.4)',
+            colorIconTab: theme.color.ink,
+            colorIconTabSelected: theme.color.accent,
+
+            spacingUnit: '4px',
+            gridColumnSpacing: '12px',
+            gridRowSpacing: '14px',
+
+            borderRadius: '12px',
+            focusBoxShadow: '0 0 0 3px rgba(31, 77, 58, 0.18)',
+            focusOutline: '0',
+          },
+          rules: {
+            '.Tab': {
+              padding: '14px 12px',
+              border: '1px solid rgba(14, 20, 20, 0.08)',
+              boxShadow: '0 1px 2px rgba(14, 20, 20, 0.04)',
+              backgroundColor: '#FFFFFF',
+              transition: 'border-color 120ms ease, transform 120ms ease',
+            },
+            '.Tab:hover': {
+              borderColor: theme.color.ink,
+            },
+            '.Tab--selected': {
+              borderColor: theme.color.accent,
+              backgroundColor: theme.color.accentBg,
+              boxShadow: '0 1px 2px rgba(14, 20, 20, 0.04)',
+            },
+            '.Tab--selected:focus': {
+              borderColor: theme.color.accent,
+              boxShadow: '0 0 0 3px rgba(31, 77, 58, 0.18)',
+            },
+            '.TabLabel': {
+              fontWeight: '600',
+              letterSpacing: '-0.005em',
+            },
+            '.TabIcon--selected': {
+              fill: theme.color.accent,
+            },
+            '.Input': {
+              padding: '12px 14px',
+              border: '1px solid rgba(14, 20, 20, 0.08)',
+              backgroundColor: '#FFFFFF',
+              fontSize: '15px',
+              transition: 'border-color 120ms ease, box-shadow 120ms ease',
+            },
+            '.Input:focus': {
+              borderColor: theme.color.ink,
+              boxShadow: 'none',
+            },
+            '.Input--invalid': {
+              borderColor: theme.color.alert,
+              boxShadow: 'none',
+            },
+            '.Label': {
+              color: theme.color.ink,
+              fontWeight: '600',
+              fontSize: '13px',
+              marginBottom: '6px',
+              letterSpacing: '-0.005em',
+            },
+            '.Error': {
+              color: theme.color.alert,
+              fontSize: '12px',
+              fontWeight: '600',
+              marginTop: '6px',
+            },
+            '.Block': {
+              border: '1px solid rgba(14, 20, 20, 0.08)',
+              backgroundColor: '#FFFFFF',
+              boxShadow: '0 1px 2px rgba(14, 20, 20, 0.04)',
+            },
+            '.AccordionItem': {
+              border: '1px solid rgba(14, 20, 20, 0.08)',
+              backgroundColor: '#FFFFFF',
+              boxShadow: '0 1px 2px rgba(14, 20, 20, 0.04)',
+              padding: '14px 16px',
+            },
+            '.AccordionItem--selected': {
+              borderColor: theme.color.accent,
+              backgroundColor: theme.color.accentBg,
+            },
+            '.PickerItem': {
+              border: '1px solid rgba(14, 20, 20, 0.08)',
+              backgroundColor: '#FFFFFF',
+              boxShadow: 'none',
+            },
+            '.PickerItem--selected': {
+              borderColor: theme.color.accent,
+              backgroundColor: theme.color.accentBg,
+            },
+            '.CheckboxInput--checked': {
+              backgroundColor: theme.color.accent,
+              borderColor: theme.color.accent,
+            },
+            '.MenuIcon': {
+              fill: 'rgba(14, 20, 20, 0.6)',
+            },
+            '.MenuAction': {
+              color: theme.color.accent,
+              fontWeight: '600',
+            },
           },
         },
       }}
