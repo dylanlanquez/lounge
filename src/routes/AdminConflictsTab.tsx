@@ -81,8 +81,6 @@ export function AdminConflictsTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-      <PageHeader />
-
       <ResourcesSection
         pools={pools.data}
         usageByPool={usage.byPoolId}
@@ -106,37 +104,54 @@ export function AdminConflictsTab() {
 // Page header
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PageHeader() {
+function PageHeader({ onAdd }: { onAdd?: () => void }) {
   return (
-    <header>
-      <h2
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.xl,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-        }}
-      >
-        <Layers size={20} aria-hidden style={{ color: theme.color.inkMuted }} /> Resources
-      </h2>
-      <p
-        style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          lineHeight: 1.55,
-          maxWidth: 680,
-        }}
-      >
-        The chairs, rooms, equipment, and staff roles that limit how many
-        bookings can run at once. Set them up here, then pick which ones each
-        phase needs in <strong>Booking types</strong>. Lounge prevents
-        double-bookings automatically.
-      </p>
+    <header
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        flexWrap: 'wrap',
+      }}
+    >
+      <div>
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xl,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+          }}
+        >
+          <Layers size={20} aria-hidden style={{ color: theme.color.inkMuted }} /> Resources
+        </h2>
+        <p
+          style={{
+            margin: `${theme.space[2]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: 1.55,
+            maxWidth: 680,
+          }}
+        >
+          The chairs, rooms, equipment, and staff roles that limit how many
+          bookings can run at once. Set them up here, then pick which ones each
+          phase needs in <strong>Booking types</strong>. Lounge prevents
+          double-bookings automatically.
+        </p>
+      </div>
+      {onAdd ? (
+        <Button variant="secondary" size="sm" onClick={onAdd}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Plus size={16} aria-hidden /> Add
+          </span>
+        </Button>
+      ) : null}
     </header>
   );
 }
@@ -226,56 +241,65 @@ function ResourcesSection({
     }
   };
 
+  // Cards render in a flat list, spaces first then staff roles. The
+  // group is communicated via the coloured edge bar on each card
+  // (graphite for spaces, accent green for staff) — no eyebrow header
+  // needed since the colour does the grouping work and the page already
+  // explains both kinds in its subtitle.
+  const orderedPools = useMemo(
+    () => [...resourcePools, ...staffRolePools],
+    [resourcePools, staffRolePools],
+  );
+
   return (
-    <Card padding="none">
-      <SectionHeader
-        icon={<Box size={16} aria-hidden />}
-        title="Your resources"
-        subtitle="The things and people that limit how many bookings can run at once. Spaces and equipment, plus staff roles like an impression taker or a denture tech. Pick which ones each phase needs in Booking types."
-        action={
-          <Button variant="tertiary" size="sm" onClick={() => setEditing({ kind: 'new' })}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-              <Plus size={14} aria-hidden /> Add
-            </span>
-          </Button>
-        }
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      <PageHeader
+        onAdd={pools.length === 0 ? undefined : () => setEditing({ kind: 'new' })}
       />
+
       {pools.length === 0 ? (
-        <EmptyState
-          icon={<Box size={20} />}
-          title="Add your first resource"
-          description="Most clinics start with chairs (one booking per chair), a lab bench, and a consult room. Add staff roles too if a service needs a specific team member, like an impression taker."
-          action={
-            <Button variant="primary" size="sm" onClick={() => setEditing({ kind: 'new' })}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                <Plus size={14} aria-hidden /> Add the first one
-              </span>
-            </Button>
-          }
-        />
+        <Card padding="none">
+          <EmptyState
+            icon={<Box size={20} />}
+            title="Add your first resource"
+            description="Most clinics start with chairs (one booking per chair), a lab bench, and a consult room. Add staff roles too if a service needs a specific team member, like an impression taker."
+            action={
+              <Button variant="primary" size="sm" onClick={() => setEditing({ kind: 'new' })}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                  <Plus size={14} aria-hidden /> Add the first one
+                </span>
+              </Button>
+            }
+          />
+        </Card>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <PoolGroup
-            title="Spaces & equipment"
-            emptyText="No physical resources yet."
-            pools={resourcePools}
-            usageByPool={usageByPool}
-            staffAssignmentsByPool={staffAssignments.byPoolId}
-            staffById={staffById}
-            onEdit={(pool) => setEditing({ kind: 'edit', pool })}
-            onRemove={requestRemove}
-          />
-          <PoolGroup
-            title="Staff roles"
-            emptyText="No staff roles yet. Add one when a service needs a specific kind of staff member, like an impression taker. Capacity is the count of active staff you assign."
-            pools={staffRolePools}
-            usageByPool={usageByPool}
-            staffAssignmentsByPool={staffAssignments.byPoolId}
-            staffById={staffById}
-            onEdit={(pool) => setEditing({ kind: 'edit', pool })}
-            onRemove={requestRemove}
-          />
-        </div>
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[3],
+          }}
+        >
+          {orderedPools.map((p) => (
+            <PoolCard
+              key={p.id}
+              pool={p}
+              consumers={usageByPool.get(p.id) ?? []}
+              assignedStaff={
+                p.kind === 'staff_role'
+                  ? (staffAssignments.byPoolId[p.id] ?? [])
+                      .map((sid) => staffById.get(sid))
+                      .filter((s): s is StaffRow => !!s)
+                  : []
+              }
+              onEdit={() => setEditing({ kind: 'edit', pool: p })}
+              onRemove={() => requestRemove(p.id)}
+            />
+          ))}
+        </ul>
       )}
 
       {editing ? (
@@ -315,7 +339,7 @@ function ResourcesSection({
           onConfirm={confirmRemove}
         />
       ) : null}
-    </Card>
+    </div>
   );
 }
 
@@ -469,99 +493,18 @@ function RemovePoolImpactList({
   );
 }
 
-// Sub-group inside the Things-in-your-clinic card. One per pool
-// kind (Spaces & equipment / Staff roles). Renders an eyebrow
-// header + the matching rows, or a quiet "none yet" hint when
-// the group is empty.
-function PoolGroup({
-  title,
-  emptyText,
-  pools,
-  usageByPool,
-  staffAssignmentsByPool,
-  staffById,
-  onEdit,
-  onRemove,
-}: {
-  title: string;
-  emptyText: string;
-  pools: ResourcePoolRow[];
-  usageByPool: Map<string, BookingServiceType[]>;
-  staffAssignmentsByPool: Record<string, string[]>;
-  staffById: Map<string, StaffRow>;
-  onEdit: (pool: ResourcePoolRow) => void;
-  onRemove: (poolId: string) => void;
-}) {
-  return (
-    <div
-      style={{
-        borderTop: `1px solid ${theme.color.border}`,
-      }}
-    >
-      <div
-        style={{
-          padding: `${theme.space[3]}px ${theme.space[5]}px ${theme.space[2]}px`,
-        }}
-      >
-        <p
-          style={{
-            margin: 0,
-            fontSize: 11,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.wide,
-            textTransform: 'uppercase',
-            color: theme.color.inkMuted,
-          }}
-        >
-          {title}
-        </p>
-      </div>
-      {pools.length === 0 ? (
-        <p
-          style={{
-            margin: 0,
-            padding: `0 ${theme.space[5]}px ${theme.space[4]}px`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkSubtle,
-            lineHeight: theme.type.leading.snug,
-          }}
-        >
-          {emptyText}
-        </p>
-      ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {pools.map((p, i) => (
-            <PoolRow
-              key={p.id}
-              isFirst={i === 0}
-              pool={p}
-              consumers={usageByPool.get(p.id) ?? []}
-              assignedStaff={
-                p.kind === 'staff_role'
-                  ? (staffAssignmentsByPool[p.id] ?? [])
-                      .map((sid) => staffById.get(sid))
-                      .filter((s): s is StaffRow => !!s)
-                  : []
-              }
-              onEdit={() => onEdit(p)}
-              onRemove={() => onRemove(p.id)}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function PoolRow({
-  isFirst,
+// Per-pool card. Each resource gets its own card, in the same visual
+// language as Booking types: rounded surface tile, soft shadow, and a
+// thick coloured left-edge bar in the kind's identity colour. The
+// colour is the only group affordance we need — graphite for spaces &
+// equipment, accent green for staff roles. No eyebrow header needed.
+function PoolCard({
   pool,
   consumers,
   assignedStaff,
   onEdit,
   onRemove,
 }: {
-  isFirst: boolean;
   pool: ResourcePoolRow;
   consumers: BookingServiceType[];
   /** Active staff assigned to this pool. Empty for non-staff-role pools. */
@@ -609,19 +552,38 @@ function PoolRow({
   const pillTone: 'neutral' | 'unsuitable' =
     isStaffRole && assignedStaff.length === 0 ? 'unsuitable' : 'neutral';
 
+  // Edge bar identity colour by kind. Graphite reads as physical /
+  // neutral; accent green reads as people. Same colour vocabulary the
+  // booking types tab uses for its identity bars (different palette
+  // because the dimensions are different — services there, kinds here).
+  const edgeColour = isStaffRole ? theme.color.accent : theme.category.consult;
+
   return (
     <li
       style={{
+        position: 'relative',
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        boxShadow: theme.shadow.card,
+        overflow: 'hidden',
         display: 'flex',
         alignItems: 'stretch',
-        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
-      {/* The body of the row is the edit affordance — tap anywhere on
-          the avatar / title / pill area to open the editor. Making the
-          whole row tappable removes the ambiguity that came from a
-          tiny cog icon sitting next to the trash, where neither read
-          obviously as buttons. */}
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: 8,
+          background: edgeColour,
+        }}
+      />
+      {/* The body of the card is the edit affordance — tap anywhere on
+          the avatar / title / pill area to open the editor. Padding-left
+          accounts for the 8px edge bar so content doesn't sit under it. */}
       <button
         type="button"
         onClick={onEdit}
@@ -632,7 +594,7 @@ function PoolRow({
           display: 'flex',
           alignItems: 'center',
           gap: theme.space[3],
-          padding: `${theme.space[4]}px ${theme.space[4]}px ${theme.space[4]}px ${theme.space[5]}px`,
+          padding: `${theme.space[4]}px ${theme.space[4]}px ${theme.space[4]}px ${theme.space[5] + 8}px`,
           background: 'transparent',
           border: 'none',
           appearance: 'none',
@@ -1320,72 +1282,6 @@ function HowThisWorks() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared layout primitives
 // ─────────────────────────────────────────────────────────────────────────────
-
-function SectionHeader({
-  icon,
-  title,
-  subtitle,
-  action,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <header
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[3],
-        padding: `${theme.space[4]}px ${theme.space[5]}px`,
-        borderBottom: `1px solid ${theme.color.border}`,
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: theme.radius.input,
-          background: theme.color.bg,
-          color: theme.color.inkMuted,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          marginTop: 2,
-        }}
-      >
-        {icon}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <h3
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
-          }}
-        >
-          {title}
-        </h3>
-        <p
-          style={{
-            margin: `2px 0 0`,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            lineHeight: 1.5,
-          }}
-        >
-          {subtitle}
-        </p>
-      </div>
-      {action ? <div style={{ flexShrink: 0 }}>{action}</div> : null}
-    </header>
-  );
-}
 
 function IconAction({
   ariaLabel,
