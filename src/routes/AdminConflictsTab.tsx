@@ -1304,6 +1304,9 @@ function DialogFooter({
   onSave: () => void;
   busy: boolean;
 }) {
+  // Plain flex container — BottomSheet's footer wrapper already
+  // provides the divider hairline, padding, and background. Adding any
+  // of those here causes a double-border + cream-stripe artifact.
   return (
     <div
       style={{
@@ -1311,12 +1314,6 @@ function DialogFooter({
         justifyContent: 'flex-end',
         alignItems: 'center',
         gap: theme.space[2],
-        borderTop: `1px solid ${theme.color.border}`,
-        marginInline: -theme.space[5],
-        marginBottom: -theme.space[5],
-        paddingInline: theme.space[5],
-        paddingBlock: theme.space[4],
-        background: theme.color.bg,
       }}
     >
       <Button variant="tertiary" onClick={onCancel} disabled={busy}>
