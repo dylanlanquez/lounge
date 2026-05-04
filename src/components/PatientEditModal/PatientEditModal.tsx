@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Mail } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Dialog } from '../Dialog/Dialog.tsx';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Input } from '../Input/Input.tsx';
 import { Button } from '../Button/Button.tsx';
 import { theme } from '../../theme/index.ts';
@@ -264,11 +264,10 @@ export function PatientEditModal({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open={open}
       onClose={handleClose}
       title={showProfile ? 'Edit profile' : 'Edit care details'}
-      width={640}
       dismissable={!saving}
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[3] }}>
@@ -470,7 +469,7 @@ export function PatientEditModal({
           </div>
         ) : null}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 

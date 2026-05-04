@@ -19,10 +19,10 @@ import {
 import {
   AddressAutocompleteField,
   Button,
+  BottomSheet,
   Card,
   Checkbox,
   DateOfBirthRow,
-  Dialog,
   DropdownSelect,
   Input,
   Skeleton,
@@ -931,11 +931,10 @@ export function Arrival() {
         </div>
       ) : null}
 
-      <Dialog
+      <BottomSheet
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
         title="Discard arrival progress?"
-        width={420}
         dismissable
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[3] }}>
@@ -951,7 +950,7 @@ export function Arrival() {
         <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm, lineHeight: theme.type.leading.snug }}>
           The cart, customer details and notes you've added so far will be cleared. Any waiver signatures the patient has already saved are kept against their record — those don't depend on this arrival.
         </p>
-      </Dialog>
+      </BottomSheet>
 
       <style>{`
         @keyframes lng-arrival-fade {

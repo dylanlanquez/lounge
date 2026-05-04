@@ -14,9 +14,9 @@ import {
 } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import {
+  BottomSheet,
   Button,
   Card,
-  Dialog,
   Input,
   Skeleton,
   SnippetEditor,
@@ -499,10 +499,9 @@ function TemplateRow({
       ) : null}
 
       {resetConfirmOpen ? (
-        <Dialog
+        <BottomSheet
           open
           onClose={resetting ? () => undefined : () => setResetConfirmOpen(false)}
-          width={460}
           title="Reset to default copy?"
           description={
             <span>
@@ -551,7 +550,7 @@ function TemplateRow({
           }
         >
           <span />
-        </Dialog>
+        </BottomSheet>
       ) : null}
     </li>
   );
@@ -1611,10 +1610,9 @@ function SendTestDialog({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={sending ? () => undefined : onClose}
-      width={460}
       title="Send a test email"
       description={
         <span>
@@ -1661,6 +1659,6 @@ function SendTestDialog({
           </p>
         ) : null}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }

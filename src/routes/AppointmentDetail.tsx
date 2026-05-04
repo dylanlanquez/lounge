@@ -27,7 +27,6 @@ import {
   Breadcrumb,
   Button,
   Card,
-  Dialog,
   EmptyState,
   RescheduleSheet,
   Skeleton,
@@ -1561,10 +1560,9 @@ function CancelDialog({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={submitting ? () => undefined : onClose}
-      width={460}
       title="Cancel this appointment?"
       description="The booking will be marked as cancelled. The slot becomes free for another patient."
       footer={
@@ -1650,7 +1648,7 @@ function CancelDialog({
           </p>
         ) : null}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
@@ -1897,10 +1895,9 @@ function ConfirmDialog({
   onClose: () => void;
 }) {
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={confirming ? () => undefined : onClose}
-      width={460}
       title={title}
       description={description}
       footer={
@@ -1915,7 +1912,7 @@ function ConfirmDialog({
       }
     >
       <span />
-    </Dialog>
+    </BottomSheet>
   );
 }
 

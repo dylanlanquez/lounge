@@ -25,7 +25,6 @@ import {
   Button,
   Card,
   DatePicker,
-  Dialog,
   EditBookingSheet,
   EmptyState,
   Input,
@@ -1420,10 +1419,9 @@ function CancelAppointmentDialog({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={busy ? () => undefined : onClose}
-      width={460}
       title="Cancel this appointment?"
       description={
         <span>
@@ -1481,7 +1479,7 @@ function CancelAppointmentDialog({
           </p>
         ) : null}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 

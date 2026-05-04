@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, CreditCard, Loader2, XCircle } from 'lucide-react';
 import { Button } from '../Button/Button.tsx';
-import { Dialog } from '../Dialog/Dialog.tsx';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { theme } from '../../theme/index.ts';
 import { supabase } from '../../lib/supabase.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
@@ -200,7 +200,7 @@ export function TerminalPaymentModal({
   };
 
   return (
-    <Dialog
+    <BottomSheet
       open={open}
       onClose={state === 'waiting' || state === 'starting' ? () => undefined : onClose}
       title={
@@ -215,7 +215,7 @@ export function TerminalPaymentModal({
       footer={renderFooter()}
     >
       {renderBody()}
-    </Dialog>
+    </BottomSheet>
   );
 
   function renderBody() {

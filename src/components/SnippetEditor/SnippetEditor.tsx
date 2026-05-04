@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { Button } from '../Button/Button.tsx';
-import { Dialog } from '../Dialog/Dialog.tsx';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Input } from '../Input/Input.tsx';
 
 // SnippetEditor — TipTap-backed rich text editor for editable email
@@ -411,10 +411,9 @@ function LinkDialog({
   const [color, setColor] = useState('');
   const ok = url && url !== 'https://';
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onCancel}
-      width={420}
       title="Insert link"
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
@@ -447,7 +446,7 @@ function LinkDialog({
           emptyLabel="Use default link colour"
         />
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
@@ -482,10 +481,9 @@ function ButtonDialog({
   const ok = label && url && url !== 'https://';
 
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onCancel}
-      width={520}
       title="Add button"
       description="Buttons render as inline-block tap targets in the email. Tweak the styling below; the preview shows the final result."
       footer={
@@ -565,7 +563,7 @@ function ButtonDialog({
           label={label || 'Click here'}
         />
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
@@ -633,10 +631,9 @@ function ImageDialog({
   const [alt, setAlt] = useState('');
   const ok = !!url;
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onCancel}
-      width={420}
       title="Insert image"
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
@@ -684,7 +681,7 @@ function ImageDialog({
           </div>
         ) : null}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
@@ -715,10 +712,9 @@ function ColorPickerDialog({
 }) {
   const [custom, setCustom] = useState(currentColor ?? '');
   return (
-    <Dialog
+    <BottomSheet
       open
       onClose={onClose}
-      width={360}
       title="Text colour"
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: theme.space[2] }}>
@@ -824,7 +820,7 @@ function ColorPickerDialog({
           </div>
         </div>
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 

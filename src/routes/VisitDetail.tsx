@@ -34,7 +34,6 @@ import {
   VisitTimeline,
   WaiverSheet,
 } from '../components/index.ts';
-import { Dialog } from '../components/Dialog/Dialog.tsx';
 import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
 import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
@@ -1243,12 +1242,11 @@ export function VisitDetail() {
         patientEmail={patient?.email ?? null}
       />
 
-      <Dialog
+      <BottomSheet
         open={noteOpen}
         onClose={() => !noteSaving && setNoteOpen(false)}
         title="Tech note for the lab"
         description="This prints on the LWO."
-        width={560}
         dismissable={!noteSaving}
         footer={
           <div
@@ -1351,7 +1349,7 @@ export function VisitDetail() {
             </div>
           ) : null}
         </div>
-      </Dialog>
+      </BottomSheet>
 
       {/* Per-line Remove sheet. Trash icon on a cart line opens
           this; staff picks one of three reasons and (for unsuitable

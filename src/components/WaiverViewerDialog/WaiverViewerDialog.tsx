@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Mail, Printer, X } from 'lucide-react';
-import { Dialog } from '../Dialog/Dialog.tsx';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Input } from '../Input/Input.tsx';
 import { theme } from '../../theme/index.ts';
@@ -245,12 +245,11 @@ export function WaiverViewerDialog({
   const busy = status.kind === 'busy';
 
   return (
-    <Dialog
+    <BottomSheet
       open={open}
       onClose={() => !busy && onClose()}
       title="View signed waiver"
       description={`A4 visit summary and signed waiver, ${doc.sections.length} section${doc.sections.length === 1 ? '' : 's'}.`}
-      width={960}
       dismissable={!busy}
       footer={
         <div
@@ -340,7 +339,7 @@ export function WaiverViewerDialog({
           />
         )}
       </div>
-    </Dialog>
+    </BottomSheet>
   );
 }
 
