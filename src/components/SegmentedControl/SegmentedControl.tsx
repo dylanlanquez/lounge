@@ -65,20 +65,22 @@ export function SegmentedControl<T extends string>({
         // .lng-segmented-scroll class via the inline <style> below).
         scrollbarWidth: 'none',
         msOverflowStyle: 'none',
-        // Scroll snapping: each tab is a snap target so a swipe lands
-        // cleanly on a tab rather than mid-scroll. `mandatory` makes
-        // the snap firm — any scroll gesture resolves to the nearest
-        // tab. scroll-padding matches the pill's internal padding so
-        // the snapped tab visually aligns with the pill's content
-        // edge, not flush against its rounded border.
-        scrollSnapType: 'x mandatory',
+        // Scroll snapping: `proximity` over `mandatory` so flicks
+        // carry their full momentum and only snap when the natural
+        // resting point is already near a tab. Pairs with no
+        // scroll-snap-stop on the tabs themselves so a fast swipe
+        // can travel several tabs at once instead of being braked
+        // at every one. scroll-padding matches the pill's internal
+        // padding so the snapped tab visually aligns with the
+        // pill's content edge, not flush against its rounded border.
+        scrollSnapType: 'x proximity',
         scrollPaddingLeft: 4,
         scrollPaddingRight: 4,
       }
     : null;
 
   const buttonSnap: CSSProperties = scrollable
-    ? { scrollSnapAlign: 'start', scrollSnapStop: 'always' }
+    ? { scrollSnapAlign: 'start' }
     : {};
 
   const renderButtons = () =>
