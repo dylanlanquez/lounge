@@ -80,24 +80,25 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { error: 'no_location_resolved' });
   }
 
-  // Server-resolved deposit: never trust the client. Reads from
-  // lng_booking_type_config via the resolver, which honours per-axis
-  // overrides (a "Whitening tray, Upper arch" deposit can differ
-  // from the parent service default).
-  const { data: cfgRaw, error: cfgErr } = await supabase.rpc('lng_booking_type_resolve', {
-    p_service_type: body.serviceType,
-    p_repair_variant: body.repairVariant ?? null,
-    p_product_key: body.productKey ?? null,
-    p_arch: body.arch ?? null,
-  });
-  if (cfgErr) {
-    await logFailure('booking_type_resolve_failed', { error: cfgErr.message, body });
+  // Server-resolved deposit: never trust the client. The deposit
+  // amount sits on lng_booking_type_config.widget_deposit_pence —
+  // exposed via lng_widget_booking_types — and the same column
+  // widget-create-appointment reads when verifying a PaymentIntent
+  // landed on the right number. (lng_booking_type_resolve covers
+  // duration / phases / pools but doesn't project the widget
+  // deposit; querying the view directly keeps the two endpoints
+  // in lockstep.)
+  const { data: depositRow, error: depositErr } = await supabase
+    .from('lng_widget_booking_types')
+    .select('deposit_pence')
+    .eq('service_type', body.serviceType)
+    .maybeSingle();
+  if (depositErr) {
+    await logFailure('deposit_lookup_failed', { error: depositErr.message, body });
     return jsonResponse(500, { error: 'resolve_failed' });
   }
-  const cfg = (Array.isArray(cfgRaw) ? cfgRaw[0] : null) as {
-    widget_deposit_pence?: number | null;
-  } | null;
-  const depositPence = cfg?.widget_deposit_pence ?? 0;
+  const depositPence =
+    (depositRow as { deposit_pence: number } | null)?.deposit_pence ?? 0;
   if (depositPence <= 0) {
     return jsonResponse(400, { error: 'no_deposit_configured' });
   }

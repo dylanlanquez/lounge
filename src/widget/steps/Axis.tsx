@@ -124,8 +124,10 @@ function AxisOptions({ api, axis }: { api: BookingStateApi; axis: AxisDef }) {
               key={opt.key}
               type="button"
               onClick={() => {
+                // setAxisPin advances itself based on the post-pin
+                // active step list — calling goNext would skip the
+                // freshly-introduced step.
                 api.setAxisPin(axis.key, opt.key, opt.archMatch);
-                api.goNext();
               }}
               style={{
                 appearance: 'none',

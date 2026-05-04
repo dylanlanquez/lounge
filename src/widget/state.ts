@@ -272,28 +272,42 @@ export function useBookingState(locations: WidgetLocation[], preSelected: Widget
     if (activeSteps.includes(key)) setStepKey(key);
   };
 
-  // Choosing a service can shorten or lengthen the step list. If the
-  // user goes back to Service and re-picks a service that no longer
-  // includes the step they were on, snap them to the right place
-  // (the step the engine now expects after Service).
+  // Choosing a service resets the axis pins (the previous
+  // service's choices don't transfer) and any upgrade picks (they
+  // were keyed on the old catalogue row). Navigation has to be
+  // computed from the NEW state — calling api.goNext() afterward
+  // would read the stale activeSteps from the current render, so
+  // the patient would skip the axes the new service introduced.
+  // We do the setStepKey here ourselves based on the predicted
+  // post-update active list.
   const setService = (service: WidgetBookingType | null) => {
     setState((prev) => ({
       ...prev,
       service,
-      // Switching service invalidates every axis pin from the
-      // previous service AND any upgrades that were tied to the
-      // old service's catalogue row. Reset both.
       axes: {},
       upgradeIds: [],
     }));
+    if (!service) {
+      setStepKey('service');
+      return;
+    }
+    const newAxes = axesForService(service.serviceType as BookingServiceType);
+    // First axis the new service declares wins. No axes → land on
+    // 'time' directly (free-text bookings like virtual impression).
+    // We don't try to land on 'upgrades' here even when upgrades
+    // exist for the row — the upgrades query fires async, and
+    // jumping the patient there mid-flight would be weird. The
+    // engine inserts the upgrades step on a later render once
+    // its query resolves.
+    setStepKey(newAxes.length > 0 ? `axis:${newAxes[0]!.key}` : 'time');
   };
 
   /** Update one axis pin and advance to the next active step. The
-   *  step engine recomputes the list before navigating, so picking
-   *  a "both"-only product correctly skips straight past the arch
-   *  step. Also clears the upgrade picks — switching axes can land
-   *  the patient on a different catalogue row whose upgrade set
-   *  doesn't include what was previously chosen. */
+   *  navigation is computed here (not via api.goNext from the call
+   *  site) because the post-update active step list is what we
+   *  need to consult — stale activeSteps in the render closure
+   *  would let the patient skip future axes that this pick just
+   *  introduced or hide an axis this pick just removed. */
   const setAxisPin = (
     axisKey: AxisKey,
     value: string,
@@ -317,6 +331,27 @@ export function useBookingState(locations: WidgetLocation[], preSelected: Widget
       }
       return { ...prev, axes: nextAxes, upgradeIds: [] };
     });
+
+    // Predict the next step from the post-pin state without
+    // waiting for React to commit. Walks the same axis registry
+    // activeStepsFor uses, applying the same conditional skip
+    // rules.
+    if (!state.service) return;
+    const allAxes = axesForService(state.service.serviceType as BookingServiceType);
+    const currentAxisIdx = allAxes.findIndex((a) => a.key === axisKey);
+    for (let i = currentAxisIdx + 1; i < allAxes.length; i++) {
+      const next = allAxes[i]!;
+      // Same skip rule as activeStepsFor: drop the arch axis when
+      // the picked product's arch_match isn't 'single'.
+      const skipArch =
+        next.key === 'arch' && productArchMatch && productArchMatch !== 'single';
+      if (skipArch) continue;
+      setStepKey(`axis:${next.key}`);
+      return;
+    }
+    // Last axis pinned — go to 'time'. Same rationale as
+    // setService: don't try to predict 'upgrades' here.
+    setStepKey('time');
   };
 
   /** Toggle a single upgrade in the patient's selection. Used by

@@ -38,8 +38,9 @@ export function ServiceStep({ api }: { api: BookingStateApi }) {
             key={bt.id}
             type="button"
             onClick={() => {
+              // setService advances the step itself — calling
+              // goNext too would compound on stale activeSteps.
               api.setService(bt);
-              api.goNext();
             }}
             style={{
               appearance: 'none',
