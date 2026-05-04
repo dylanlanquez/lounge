@@ -7,7 +7,8 @@ import {
   type VisitorAddressMapData,
   type VisitorAddressPoint,
   type VisitorMapService,
-  VISITOR_MAP_SERVICES,
+  type VisitorMapServiceDef,
+  useVisitorMapServices,
 } from '../../lib/queries/reports.ts';
 import type { AddressGeocode } from '../../lib/queries/addressGeocodes.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
@@ -15,7 +16,7 @@ import { logFailure } from '../../lib/failureLog.ts';
 import {
   MAP_STYLE,
   MAP_BACKGROUND,
-  MARKER_COLOUR,
+  colourForService,
   haloMarkerIcon,
 } from '../../lib/visitorMapStyling.ts';
 
@@ -59,6 +60,7 @@ interface HoverState {
 }
 
 export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
+  const { data: services } = useVisitorMapServices();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<GMarker[]>([]);
   // Tracks the geocode set we last auto-fit the camera to. Filter
@@ -110,8 +112,8 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
   // recolours every dot to that service. At the 'all' level we keep
   // each point's own dominant-service colour.
   const colourFor = (point: VisitorAddressPoint): string => {
-    if (filter.level === 'all') return MARKER_COLOUR[point.dominant_service];
-    return MARKER_COLOUR[filter.service];
+    if (filter.level === 'all') return colourForService(point.dominant_service, services);
+    return colourForService(filter.service, services);
   };
 
   const totals = useMemo(() => {
@@ -286,8 +288,8 @@ export function VisitorAddressMap({ data, geocodes }: VisitorAddressMapProps) {
         }}
       />
       <KpiBadges placed={totals.placed} total={totals.total} visits={totals.visits} />
-      <ServiceFilter data={data} filter={filter} onChange={setFilter} />
-      {hover ? <HoverCard hover={hover} containerRef={containerRef} /> : null}
+      <ServiceFilter data={data} filter={filter} services={services} onChange={setFilter} />
+      {hover ? <HoverCard hover={hover} services={services} containerRef={containerRef} /> : null}
     </div>
   );
 }
@@ -389,10 +391,12 @@ const FILTER_OPEN_WIDTH = 240;
 function ServiceFilter({
   data,
   filter,
+  services,
   onChange,
 }: {
   data: VisitorAddressMapData;
   filter: AddressMapFilter;
+  services: ReadonlyArray<VisitorMapServiceDef>;
   onChange: (next: AddressMapFilter) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -428,9 +432,9 @@ function ServiceFilter({
     [data.points],
   );
 
-  const activeLabel = labelForFilter(filter);
+  const activeLabel = labelForFilter(filter, services);
   const activeColour =
-    filter.level === 'all' ? theme.color.inkSubtle : MARKER_COLOUR[filter.service];
+    filter.level === 'all' ? theme.color.inkSubtle : colourForService(filter.service, services);
 
   return (
     <div
@@ -518,7 +522,11 @@ function ServiceFilter({
         }}
       >
         <PanelHeader
-          title={filter.level === 'all' ? 'Service' : labelForServiceTitle(filter)}
+          title={
+            filter.level === 'all'
+              ? 'Service'
+              : services.find((s) => s.id === filter.service)?.label ?? filter.service
+          }
           onClose={() => setExpanded(false)}
         />
         {filter.level === 'all' ? (
@@ -531,11 +539,11 @@ function ServiceFilter({
               count={totalAll}
               onClick={() => onChange({ level: 'all' })}
             />
-            {VISITOR_MAP_SERVICES.map((s) => (
+            {services.map((s) => (
               <FilterRow
                 key={s.id}
                 active={false}
-                colour={MARKER_COLOUR[s.id]}
+                colour={colourForService(s.id, services)}
                 label={s.label}
                 count={serviceTotals.get(s.id) ?? 0}
                 chevron
@@ -544,7 +552,7 @@ function ServiceFilter({
             ))}
           </>
         ) : (
-          <ServiceDrilldown data={data} filter={filter} onChange={onChange} />
+          <ServiceDrilldown data={data} filter={filter} services={services} onChange={onChange} />
         )}
       </div>
     </div>
@@ -609,14 +617,16 @@ function PanelHeader({ title, onClose }: { title: string; onClose: () => void })
 function ServiceDrilldown({
   data,
   filter,
+  services,
   onChange,
 }: {
   data: VisitorAddressMapData;
   filter: Extract<AddressMapFilter, { level: 'service' | 'sub' }>;
+  services: ReadonlyArray<VisitorMapServiceDef>;
   onChange: (next: AddressMapFilter) => void;
 }) {
   const service = filter.service;
-  const serviceLabel = VISITOR_MAP_SERVICES.find((s) => s.id === service)?.label ?? service;
+  const serviceLabel = services.find((s) => s.id === service)?.label ?? service;
   const subTotals = useMemo(() => aggregateAddressSubs(data, service), [data, service]);
   const serviceTotal = useMemo(() => {
     let n = 0;
@@ -631,7 +641,7 @@ function ServiceDrilldown({
       <BackRow onClick={() => onChange({ level: 'all' })} />
       <FilterRow
         active={filter.level === 'service'}
-        colour={MARKER_COLOUR[service]}
+        colour={colourForService(service, services)}
         label={`All ${serviceLabel.toLowerCase()}`}
         count={serviceTotal}
         onClick={() => onChange({ level: 'service', service })}
@@ -654,7 +664,7 @@ function ServiceDrilldown({
             <FilterRow
               key={s.key}
               active={isActive}
-              colour={MARKER_COLOUR[service]}
+              colour={colourForService(service, services)}
               label={s.label}
               count={s.count}
               onClick={() =>
@@ -716,15 +726,14 @@ function aggregateAddressSubs(
     .sort((a, b) => b.count - a.count);
 }
 
-function labelForFilter(filter: AddressMapFilter): string {
+function labelForFilter(
+  filter: AddressMapFilter,
+  services: ReadonlyArray<VisitorMapServiceDef>,
+): string {
   if (filter.level === 'all') return 'All visits';
   const serviceLabel =
-    VISITOR_MAP_SERVICES.find((s) => s.id === filter.service)?.label ?? filter.service;
+    services.find((s) => s.id === filter.service)?.label ?? filter.service;
   return serviceLabel;
-}
-
-function labelForServiceTitle(filter: Extract<AddressMapFilter, { level: 'service' | 'sub' }>): string {
-  return VISITOR_MAP_SERVICES.find((s) => s.id === filter.service)?.label ?? filter.service;
 }
 
 function FilterRow({
@@ -819,9 +828,11 @@ const RECENT_LIMIT = 3;
 
 function HoverCard({
   hover,
+  services,
   containerRef,
 }: {
   hover: HoverState;
+  services: ReadonlyArray<VisitorMapServiceDef>;
   containerRef: RefObject<HTMLDivElement | null>;
 }) {
   const point = hover.point;
@@ -890,7 +901,7 @@ function HoverCard({
               width: 8,
               height: 8,
               borderRadius: '50%',
-              background: MARKER_COLOUR[point.dominant_service],
+              background: colourForService(point.dominant_service, services),
               flexShrink: 0,
             }}
           />

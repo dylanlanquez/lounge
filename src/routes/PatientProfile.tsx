@@ -665,8 +665,11 @@ function ShopifyLinkedPill() {
           gap: theme.space[1],
           padding: `2px ${theme.space[2]}px 2px ${theme.space[2]}px`,
           borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
+          // Pastel blue tint with a tonally-paired ink so the
+          // "Linked" pill reads as the connected-services slot
+          // distinct from the green scan / veneer pills next to it.
+          background: '#E5EEF8',
+          color: '#1E5BA8',
           fontSize: theme.type.size.xs,
           fontWeight: theme.type.weight.semibold,
           border: 'none',

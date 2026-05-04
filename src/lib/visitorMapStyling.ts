@@ -99,22 +99,44 @@ export const MAP_STYLE: Array<Record<string, unknown>> = [
   { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
 ];
 
-// Categorical palette for the heatmap and its legend. Anchored on
-// the brand green for "Same-day appliance" (the closest category
-// to a Lounge default) and opposed across the colour wheel for
-// separation: slate-blue, charcoal, ochre, stone.
+// Categorical palette for the heatmap and its legend. Picked for
+// separation across the colour wheel — brand green leads (closest
+// to a Lounge default), then slate-blue, charcoal, ochre, plum,
+// teal — so adjacent legend rows never bleed into each other.
 //
 // Why not the base theme alert/warn/etc colours: those are *status*
 // colours (red = error, amber = warning) and would read as a value
 // judgement on the service category. Categorical colour shouldn't
 // editorialise.
-export const MARKER_COLOUR: Record<VisitorMapService, string> = {
-  denture_repair: '#4F6F89',
-  click_in_veneers: '#2D3539',
-  same_day_appliance: theme.color.accent,
-  impression_appointment: '#B36815',
-  other: '#6B7378',
-};
+const PALETTE: string[] = [
+  theme.color.accent, // brand green
+  '#4F6F89',          // slate blue
+  '#2D3539',          // charcoal
+  '#B36815',          // ochre
+  '#8C2A5A',          // plum
+  '#3D8FA0',          // muted teal
+  '#6B6F2A',          // olive
+  '#A0593A',          // terracotta
+];
+
+const OTHER_COLOUR = '#6B7378';
+
+/** Resolve the marker colour for a service. 'Other' always lands
+ *  on the stable grey; every other service is assigned a palette
+ *  slot by its index in the live services list, so the same
+ *  service keeps its colour across renders even as the list
+ *  grows. Wraps around the palette when more than 8 services
+ *  exist (rare; categorical clarity starts breaking down well
+ *  before that). */
+export function colourForService(
+  serviceId: VisitorMapService,
+  services: ReadonlyArray<{ id: VisitorMapService }>,
+): string {
+  if (serviceId === 'other') return OTHER_COLOUR;
+  const idx = services.findIndex((s) => s.id === serviceId);
+  if (idx < 0) return OTHER_COLOUR;
+  return PALETTE[idx % PALETTE.length]!;
+}
 
 // Build a layered SVG marker — outer glow, mid halo, inner core
 // with white stroke. The triple-layer fade gives a luminous look

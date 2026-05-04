@@ -7,14 +7,15 @@ import {
   type VisitorMapData,
   type VisitorMapPoint,
   type VisitorMapService,
-  VISITOR_MAP_SERVICES,
+  type VisitorMapServiceDef,
+  useVisitorMapServices,
 } from '../../lib/queries/reports.ts';
 import type { PostcodeGeocode } from '../../lib/queries/postcodeGeocodes.ts';
 import { logFailure } from '../../lib/failureLog.ts';
 import {
   MAP_STYLE,
   MAP_BACKGROUND,
-  MARKER_COLOUR,
+  colourForService,
   haloMarkerIcon,
 } from '../../lib/visitorMapStyling.ts';
 
@@ -39,8 +40,12 @@ export interface VisitorHeatmapProps {
   geocodes: PostcodeGeocode[];
 }
 
-function colourFor(service: VisitorMapService): string {
-  return MARKER_COLOUR[service];
+// Helper that wraps the live services list — picked from the hook
+// once at the component root and threaded through here — into the
+// shared palette resolver. Dropped into a closure so call sites
+// stay short.
+function makeColourFor(services: ReadonlyArray<VisitorMapServiceDef>) {
+  return (service: VisitorMapService) => colourForService(service, services);
 }
 
 interface ResolvedPoint {
@@ -64,6 +69,8 @@ interface HoverState {
 }
 
 export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
+  const { data: services } = useVisitorMapServices();
+  const colourFor = useMemo(() => makeColourFor(services), [services]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const markersRef = useRef<GMarker[]>([]);
   // Tracks the geocode set we last auto-fit the camera to. Filter
@@ -96,7 +103,7 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
       return data.points.map((p) => ({
         outward: p.outward,
         count: p.total,
-        colour: dominantServiceColour(p),
+        colour: dominantServiceColour(p, services),
         point: p,
       }));
     }
@@ -330,8 +337,15 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
         }}
       />
       <KpiBadges visitors={totalsForBadges.visitors} areas={totalsForBadges.areas} />
-      <Legend data={data} filter={filter} onChange={setFilter} />
-      {hover ? <HoverCard hover={hover} filter={filter} containerRef={containerRef} /> : null}
+      <Legend data={data} filter={filter} services={services} onChange={setFilter} />
+      {hover ? (
+        <HoverCard
+          hover={hover}
+          filter={filter}
+          services={services}
+          containerRef={containerRef}
+        />
+      ) : null}
     </div>
   );
 }
@@ -344,10 +358,12 @@ export function VisitorHeatmap({ data, geocodes }: VisitorHeatmapProps) {
 function HoverCard({
   hover,
   filter,
+  services,
   containerRef,
 }: {
   hover: HoverState;
   filter: VisitorMapFilter;
+  services: ReadonlyArray<VisitorMapServiceDef>;
   containerRef: RefObject<HTMLDivElement | null>;
 }) {
   const breakdown = useMemo(() => {
@@ -357,7 +373,7 @@ function HoverCard({
       return sub ? sub.label : null;
     }
     if (filter.level === 'service') {
-      const label = VISITOR_MAP_SERVICES.find((s) => s.id === filter.service)?.label;
+      const label = services.find((s) => s.id === filter.service)?.label;
       return label ?? null;
     }
     // 'all' — show top services for this outward, up to two.
@@ -368,11 +384,11 @@ function HoverCard({
     if (top.length === 0) return null;
     return top
       .map((s) => {
-        const label = VISITOR_MAP_SERVICES.find((x) => x.id === s.service)?.label ?? s.service;
+        const label = services.find((x) => x.id === s.service)?.label ?? s.service;
         return `${label} (${s.count})`;
       })
       .join(', ');
-  }, [hover, filter]);
+  }, [hover, filter, services]);
 
   // Measure-and-flip positioning: render at opacity 0 first, measure
   // the rendered tooltip, then re-position with the proper side and
@@ -548,12 +564,15 @@ function Badge({ label, value }: { label: string; value: number }) {
 function Legend({
   data,
   filter,
+  services,
   onChange,
 }: {
   data: VisitorMapData;
   filter: VisitorMapFilter;
+  services: ReadonlyArray<VisitorMapServiceDef>;
   onChange: (next: VisitorMapFilter) => void;
 }) {
+  const colourFor = useMemo(() => makeColourFor(services), [services]);
   // Aggregate service totals across every outward so the top-level
   // legend can show visitor counts per service. (The map itself
   // doesn't need this — but the legend item label benefits from
@@ -579,7 +598,7 @@ function Legend({
           onClick={() => undefined}
           highlighted
         />
-        {VISITOR_MAP_SERVICES.map((s) => (
+        {services.map((s) => (
           <LegendRow
             key={s.id}
             active={false}
@@ -596,7 +615,7 @@ function Legend({
 
   // Drill into a service. Compose sub-totals across outwards.
   const service = filter.service;
-  const serviceLabel = VISITOR_MAP_SERVICES.find((s) => s.id === service)?.label ?? service;
+  const serviceLabel = services.find((s) => s.id === service)?.label ?? service;
   const subTotals = aggregateSubTotals(data, service);
 
   return (
@@ -794,7 +813,10 @@ function aggregateSubTotals(
     .sort((a, b) => b.count - a.count);
 }
 
-function dominantServiceColour(point: VisitorMapPoint): string {
+function dominantServiceColour(
+  point: VisitorMapPoint,
+  services: ReadonlyArray<VisitorMapServiceDef>,
+): string {
   let best: VisitorMapService = 'other';
   let bestCount = -1;
   for (const s of point.services) {
@@ -803,5 +825,5 @@ function dominantServiceColour(point: VisitorMapPoint): string {
       bestCount = s.count;
     }
   }
-  return colourFor(best);
+  return colourForService(best, services);
 }

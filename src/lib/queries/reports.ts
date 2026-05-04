@@ -796,15 +796,78 @@ export function useReportsPatients(range: DateRange): PatientReportsResult {
 // into 'other'.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type VisitorMapService = 'denture_repair' | 'click_in_veneers' | 'same_day_appliance' | 'impression_appointment' | 'other';
+// Service-type slug as it appears on lng_booking_type_config /
+// lwo_catalogue.service_type. We let any string value through so
+// new services added to the booking-types config flow into the
+// heatmap automatically. 'other' is reserved for items whose
+// catalogue row had no service_type.
+export type VisitorMapService = string;
 
-export const VISITOR_MAP_SERVICES: { id: VisitorMapService; label: string }[] = [
-  { id: 'denture_repair', label: 'Denture repair' },
-  { id: 'click_in_veneers', label: 'Click-in veneers' },
-  { id: 'same_day_appliance', label: 'Same-day appliance' },
-  { id: 'impression_appointment', label: 'Impression' },
+export interface VisitorMapServiceDef {
+  id: VisitorMapService;
+  label: string;
+}
+
+// Floor list returned while the live useVisitorMapServices hook
+// is still loading, so a brief flicker on first paint doesn't
+// drop the legend down to nothing. Same shape the live read
+// returns. 'Other' is always present — anything the hook
+// surfaces is appended ahead of it.
+export const VISITOR_MAP_FALLBACK_SERVICES: VisitorMapServiceDef[] = [
   { id: 'other', label: 'Other' },
 ];
+
+interface VisitorMapServicesResult {
+  data: VisitorMapServiceDef[];
+  loading: boolean;
+  error: string | null;
+}
+
+/** Live list of service categories the heatmap should slice by.
+ *  Reads lng_widget_booking_types — same canonical source the
+ *  customer-facing booking widget uses, so what the patient sees
+ *  in the funnel matches what the heatmap legend shows. Any
+ *  new service added in admin appears automatically with its
+ *  display_label; 'Other' is appended as the catch-all bucket. */
+export function useVisitorMapServices(): VisitorMapServicesResult {
+  const [data, setData] = useState<VisitorMapServiceDef[]>(VISITOR_MAP_FALLBACK_SERVICES);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('lng_widget_booking_types')
+        .select('service_type, label')
+        .order('label', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      const live: VisitorMapServiceDef[] = (rows ?? [])
+        .map((r) => ({
+          id: ((r.service_type as string) ?? '').trim() || null,
+          label: ((r.label as string) ?? '').trim() || null,
+        }))
+        .filter((s): s is VisitorMapServiceDef => s.id !== null && s.label !== null);
+      // 'Other' always wraps the tail so any service_type that
+      // isn't in the live list (legacy data, removed services)
+      // still has somewhere to land in the legend.
+      live.push({ id: 'other', label: 'Other' });
+      setData(live);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { data, loading, error };
+}
 
 // One drill-down level beneath VisitorMapService. Each parent service
 // has its own sub-vocabulary:
@@ -971,24 +1034,21 @@ function dominantClassification(v: VisitorMapVisit): DominantClassification {
   const items = cart?.items ?? [];
   if (items.length === 0) return { service: 'other', subKey: null };
 
-  // Step 1 — pick the dominant service across all items.
-  const serviceCounts: Record<VisitorMapService, number> = {
-    denture_repair: 0,
-    click_in_veneers: 0,
-    same_day_appliance: 0,
-    impression_appointment: 0,
-    other: 0,
-  };
+  // Step 1 — pick the dominant service across all items. Any
+  // service_type seen on the catalogue rows gets its own bucket;
+  // empty / null collapse to 'other'. New services added in
+  // admin land in their own slice without code changes.
+  const serviceCounts = new Map<VisitorMapService, number>();
   for (const it of items) {
     const cat = pickOne(it.catalogue);
     const st = normaliseServiceType(cat?.service_type ?? null);
-    serviceCounts[st] += 1;
+    serviceCounts.set(st, (serviceCounts.get(st) ?? 0) + 1);
   }
   let dominant: VisitorMapService = 'other';
   let dominantCount = -1;
-  for (const k of Object.keys(serviceCounts) as VisitorMapService[]) {
-    if (serviceCounts[k] > dominantCount) {
-      dominantCount = serviceCounts[k];
+  for (const [k, count] of serviceCounts) {
+    if (count > dominantCount) {
+      dominantCount = count;
       dominant = k;
     }
   }
@@ -1015,60 +1075,57 @@ function dominantClassification(v: VisitorMapVisit): DominantClassification {
   return { service: dominant, subKey: bestSub };
 }
 
-// Per-service sub-key extraction. Each service uses a different
-// schema field for its drill-down. Returns null when the relevant
-// field is empty so the patient still contributes to the parent
-// service's count without polluting the sub-list with "Unknown"
-// rows.
+// Per-service sub-key extraction. Each known service uses a
+// different schema field for its drill-down; unknown service
+// types (anything new the booking-types config gains) drop to a
+// generic resolution: prefer repair_variant, then product_key,
+// then arch, so the drill-down lights up automatically when
+// a new service has any of those axes pinned. Returns null when
+// no axis applies, so the patient still contributes to the
+// parent service's count without polluting the sub-list.
 function subKeyFor(
   service: VisitorMapService,
   arch: string | null,
   repairVariant: string | null,
   productKey: string | null,
 ): string | null {
-  switch (service) {
-    case 'denture_repair':
-      return repairVariant?.trim() || null;
-    case 'same_day_appliance':
-      return productKey?.trim() || null;
-    case 'click_in_veneers':
-    case 'impression_appointment':
-      // Arch is the natural drill-down for veneers + impressions.
-      return arch?.trim() || null;
-    case 'other':
-      return null;
+  if (service === 'denture_repair') return repairVariant?.trim() || null;
+  if (service === 'same_day_appliance') return productKey?.trim() || null;
+  if (service === 'click_in_veneers') return arch?.trim() || null;
+  if (service === 'impression_appointment' || service === 'virtual_impression_appointment') {
+    return arch?.trim() || null;
   }
+  if (service === 'other') return null;
+  // Unknown service — pick the most specific axis available.
+  return repairVariant?.trim() || productKey?.trim() || arch?.trim() || null;
 }
 
 function humaniseSub(service: VisitorMapService, key: string): string {
-  if (service === 'click_in_veneers' || service === 'impression_appointment') {
-    if (key === 'upper') return 'Upper arch';
-    if (key === 'lower') return 'Lower arch';
-    if (key === 'both') return 'Both arches';
-    return key;
-  }
+  // Arch values share a vocabulary across every service that
+  // uses them; treat 'upper' / 'lower' / 'both' uniformly so any
+  // new arch-axis service inherits the same humanisation.
+  if (key === 'upper') return 'Upper arch';
+  if (key === 'lower') return 'Lower arch';
+  if (key === 'both') return 'Both arches';
   if (service === 'same_day_appliance') {
     // Catalogue product_keys are snake_case identifiers — humanise.
-    return key
-      .split('_')
-      .map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
-      .join(' ');
+    return humaniseSnake(key);
   }
-  // Denture repair already comes through with a human label
-  // ('Snapped denture', 'Add a new tooth') in the catalogue.
+  // Repair variants (and other free-text drill-downs) come
+  // through with a human label already.
   return key;
 }
 
+function humaniseSnake(key: string): string {
+  return key
+    .split('_')
+    .map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(' ');
+}
+
 function normaliseServiceType(raw: string | null): VisitorMapService {
-  switch (raw) {
-    case 'denture_repair':
-    case 'click_in_veneers':
-    case 'same_day_appliance':
-    case 'impression_appointment':
-      return raw;
-    default:
-      return 'other';
-  }
+  const trimmed = raw?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : 'other';
 }
 
 interface VisitorMapResult {
@@ -1472,25 +1529,44 @@ function isVisitorMapService(s: string | null): s is VisitorMapService {
 //   • other / unknown   → "Other service"
 //
 // Never returns a raw backend slug. If we can't resolve a meaningful
-// sub, we surface the service's display name from VISITOR_MAP_SERVICES.
+// sub, we surface a humanised version of the service's id (e.g.
+// "Denture repair" from "denture_repair") so any new service the
+// booking-types config gains still reads as English.
 function prettyItemLabel(
   service: VisitorMapService,
   cat: { service_type: string | null; repair_variant: string | null; product_key: string | null } | null,
   arch: string | null,
 ): string {
-  const serviceDisplay =
-    VISITOR_MAP_SERVICES.find((s) => s.id === service)?.label ?? 'Other service';
-  switch (service) {
-    case 'denture_repair':
-      return cat?.repair_variant?.trim() || serviceDisplay;
-    case 'same_day_appliance':
-      return humaniseProductKey(cat?.product_key) || serviceDisplay;
-    case 'click_in_veneers':
-    case 'impression_appointment':
-      return archLabel(arch) || serviceDisplay;
-    default:
-      return serviceDisplay;
+  const serviceDisplay = humaniseServiceSlug(service);
+  if (service === 'denture_repair') {
+    return cat?.repair_variant?.trim() || serviceDisplay;
   }
+  if (service === 'same_day_appliance') {
+    return humaniseProductKey(cat?.product_key) || serviceDisplay;
+  }
+  if (
+    service === 'click_in_veneers' ||
+    service === 'impression_appointment' ||
+    service === 'virtual_impression_appointment'
+  ) {
+    return archLabel(arch) || serviceDisplay;
+  }
+  return serviceDisplay;
+}
+
+/** Title-cased version of a service-type slug for fallback
+ *  display when the live booking-types list isn't in scope.
+ *  Mirrors humaniseSnake but with first-word-only capitalisation
+ *  ("Denture repair", not "Denture Repair") to match the way
+ *  display labels are written in the lng_widget_booking_types
+ *  view. 'other' renders as "Other service" — slightly more
+ *  forgiving than a bare "Other" when it leaks into a long line. */
+function humaniseServiceSlug(slug: VisitorMapService): string {
+  if (!slug || slug === 'other') return 'Other service';
+  const parts = slug.split('_').filter(Boolean);
+  if (parts.length === 0) return 'Other service';
+  parts[0] = parts[0]!.charAt(0).toUpperCase() + parts[0]!.slice(1);
+  return parts.join(' ');
 }
 
 function humaniseProductKey(key: string | null | undefined): string | null {
