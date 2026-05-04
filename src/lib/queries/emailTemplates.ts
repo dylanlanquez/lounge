@@ -369,6 +369,48 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     sample:
       'https://www.google.com/calendar/render?action=TEMPLATE&text=Click-in+veneers&dates=20260509T100000Z/20260509T110000Z',
   },
+  {
+    name: 'publicEmail',
+    label: 'Public email',
+    description:
+      "The clinic's public-facing email address from Branding & clinic. Use for \"questions? email us\".",
+    sample: 'hello@venneir.com',
+  },
+  {
+    name: 'websiteUrl',
+    label: 'Website URL',
+    description: 'Clinic website from Branding & clinic. Empty when not set.',
+    sample: 'https://venneir.com',
+  },
+  {
+    name: 'bookingLink',
+    label: 'Booking link',
+    description:
+      'Public booking URL from Branding & clinic. Drop into [button:Book again](url) for a re-booking CTA.',
+    sample: 'https://venneir.com/book',
+  },
+  {
+    name: 'mapUrl',
+    label: 'Map URL',
+    description:
+      'Google Maps link to the clinic from Branding & clinic. Pair with the address: "[See on map]({{mapUrl}})".',
+    sample: 'https://maps.google.com/?q=Venneir+Lounge',
+  },
+  {
+    name: 'openingHoursToday',
+    label: 'Opening hours, today',
+    description:
+      "Today's opening times in HH:mm–HH:mm format, or \"closed\". Pulled live from Branding & clinic.",
+    sample: '09:00–18:00',
+  },
+  {
+    name: 'openingHoursWeek',
+    label: 'Opening hours, full week',
+    description:
+      'All seven days, one per line, e.g. "Monday: 09:00–18:00". Pulled live from Branding & clinic.',
+    sample:
+      'Monday: 09:00–18:00\nTuesday: 09:00–18:00\nWednesday: 09:00–18:00\nThursday: 09:00–18:00\nFriday: 09:00–18:00\nSaturday: 10:00–16:00\nSunday: closed',
+  },
 ];
 
 // Reschedule-specific variables. Layered on top of the shared list

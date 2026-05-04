@@ -43,6 +43,22 @@
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface BrandOptions {
+  /** Logo URL shown at the top of the white card. Empty string or
+   *  show=false to omit the header. */
+  logoUrl?: string;
+  /** Whether to render the logo header at all. */
+  logoShow?: boolean;
+  /** Logo max-width in pixels. Defaults to 120. */
+  logoMaxWidth?: number;
+  /** Hex including leading `#`. Empty falls back to ink. */
+  accentColor?: string;
+  /** Legal footer fields. Any non-empty value appears in the footer. */
+  companyNumber?: string;
+  vatNumber?: string;
+  registeredAddress?: string;
+}
+
 export interface RenderEmailInput {
   /** The template's subject line, with {{var}} placeholders. */
   subject: string;
@@ -53,8 +69,12 @@ export interface RenderEmailInput {
    * misnamed variable in QA than a silently empty email. */
   variables: Record<string, string>;
   /** Optional override of the default branding wrapped around the
-   * body. Tests pass `null` to inspect the body HTML alone. */
+   * body. Tests pass `'bare'` to inspect the body HTML alone. */
   shell?: 'lounge' | 'bare';
+  /** Branding options pulled from lng_settings (`email.brand_*`,
+   *  `legal.*`). Optional — when omitted the shell renders without
+   *  a logo header or legal footer. The admin tab populates this. */
+  brand?: BrandOptions;
 }
 
 export interface RenderedEmail {
@@ -72,8 +92,8 @@ export function renderEmail(input: RenderEmailInput): RenderedEmail {
   const text = bodyToText(bodyAfterVars);
   const html =
     input.shell === 'bare'
-      ? bodyHtml
-      : wrapInLoungeShell(bodyHtml);
+      ? renderLogoHeader(input.brand) + bodyHtml
+      : wrapInLoungeShell(bodyHtml, input.brand);
   return { subject, html, text };
 }
 
@@ -311,14 +331,49 @@ export function bodyToText(syntax: string): string {
 // language of send-appointment-confirmation's hardcoded HTML so
 // reminders look like a sibling email, not a foreign one.
 
-function wrapInLoungeShell(bodyHtml: string): string {
+/** Logo header rendered inside the white card before the body. The
+ *  email shell calls this; the bare/preview shell calls it inline.
+ *  Returns empty string when the brand says no logo, so callers can
+ *  prepend unconditionally. */
+export function renderLogoHeader(brand?: BrandOptions): string {
+  if (!brand) return '';
+  const show = brand.logoShow !== false;
+  const url = (brand.logoUrl ?? '').trim();
+  if (!show || !url) return '';
+  const maxWidth = Math.max(40, Math.min(320, brand.logoMaxWidth ?? 120));
+  // The wrapper is a paragraph with the same 8px bottom margin as
+  // every other block — keeps the rhythm consistent and means the
+  // first body block sits exactly one paragraph break below the
+  // logo regardless of what kind of block it is.
+  return `<p style="margin:0 0 8px 0;text-align:center"><img src="${url}" alt="" style="max-width:${maxWidth}px;height:auto;display:inline-block;border:0"></p>`;
+}
+
+/** Legal footer block. Renders below the white card (outside it) with
+ *  Venneir Limited + any company number / VAT / registered address
+ *  the admin has set. UK statute requires the company number and
+ *  registered address on customer-facing comms for limited
+ *  companies. */
+export function renderLegalFooter(brand?: BrandOptions): string {
+  const lines: string[] = ['Venneir Limited'];
+  const companyNumber = (brand?.companyNumber ?? '').trim();
+  const vatNumber = (brand?.vatNumber ?? '').trim();
+  const registeredAddress = (brand?.registeredAddress ?? '').trim();
+  if (companyNumber) lines.push(`Company no. ${companyNumber}`);
+  if (vatNumber) lines.push(`VAT no. ${vatNumber}`);
+  if (registeredAddress) lines.push(registeredAddress);
+  return `<p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">${lines.join(' · ')}</p>`;
+}
+
+function wrapInLoungeShell(bodyHtml: string, brand?: BrandOptions): string {
+  const logo = renderLogoHeader(brand);
+  const footer = renderLegalFooter(brand);
   return `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
   <div style="max-width:600px;margin:0 auto;padding:32px 24px">
     <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
-      ${bodyHtml}
+      ${logo}${bodyHtml}
     </div>
-    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">Venneir Limited</p>
+    ${footer}
   </div>
 </body></html>`;
 }

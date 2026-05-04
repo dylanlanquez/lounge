@@ -280,9 +280,10 @@ async function handle(req: Request): Promise<Response> {
 
   // Phase data feeds the segmented schedule. Best-effort — empty
   // array degrades to the duration label.
-  const [phases, segmentedThresholdMinutes] = await Promise.all([
+  const [phases, segmentedThresholdMinutes, brandingAndContact] = await Promise.all([
     fetchAppointmentPhases(admin, apt.id),
     resolveSegmentedThresholdMinutes(admin),
+    loadBrandingAndContact(admin),
   ]);
 
   const variables = buildVariables({
@@ -294,10 +295,11 @@ async function handle(req: Request): Promise<Response> {
     patientFacingMaxMinutes: patientFacingRange.max,
     phases,
     segmentedThresholdMinutes,
+    contact: brandingAndContact.contact,
   });
   const subject = substituteVariables(template.subject, variables);
   const bodyAfterVars = substituteVariables(template.body_syntax, variables);
-  const html = wrapInLoungeShell(parseFormatting(bodyAfterVars));
+  const html = wrapInLoungeShell(parseFormatting(bodyAfterVars), brandingAndContact.brand);
   const text = bodyToText(bodyAfterVars);
 
   // ── Deliver via Resend ─────────────────────────────────────────
@@ -745,6 +747,11 @@ interface VariableContext {
   // ones falls back to the duration label.
   phases: AppointmentPhase[];
   segmentedThresholdMinutes: number;
+  // Clinic-wide contact info pulled from lng_settings. Empty strings
+  // when not configured. Powers {{publicEmail}}, {{websiteUrl}},
+  // {{bookingLink}}, {{mapUrl}}, {{openingHoursToday}}, and
+  // {{openingHoursWeek}} placeholders.
+  contact: ContactSettings;
 }
 
 function buildVariables(ctx: VariableContext): Record<string, string> {
@@ -752,6 +759,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
   const oldApt = ctx.oldApt;
   const patient = ctx.patient;
   const location = ctx.location;
+  const contact = ctx.contact;
 
   const fmtRange = (iso: string, opts: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', ...opts }).format(
@@ -777,6 +785,12 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     locationCity: location?.city?.trim() || '',
     locationAddress: locationFreeform(location),
     locationPhone: location?.phone?.trim() || '',
+    publicEmail: contact.publicEmail,
+    websiteUrl: contact.websiteUrl,
+    bookingLink: contact.bookingUrl,
+    mapUrl: contact.mapUrl,
+    openingHoursToday: contact.openingHoursToday,
+    openingHoursWeek: contact.openingHoursWeek,
     appointmentRef: apt.appointment_ref ?? '',
     googleCalendarUrl: googleCalendarUrl(apt, location),
     patientFacingDuration: formatPatientFacingDurationForEmail(
@@ -970,14 +984,126 @@ function bodyToText(syntax: string): string {
     .trim();
 }
 
-function wrapInLoungeShell(bodyHtml: string): string {
+// ─────────────────────────────────────────────────────────────────────────────
+// Branding & contact loader — pulls lng_settings and shapes the
+// values the renderer + variable map need. Best-effort: if the
+// settings query fails we render with empty defaults rather than
+// 500 the email send.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface BrandSettings {
+  logoUrl: string;
+  logoShow: boolean;
+  logoMaxWidth: number;
+  accentColor: string;
+  companyNumber: string;
+  vatNumber: string;
+  registeredAddress: string;
+}
+
+interface ContactSettings {
+  publicEmail: string;
+  websiteUrl: string;
+  bookingUrl: string;
+  mapUrl: string;
+  openingHoursToday: string;
+  openingHoursWeek: string;
+}
+
+type OpeningDay = { closed: true } | { open: string; close: string };
+const DAY_NAMES_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+async function loadBrandingAndContact(
+  admin: SupabaseClient,
+): Promise<{ brand: BrandSettings; contact: ContactSettings }> {
+  const empty = {
+    brand: {
+      logoUrl: '',
+      logoShow: false,
+      logoMaxWidth: 120,
+      accentColor: '#0E1414',
+      companyNumber: '',
+      vatNumber: '',
+      registeredAddress: '',
+    },
+    contact: {
+      publicEmail: '',
+      websiteUrl: '',
+      bookingUrl: '',
+      mapUrl: '',
+      openingHoursToday: '',
+      openingHoursWeek: '',
+    },
+  };
+  const { data: rows, error } = await admin
+    .from('lng_settings')
+    .select('key, value')
+    .or('key.like.email.%,key.like.clinic.%,key.like.legal.%')
+    .is('location_id', null);
+  if (error || !rows) return empty;
+  const map = new Map<string, unknown>();
+  for (const r of rows as Array<{ key: string; value: unknown }>) map.set(r.key, r.value);
+
+  const get = <T>(k: string, fallback: T): T => {
+    const v = map.get(k);
+    return v === undefined || v === null ? fallback : (v as T);
+  };
+
+  const brand: BrandSettings = {
+    logoUrl: get<string>('email.brand_logo_url', ''),
+    logoShow: get<boolean>('email.brand_logo_show', true),
+    logoMaxWidth: get<number>('email.brand_logo_max_width', 120),
+    accentColor: get<string>('email.brand_accent_color', '#0E1414'),
+    companyNumber: get<string>('legal.company_number', ''),
+    vatNumber: get<string>('legal.vat_number', ''),
+    registeredAddress: get<string>('legal.registered_address', ''),
+  };
+
+  const opening = get<OpeningDay[]>('clinic.opening_hours', []);
+  const formatDay = (d: OpeningDay | undefined) =>
+    !d ? '' : 'closed' in d && d.closed ? 'closed' : `${('open' in d && d.open) || ''}–${('close' in d && d.close) || ''}`;
+  const todayIdx = ((new Date().getDay() + 6) % 7); // Mon=0
+  const openingHoursToday = formatDay(opening[todayIdx]);
+  const openingHoursWeek = opening
+    .map((d, i) => `${DAY_NAMES_LONG[i]}: ${formatDay(d)}`)
+    .join('\n');
+
+  const contact: ContactSettings = {
+    publicEmail: get<string>('clinic.public_email', ''),
+    websiteUrl: get<string>('clinic.website_url', ''),
+    bookingUrl: get<string>('clinic.booking_url', ''),
+    mapUrl: get<string>('clinic.map_url', ''),
+    openingHoursToday,
+    openingHoursWeek,
+  };
+
+  return { brand, contact };
+}
+
+function renderLogoHeader(brand: BrandSettings): string {
+  if (!brand.logoShow || !brand.logoUrl) return '';
+  const maxWidth = Math.max(40, Math.min(320, brand.logoMaxWidth));
+  return `<p style="margin:0 0 8px 0;text-align:center"><img src="${brand.logoUrl}" alt="" style="max-width:${maxWidth}px;height:auto;display:inline-block;border:0"></p>`;
+}
+
+function renderLegalFooter(brand: BrandSettings): string {
+  const lines: string[] = ['Venneir Limited'];
+  if (brand.companyNumber) lines.push(`Company no. ${brand.companyNumber}`);
+  if (brand.vatNumber) lines.push(`VAT no. ${brand.vatNumber}`);
+  if (brand.registeredAddress) lines.push(brand.registeredAddress);
+  return `<p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">${lines.join(' · ')}</p>`;
+}
+
+function wrapInLoungeShell(bodyHtml: string, brand: BrandSettings): string {
+  const logo = renderLogoHeader(brand);
+  const footer = renderLegalFooter(brand);
   return `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
   <div style="max-width:600px;margin:0 auto;padding:32px 24px">
     <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
-      ${bodyHtml}
+      ${logo}${bodyHtml}
     </div>
-    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">Venneir Limited</p>
+    ${footer}
   </div>
 </body></html>`;
 }

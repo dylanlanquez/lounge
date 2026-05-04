@@ -38,6 +38,7 @@ import {
 } from '../lib/queries/emailTemplates.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { renderEmail } from '../lib/emailRenderer.ts';
+import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 
 // Admin → Email templates tab.
 //
@@ -1089,9 +1090,23 @@ function BodyPreview({
   restoring: boolean;
 }) {
   const sampleVars = useMemo(() => sampleVariablesFor(templateKey), [templateKey]);
+  const clinicSettings = useClinicSettings();
+  const brand = useMemo(
+    () => ({
+      logoUrl: clinicSettings.data.brandLogoUrl,
+      logoShow: clinicSettings.data.brandLogoShow,
+      logoMaxWidth: clinicSettings.data.brandLogoMaxWidth,
+      accentColor: clinicSettings.data.brandAccentColor,
+      companyNumber: clinicSettings.data.companyNumber,
+      vatNumber: clinicSettings.data.vatNumber,
+      registeredAddress: clinicSettings.data.registeredAddress,
+    }),
+    [clinicSettings.data],
+  );
   const rendered = useMemo(
-    () => renderEmail({ subject, bodySyntax: body, variables: sampleVars, shell: 'bare' }),
-    [subject, body, sampleVars],
+    () =>
+      renderEmail({ subject, bodySyntax: body, variables: sampleVars, shell: 'bare', brand }),
+    [subject, body, sampleVars, brand],
   );
   const historicalLabel = useMemo(() => {
     if (!historicalVersion) return null;
@@ -1275,9 +1290,17 @@ function BodyPreview({
             color: '#7B8285',
             fontSize: 12,
             textAlign: 'center',
+            lineHeight: 1.55,
           }}
         >
-          Venneir Limited
+          {[
+            'Venneir Limited',
+            brand.companyNumber ? `Company no. ${brand.companyNumber}` : null,
+            brand.vatNumber ? `VAT no. ${brand.vatNumber}` : null,
+            brand.registeredAddress || null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </p>
       </div>
     </div>
