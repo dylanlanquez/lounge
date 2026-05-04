@@ -663,17 +663,32 @@ function PoolRow({
       <StatusPill tone={pillTone} size="sm">
         {pillCopy}
       </StatusPill>
-      <IconAction
-        ariaLabel={`Edit ${pool.display_name}`}
-        onClick={onEdit}
-        icon={<Settings2 size={16} aria-hidden />}
+      {/* Visible divider separates the informational pill on the left
+          from the row-action buttons on the right. Without it the pill
+          and the icon buttons all read as the same control cluster
+          and it isn't obvious what's tappable. */}
+      <span
+        aria-hidden
+        style={{
+          width: 1,
+          alignSelf: 'stretch',
+          background: theme.color.border,
+          marginInline: theme.space[2],
+        }}
       />
-      <IconAction
-        ariaLabel={`Remove ${pool.display_name}`}
-        onClick={onRemove}
-        icon={<Trash2 size={16} aria-hidden />}
-        tone="danger"
-      />
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+        <IconAction
+          ariaLabel={`Edit ${pool.display_name}`}
+          onClick={onEdit}
+          icon={<Settings2 size={16} aria-hidden />}
+        />
+        <IconAction
+          ariaLabel={`Remove ${pool.display_name}`}
+          onClick={onRemove}
+          icon={<Trash2 size={16} aria-hidden />}
+          tone="danger"
+        />
+      </div>
     </li>
   );
 }
