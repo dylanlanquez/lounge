@@ -38,12 +38,17 @@ export interface AppointmentHeroWhen {
   /** "09:00 — 09:45" or "Walked in 09:43" — the time anchor. */
   timeLine: string;
   /** Optional relative phrase next to the time anchor: "In 5 days" /
-   * "Arrived 23 minutes ago" / "Completed an hour ago". */
+   * "Arrived 23 minutes ago" / "Ready to finish". */
   relative?: string | null;
   /** Optional service / event-type label below the date row. */
   service?: string | null;
   /** Drives the ribbon tint. */
   tone: AppointmentHeroTone;
+  /** Override the leading ribbon icon. Default is CalendarClock — used
+   * by callers whose ribbon is communicating a non-time fact (e.g. a
+   * paid visit ribbon should lead with a settled-receipt mark, not a
+   * calendar). The icon should be sized to render at 16px. */
+  icon?: ReactNode;
 }
 
 export interface AppointmentHeroProps {
@@ -171,7 +176,7 @@ export function AppointmentHero({
               flexShrink: 0,
             }}
           >
-            <CalendarClock size={16} aria-hidden />
+            {when.icon ?? <CalendarClock size={16} aria-hidden />}
           </span>
           <div style={{ minWidth: 0 }}>
             <p

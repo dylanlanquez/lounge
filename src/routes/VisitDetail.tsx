@@ -907,7 +907,7 @@ export function VisitDetail() {
                 the visit timeline at the bottom. */}
             <div style={{ marginBottom: theme.space[6] }}>
               <AppointmentHero
-                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable, paidPayments)}
+                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable)}
                 trailing={
                   patient ? (
                     <Button
@@ -2436,7 +2436,6 @@ function buildVisitHeroProps(
   patient: (PatientRow & { avatar_data?: string | null }) | null,
   cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null; total_pence: number } | null,
   latestUnsuitable: { recorded_at: string | null } | null,
-  paidPayments: CartPaymentRow[],
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
@@ -2447,7 +2446,7 @@ function buildVisitHeroProps(
   // happening with this visit" with the live, current fact: paid.
   const lineParts =
     cart?.status === 'paid'
-      ? visitWhenPaidLine(cart, paidPayments)
+      ? visitWhenPaidLine()
       : visitWhenStatusLine(visit, appointment, isWalkIn);
   const service =
     humaniseEventTypeLabel(appointment?.event_type_label ?? null) ?? (isWalkIn ? 'Walk-in' : 'Appointment');
@@ -2491,6 +2490,12 @@ function buildVisitHeroProps(
   // future enrichment doesn't need a callsite churn.
   void latestUnsuitable;
 
+  // Once paid, the ribbon's leading icon should read as "settled
+  // receipt" not "calendar clock" — the calendar implies pending
+  // chronology, which is the wrong message for a sale that's done.
+  const ribbonIcon =
+    cart?.status === 'paid' ? <BadgeCheck size={16} aria-hidden /> : undefined;
+
   return {
     patient: { name: patient ? patientFullName(patient) : 'Patient', avatarSrc: patient?.avatar_data ?? null },
     pills,
@@ -2501,6 +2506,7 @@ function buildVisitHeroProps(
       relative: lineParts.relative,
       service,
       tone,
+      icon: ribbonIcon,
     },
   };
 }
@@ -2511,20 +2517,19 @@ function buildVisitHeroProps(
 // ago", "In chair · 14 minutes", "Completed 5 minutes ago"). The
 // pair is deliberately split so the renderer can colour them
 // differently without re-parsing the string.
-// When the cart is paid, the ribbon answers "what state is this visit
-// in?" with the current fact (paid in cash · 5 minutes ago) instead of
-// stale arrival timing. Formatter mirrors the PaidHeader inside the
-// cart so the two read consistently.
-function visitWhenPaidLine(
-  cart: { closed_at: string | null; total_pence: number },
-  payments: CartPaymentRow[],
-): { anchor: string; relative: string | null } {
-  const breakdown = formatMethodBreakdown(payments);
-  const anchor = breakdown
-    ? `Paid · ${breakdown.replace(/^Received in /, '')}`
-    : 'Paid in full';
-  const relative = cart.closed_at ? relativeMinutes(cart.closed_at) : null;
-  return { anchor, relative: relative ? `${relative}` : null };
+// When the cart is paid, the ribbon answers two things at once: the
+// state ("Paid in full") AND the next action ("Ready to finish"). The
+// relative slot is rendered in the accent colour by AppointmentHero,
+// so putting "Ready to finish" there pulls the receptionist's eye
+// straight to the next thing they need to do — Finish visit at the
+// bottom of the page. The detailed receipt (amount, method, exact
+// time) lives in the PaidHeader inside the Cart card; the ribbon
+// stays a quiet state-and-prompt summary.
+function visitWhenPaidLine(): { anchor: string; relative: string | null } {
+  return {
+    anchor: 'Paid in full',
+    relative: 'Ready to finish',
+  };
 }
 
 function visitWhenStatusLine(
