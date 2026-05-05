@@ -419,7 +419,15 @@ export function VisitDetail() {
         cart && cart.status === 'paid'
           ? {
               amountPence: cart.total_pence,
-              method: 'card',
+              // Method comes from the actual succeeded payments on the
+              // cart, not a hardcoded 'card'. Single method renders as
+              // its own word ("Cash" / "Card" / "Gift card"); a split
+              // payment renders as the methods joined ("Cash + Card").
+              // Falls back to 'Card' only if the cart is paid but no
+              // succeeded payment rows exist (defensive — shouldn't
+              // happen, the cart only flips to paid when sum of
+              // succeeded >= total).
+              method: deriveWaiverPaymentMethod(paidPayments),
               takenAt: cart.closed_at ?? visit.opened_at,
               status: 'paid' as const,
               depositPence: deposit?.status === 'paid' ? deposit.pence : 0,
@@ -444,7 +452,7 @@ export function VisitDetail() {
       },
       accentColor: theme.color.accent,
     };
-  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit]);
+  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit, paidPayments]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -2913,6 +2921,27 @@ function formatMethodBreakdown(payments: CartPaymentRow[]): string {
     ([m, sum]) => `${formatPence(sum)} ${humanisePaymentMethod(m)}`,
   );
   return parts.join(' + ');
+}
+
+// Builds the payment-method string the waiver document prints under
+// the cart total. Single-method paid carts get the method name on its
+// own ('cash' / 'card' / 'gift card'). Split payments get the unique
+// methods joined ('cash + card'). The waiver renderer runs the result
+// through properCase, so each word ends up capitalised in the PDF.
+//
+// 'paid' carts should always have at least one succeeded payment row
+// (the trigger that flips status only fires once sum(succeeded) >=
+// total), but if the row is missing we fall back to 'card' rather
+// than printing an empty line. That fallback is the only place a
+// hardcoded method survives — every real path now reflects what the
+// patient actually paid with.
+function deriveWaiverPaymentMethod(payments: CartPaymentRow[]): string {
+  const methods: PaymentMethod[] = [];
+  for (const p of payments) {
+    if (!methods.includes(p.method)) methods.push(p.method);
+  }
+  if (methods.length === 0) return 'card';
+  return methods.map((m) => humanisePaymentMethod(m)).join(' + ');
 }
 
 function humanisePaymentMethod(m: PaymentMethod): string {
