@@ -564,6 +564,7 @@ function Hero({
   fullName: string;
   tone: StatusTone;
 }) {
+  const navigate = useNavigate();
   const sourceLabel = humaniseLedgerSource(appt.source);
   const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
   const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
@@ -576,6 +577,23 @@ function Hero({
   // operator about which row this is.
   const ribbon = buildApptRibbon(appt);
   const dateLong = ribbon.dateLong ?? formatDateLongOrdinal(appt.start_at);
+
+  // For rescheduled rows the relative slot becomes a one-tap link to
+  // the new booking — same destination as the "Rescheduled to" card
+  // below, but reachable from the ribbon so the staff don't have to
+  // scroll. The button styles match the accent treatment the ribbon
+  // already gives to the relative span so it reads as one element,
+  // not a tacked-on control.
+  const relative: ReactNode | null =
+    appt.status === 'rescheduled' && appt.reschedule_to_id ? (
+      <RibbonNavLink
+        onClick={() => navigate(`/appointment/${appt.reschedule_to_id}`)}
+      >
+        Open new booking
+      </RibbonNavLink>
+    ) : (
+      ribbon.relative
+    );
 
   // Pills sit next to the patient name in the hero. Status is always
   // present; "Deposit paid" joins it when the booking-time deposit has
@@ -598,12 +616,49 @@ function Hero({
       when={{
         dateLong,
         timeLine: ribbon.timeLine,
-        relative: ribbon.relative,
+        relative,
         service,
         tone: ribbon.tone,
         icon: ribbon.icon,
       }}
     />
+  );
+}
+
+// Inline link rendered in the ribbon's relative slot. Inherits the
+// accent colour + semibold weight the surrounding span supplies so it
+// looks like part of the ribbon line, not a separate control.
+function RibbonNavLink({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        margin: 0,
+        font: 'inherit',
+        color: 'inherit',
+        fontWeight: 'inherit',
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        textUnderlineOffset: 3,
+        textDecoration: 'underline',
+      }}
+    >
+      {children}
+      <ArrowRight size={12} aria-hidden />
+    </button>
   );
 }
 
@@ -697,16 +752,16 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
       // The big bold date on a rescheduled row is the OLD slot
       // (appt.start_at hasn't moved — the new booking is a separate
       // row reachable via reschedule_to_id). Prefix the date with
-      // "Old slot ·" so the heading itself states past tense, and
-      // make the secondary line read as a clear pointer to the
-      // replacement card below. Without the prefix an onlooker can't
-      // tell whether the bold date is the upcoming or the cancelled
-      // moment.
+      // "Was on" so the heading itself reads past-tense in plain
+      // English, no jargon. The relative slot is replaced in Hero()
+      // with a clickable "Open new booking →" link that navigates
+      // straight to the replacement, so the staff don't have to
+      // hunt below to find it.
       return {
         icon: <RotateCcw size={16} aria-hidden />,
-        dateLong: `Old slot · ${formatDateLongOrdinal(appt.start_at)}`,
+        dateLong: `Was on ${formatDateLongOrdinal(appt.start_at)}`,
         timeLine: 'This booking has been moved',
-        relative: 'See new slot below',
+        relative: null,
         tone: 'warn',
       };
     }
@@ -1318,7 +1373,7 @@ function RescheduledTo({ apptId }: { apptId: string }) {
           gap: theme.space[2],
         }}
       >
-        Open replacement booking
+        Open new booking
         <ArrowRight size={14} aria-hidden />
       </button>
     </Card>
@@ -1585,7 +1640,7 @@ function Actions({
       {has('view_rescheduled_to') ? (
         <ActionRow
           icon={<CalendarCheck size={16} aria-hidden />}
-          label="Open replacement booking"
+          label="Open new booking"
           onClick={onViewRescheduledTo}
         />
       ) : null}

@@ -37,9 +37,11 @@ export interface AppointmentHeroWhen {
   dateLong: string;
   /** "09:00 — 09:45" or "Walked in 09:43" — the time anchor. */
   timeLine: string;
-  /** Optional relative phrase next to the time anchor: "In 5 days" /
-   * "Arrived 23 minutes ago" / "Ready to finish". */
-  relative?: string | null;
+  /** Phrase or interactive element next to the time anchor:
+   * "In 5 days" / "Ready to finish" / a button taking the user to a
+   * related row. Rendered in the accent colour so action affordances
+   * land on the natural focal point of the ribbon. */
+  relative?: ReactNode | null;
   /** Optional service / event-type label below the date row. */
   service?: string | null;
   /** Drives the ribbon tint. */
