@@ -741,8 +741,8 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
       if (appt.join_url) {
         return {
           icon: <Video size={16} aria-hidden />,
-          timeLine: 'Meeting in progress',
-          relative: 'Patient has joined',
+          timeLine: `Remote session at ${timeRange}`,
+          relative: null,
           tone: 'accent',
         };
       }
