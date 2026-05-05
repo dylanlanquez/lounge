@@ -43,6 +43,11 @@ This file is loaded automatically when Claude Code is invoked in this directory.
 - Coordinate with Meridian: read latest migration in `~/Desktop/meridian-app/supabase/migrations/` before adding a Lounge migration.
 - Apply order: write → shadow (verify) → Meridian. Never directly to Meridian without shadow verification.
 - Edge function deploy: `npx supabase functions deploy <name> --project-ref npuvhxakffxqoszytkxw`.
+- **DB connections use the session pooler, not direct hostnames.** Supabase moved `db.<ref>.supabase.co` to IPv6-only — IPv4 fails to resolve on most networks. Pooler URLs (as of 5 May 2026):
+  - Meridian: `aws-1-eu-west-2.pooler.supabase.com:5432` with user `postgres.npuvhxakffxqoszytkxw`
+  - Shadow:   `aws-1-eu-central-1.pooler.supabase.com:5432` with user `postgres.vkgghplhykavklevfhkz`
+  - Apply migrations with `psql "$LNG_SHADOW_DB_URL" -f <file>` then `psql "$LNG_MERIDIAN_DB_URL" -f <file>`.
+  - Both env vars live in `~/.zshrc`.
 
 ## Working agreement with Dylan
 

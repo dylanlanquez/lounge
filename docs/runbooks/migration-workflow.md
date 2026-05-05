@@ -31,15 +31,34 @@ pg_dump --version # should print same
 
 ### 1.2 Save connection strings (one-time)
 
-In Supabase Dashboard → each project → **Project Settings → Database → Connection string → URI**. Copy both. Keep them in your password manager (not in git).
+**Use the pooler URLs, not the direct DB hostnames.** Supabase has moved direct hosts (`db.<ref>.supabase.co`) to IPv6-only — they will *not* resolve over IPv4 on most home / office networks, so anything that uses them silently fails with `could not translate host name`. The pooler has IPv4 records and is the only reliable path from a developer machine.
+
+In Supabase Dashboard → each project → **Project Settings → Database → Connection string → "Session pooler"** (port 5432). Copy both. Keep them in your password manager (not in git).
 
 ```bash
 # Add to ~/.zshrc, source it. NEVER commit to a file in git.
-export LNG_MERIDIAN_DB_URL='postgresql://postgres.npuvhxakffxqoszytkxw:<pw>@aws-...pooler.supabase.com:5432/postgres'
-export LNG_SHADOW_DB_URL='postgresql://postgres.vkgghplhykavklevfhkz:<pw>@aws-...pooler.supabase.com:5432/postgres'
+# Both URLs as of 5 May 2026 — re-check the dashboard if the pooler
+# host or region changes (Supabase occasionally rebalances).
+export LNG_MERIDIAN_DB_URL='postgresql://postgres.npuvhxakffxqoszytkxw:<pw>@aws-1-eu-west-2.pooler.supabase.com:5432/postgres'
+export LNG_SHADOW_DB_URL='postgresql://postgres.vkgghplhykavklevfhkz:<pw>@aws-1-eu-central-1.pooler.supabase.com:5432/postgres'
 ```
 
-(Use the **non-pooler** direct connection if pg_dump fails on the pooler; it's listed in the same Dashboard page as "Direct connection".)
+The two projects sit in different regions (Meridian → London, Shadow → Frankfurt) so the pooler hostnames are NOT the same — copy each one from the dashboard separately.
+
+**If the dashboard URL ever stops working, re-discover the region:**
+
+```bash
+# Probe a handful of pooler hosts. The right one returns "select 1 → 1";
+# the wrong ones return "Tenant or user not found".
+for prefix in aws-1-eu-west-2 aws-1-eu-central-1 aws-1-eu-west-1 \
+              aws-0-eu-west-2 aws-0-eu-central-1 aws-0-us-east-1; do
+  echo "=== $prefix ==="
+  psql "postgresql://postgres.<project_ref>:<pw>@${prefix}.pooler.supabase.com:5432/postgres" \
+    -c "select 1 as ok;" 2>&1 | tail -2
+done
+```
+
+(Direct DB hostnames still work over IPv6 if your machine and network are dual-stacked — useful if you need a feature that the pooler doesn't pass through, like `LISTEN/NOTIFY`. For DDL migrations, the session pooler is fine.)
 
 ### 1.3 Bootstrap the shadow with Meridian's schema
 
@@ -244,4 +263,4 @@ If any of those don't match: stop, debug, ask before retrying.
 
 ---
 
-*Last updated 27 Apr 2026.*
+*Last updated 5 May 2026 — connection strings switched to the session pooler after Supabase moved direct DB hostnames to IPv6-only. Pooler URLs are IPv4-friendly and what the migration runbook now assumes.*
