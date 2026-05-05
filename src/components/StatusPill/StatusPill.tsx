@@ -16,7 +16,12 @@ export type StatusTone =
   // strikethrough — staff still need to read the label clearly. The
   // colour communicates terminal but not destructive: the visit
   // ended without success, but it's reversible by an admin.
-  | 'unsuitable';
+  | 'unsuitable'
+  // Lighter green sibling of `arrived`. Used for "Deposit paid" — the
+  // booking has money against it, but the cart isn't settled in full.
+  // The lighter weight stops staff reading the row as "fully paid"
+  // when only the deposit has cleared.
+  | 'deposit_paid';
 
 export interface StatusPillProps {
   tone: StatusTone;
@@ -69,6 +74,15 @@ const TONE_STYLES: Record<StatusTone, CSSProperties> = {
     background: 'rgba(179, 104, 21, 0.10)',
     color: theme.color.warn,
     boxShadow: `inset 0 0 0 1px rgba(179, 104, 21, 0.25)`,
+  },
+  deposit_paid: {
+    // Tinted accent on a near-white wash with a quiet accent ring.
+    // Pairs visually with `arrived` (solid forest green) but reads as
+    // "partial" — strong enough to mean "money in", subtle enough to
+    // not be confused with a fully paid sale.
+    background: theme.color.accentBg,
+    color: theme.color.accent,
+    boxShadow: `inset 0 0 0 1px rgba(31, 77, 58, 0.22)`,
   },
 };
 

@@ -585,14 +585,16 @@ function Hero({
         : 'neutral';
 
   // Pills sit next to the patient name in the hero. Status is always
-  // present; "Paid" joins it when the booking-time deposit has settled
-  // so the page reads as paid the moment a glance lands on the hero,
-  // before the eye ever reaches the deposit card below.
+  // present; "Deposit paid" joins it when the booking-time deposit has
+  // settled, so the page reads as deposit-secured the moment a glance
+  // lands on the hero. Distinct from the solid-green "Paid" used for a
+  // fully-settled cart on VisitDetail — a £25 deposit is not the same
+  // as a £200 visit being paid in full.
   const pills: AppointmentHeroPill[] = [
     { tone, label: humaniseAppointmentStatus(appt.status) },
   ];
   if (appt.deposit_status === 'paid' && (appt.deposit_pence ?? 0) > 0) {
-    pills.push({ tone: 'arrived', label: 'Paid' });
+    pills.push({ tone: 'deposit_paid', label: 'Deposit paid' });
   }
 
   return (
@@ -807,11 +809,13 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   const paid = appt.deposit_status === 'paid';
   const failed = appt.deposit_status === 'failed';
 
-  // Paid: an accent-tinted card with the BadgeCheck mark and "Paid in
-  // full" headline — the same phrase the waiver document uses for a
-  // settled booking. The card itself reads as good news at a glance,
-  // pairing with the "Paid" pill in the hero so a receptionist scanning
-  // the page from top to bottom never has to hunt for the payment state.
+  // Paid: a soft accent-tinted card with the BadgeCheck mark and a
+  // "Deposit paid" headline. Crucially NOT "Paid in full" — that
+  // implies the whole bill is settled, which a booking deposit never
+  // guarantees. The wording + lighter background tells the operator
+  // "money in against this booking, but the cart at the visit is the
+  // source of truth for what's owed". Pairs with the "Deposit paid"
+  // pill in the hero.
   if (paid) {
     return (
       <Card
@@ -823,7 +827,7 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
       >
         <DetailSectionHeader
           icon={<BadgeCheck size={16} aria-hidden />}
-          title="Paid in full"
+          title="Deposit paid"
         />
         <div
           style={{
@@ -852,7 +856,8 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
               color: theme.color.inkMuted,
             }}
           >
-            settled via {provider} at booking
+            received via {provider} at booking. The remaining bill is
+            settled at the visit.
           </span>
         </div>
       </Card>

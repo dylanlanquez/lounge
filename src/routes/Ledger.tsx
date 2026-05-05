@@ -78,12 +78,16 @@ const SOURCE_OPTIONS: ReadonlyArray<{ value: LedgerSource; label: string }> = [
   { value: 'walk_in', label: 'Walk-in' },
 ];
 
-// Payment axis filter — Paid / Unpaid / Refunded. Independent of the
-// workflow Status filter (a row can be Complete and Paid; the two
-// pills compose). Refunded surfaces voided carts so an admin can
-// audit "what money came back this month".
+// Payment axis filter — independent of the workflow Status filter (a
+// row can be Complete and Paid in full; the two pills compose). The
+// four values mirror lng_ledger.payment_state:
+//   • Paid in full — cart settled to zero.
+//   • Deposit paid — money against the booking but cart not in full.
+//   • Unpaid       — no money received.
+//   • Refunded     — cart voided after payment.
 const PAYMENT_OPTIONS: ReadonlyArray<{ value: LedgerPaymentState; label: string }> = [
-  { value: 'paid', label: 'Paid' },
+  { value: 'paid', label: 'Paid in full' },
+  { value: 'deposit_paid', label: 'Deposit paid' },
   { value: 'unpaid', label: 'Unpaid' },
   { value: 'refunded', label: 'Refunded' },
 ];
@@ -659,7 +663,9 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
           }}
         >
           {row.payment_state === 'paid' ? (
-            <StatusPill tone="arrived" size="sm">Paid</StatusPill>
+            <StatusPill tone="arrived" size="sm">Paid in full</StatusPill>
+          ) : row.payment_state === 'deposit_paid' ? (
+            <StatusPill tone="deposit_paid" size="sm">Deposit paid</StatusPill>
           ) : row.payment_state === 'refunded' ? (
             <StatusPill tone="unsuitable" size="sm">Refunded</StatusPill>
           ) : null}
