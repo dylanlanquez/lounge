@@ -7,7 +7,7 @@ import TextAlign from '@tiptap/extension-text-align';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
 import Image from '@tiptap/extension-image';
-import { Node as TiptapNode, mergeAttributes } from '@tiptap/core';
+import { Node as TiptapNode, Extension, mergeAttributes } from '@tiptap/core';
 import {
   AlignCenter,
   AlignLeft,
@@ -26,43 +26,33 @@ import { theme } from '../../theme/index.ts';
 import { Button } from '../Button/Button.tsx';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Input } from '../Input/Input.tsx';
+import { EMAIL_ICONS, EMAIL_ICON_LIST } from '../../lib/emailIcons.ts';
 
-// SnippetEditor — TipTap-backed rich text editor for editable email
-// templates. Ported from Checkpoint's SnippetEditor.jsx (admin → email
-// snippets), adapted to Lounge's design tokens and primitives.
-//
-// What it does:
-//
-//   • Renders a TipTap editor that round-trips through the storage
-//     syntax via syntaxToHtml / htmlToSyntax — so the value the
-//     parent sees matches what's saved to lng_email_templates.body_syntax,
-//     and the renderer at send time produces identical HTML.
-//
-//   • Toolbar: bold / italic / underline / text colour / H2 / H3 /
-//     bullet list / horizontal rule / left|center|right align / link /
-//     styled button / image. Same feature set as Checkpoint, with
-//     Lounge tokens.
-//
-//   • Custom StyledButton TipTap node so the button preview inside
-//     the editor matches what the email sends — bg colour, text
-//     colour, border-radius, margin top/bottom all editable via the
-//     "Add button" dialog.
-//
-//   • Link / Image / Button popups are Lounge Dialogs (not the
-//     ad-hoc overlays Checkpoint used). Keeps the visual language
-//     consistent with the rest of the admin UI.
-//
-// Public API:
-//
-//   value     — current body in storage syntax. Empty string fine.
-//   onChange  — called with the updated storage syntax on every edit.
-//   onCursorVariableInsert — optional; when set, the parent can
-//                            push a {{variable}} into the editor via
-//                            this ref-style callback. The variables
-//                            sidebar (PR 2c) wires this up.
-//
-// Re-export of syntaxToHtml / htmlToSyntax so PR 2c's preview can
-// render the same HTML the editor sees.
+// ─────────────────────────────────────────────────────────────────────────────
+// FontWeight extension — extends TextStyle so font-weight can be set
+// alongside color on the same span, avoiding nested mark soup.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FontWeightExtension = Extension.create({
+  name: 'fontWeightExtension',
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['textStyle'],
+        attributes: {
+          fontWeight: {
+            default: null,
+            parseHTML: (el) => (el as HTMLElement).style.fontWeight || null,
+            renderHTML: (attrs) => {
+              if (!attrs.fontWeight) return {};
+              return { style: `font-weight:${attrs.fontWeight as string}` };
+            },
+          },
+        },
+      },
+    ];
+  },
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom Node: Styled Button
@@ -103,22 +93,34 @@ const StyledButton = TiptapNode.create({
         default: '12',
         parseHTML: (el) => (el as HTMLElement).getAttribute('data-mb') ?? '12',
       },
+      borderWidth: {
+        default: '0',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-bw') ?? '0',
+      },
+      borderColor: {
+        default: '#0E1414',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-bc') ?? '#0E1414',
+      },
+      iconName: {
+        default: '',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-icon') ?? '',
+      },
     };
   },
   parseHTML() {
     return [{ tag: 'span[data-type="styled-button"]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    const { url, bgColor, textColor, borderRadius, marginTop, marginBottom, label, ...rest } =
-      HTMLAttributes as {
-        url: string;
-        bgColor: string;
-        textColor: string;
-        borderRadius: string;
-        marginTop: string;
-        marginBottom: string;
-        label: string;
-      };
+    const {
+      url, bgColor, textColor, borderRadius, marginTop, marginBottom,
+      label, borderWidth, borderColor, iconName, ...rest
+    } = HTMLAttributes as {
+      url: string; bgColor: string; textColor: string; borderRadius: string;
+      marginTop: string; marginBottom: string; label: string;
+      borderWidth: string; borderColor: string; iconName: string;
+    };
+    const bwNum = Number(borderWidth || '0');
+    const borderStyle = bwNum > 0 ? `;border:${bwNum}px solid ${borderColor}` : '';
     return [
       'span',
       mergeAttributes(rest, {
@@ -129,20 +131,30 @@ const StyledButton = TiptapNode.create({
         'data-radius': borderRadius,
         'data-mt': marginTop,
         'data-mb': marginBottom,
-        style: `display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0`,
+        'data-bw': borderWidth || '0',
+        'data-bc': borderColor || '#0E1414',
+        'data-icon': iconName || '',
+        style: `display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0${borderStyle}`,
       }),
       label,
     ];
   },
   addNodeView() {
     return ({ node, getPos }) => {
-      const url           = (node.attrs.url           as string | null) ?? '';
-      const bgColor       = (node.attrs.bgColor       as string | null) ?? '#0E1414';
-      const textColor     = (node.attrs.textColor     as string | null) ?? '#FFFFFF';
-      const borderRadius  = (node.attrs.borderRadius  as string | null) ?? '999';
-      const marginTop     = (node.attrs.marginTop     as string | null) ?? '12';
-      const marginBottom  = (node.attrs.marginBottom  as string | null) ?? '12';
-      const label         = (node.attrs.label         as string | null) ?? 'Click here';
+      const url          = (node.attrs.url          as string | null) ?? '';
+      const bgColor      = (node.attrs.bgColor      as string | null) ?? '#0E1414';
+      const textColor    = (node.attrs.textColor    as string | null) ?? '#FFFFFF';
+      const borderRadius = (node.attrs.borderRadius as string | null) ?? '999';
+      const marginTop    = (node.attrs.marginTop    as string | null) ?? '12';
+      const marginBottom = (node.attrs.marginBottom as string | null) ?? '12';
+      const label        = (node.attrs.label        as string | null) ?? 'Click here';
+      const borderWidth  = (node.attrs.borderWidth  as string | null) ?? '0';
+      const borderColor  = (node.attrs.borderColor  as string | null) ?? '#0E1414';
+      const iconName     = (node.attrs.iconName     as string | null) ?? '';
+
+      const bwNum = Number(borderWidth);
+      const borderStyleStr = bwNum > 0 ? `border:${bwNum}px solid ${borderColor};` : '';
+
       const dom = document.createElement('span');
       dom.setAttribute('data-type', 'styled-button');
       dom.setAttribute('data-url', url);
@@ -151,8 +163,21 @@ const StyledButton = TiptapNode.create({
       dom.setAttribute('data-radius', borderRadius);
       dom.setAttribute('data-mt', marginTop);
       dom.setAttribute('data-mb', marginBottom);
-      dom.style.cssText = `display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:pointer;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0;user-select:none`;
-      dom.textContent = label;
+      dom.setAttribute('data-bw', borderWidth);
+      dom.setAttribute('data-bc', borderColor);
+      dom.setAttribute('data-icon', iconName);
+      dom.style.cssText = `display:inline-flex;align-items:center;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:pointer;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0;user-select:none;${borderStyleStr}`;
+
+      if (iconName && EMAIL_ICONS[iconName]) {
+        const iconSpan = document.createElement('span');
+        iconSpan.style.cssText = 'display:inline-flex;flex-shrink:0;margin-right:6px';
+        iconSpan.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${textColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[iconName]}</svg>`;
+        dom.appendChild(iconSpan);
+      }
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = label;
+      dom.appendChild(labelSpan);
+
       dom.addEventListener('click', () => {
         const pos = typeof getPos === 'function' ? getPos() : undefined;
         if (pos === undefined) return;
@@ -180,12 +205,7 @@ const StyledButton = TiptapNode.create({
 export function syntaxToHtml(text: string): string {
   if (!text) return '<p></p>';
   const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // Self-heal old corruption from before the block-separator fix:
-  // HR used to walk to bare '---' with no trailing newline, so a
-  // divider followed by anything (e.g. **Need to make a change?**)
-  // was saved glued to the next line's content. Split any line that
-  // starts with --- + non-dash content into a clean HR line plus
-  // the remainder, so the editor stops showing literal `---`.
+  // Self-heal old corruption from before the block-separator fix.
   const rawLines = escaped.split('\n');
   const lines: string[] = [];
   for (const raw of rawLines) {
@@ -203,64 +223,49 @@ export function syntaxToHtml(text: string): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     if (/^---+$/.test(line.trim())) {
-      if (inList) {
-        htmlLines.push('</ul>');
-        inList = false;
-      }
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
       htmlLines.push('<hr>');
       continue;
     }
+    if (/^#### (.+)$/.test(line)) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<h4>${line.slice(5)}</h4>`);
+      continue;
+    }
     if (/^### (.+)$/.test(line)) {
-      if (inList) {
-        htmlLines.push('</ul>');
-        inList = false;
-      }
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
       htmlLines.push(`<h3>${line.slice(4)}</h3>`);
       continue;
     }
     if (/^## (.+)$/.test(line)) {
-      if (inList) {
-        htmlLines.push('</ul>');
-        inList = false;
-      }
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
       htmlLines.push(`<h2>${line.slice(3)}</h2>`);
       continue;
     }
+    if (/^# (.+)$/.test(line)) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(`<h1>${line.slice(2)}</h1>`);
+      continue;
+    }
     if (/^- (.+)$/.test(line)) {
-      if (!inList) {
-        htmlLines.push('<ul>');
-        inList = true;
-      }
+      if (!inList) { htmlLines.push('<ul>'); inList = true; }
       htmlLines.push(`<li>${line.slice(2)}</li>`);
       continue;
     }
     if (/^!\[([^\]]*)\]\((.+?)\)$/.test(line.trim())) {
-      if (inList) {
-        htmlLines.push('</ul>');
-        inList = false;
-      }
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
       const m = line.trim().match(/^!\[([^\]]*)\]\((.+?)\)$/);
       if (m) htmlLines.push(`<img src="${m[2]}" alt="${m[1]}">`);
       continue;
     }
-    if (inList) {
-      htmlLines.push('</ul>');
-      inList = false;
-    }
-    if (line.trim() === '') {
-      htmlLines.push('');
-      continue;
-    }
+    if (inList) { htmlLines.push('</ul>'); inList = false; }
+    if (line.trim() === '') { htmlLines.push(''); continue; }
     htmlLines.push(line);
   }
   if (inList) htmlLines.push('</ul>');
 
   let html = '';
   let currentP: string[] = [];
-  // Counts consecutive empty htmlLines once the previous paragraph
-  // has been flushed. The 1st empty line is the block separator;
-  // each additional one becomes a `<p></p>` so vertical spacing the
-  // user added with extra Enters survives the round trip.
   let emptyStreak = 0;
   const flushEmpties = () => {
     if (emptyStreak > 1) {
@@ -270,18 +275,12 @@ export function syntaxToHtml(text: string): string {
   };
   for (const line of htmlLines) {
     if (line === '') {
-      if (currentP.length) {
-        html += `<p>${currentP.join('<br>')}</p>`;
-        currentP = [];
-      }
+      if (currentP.length) { html += `<p>${currentP.join('<br>')}</p>`; currentP = []; }
       emptyStreak++;
       continue;
     }
-    if (/^<(h[23]|hr|ul|li|\/ul|img)/.test(line)) {
-      if (currentP.length) {
-        html += `<p>${currentP.join('<br>')}</p>`;
-        currentP = [];
-      }
+    if (/^<(h[1-4]|hr|ul|li|\/ul|img)/.test(line)) {
+      if (currentP.length) { html += `<p>${currentP.join('<br>')}</p>`; currentP = []; }
       flushEmpties();
       html += line;
       continue;
@@ -291,15 +290,16 @@ export function syntaxToHtml(text: string): string {
   }
   if (currentP.length) html += `<p>${currentP.join('<br>')}</p>`;
 
-  // Inline formatting + custom button. Buttons must run BEFORE
-  // plain links because their URL fragment would otherwise be eaten
-  // by the link regex.
+  // Inline formatting. Buttons run before plain links so the button
+  // regex consumes its URL fragment first.
   html = html
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>')
+    .replace(/\{w:([^}]+)\}(.+?)\{\/w\}/g, '<span style="font-weight:$1">$2</span>')
     .replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>')
+    // 9-param button (handles existing 6-param + new 9-param; last 3 optional)
     .replace(
-      /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
+      /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?)?\]\((.+?)\)/g,
       (
         _: string,
         label: string,
@@ -308,6 +308,9 @@ export function syntaxToHtml(text: string): string {
         rad: string | undefined,
         mt: string | undefined,
         mb: string | undefined,
+        bw: string | undefined,
+        bc: string | undefined,
+        icon: string | undefined,
         url: string,
       ) => {
         const bgColor = bg || '#0E1414';
@@ -315,7 +318,15 @@ export function syntaxToHtml(text: string): string {
         const borderRadius = rad || '999';
         const marginTop = mt || '12';
         const marginBottom = mb || '12';
-        return `<span data-type="styled-button" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="${marginTop}" data-mb="${marginBottom}" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0">${label}</span>`;
+        const borderWidth = bw || '0';
+        const borderColor = bc || '#0E1414';
+        const iconName = icon || '';
+        const bwNum = Number(borderWidth);
+        const borderStyleStr = bwNum > 0 ? `;border:${bwNum}px solid ${borderColor}` : '';
+        const iconHtml = iconName && EMAIL_ICONS[iconName]
+          ? `<span style="display:inline-block;margin-right:5px;vertical-align:middle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${textColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[iconName]}</svg></span>`
+          : '';
+        return `<span data-type="styled-button" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="${marginTop}" data-mb="${marginBottom}" data-bw="${borderWidth}" data-bc="${borderColor}" data-icon="${iconName}" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0${borderStyleStr}">${iconHtml}${label}</span>`;
       },
     )
     // Backward compat: 3-param button
@@ -332,7 +343,7 @@ export function syntaxToHtml(text: string): string {
         const bgColor = bg || '#0E1414';
         const textColor = tc || '#FFFFFF';
         const borderRadius = rad || '999';
-        return `<span data-type="styled-button" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="12" data-mb="12" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:12px 0">${label}</span>`;
+        return `<span data-type="styled-button" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="12" data-mb="12" data-bw="0" data-bc="#0E1414" data-icon="" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:12px 0">${label}</span>`;
       },
     )
     .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
@@ -345,9 +356,6 @@ export function htmlToSyntax(html: string): string {
   const d = document.createElement('div');
   d.innerHTML = html;
 
-  // Use the DOM Node type (NodeType.TEXT_NODE === 3) for the walk.
-  // Re-imported under an alias because we already use 'TiptapNode'
-  // for the editor's Node API at the top of the file.
   const walk = (node: globalThis.Node): string => {
     if (node.nodeType === 3) return node.textContent ?? '';
     if (node.nodeType !== 1) return wc(node);
@@ -355,13 +363,12 @@ export function htmlToSyntax(html: string): string {
     const tag = el.nodeName;
     if (tag === 'BR') return '\n';
     if (tag === 'HR') return '---\n\n';
+    if (tag === 'H1') return '# ' + wc(el) + '\n\n';
     if (tag === 'H2') return '## ' + wc(el) + '\n\n';
     if (tag === 'H3') return '### ' + wc(el) + '\n\n';
+    if (tag === 'H4') return '#### ' + wc(el) + '\n\n';
     if (tag === 'P') {
       const inner = wc(el);
-      // Empty paragraphs are visual spacers — encode as a single
-      // newline so consecutive empty <p>s survive the round trip.
-      // A non-empty paragraph terminates with \n\n (block separator).
       return inner === '' ? '\n' : inner + '\n\n';
     }
     if (tag === 'UL') {
@@ -383,33 +390,35 @@ export function htmlToSyntax(html: string): string {
     }
     if (tag === 'SPAN') {
       if (el.getAttribute('data-type') === 'styled-button') {
-        const url = el.getAttribute('data-url') ?? '';
-        const label = el.textContent ?? 'Click here';
-        const bg = el.getAttribute('data-bg') ?? '#0E1414';
-        const tc = el.getAttribute('data-text-color') ?? '#FFFFFF';
-        const rad = el.getAttribute('data-radius') ?? '999';
-        const mt = el.getAttribute('data-mt') ?? '12';
-        const mb = el.getAttribute('data-mb') ?? '12';
-        const hasCustom =
-          bg !== '#0E1414' || tc !== '#FFFFFF' || rad !== '999' || mt !== '12' || mb !== '12';
-        return hasCustom
-          ? `[button:${label}|${bg}|${tc}|${rad}|${mt}|${mb}](${url})`
-          : `[button:${label}](${url})`;
+        const url   = el.getAttribute('data-url') ?? '';
+        const label = el.textContent?.trim() ?? 'Click here';
+        const bg    = el.getAttribute('data-bg') ?? '#0E1414';
+        const tc    = el.getAttribute('data-text-color') ?? '#FFFFFF';
+        const rad   = el.getAttribute('data-radius') ?? '999';
+        const mt    = el.getAttribute('data-mt') ?? '12';
+        const mb    = el.getAttribute('data-mb') ?? '12';
+        const bw    = el.getAttribute('data-bw') ?? '0';
+        const bc    = el.getAttribute('data-bc') ?? '#0E1414';
+        const icon  = el.getAttribute('data-icon') ?? '';
+        const isDefault =
+          bg === '#0E1414' && tc === '#FFFFFF' && rad === '999' &&
+          mt === '12' && mb === '12' && bw === '0' && bc === '#0E1414' && icon === '';
+        return isDefault
+          ? `[button:${label}](${url})`
+          : `[button:${label}|${bg}|${tc}|${rad}|${mt}|${mb}|${bw}|${bc}|${icon}](${url})`;
       }
       const style = el.getAttribute('style') ?? '';
-      const colorMatch = style.match(/color:\s*([^;]+)/);
-      if (colorMatch && colorMatch[1]) {
-        return `{color:${colorMatch[1].trim()}}${wc(el)}{/color}`;
-      }
-      return wc(el);
+      const weightMatch = style.match(/(?:^|;)\s*font-weight:\s*([^;]+)/);
+      const colorMatch  = style.match(/(?:^|;)\s*color:\s*([^;]+)/);
+      let inner = wc(el);
+      if (weightMatch?.[1]) inner = `{w:${weightMatch[1].trim()}}${inner}{/w}`;
+      if (colorMatch?.[1])  inner = `{color:${colorMatch[1].trim()}}${inner}{/color}`;
+      return inner;
     }
     return wc(el);
   };
   const wc = (node: globalThis.Node): string =>
     Array.from(node.childNodes).map(walk).join('');
-  // Trim only leading/trailing newlines. Internal runs are
-  // intentional: \n\n is a block separator, and each extra \n beyond
-  // that represents one preserved empty paragraph.
   return wc(d).replace(/^\n+|\n+$/g, '');
 }
 
@@ -493,32 +502,46 @@ function ToolbarButton({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LinkDialog({
+  initial,
   onConfirm,
   onCancel,
+  onRemove,
 }: {
+  initial?: { url: string };
   onConfirm: (args: { url: string; color: string | null }) => void;
   onCancel: () => void;
+  onRemove?: () => void;
 }) {
-  const [url, setUrl] = useState('https://');
+  const isEdit = !!initial;
+  const [url, setUrl] = useState(initial?.url ?? 'https://');
   const [color, setColor] = useState('');
   const ok = url && url !== 'https://';
   return (
     <BottomSheet
       open
       onClose={onCancel}
-      title="Insert link"
+      title={isEdit ? 'Edit link' : 'Insert link'}
       footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
-          <Button variant="tertiary" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={!ok}
-            onClick={() => onConfirm({ url, color: color || null })}
-          >
-            Insert link
-          </Button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: theme.space[2] }}>
+          {isEdit && onRemove ? (
+            <Button variant="tertiary" onClick={onRemove}>
+              Remove link
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div style={{ display: 'flex', gap: theme.space[2] }}>
+            <Button variant="tertiary" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!ok}
+              onClick={() => onConfirm({ url, color: color || null })}
+            >
+              {isEdit ? 'Save link' : 'Insert link'}
+            </Button>
+          </div>
         </div>
       }
     >
@@ -543,7 +566,7 @@ function LinkDialog({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Button popup — full styling controls (bg, text, radius, margins) + preview
+// Button popup — full styling controls + border + icon picker
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ButtonAttrs {
@@ -554,6 +577,9 @@ interface ButtonAttrs {
   borderRadius: string;
   marginTop: string;
   marginBottom: string;
+  borderWidth: string;
+  borderColor: string;
+  iconName: string;
 }
 
 function ButtonDialog({
@@ -568,13 +594,16 @@ function ButtonDialog({
   onDelete?: () => void;
 }) {
   const isEdit = !!initial;
-  const [label, setLabel] = useState(initial?.label ?? 'Click here');
-  const [url, setUrl] = useState(initial?.url ?? 'https://');
-  const [bgColor, setBgColor] = useState(initial?.bgColor ?? '#0E1414');
-  const [textColor, setTextColor] = useState(initial?.textColor ?? '#FFFFFF');
+  const [label,        setLabel]        = useState(initial?.label        ?? 'Click here');
+  const [url,          setUrl]          = useState(initial?.url          ?? 'https://');
+  const [bgColor,      setBgColor]      = useState(initial?.bgColor      ?? '#0E1414');
+  const [textColor,    setTextColor]    = useState(initial?.textColor    ?? '#FFFFFF');
   const [borderRadius, setBorderRadius] = useState(initial?.borderRadius ?? '999');
-  const [marginTop, setMarginTop] = useState(initial?.marginTop ?? '12');
+  const [marginTop,    setMarginTop]    = useState(initial?.marginTop    ?? '12');
   const [marginBottom, setMarginBottom] = useState(initial?.marginBottom ?? '12');
+  const [borderWidth,  setBorderWidth]  = useState(initial?.borderWidth  ?? '0');
+  const [borderColor,  setBorderColor]  = useState(initial?.borderColor  ?? '#0E1414');
+  const [iconName,     setIconName]     = useState(initial?.iconName     ?? '');
   const ok = label && url && url !== 'https://';
 
   return (
@@ -582,7 +611,7 @@ function ButtonDialog({
       open
       onClose={onCancel}
       title={isEdit ? 'Edit button' : 'Add button'}
-      description="Buttons render as inline-block tap targets in the email. Tweak the styling below; the preview shows the final result."
+      description="Buttons render as tap targets in the email. Tweak the styling below; the preview shows the final result."
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: theme.space[2] }}>
           {isEdit && onDelete ? (
@@ -600,15 +629,7 @@ function ButtonDialog({
               variant="primary"
               disabled={!ok}
               onClick={() =>
-                onConfirm({
-                  label,
-                  url,
-                  bgColor,
-                  textColor,
-                  borderRadius,
-                  marginTop,
-                  marginBottom,
-                })
+                onConfirm({ label, url, bgColor, textColor, borderRadius, marginTop, marginBottom, borderWidth, borderColor, iconName })
               }
             >
               {isEdit ? 'Save changes' : 'Add button'}
@@ -618,54 +639,151 @@ function ButtonDialog({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-        <Input
-          label="Button text"
-          autoFocus
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-        />
-        <Input
-          label="URL"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://"
-        />
+        <Input label="Button text" autoFocus value={label} onChange={(e) => setLabel(e.target.value)} />
+        <Input label="URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" />
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
           <ColorRow label="Background" value={bgColor} onChange={setBgColor} />
           <ColorRow label="Text colour" value={textColor} onChange={setTextColor} />
         </div>
-        <SliderRow
-          label="Border radius"
-          unit="px"
-          min={0}
-          max={999}
-          value={borderRadius}
-          onChange={setBorderRadius}
-        />
+
+        {/* Border radius — slider capped at 24 for usability, Pill button forces 999 */}
+        <div>
+          <Eyebrow>Border radius</Eyebrow>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginTop: theme.space[1] }}>
+            <input
+              type="range"
+              min={0}
+              max={24}
+              value={borderRadius === '999' ? '24' : String(Math.min(Number(borderRadius), 24))}
+              onChange={(e) => setBorderRadius(e.target.value)}
+              style={{ flex: 1, accentColor: theme.color.accent }}
+            />
+            <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums', minWidth: 38, textAlign: 'right' }}>
+              {borderRadius === '999' ? 'Pill' : `${borderRadius}px`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setBorderRadius('999')}
+              style={{
+                padding: '3px 10px',
+                borderRadius: 6,
+                border: `1px solid ${borderRadius === '999' ? theme.color.accent : theme.color.border}`,
+                background: borderRadius === '999' ? theme.color.accentBg : 'transparent',
+                color: borderRadius === '999' ? theme.color.accent : theme.color.inkMuted,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+                flexShrink: 0,
+                fontFamily: 'inherit',
+              }}
+            >
+              Pill
+            </button>
+          </div>
+        </div>
+
+        {/* Border width + color */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
           <SliderRow
-            label="Margin top"
+            label="Border width"
             unit="px"
             min={0}
-            max={40}
-            value={marginTop}
-            onChange={setMarginTop}
+            max={8}
+            value={borderWidth}
+            onChange={setBorderWidth}
           />
-          <SliderRow
-            label="Margin bottom"
-            unit="px"
-            min={0}
-            max={40}
-            value={marginBottom}
-            onChange={setMarginBottom}
-          />
+          <ColorRow label="Border colour" value={borderColor} onChange={setBorderColor} />
         </div>
+
+        {/* Icon picker */}
+        <div>
+          <Eyebrow>Icon (optional)</Eyebrow>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(7, 1fr)',
+              gap: 6,
+              marginTop: theme.space[1],
+              maxHeight: 220,
+              overflowY: 'auto',
+              padding: '2px 0',
+            }}
+          >
+            {/* None option */}
+            <button
+              type="button"
+              onClick={() => setIconName('')}
+              title="No icon"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 3,
+                padding: '6px 4px',
+                border: `1px solid ${iconName === '' ? theme.color.accent : theme.color.border}`,
+                background: iconName === '' ? theme.color.accentBg : 'transparent',
+                borderRadius: 8,
+                cursor: 'pointer',
+                color: iconName === '' ? theme.color.accent : theme.color.inkMuted,
+                minWidth: 0,
+              }}
+            >
+              <span style={{ fontSize: 14, lineHeight: 1, fontWeight: 600 }}>—</span>
+              <span style={{ fontSize: 9, textAlign: 'center' }}>None</span>
+            </button>
+
+            {EMAIL_ICON_LIST.map(({ name, label: iconLabel }) => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => setIconName(name)}
+                title={iconLabel}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 3,
+                  padding: '6px 4px',
+                  border: `1px solid ${iconName === name ? theme.color.accent : theme.color.border}`,
+                  background: iconName === name ? theme.color.accentBg : 'transparent',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  color: iconName === name ? theme.color.accent : theme.color.inkMuted,
+                  minWidth: 0,
+                }}
+              >
+                <span
+                  style={{ display: 'flex', color: 'inherit' }}
+                  dangerouslySetInnerHTML={{
+                    __html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[name] ?? ''}</svg>`,
+                  }}
+                />
+                <span style={{ fontSize: 9, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>
+                  {iconLabel}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Margins */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+          <SliderRow label="Margin top"    unit="px" min={0} max={40} value={marginTop}    onChange={setMarginTop}    />
+          <SliderRow label="Margin bottom" unit="px" min={0} max={40} value={marginBottom} onChange={setMarginBottom} />
+        </div>
+
         <PreviewBlock
           bgColor={bgColor}
           textColor={textColor}
           borderRadius={borderRadius}
           marginTop={marginTop}
           marginBottom={marginBottom}
+          borderWidth={borderWidth}
+          borderColor={borderColor}
+          iconName={iconName}
           label={label || 'Click here'}
         />
       </div>
@@ -679,6 +797,9 @@ function PreviewBlock({
   borderRadius,
   marginTop,
   marginBottom,
+  borderWidth,
+  borderColor,
+  iconName,
   label,
 }: {
   bgColor: string;
@@ -686,8 +807,13 @@ function PreviewBlock({
   borderRadius: string;
   marginTop: string;
   marginBottom: string;
+  borderWidth: string;
+  borderColor: string;
+  iconName: string;
   label: string;
 }) {
+  const rad = borderRadius === '999' ? 9999 : Number(borderRadius);
+  const bwNum = Number(borderWidth);
   return (
     <div>
       <Eyebrow>Preview</Eyebrow>
@@ -702,19 +828,30 @@ function PreviewBlock({
       >
         <span
           style={{
-            display: 'inline-block',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
             padding: '12px 28px',
             background: bgColor,
             color: textColor,
-            borderRadius: `${borderRadius}px`,
+            borderRadius: `${rad}px`,
             fontWeight: 600,
             fontSize: 14,
             textDecoration: 'none',
             marginTop: `${marginTop}px`,
             marginBottom: `${marginBottom}px`,
             letterSpacing: '-0.005em',
+            border: bwNum > 0 ? `${bwNum}px solid ${borderColor}` : 'none',
           }}
         >
+          {iconName && EMAIL_ICONS[iconName] ? (
+            <span
+              style={{ display: 'inline-flex', flexShrink: 0 }}
+              dangerouslySetInnerHTML={{
+                __html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${textColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[iconName]}</svg>`,
+              }}
+            />
+          ) : null}
           {label}
         </span>
       </div>
@@ -792,16 +929,15 @@ function ImageDialog({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Colour picker dialog (used standalone for the toolbar text-colour
-// button, and inline inside the Link / Button dialogs as ColorRow)
+// Colour picker dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
 const COLOR_PRESETS: readonly string[] = [
-  '#0E1414', // ink
-  '#5A6266', // inkMuted
-  '#B83A2A', // alert
-  '#B36815', // warn
-  '#28785C', // accent (Lounge dark green)
+  '#0E1414',
+  '#5A6266',
+  '#B83A2A',
+  '#B36815',
+  '#28785C',
   '#3B82F6',
   '#8B5CF6',
   '#EC4899',
@@ -930,8 +1066,6 @@ function ColorPickerDialog({
   );
 }
 
-// Inline colour swatch + hex input row, used inside Link / Button
-// dialogs where a colour is one of several fields.
 function ColorRow({
   label,
   value,
@@ -987,7 +1121,6 @@ function ColorRow({
   );
 }
 
-// Slider + numeric label row, used for border-radius / margins.
 function SliderRow({
   label,
   unit,
@@ -1054,14 +1187,9 @@ function Eyebrow({ children }: { children: ReactNode }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SnippetEditorProps {
-  /** Body in storage syntax. */
   value: string;
-  /** Called on every edit with the new storage syntax. */
   onChange: (next: string) => void;
-  /** Optional placeholder shown in the empty editor. */
   placeholder?: string;
-  /** Forwarded to the internal editor for imperative control by the
-   * parent (e.g. variables sidebar inserting {{var}} at cursor). */
   editorRef?: { current: Editor | null };
 }
 
@@ -1071,17 +1199,12 @@ export function SnippetEditor({
   placeholder,
   editorRef,
 }: SnippetEditorProps) {
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [buttonOpen, setButtonOpen] = useState(false);
-  const [imageOpen, setImageOpen] = useState(false);
-  const [colorOpen, setColorOpen] = useState(false);
-  // editingButton: set when the user clicks an existing button node in
-  // the editor. Stores the document position + current attrs so the
-  // edit dialog can pre-fill and update/delete the right node.
-  const [editingButton, setEditingButton] = useState<{
-    pos: number;
-    attrs: ButtonAttrs;
-  } | null>(null);
+  const [linkOpen,      setLinkOpen]      = useState(false);
+  const [linkInitial,   setLinkInitial]   = useState<{ url: string } | null>(null);
+  const [buttonOpen,    setButtonOpen]    = useState(false);
+  const [imageOpen,     setImageOpen]     = useState(false);
+  const [colorOpen,     setColorOpen]     = useState(false);
+  const [editingButton, setEditingButton] = useState<{ pos: number; attrs: ButtonAttrs } | null>(null);
   const editorWrapperRef = useRef<HTMLDivElement>(null);
 
   const editor = useEditor(
@@ -1092,19 +1215,10 @@ export function SnippetEditor({
           codeBlock: false,
           code: false,
           strike: false,
-          // Inline margins on every block, byte-for-byte identical
-          // to the email renderer's BLOCK_MARGIN_BOTTOM. Editor
-          // preview = sent email; what you see is what your patient
-          // sees. One consistent paragraph gap, no asymmetry between
-          // headings, paragraphs, or dividers.
-          paragraph: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
-          heading: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
-          horizontalRule: {
-            HTMLAttributes: {
-              style: 'border:none;border-top:1px solid #E5E2DC;margin:0 0 8px 0',
-            },
-          },
-          bulletList: { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
+          paragraph:       { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
+          heading:         { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
+          horizontalRule:  { HTMLAttributes: { style: 'border:none;border-top:1px solid #E5E2DC;margin:0 0 8px 0' } },
+          bulletList:      { HTMLAttributes: { style: 'margin:0 0 8px 0' } },
         }),
         Link.configure({
           openOnClick: false,
@@ -1113,13 +1227,12 @@ export function SnippetEditor({
         Underline,
         TextStyle,
         Color,
+        FontWeightExtension,
         TextAlign.configure({ types: ['heading', 'paragraph'] }),
         Image.configure({
           inline: false,
           allowBase64: false,
-          HTMLAttributes: {
-            style: 'max-width:100%;border-radius:8px;margin:0 0 8px 0;display:block',
-          },
+          HTMLAttributes: { style: 'max-width:100%;border-radius:8px;margin:0 0 8px 0;display:block' },
         }),
         StyledButton,
       ],
@@ -1133,10 +1246,6 @@ export function SnippetEditor({
           style: `outline:none;min-height:220px;font-size:${theme.type.size.sm};line-height:${theme.type.leading.relaxed};color:${theme.color.ink};font-family:inherit`,
         },
         handlePaste: (view, event) => {
-          // Pasting rich text from another app drags in styles we
-          // don't support and visual fragments that round-trip
-          // poorly. Force plain-text paste — if the user wants
-          // formatting they can apply it explicitly.
           const text = event.clipboardData?.getData('text/plain');
           if (text) {
             event.preventDefault();
@@ -1150,18 +1259,12 @@ export function SnippetEditor({
     [],
   );
 
-  // Forward the editor instance to the parent's ref.
   useEffect(() => {
     if (!editorRef) return;
     editorRef.current = editor ?? null;
-    return () => {
-      if (editorRef) editorRef.current = null;
-    };
+    return () => { if (editorRef) editorRef.current = null; };
   }, [editor, editorRef]);
 
-  // Listen for click events dispatched by the styledButton node view.
-  // When a button is clicked in the editor, open the edit dialog
-  // pre-filled with its current attrs.
   useEffect(() => {
     const el = editorWrapperRef.current;
     if (!el) return;
@@ -1173,7 +1276,6 @@ export function SnippetEditor({
     return () => el.removeEventListener('snippet-button-click', handler);
   }, []);
 
-  // Sync external value changes (e.g. version restore from history).
   useEffect(() => {
     if (!editor) return;
     const currentSyntax = htmlToSyntax(editor.getHTML());
@@ -1187,51 +1289,56 @@ export function SnippetEditor({
 
   const currentColor: string | null =
     (editor.getAttributes('textStyle')?.color as string | undefined) ?? null;
+  const currentFontWeight: string | undefined =
+    editor.getAttributes('textStyle')?.fontWeight as string | undefined;
+
+  const openLinkDialog = () => {
+    if (editor.isActive('link')) {
+      const href = (editor.getAttributes('link').href as string | undefined) ?? '';
+      setLinkInitial({ url: href });
+    } else {
+      setLinkInitial(null);
+    }
+    setLinkOpen(true);
+  };
 
   const confirmLink = ({ url, color }: { url: string; color: string | null }) => {
-    if (!editor || !url) {
-      setLinkOpen(false);
-      return;
-    }
+    if (!editor || !url) { setLinkOpen(false); return; }
     const { from, to } = editor.state.selection;
     if (from === to) {
-      // Nothing selected — insert as a fresh "Link" word so the
-      // user can rename it inline. Better than blocking the
-      // insertion and forcing them to select first.
-      editor
-        .chain()
-        .focus()
-        .insertContent(
-          `<a href="${url}"${color ? ` style="color:${color}"` : ''}>Link</a>`,
-        )
-        .run();
+      editor.chain().focus().insertContent(
+        `<a href="${url}"${color ? ` style="color:${color}"` : ''}>Link</a>`,
+      ).run();
     } else {
       editor.chain().focus().setLink({ href: url }).run();
     }
     setLinkOpen(false);
+    setLinkInitial(null);
+  };
+
+  const removeLink = () => {
+    editor?.chain().focus().unsetLink().run();
+    setLinkOpen(false);
+    setLinkInitial(null);
   };
 
   const confirmButton = (attrs: ButtonAttrs) => {
-    if (!editor || !attrs.url) {
-      setButtonOpen(false);
-      return;
-    }
-    editor
-      .chain()
-      .focus()
-      .insertContent({
-        type: 'styledButton',
-        attrs: {
-          url: attrs.url,
-          label: attrs.label,
-          bgColor: attrs.bgColor,
-          textColor: attrs.textColor,
-          borderRadius: attrs.borderRadius,
-          marginTop: attrs.marginTop,
-          marginBottom: attrs.marginBottom,
-        },
-      })
-      .run();
+    if (!editor || !attrs.url) { setButtonOpen(false); return; }
+    editor.chain().focus().insertContent({
+      type: 'styledButton',
+      attrs: {
+        url:          attrs.url,
+        label:        attrs.label,
+        bgColor:      attrs.bgColor,
+        textColor:    attrs.textColor,
+        borderRadius: attrs.borderRadius,
+        marginTop:    attrs.marginTop,
+        marginBottom: attrs.marginBottom,
+        borderWidth:  attrs.borderWidth,
+        borderColor:  attrs.borderColor,
+        iconName:     attrs.iconName,
+      },
+    }).run();
     setButtonOpen(false);
   };
 
@@ -1239,19 +1346,19 @@ export function SnippetEditor({
     if (!editor || editingButton === null) return;
     const { pos } = editingButton;
     const node = editor.state.doc.nodeAt(pos);
-    if (!node || node.type.name !== 'styledButton') {
-      setEditingButton(null);
-      return;
-    }
+    if (!node || node.type.name !== 'styledButton') { setEditingButton(null); return; }
     editor.view.dispatch(
       editor.state.tr.setNodeMarkup(pos, undefined, {
-        url: newAttrs.url,
-        label: newAttrs.label,
-        bgColor: newAttrs.bgColor,
-        textColor: newAttrs.textColor,
+        url:          newAttrs.url,
+        label:        newAttrs.label,
+        bgColor:      newAttrs.bgColor,
+        textColor:    newAttrs.textColor,
         borderRadius: newAttrs.borderRadius,
-        marginTop: newAttrs.marginTop,
+        marginTop:    newAttrs.marginTop,
         marginBottom: newAttrs.marginBottom,
+        borderWidth:  newAttrs.borderWidth,
+        borderColor:  newAttrs.borderColor,
+        iconName:     newAttrs.iconName,
       }),
     );
     setEditingButton(null);
@@ -1261,17 +1368,12 @@ export function SnippetEditor({
     if (!editor || editingButton === null) return;
     const { pos } = editingButton;
     const node = editor.state.doc.nodeAt(pos);
-    if (node) {
-      editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize));
-    }
+    if (node) editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize));
     setEditingButton(null);
   };
 
   const confirmImage = ({ url, alt }: { url: string; alt: string }) => {
-    if (!editor || !url) {
-      setImageOpen(false);
-      return;
-    }
+    if (!editor || !url) { setImageOpen(false); return; }
     editor.chain().focus().setImage({ src: url, alt: alt || '' }).run();
     setImageOpen(false);
   };
@@ -1337,8 +1439,49 @@ export function SnippetEditor({
           </span>
         </ToolbarButton>
 
+        {/* Font weight dropdown */}
+        <select
+          title="Font weight"
+          value={currentFontWeight ?? ''}
+          onChange={(e) => {
+            if (!e.target.value) {
+              editor.chain().focus().setMark('textStyle', { fontWeight: null }).run();
+            } else {
+              editor.chain().focus().setMark('textStyle', { fontWeight: e.target.value }).run();
+            }
+          }}
+          style={{
+            appearance: 'none',
+            WebkitAppearance: 'none',
+            height: 28,
+            padding: '0 8px',
+            background: currentFontWeight ? theme.color.accentBg : 'transparent',
+            border: `1px solid ${currentFontWeight ? theme.color.accent : theme.color.border}`,
+            borderRadius: 6,
+            color: currentFontWeight ? theme.color.accent : theme.color.inkMuted,
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            flexShrink: 0,
+          }}
+        >
+          <option value="">Wt</option>
+          <option value="300">Light</option>
+          <option value="500">Medium</option>
+          <option value="600">Semibold</option>
+          <option value="800">Extra Bold</option>
+        </select>
+
         <ToolbarSep />
 
+        <ToolbarButton
+          title="Heading 1"
+          active={editor.isActive('heading', { level: 1 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700 }}>H1</span>
+        </ToolbarButton>
         <ToolbarButton
           title="Heading 2"
           active={editor.isActive('heading', { level: 2 })}
@@ -1352,6 +1495,13 @@ export function SnippetEditor({
           onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
         >
           <span style={{ fontSize: 11, fontWeight: 700 }}>H3</span>
+        </ToolbarButton>
+        <ToolbarButton
+          title="Heading 4"
+          active={editor.isActive('heading', { level: 4 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700 }}>H4</span>
         </ToolbarButton>
         <ToolbarButton
           title="Bullet list"
@@ -1395,9 +1545,9 @@ export function SnippetEditor({
         <ToolbarSep />
 
         <ToolbarButton
-          title="Insert link"
+          title={editor.isActive('link') ? 'Edit link' : 'Insert link'}
           active={editor.isActive('link')}
-          onClick={() => setLinkOpen(true)}
+          onClick={openLinkDialog}
         >
           <LinkIcon size={14} aria-hidden />
         </ToolbarButton>
@@ -1424,7 +1574,14 @@ export function SnippetEditor({
         <EditorContent editor={editor} placeholder={placeholder} />
       </div>
 
-      {linkOpen ? <LinkDialog onConfirm={confirmLink} onCancel={() => setLinkOpen(false)} /> : null}
+      {linkOpen ? (
+        <LinkDialog
+          initial={linkInitial ?? undefined}
+          onConfirm={confirmLink}
+          onCancel={() => { setLinkOpen(false); setLinkInitial(null); }}
+          onRemove={linkInitial ? removeLink : undefined}
+        />
+      ) : null}
       {buttonOpen ? (
         <ButtonDialog onConfirm={confirmButton} onCancel={() => setButtonOpen(false)} />
       ) : null}

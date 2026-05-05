@@ -1,3 +1,5 @@
+import { iconSvg } from './emailIcons.ts';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Email body renderer.
 //
@@ -139,8 +141,10 @@ export function substituteVariables(
 
 const BLOCK_MARGIN_BOTTOM = '0 0 8px 0';
 const STYLE_PARA = `margin:${BLOCK_MARGIN_BOTTOM}`;
+const STYLE_H1 = `font-size:28px;font-weight:700;margin:${BLOCK_MARGIN_BOTTOM};color:#0E1414;letter-spacing:-0.02em`;
 const STYLE_H2 = `font-size:20px;font-weight:600;margin:${BLOCK_MARGIN_BOTTOM};color:#0E1414;letter-spacing:-0.01em`;
 const STYLE_H3 = `font-size:16px;font-weight:600;margin:${BLOCK_MARGIN_BOTTOM};color:#0E1414;letter-spacing:-0.01em`;
+const STYLE_H4 = `font-size:13px;font-weight:600;margin:${BLOCK_MARGIN_BOTTOM};color:#0E1414;letter-spacing:0.02em;text-transform:uppercase`;
 const STYLE_HR = `border:none;border-top:1px solid #E5E2DC;margin:${BLOCK_MARGIN_BOTTOM}`;
 const STYLE_IMG = `max-width:100%;border-radius:8px;margin:${BLOCK_MARGIN_BOTTOM};display:block`;
 const STYLE_LIST = `margin:${BLOCK_MARGIN_BOTTOM}`;
@@ -201,11 +205,11 @@ export function parseFormatting(syntax: string): string {
       blocks.push(`<hr style="${STYLE_HR}">`);
       continue;
     }
-    const h2 = line.match(/^## (.+)$/);
-    if (h2 && h2[1]) {
+    const h4 = line.match(/^#### (.+)$/);
+    if (h4 && h4[1]) {
       flushBuffer();
       flushList();
-      blocks.push(`<h2 style="${STYLE_H2}">${applyInlines(h2[1])}</h2>`);
+      blocks.push(`<h4 style="${STYLE_H4}">${applyInlines(h4[1])}</h4>`);
       continue;
     }
     const h3 = line.match(/^### (.+)$/);
@@ -213,6 +217,20 @@ export function parseFormatting(syntax: string): string {
       flushBuffer();
       flushList();
       blocks.push(`<h3 style="${STYLE_H3}">${applyInlines(h3[1])}</h3>`);
+      continue;
+    }
+    const h2 = line.match(/^## (.+)$/);
+    if (h2 && h2[1]) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<h2 style="${STYLE_H2}">${applyInlines(h2[1])}</h2>`);
+      continue;
+    }
+    const h1 = line.match(/^# (.+)$/);
+    if (h1 && h1[1]) {
+      flushBuffer();
+      flushList();
+      blocks.push(`<h1 style="${STYLE_H1}">${applyInlines(h1[1])}</h1>`);
       continue;
     }
     const img = line.trim().match(/^!\[([^\]]*)\]\((.+?)\)$/);
@@ -239,9 +257,10 @@ export function parseFormatting(syntax: string): string {
   return blocks.join('');
 }
 
-/** Apply inline-only transforms (bold, italic, color, link, button)
- *  to a single line / paragraph's content. Buttons run before plain
- *  links so the button regex consumes its own URL pattern first. */
+/** Apply inline-only transforms (bold, italic, color, font-weight,
+ *  link, button) to a single line / paragraph's content. Buttons run
+ *  before plain links so the button regex consumes its own URL pattern
+ *  first. */
 function applyInlines(text: string): string {
   let out = text;
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -251,7 +270,14 @@ function applyInlines(text: string): string {
     '<span style="color:$1">$2</span>',
   );
   out = out.replace(
-    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
+    /\{w:([^}]+)\}(.+?)\{\/w\}/g,
+    '<span style="font-weight:$1">$2</span>',
+  );
+  // 9-param button: [button:label|bg|tc|rad|mt|mb|bw|bc|icon](url)
+  // Params 7-9 (bw/bc/icon) are an optional sub-group; params 2-6
+  // are also optional. Falls back to sensible defaults for each.
+  out = out.replace(
+    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?)?\]\((.+?)\)/g,
     (
       _: string,
       label: string,
@@ -260,30 +286,21 @@ function applyInlines(text: string): string {
       rad: string | undefined,
       mt: string | undefined,
       mb: string | undefined,
+      bw: string | undefined,
+      bc: string | undefined,
+      icon: string | undefined,
       url: string,
     ) => {
-      const bgC = bg || '#0E1414';
-      const tcC = tc || '#FFFFFF';
-      const radC = rad || '999';
-      const mtC = mt || '12';
-      const mbC = mb || '12';
-      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em">${label}</a>`;
-    },
-  );
-  out = out.replace(
-    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
-    (
-      _: string,
-      label: string,
-      bg: string | undefined,
-      tc: string | undefined,
-      rad: string | undefined,
-      url: string,
-    ) => {
-      const bgC = bg || '#0E1414';
-      const tcC = tc || '#FFFFFF';
-      const radC = rad || '999';
-      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:12px 0;letter-spacing:-0.005em">${label}</a>`;
+      const bgC     = bg   || '#0E1414';
+      const tcC     = tc   || '#FFFFFF';
+      const radC    = rad  || '999';
+      const mtC     = mt   || '12';
+      const mbC     = mb   || '12';
+      const bwNum   = Number(bw || '0');
+      const bcC     = bc   || '#0E1414';
+      const iconHtml = icon ? iconSvg(icon, tcC, 16) : '';
+      const border  = bwNum > 0 ? `border:${bwNum}px solid ${bcC};` : '';
+      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em;${border}">${iconHtml}${label}</a>`;
     },
   );
   out = out.replace(
@@ -306,11 +323,14 @@ function applyInlines(text: string): string {
 export function bodyToText(syntax: string): string {
   if (!syntax) return '';
   return syntax
+    .replace(/#### (.+)/g, '$1')
     .replace(/### (.+)/g, '$1')
     .replace(/## (.+)/g, '$1')
+    .replace(/# (.+)/g, '$1')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
     .replace(/\{color:[^}]+\}([^{]+)\{\/color\}/g, '$1')
+    .replace(/\{w:[^}]+\}([^{]+)\{\/w\}/g, '$1')
     .replace(/!\[([^\]]*)\]\((.+?)\)/g, '[image: $1 — $2]')
     .replace(
       /\[button:([^|\]]+)(?:\|[^\]]*)?\]\((.+?)\)/g,
