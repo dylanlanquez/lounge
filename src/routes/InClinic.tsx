@@ -370,40 +370,32 @@ function ActiveVisitCard({
         (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
       }}
     >
-      {/* Identity row — avatar + name on the left, wait chip on the
-          right. Descriptor moved OUT of this row onto its own
-          full-width line below so it has the whole card to breathe in,
-          not a narrow column squeezed by the avatar + chip. */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0, flex: 1 }}>
-          <Avatar
-            src={visit.patient_avatar_data}
-            name={name}
-            size="md"
-            badge={null}
-          />
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              letterSpacing: theme.type.tracking.tight,
-              minWidth: 0,
-              flex: 1,
-            }}
-          >
-            {name}
-          </p>
-        </div>
-        <WaitChip
-          minutes={minutesHere}
-          slaTargetMinutes={visit.sla_target_minutes}
-          slaState={slaState}
+      {/* Identity row — avatar + name only. The wait chip moved down
+          to the JB / balance line so the name has the full card width
+          to itself, instead of fighting a 70px chip on the right. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0 }}>
+        <Avatar
+          src={visit.patient_avatar_data}
+          name={name}
+          size="md"
+          badge={null}
         />
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            letterSpacing: theme.type.tracking.tight,
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
+          {name}
+        </p>
       </div>
 
       {/* Descriptor row — full card width. Caps at 2 lines + ellipsis;
@@ -460,30 +452,38 @@ function ActiveVisitCard({
         <PaymentPill done={visit.payment_done} status={visit.paid_status} />
       </div>
 
-      {/* Bottom row — JB on the left, balance on the right. JB renders
-          empty when not yet allocated so the balance keeps its right
-          edge. Balance dims to inkSubtle when unpaid (still on the
-          card, but visually quieter than name/descriptor) and uses
-          accent green when settled to mirror the Paid pill. */}
+      {/* Bottom row — wait chip + JB ref on the left, balance on the
+          right. The chip lives here (not on the identity row) so the
+          patient name has the full card width up top, AND the
+          urgency-coloured chip sits next to the JB ref where the
+          operator's eye is already going to read time-since-arrival
+          alongside the box number. */}
       <div
         style={{
           display: 'flex',
-          alignItems: 'baseline',
+          alignItems: 'center',
           justifyContent: 'space-between',
           gap: theme.space[3],
           marginTop: theme.space[4],
         }}
       >
-        <span
-          style={{
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.medium,
-            color: theme.color.inkMuted,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {visit.jb_ref ? `JB${visit.jb_ref}` : '—'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
+          <WaitChip
+            minutes={minutesHere}
+            slaTargetMinutes={visit.sla_target_minutes}
+            slaState={slaState}
+          />
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {visit.jb_ref ? `JB${visit.jb_ref}` : '—'}
+          </span>
+        </div>
         <span
           style={{
             fontSize: theme.type.size.base,
