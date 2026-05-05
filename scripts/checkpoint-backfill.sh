@@ -20,7 +20,8 @@ fi
 if [[ -z "$CHECKPOINT_DB_URL" ]]; then
   echo "ERROR: CHECKPOINT_DB_URL not set."
   echo "  Add to ~/.zshrc:"
-  echo "    export CHECKPOINT_DB_URL='postgresql://postgres:<pw>@db.emonsrrhflmwfsuupibj.supabase.co:5432/postgres'"
+  echo "    export CHECKPOINT_DB_URL='postgresql://postgres.emonsrrhflmwfsuupibj:<pw>@aws-1-<region>.pooler.supabase.com:5432/postgres'"
+  echo "  (Direct db.<ref>.supabase.co hostnames are now IPv6-only — use the session pooler URL from the Supabase dashboard.)"
   echo "  Then source ~/.zshrc and re-run."
   exit 1
 fi
