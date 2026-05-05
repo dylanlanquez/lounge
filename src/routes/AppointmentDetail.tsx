@@ -733,10 +733,19 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
       };
     }
     case 'arrived': {
-      // Transient — the arrival flow opens a visit immediately so
-      // AppointmentDetail rarely lands here. When it does, the page
-      // is about to redirect; a friendly "checked in, opening visit"
-      // bridges the gap.
+      // Virtual appointments stay on this page after joining (no visit
+      // row is created), so the ribbon must read as an active meeting.
+      // Non-virtual arrived rows are transient — the arrival flow opens
+      // a visit immediately and the page redirects; the bridging copy
+      // only shows for a moment.
+      if (appt.join_url) {
+        return {
+          icon: <Video size={16} aria-hidden />,
+          timeLine: 'Meeting in progress',
+          relative: 'Patient has joined',
+          tone: 'accent',
+        };
+      }
       return {
         icon: <UserCheck size={16} aria-hidden />,
         timeLine: 'Patient checked in',
@@ -747,7 +756,7 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
     case 'complete': {
       return {
         icon: <CheckCircle2 size={16} aria-hidden />,
-        timeLine: 'Visit complete',
+        timeLine: appt.join_url ? 'Meeting complete' : 'Visit complete',
         relative: null,
         tone: 'neutral',
       };
