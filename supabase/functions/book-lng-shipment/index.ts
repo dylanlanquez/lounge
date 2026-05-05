@@ -254,9 +254,6 @@ async function handle(req: Request): Promise<Response> {
   });
 
   // ── Checkpoint shipping_queue insert ─────────────────────────────────────
-  // Inserts an LWO row so the lab's Laboratory Dispatch table picks it up.
-  // order_name = "LWO-{lwo_ref}" matches the isLwoOrder filter in
-  // ShippingQueueView; shopify_sync='skipped' since there's no Shopify order.
   if (CHECKPOINT_SUPABASE_URL && CHECKPOINT_SERVICE_ROLE_KEY) {
     const cpSb = {
       'Content-Type': 'application/json',
@@ -266,46 +263,37 @@ async function handle(req: Request): Promise<Response> {
     const lwoRef       = patient?.lwo_ref ?? null;
     const orderName    = lwoRef ? `LWO-${lwoRef}` : dispatch_ref;
     const customerName = `${patient?.first_name ?? ''} ${patient?.last_name ?? ''}`.trim() || 'Unknown';
-    const dispatchedProducts = items.map((label) => ({
-      label,
-      qty:  1,
-      arch: null,
-    }));
+
+    const cpRow = {
+      cpid:                 dispatch_ref,
+      order_id:             null,
+      order_name:           orderName,
+      customer_name:        customerName,
+      product_type:         'completed_product',
+      delivery_method:      'DPD Local',
+      country:              shipping_address.country_code ?? 'GB',
+      postcode:             (shipping_address.zip ?? '').trim(),
+      status:               labelData ? 'printed' : (trackingNumber ? 'pending' : 'print_error'),
+      label_data:           labelData,
+      label_html:           null,
+      tracking_number:      trackingNumber ?? '',
+      shipment_id:          shipmentId ?? '',
+      slot_id:              null,
+      shopify_line_item_ids:[],
+      shopify_sync:         'skipped',
+      created_by:           staff_name || 'Lounge',
+      created_at:           now,
+    };
 
     const cpInsert = await fetch(`${CHECKPOINT_SUPABASE_URL}/rest/v1/shipping_queue`, {
       method:  'POST',
-      headers: cpSb,
-      body: JSON.stringify({
-        cpid:                 dispatch_ref,
-        order_id:             null,
-        order_name:           orderName,
-        customer_name:        customerName,
-        product_type:         'completed_product',
-        delivery_method:      'DPD Local',
-        country:              shipping_address.country_code ?? 'GB',
-        postcode:             (shipping_address.zip ?? '').trim(),
-        status:               labelData ? 'printed' : (trackingNumber ? 'pending' : 'failed'),
-        error_detail:         (!trackingNumber && !labelData) ? 'DPD booking failed from Lounge' : null,
-        label_data:           labelData,
-        label_html:           null,
-        tracking_number:      trackingNumber ?? '',
-        parcel_code:          trackingNumber ?? '',
-        shipment_id:          shipmentId ?? '',
-        slot_id:              null,
-        shopify_line_item_ids:[],
-        shopify_sync:         'skipped',
-        dispatched_products:  dispatchedProducts,
-        created_by:           staff_name || 'Lounge',
-        created_at:           now,
-      }),
+      headers: { ...cpSb, Prefer: 'return=representation' },
+      body: JSON.stringify(cpRow),
     });
     if (!cpInsert.ok) {
-      const detail = await cpInsert.text();
-      console.error('Checkpoint shipping_queue insert failed:', cpInsert.status, detail);
-      // Non-fatal — log but don't fail the overall request
+      const cpBody = await cpInsert.text().catch(() => '');
+      console.error(`Checkpoint shipping_queue insert failed (${cpInsert.status}):`, cpBody.slice(0, 300));
     }
-  } else {
-    console.warn('CHECKPOINT_SUPABASE_URL / CHECKPOINT_SERVICE_ROLE_KEY not set; skipping Checkpoint dispatch row');
   }
 
   // ── Send patient email ───────────────────────────────────────────────────
