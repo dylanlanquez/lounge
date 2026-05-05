@@ -370,71 +370,34 @@ function ActiveVisitCard({
         (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3] }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0 }}>
+      {/* Identity row — avatar + name on the left, wait chip on the
+          right. Descriptor moved OUT of this row onto its own
+          full-width line below so it has the whole card to breathe in,
+          not a narrow column squeezed by the avatar + chip. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0, flex: 1 }}>
           <Avatar
             src={visit.patient_avatar_data}
             name={name}
             size="md"
             badge={null}
           />
-          <div style={{ minWidth: 0 }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.base,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                letterSpacing: theme.type.tracking.tight,
-              }}
-            >
-              {name}
-            </p>
-            <p
-              style={{
-                margin: `${theme.space[1]}px 0 0`,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                lineHeight: 1.35,
-                // Cap the descriptor at 2 lines + ellipsis so a long
-                // service list ("Click-in veneers · Retainer +1 more")
-                // can't double the card's height. Full text shows on
-                // hover via the title attribute below.
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                wordBreak: 'break-word',
-              }}
-              title={visit.descriptor}
-            >
-              {visit.descriptor}
-            </p>
-            {visit.secondary_buckets.length > 0 ? (
-              <p
-                style={{
-                  margin: `${theme.space[1]}px 0 0`,
-                  fontSize: theme.type.size.xs,
-                  color: theme.color.inkSubtle,
-                  fontWeight: theme.type.weight.medium,
-                  lineHeight: 1.35,
-                  // Single-line ellipsis — the "Also:" line is
-                  // supplementary information, not the headline.
-                  // Truncation here costs the staff nothing they
-                  // can't recover by tapping the card.
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-                title={`Also: ${visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}`}
-              >
-                Also: {visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}
-              </p>
-            ) : null}
-          </div>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              letterSpacing: theme.type.tracking.tight,
+              minWidth: 0,
+              flex: 1,
+            }}
+          >
+            {name}
+          </p>
         </div>
         <WaitChip
           minutes={minutesHere}
@@ -442,6 +405,42 @@ function ActiveVisitCard({
           slaState={slaState}
         />
       </div>
+
+      {/* Descriptor row — full card width. Caps at 2 lines + ellipsis;
+          full text on hover via the title attribute. */}
+      <p
+        style={{
+          margin: `${theme.space[3]}px 0 0`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: 1.35,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          wordBreak: 'break-word',
+        }}
+        title={visit.descriptor}
+      >
+        {visit.descriptor}
+      </p>
+      {visit.secondary_buckets.length > 0 ? (
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            fontWeight: theme.type.weight.medium,
+            lineHeight: 1.35,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+          title={`Also: ${visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}`}
+        >
+          Also: {visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}
+        </p>
+      ) : null}
 
       {/* Pills row — waiver + payment status. */}
       <div
