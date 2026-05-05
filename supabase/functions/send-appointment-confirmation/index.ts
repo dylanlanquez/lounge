@@ -836,6 +836,9 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
       ),
       time24,
     ),
+    joinMeetingButton: apt.join_url
+      ? `[button:Join your video appointment|#0D9488|#FFFFFF|999|20|8](${apt.join_url})`
+      : '',
   };
 
   if (oldApt) {

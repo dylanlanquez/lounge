@@ -125,7 +125,7 @@ async function handle(req: Request): Promise<Response> {
   const { data: rowsRaw, error: sweepErr } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref',
+      'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url',
     )
     .eq('status', 'booked')
     .neq('source', 'calendly')
@@ -362,6 +362,9 @@ function buildVariables(
       formatPatientFacingDurationForEmail(patientFacingMinMinutes, patientFacingMaxMinutes),
       formatHmm,
     ),
+    joinMeetingButton: apt.join_url
+      ? `[button:Join your video appointment|#0D9488|#FFFFFF|999|20|8](${apt.join_url})`
+      : '',
   };
 }
 
@@ -858,6 +861,7 @@ interface AppointmentRow {
   service_type: string | null;
   event_type_label: string | null;
   appointment_ref: string | null;
+  join_url: string | null;
 }
 
 interface PatientRow {
