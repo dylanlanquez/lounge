@@ -39,9 +39,9 @@ export function CalendarGrid({
   const hours = Array.from({ length: totalHours + 1 }, (_, i) => startHour + i);
 
   const isToday = !isoDate || isoDate === todayIso();
-  const nowOffset = useNowOffset(startHour, endHour, pxPerHour, isToday);
+  const now = useNowOffset(startHour, endHour, pxPerHour, isToday);
 
-  const showNow = showNowIndicator && nowOffset !== null;
+  const showNow = showNowIndicator && now !== null;
 
   return (
     <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
@@ -64,7 +64,7 @@ export function CalendarGrid({
           </div>
         ))}
         {/* Now-time pill — lives on the time axis so it never overlaps cards. */}
-        {showNow ? <NowPill offset={nowOffset!} /> : null}
+        {showNow ? <NowPill offset={now!.offset} beforeStart={now!.beforeStart} /> : null}
       </div>
 
       {/* Slots column */}
@@ -142,7 +142,7 @@ export function CalendarGrid({
         {children}
 
         {/* Now-line — full-width across slot column at low opacity. */}
-        {showNow ? <NowLine offset={nowOffset!} /> : null}
+        {showNow ? <NowLine offset={now!.offset} /> : null}
       </div>
     </div>
   );
@@ -169,7 +169,7 @@ function NowLine({ offset }: { offset: number }) {
   );
 }
 
-function NowPill({ offset }: { offset: number }) {
+function NowPill({ offset, beforeStart }: { offset: number; beforeStart: boolean }) {
   const now = new Date();
   const h = now.getHours();
   const m = now.getMinutes();
@@ -179,12 +179,15 @@ function NowPill({ offset }: { offset: number }) {
 
   // Anchor to the right edge of the time-axis column so the pill ends just
   // before the slot column starts — never overlaps appointment cards.
-  // top: offset - 10 keeps the pill vertically centred on the now-line.
+  // Default: vertically centred on the now-line. Before the first visible
+  // hour, perch the pill above the top edge so it doesn't cover the
+  // first hour label (which sits at top: -6).
+  const top = beforeStart ? -26 : offset - 10;
   return (
     <div
       style={{
         position: 'absolute',
-        top: offset - 10,
+        top,
         right: 4,
         padding: '2px 8px',
         background: theme.color.accent,
@@ -350,11 +353,13 @@ function isoForY(
   return d.toISOString();
 }
 
+type NowState = { offset: number; beforeStart: boolean };
+
 function useNowOffset(startHour: number, endHour: number, pxPerHour: number, isToday: boolean) {
-  const [offset, setOffset] = useState<number | null>(null);
+  const [state, setState] = useState<NowState | null>(null);
   useEffect(() => {
     if (!isToday) {
-      setOffset(null);
+      setState(null);
       return;
     }
     const update = () => {
@@ -365,18 +370,17 @@ function useNowOffset(startHour: number, endHour: number, pxPerHour: number, isT
       // Past the last visible hour, drop the indicator entirely so it
       // doesn't dangle below the grid.
       if (minutes >= endMinutes) {
-        setOffset(null);
+        setState(null);
         return;
       }
-      // Before the first visible hour, clamp to the top edge so the pill
-      // and line rest at the top of the calendar instead of floating
-      // above it.
       const raw = ((minutes - startMinutes) / 60) * pxPerHour;
-      setOffset(Math.max(0, raw));
+      // Before the first visible hour, clamp the line to the top edge.
+      // The pill positions itself separately based on `beforeStart`.
+      setState({ offset: Math.max(0, raw), beforeStart: raw < 0 });
     };
     update();
     const t = setInterval(update, 60_000);
     return () => clearInterval(t);
   }, [startHour, endHour, pxPerHour, isToday]);
-  return offset;
+  return state;
 }
