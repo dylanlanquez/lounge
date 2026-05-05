@@ -315,6 +315,11 @@ function Section({
           gridTemplateColumns: isMobile
             ? '1fr'
             : 'repeat(auto-fill, minmax(280px, 1fr))',
+          // Force every card in the same row to the same height. With
+          // descriptor / "Also:" lines now clamped (see CARD_DESCRIPTOR
+          // / CARD_ALSO_LINE styles), the tallest card sets a bounded
+          // ceiling and everything in the row matches it.
+          gridAutoRows: '1fr',
           gap: theme.space[3],
         }}
       >
@@ -393,14 +398,16 @@ function ActiveVisitCard({
                 margin: `${theme.space[1]}px 0 0`,
                 fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
-                // Wrap rather than ellipsis: the cards have plenty of
-                // vertical room and a truncated "Click-in veneers · Den…"
-                // gave staff no useful information. wordBreak handles
-                // very long single tokens (lab notes, etc.) without
-                // overflowing the card.
+                lineHeight: 1.35,
+                // Cap the descriptor at 2 lines + ellipsis so a long
+                // service list ("Click-in veneers · Retainer +1 more")
+                // can't double the card's height. Full text shows on
+                // hover via the title attribute below.
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
                 overflow: 'hidden',
                 wordBreak: 'break-word',
-                lineHeight: 1.35,
               }}
               title={visit.descriptor}
             >
@@ -414,7 +421,15 @@ function ActiveVisitCard({
                   color: theme.color.inkSubtle,
                   fontWeight: theme.type.weight.medium,
                   lineHeight: 1.35,
+                  // Single-line ellipsis — the "Also:" line is
+                  // supplementary information, not the headline.
+                  // Truncation here costs the staff nothing they
+                  // can't recover by tapping the card.
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
                 }}
+                title={`Also: ${visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}`}
               >
                 Also: {visit.secondary_buckets.map((b) => CLINIC_SECTION_LABELS[b]).join(' · ')}
               </p>
@@ -435,7 +450,11 @@ function ActiveVisitCard({
           alignItems: 'center',
           gap: theme.space[2],
           flexWrap: 'wrap',
-          marginTop: theme.space[5],
+          // Push to the bottom of the card so all cards in a row line
+          // up at the pills (the gridAutoRows: '1fr' pads each card to
+          // match the tallest, leaving the spare space here).
+          marginTop: 'auto',
+          paddingTop: theme.space[4],
         }}
       >
         <WaiverPill status={visit.waiver_status} />
@@ -681,7 +700,11 @@ const cardStyle: CSSProperties = {
   appearance: 'none',
   width: '100%',
   textAlign: 'left',
-  padding: theme.space[5],
+  // Tightened from space[5] (20px) to space[4] (16px). Combined with
+  // line-clamped descriptor / "Also" text and marginTop: auto on the
+  // pills row, every card now reads compact and uniform regardless of
+  // service-list length.
+  padding: theme.space[4],
   background: theme.color.surface,
   border: `1px solid ${theme.color.border}`,
   borderRadius: theme.radius.card,
