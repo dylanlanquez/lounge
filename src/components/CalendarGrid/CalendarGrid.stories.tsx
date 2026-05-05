@@ -76,13 +76,12 @@ export const StatusGallery: StoryObj = {
         </p>
         <div style={{ background: theme.color.surface, borderRadius: theme.radius.card, padding: theme.space[4], boxShadow: theme.shadow.card }}>
           <CalendarGrid showNowIndicator={false}>
-            {(['booked', 'arrived', 'in_progress', 'complete', 'no_show', 'cancelled'] as const).map((status, i) => {
+            {(['booked', 'arrived', 'complete', 'no_show', 'cancelled'] as const).map((status, i) => {
               const start = today(8 + i + 1, 0);
               const end = today(8 + i + 1, 45);
               const labels: Record<string, string> = {
                 booked: 'Sarah H.',
                 arrived: 'Rajiv P.',
-                in_progress: 'Olu A.',
                 complete: 'Marta K.',
                 no_show: 'Tom B.',
                 cancelled: 'Jay W.',

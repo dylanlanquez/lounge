@@ -109,14 +109,13 @@ export const NO_SHOW_LATE_THRESHOLD_MIN = 15;
 //   - Terminal status (complete / cancelled / rescheduled) — done, regardless of time.
 //   - Past slot (end_at <= now) for any non-active status — booked rows that
 //     never got actioned and no_shows from earlier in the day or week.
-// Active visits (arrived, in_progress) stay full-strength even past end_at,
-// because the appointment slot may have over-run while the patient is still
-// in the chair.
+// Active visits (arrived) stay full-strength even past end_at, because the
+// appointment slot may have over-run while the patient is still in the chair.
 export function isAppointmentDimmed(
   row: { end_at: string; status: AppointmentStatus },
   now: Date | number
 ): boolean {
-  if (row.status === 'arrived' || row.status === 'in_progress') return false;
+  if (row.status === 'arrived') return false;
   if (row.status === 'complete' || row.status === 'cancelled' || row.status === 'rescheduled') {
     return true;
   }
@@ -166,15 +165,13 @@ export function formatLateDuration(totalMinutes: number): string {
 }
 
 // Human-readable label for an appointment status. Backed-end enums like
-// 'no_show' / 'in_progress' are not for the receptionist to see.
+// 'no_show' are not for the receptionist to see.
 export function humaniseStatus(status: AppointmentRow['status']): string {
   switch (status) {
     case 'booked':
       return 'Booked';
     case 'arrived':
       return 'Arrived';
-    case 'in_progress':
-      return 'In progress';
     case 'complete':
       return 'Complete';
     case 'no_show':

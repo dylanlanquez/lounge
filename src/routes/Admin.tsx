@@ -643,7 +643,7 @@ function TestingTab() {
                     }}
                   >
                     <StatusPill tone={row.status === 'arrived' ? 'arrived' : row.status === 'no_show' ? 'no_show' : 'neutral'} size="sm">
-                      {humaniseStatus(row.status as 'booked' | 'arrived' | 'in_progress' | 'complete' | 'no_show' | 'cancelled' | 'rescheduled')}
+                      {humaniseStatus(row.status as 'booked' | 'arrived' | 'complete' | 'no_show' | 'cancelled' | 'rescheduled')}
                     </StatusPill>
                     <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
                       {name}

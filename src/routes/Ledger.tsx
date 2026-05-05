@@ -56,14 +56,12 @@ import type { DateRange } from '../lib/dateRange.ts';
 // Either destination's breadcrumb reads "Ledger › ..." via the
 // `from: 'ledger'` router state we attach below.
 
-// "In progress" comes from lng_appointments.status. The visit-side
-// equivalent ('in_chair') was retired in 20260505 — once a patient
-// is marked arrived they're effectively in the chair, the extra
-// transition was never used.
+// 'in_chair' (visits) and 'in_progress' (appointments) were both
+// retired in 20260505 — neither transition was ever used in practice;
+// once a patient is marked arrived they're effectively in the chair.
 const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
   { value: 'arrived', label: 'Arrived' },
-  { value: 'in_progress', label: 'In progress' },
   { value: 'complete', label: 'Complete' },
   { value: 'no_show', label: 'No-show' },
   { value: 'cancelled', label: 'Cancelled' },
@@ -100,7 +98,6 @@ const PAYMENT_OPTIONS: ReadonlyArray<{ value: LedgerPaymentState; label: string 
 const STATUS_TO_TONE: Record<LedgerStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
-  in_progress: 'in_progress',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',

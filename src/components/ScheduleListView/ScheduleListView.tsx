@@ -215,7 +215,6 @@ export function ScheduleListRow({
 function statusToTone(s: AppointmentRow['status']) {
   switch (s) {
     case 'arrived':
-    case 'in_progress':
       return 'arrived' as const;
     case 'complete':
       return 'complete' as const;

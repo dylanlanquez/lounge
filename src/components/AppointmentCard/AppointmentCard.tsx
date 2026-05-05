@@ -59,7 +59,6 @@ export interface AppointmentCardProps {
 export type AppointmentStatus =
   | 'booked'
   | 'arrived'
-  | 'in_progress'
   | 'complete'
   | 'no_show'
   | 'cancelled'
@@ -68,7 +67,6 @@ export type AppointmentStatus =
 const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   booked: 'neutral',
   arrived: 'arrived',
-  in_progress: 'in_progress',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',
@@ -78,7 +76,6 @@ const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
 const BAR_COLOR: Record<AppointmentStatus, string> = {
   booked: theme.color.ink,
   arrived: theme.color.accent,
-  in_progress: theme.color.accent,
   complete: theme.color.inkSubtle,
   no_show: theme.color.alert,
   cancelled: theme.color.inkSubtle,
@@ -88,7 +85,6 @@ const BAR_COLOR: Record<AppointmentStatus, string> = {
 const FILL_COLOR: Record<AppointmentStatus, string> = {
   booked: theme.color.surface,
   arrived: theme.color.accentBg,
-  in_progress: theme.color.surface,
   complete: theme.color.surface,
   no_show: theme.color.surface,
   cancelled: theme.color.surface,

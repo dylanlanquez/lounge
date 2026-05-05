@@ -643,7 +643,6 @@ function humaniseServiceType(s: string | null): string | null {
 export type ScheduledApptStatus =
   | 'booked'
   | 'arrived'
-  | 'in_progress'
   | 'complete'
   | 'no_show'
   | 'cancelled'

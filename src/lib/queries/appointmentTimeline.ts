@@ -989,8 +989,6 @@ function humaniseStatus(status: string): string {
       return 'Booked';
     case 'arrived':
       return 'Arrived';
-    case 'in_progress':
-      return 'In progress';
     case 'no_show':
       return 'No-show';
     case 'cancelled':

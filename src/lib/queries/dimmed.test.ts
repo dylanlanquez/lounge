@@ -15,9 +15,8 @@ describe('isAppointmentDimmed', () => {
     expect(isAppointmentDimmed(row('rescheduled', future), now)).toBe(true);
   });
 
-  it('keeps active statuses (arrived, in_progress) at full strength even past end_at', () => {
+  it('keeps active arrived rows at full strength even past end_at', () => {
     expect(isAppointmentDimmed(row('arrived', past), now)).toBe(false);
-    expect(isAppointmentDimmed(row('in_progress', past), now)).toBe(false);
   });
 
   it('dims booked rows whose slot has ended', () => {

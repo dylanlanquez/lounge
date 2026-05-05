@@ -10,9 +10,9 @@ import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 //      that has to happen on Calendly. The reschedule helper has the
 //      same guard for the same reason. Surfaces a clear error so
 //      staff don't expect the cancel to flow through.
-//   3. Status guard — already-terminal rows are no-ops; in_progress
-//      can't be cancelled (the visit is mid-flow, staff should void
-//      the cart instead). Allowed start states: booked, arrived.
+//   3. Status guard — already-terminal rows are no-ops; an arrived
+//      booking has a live visit, staff should void the cart there
+//      instead. Allowed start state: booked.
 //   4. Update the row: status='cancelled', cancel_reason.
 //   5. Emit patient_events 'appointment_cancelled' for the timeline.
 //   6. Best-effort: send a cancellation email + CANCEL .ics so the
@@ -67,7 +67,9 @@ export async function cancelAppointment(input: {
   ) {
     throw new Error(`Can't cancel an appointment with status "${existing.status}".`);
   }
-  if (existing.status === 'in_progress') {
+  // 'arrived' bookings have a live visit. Cancelling here would orphan
+  // the cart; void from the visit page instead.
+  if (existing.status === 'arrived') {
     throw new Error(
       'This visit is in progress. Void the cart from the visit page instead of cancelling here.',
     );

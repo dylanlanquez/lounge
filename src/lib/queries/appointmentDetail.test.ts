@@ -19,7 +19,6 @@ describe('availableActions', () => {
     const statuses: AvailableActionsInput['status'][] = [
       'booked',
       'arrived',
-      'in_progress',
       'complete',
       'no_show',
       'cancelled',
@@ -99,11 +98,6 @@ describe('availableActions', () => {
     it('arrived + has visit: view_visit', () => {
       const out = availableActions({ ...base, status: 'arrived', hasVisit: true });
       expect(out).toEqual(['view_patient_profile', 'view_visit']);
-    });
-
-    it('in_progress + has visit: view_visit', () => {
-      const out = availableActions({ ...base, status: 'in_progress', hasVisit: true });
-      expect(out).toContain('view_visit');
     });
 
     it('complete + has visit: view_visit', () => {

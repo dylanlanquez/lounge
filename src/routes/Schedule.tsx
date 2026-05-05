@@ -1823,13 +1823,11 @@ function statusToTone(s: AppointmentRow['status']) {
     ? 'neutral'
     : s === 'arrived'
       ? 'arrived'
-      : s === 'in_progress'
-        ? 'in_progress'
-        : s === 'complete'
-          ? 'complete'
-          : s === 'no_show'
-            ? 'no_show'
-            : 'cancelled';
+      : s === 'complete'
+        ? 'complete'
+        : s === 'no_show'
+          ? 'no_show'
+          : 'cancelled';
 }
 
 // Compact day + start-time string for the appointment popup

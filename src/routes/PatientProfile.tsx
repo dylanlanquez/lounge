@@ -1748,11 +1748,9 @@ function ApptStatusPill({ status }: { status: ScheduledApptStatus }) {
         ? 'no_show'
         : status === 'cancelled' || status === 'rescheduled'
           ? 'cancelled'
-          : status === 'in_progress'
-            ? 'in_progress'
-            : status === 'arrived'
-              ? 'arrived'
-              : 'neutral';
+          : status === 'arrived'
+            ? 'arrived'
+            : 'neutral';
   const label = humaniseApptStatus(status);
   return (
     <StatusPill tone={tone} size="sm">
@@ -1780,8 +1778,6 @@ function humaniseApptStatus(s: ScheduledApptStatus): string {
       return 'Booked';
     case 'arrived':
       return 'Arrived';
-    case 'in_progress':
-      return 'In progress';
     case 'complete':
       return 'Complete';
     case 'no_show':

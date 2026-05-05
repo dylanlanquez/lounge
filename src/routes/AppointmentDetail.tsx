@@ -548,7 +548,6 @@ function Loaded({
 const STATUS_TONE: Record<AppointmentStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
-  in_progress: 'in_progress',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',
@@ -716,14 +715,6 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
         tone: 'accent',
       };
     }
-    case 'in_progress': {
-      return {
-        icon: <UserCheck size={16} aria-hidden />,
-        timeLine: 'Visit in progress',
-        relative: null,
-        tone: 'accent',
-      };
-    }
     case 'complete': {
       return {
         icon: <CheckCircle2 size={16} aria-hidden />,
@@ -788,8 +779,6 @@ function humaniseAppointmentStatus(status: AppointmentStatus): string {
       return 'Booked';
     case 'arrived':
       return 'Arrived';
-    case 'in_progress':
-      return 'In progress';
     case 'complete':
       return 'Complete';
     case 'no_show':

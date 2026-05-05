@@ -339,7 +339,7 @@ export type AppointmentAction =
   | 'reverse_cancellation'   // cancelled
   | 'reverse_no_show'        // no_show
   | 'view_rescheduled_to'    // rescheduled with a forward link
-  | 'view_visit';            // arrived / in_progress / complete with a visit
+  | 'view_visit';            // arrived / complete with a visit
 //
 // 'edit' was removed — note edits happen inline on the Notes card,
 // and staff reassignment is rare enough that pushing it back to the
@@ -372,11 +372,7 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
     out.push('reverse_no_show');
   } else if (status === 'rescheduled') {
     if (hasRescheduleTarget) out.push('view_rescheduled_to');
-  } else if (
-    status === 'arrived' ||
-    status === 'in_progress' ||
-    status === 'complete'
-  ) {
+  } else if (status === 'arrived' || status === 'complete') {
     if (hasVisit) out.push('view_visit');
   }
 

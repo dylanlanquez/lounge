@@ -768,7 +768,6 @@ function StatusBadge({ status }: { status: string }) {
       case 'cancelled':
         return { label: 'Cancelled', bg: 'rgba(184, 58, 42, 0.08)', fg: theme.color.alert, icon: <X size={12} aria-hidden /> };
       case 'arrived':
-      case 'in_progress':
         return { label: 'In progress', bg: theme.color.accentBg, fg: theme.color.accent, icon: <Check size={12} aria-hidden /> };
       case 'complete':
         return { label: 'Completed', bg: theme.color.bg, fg: theme.color.inkMuted, icon: <Check size={12} aria-hidden /> };
