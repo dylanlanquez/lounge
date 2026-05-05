@@ -536,7 +536,12 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
           flex: 1,
           minWidth: 0,
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) auto',
+          // Fixed width on the trailing status track so a wider pill
+          // (e.g. "Rescheduled") never steals space from the date /
+          // service columns. The pill itself is right-aligned inside
+          // the track so its right edge sits flush against the chevron
+          // for every row, regardless of label length.
+          gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) 116px',
           alignItems: 'center',
           gap: theme.space[3],
         }}
@@ -596,9 +601,11 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
           {dateLabel}
           <span style={{ color: theme.color.inkSubtle, marginLeft: theme.space[2] }}>{timeLabel}</span>
         </p>
-        <StatusPill tone={tone} size="sm">
-          {humaniseLedgerStatus(row.status)}
-        </StatusPill>
+        <div style={{ justifySelf: 'end' }}>
+          <StatusPill tone={tone} size="sm">
+            {humaniseLedgerStatus(row.status)}
+          </StatusPill>
+        </div>
       </div>
       <ChevronRight
         size={18}
@@ -633,7 +640,7 @@ function SkeletonList() {
               flex: 1,
               minWidth: 0,
               display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) 90px',
+              gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) 116px',
               gap: theme.space[3],
               alignItems: 'center',
             }}
@@ -641,7 +648,9 @@ function SkeletonList() {
             <Skeleton width="60%" height={16} radius={4} />
             <Skeleton width="70%" height={14} radius={4} />
             <Skeleton width="80%" height={14} radius={4} />
-            <Skeleton width="100%" height={20} radius={999} />
+            <div style={{ justifySelf: 'end' }}>
+              <Skeleton width={80} height={20} radius={999} />
+            </div>
           </div>
           <Skeleton width={18} height={18} radius={4} />
         </div>
