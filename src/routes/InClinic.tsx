@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import {
   Clock,
   CreditCard,
+  Package,
   Search,
   ShieldCheck,
   X,
@@ -434,30 +435,34 @@ function ActiveVisitCard({
         </p>
       ) : null}
 
-      {/* Pills row — waiver + payment status. */}
+      {/* Pills row — dispatch-pending visits get a single "Ready to ship"
+          pill; active visits show the usual waiver + payment state. */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: theme.space[2],
           flexWrap: 'wrap',
-          // Push to the bottom of the card so all cards in a row line
-          // up at the pills (the gridAutoRows: '1fr' pads each card to
-          // match the tallest, leaving the spare space here).
           marginTop: 'auto',
           paddingTop: theme.space[4],
         }}
       >
-        <WaiverPill status={visit.waiver_status} />
-        <PaymentPill done={visit.payment_done} status={visit.paid_status} />
+        {visit.status === 'complete' ? (
+          <StatusPill tone="arrived" size="sm">
+            <span style={pillInnerStyle}>
+              <Package size={12} aria-hidden />
+              Ready to ship
+            </span>
+          </StatusPill>
+        ) : (
+          <>
+            <WaiverPill status={visit.waiver_status} />
+            <PaymentPill done={visit.payment_done} status={visit.paid_status} />
+          </>
+        )}
       </div>
 
-      {/* Bottom row — wait chip + JB ref on the left, balance on the
-          right. The chip lives here (not on the identity row) so the
-          patient name has the full card width up top, AND the
-          urgency-coloured chip sits next to the JB ref where the
-          operator's eye is already going to read time-since-arrival
-          alongside the box number. */}
+      {/* Bottom row — wait chip + JB ref on the left, balance on the right. */}
       <div
         style={{
           display: 'flex',
@@ -473,32 +478,32 @@ function ActiveVisitCard({
             slaTargetMinutes={visit.sla_target_minutes}
             slaState={slaState}
           />
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.medium,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {visit.jb_ref ? `JB${visit.jb_ref}` : '—'}
-          </span>
+          {visit.status !== 'complete' && (
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {visit.jb_ref ? `JB${visit.jb_ref}` : '—'}
+            </span>
+          )}
         </div>
         <span
           style={{
             fontSize: theme.type.size.base,
             fontWeight: theme.type.weight.semibold,
-            color: visit.payment_done ? theme.color.accent : theme.color.inkSubtle,
+            color: visit.status === 'complete'
+              ? theme.color.accent
+              : visit.payment_done ? theme.color.accent : theme.color.inkSubtle,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {/* Show the outstanding balance (bill - deposit - what's
-              already been paid), not the bare bill. The view already
-              factors deposits and discounts into amount_paid_pence /
-              amount_due_pence respectively, so this is a simple
-              subtraction. Floors at 0 so an over-deposit doesn't
-              produce a negative; final paid carts read as "Paid". */}
-          {formatOutstanding(visit.amount_due_pence, visit.amount_paid_pence, visit.payment_done)}
+          {visit.status === 'complete'
+            ? 'Paid'
+            : formatOutstanding(visit.amount_due_pence, visit.amount_paid_pence, visit.payment_done)}
         </span>
       </div>
     </button>

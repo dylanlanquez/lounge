@@ -237,6 +237,7 @@ function makeVisit(overrides: Partial<EnrichedActiveVisit> = {}): EnrichedActive
     status: 'arrived',
     arrival_type: 'walk_in',
     opened_at: '2026-04-28T09:00:00Z',
+    fulfilment_method: null,
     patient_first_name: null,
     patient_last_name: null,
     patient_phone: null,

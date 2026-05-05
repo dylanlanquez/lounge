@@ -44,7 +44,8 @@ export type ClinicSectionKey =
   | 'sameDay'
   | 'repair'
   | 'impression'
-  | 'consult';
+  | 'consult'
+  | 'dispatch';
 
 export const CLINIC_SECTION_ORDER: ClinicSectionKey[] = [
   'appliance',
@@ -52,6 +53,10 @@ export const CLINIC_SECTION_ORDER: ClinicSectionKey[] = [
   'repair',
   'impression',
   'consult',
+  // Visits whose Finish Visit set fulfilment_method='shipping' but whose
+  // DPD label hasn't been created yet. Appears last — live patients always
+  // have priority over pending dispatch tasks.
+  'dispatch',
 ];
 
 export const CLINIC_SECTION_LABELS: Record<ClinicSectionKey, string> = {
@@ -60,6 +65,7 @@ export const CLINIC_SECTION_LABELS: Record<ClinicSectionKey, string> = {
   repair: 'Denture repairs',
   impression: 'Impression appointments',
   consult: 'Other',
+  dispatch: 'Awaiting dispatch',
 };
 
 export type WaiverDisplayStatus = 'done' | 'pending' | 'not_required';
@@ -67,8 +73,9 @@ export type WaiverDisplayStatus = 'done' | 'pending' | 'not_required';
 export interface EnrichedActiveVisit {
   id: string;
   patient_id: string;
-  status: 'arrived';
+  status: 'arrived' | 'complete';
   arrival_type: 'walk_in' | 'scheduled';
+  fulfilment_method: 'in_person' | 'shipping' | null;
   opened_at: string;
   // Patient identity
   patient_first_name: string | null;
@@ -307,9 +314,11 @@ interface CartSlaJoin {
 interface VisitsRowFromDb {
   id: string;
   patient_id: string;
-  status: 'arrived';
+  status: 'arrived' | 'complete';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
+  fulfilment_method: 'in_person' | 'shipping' | null;
+  dispatch_ref: string | null;
   patient: PatientJoin | PatientJoin[] | null;
   appointment: AppointmentJoin | AppointmentJoin[] | null;
   walk_in: WalkInJoin | WalkInJoin[] | null;
@@ -350,6 +359,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
         .from('lng_visits')
         .select(
           `id, patient_id, status, arrival_type, opened_at,
+           fulfilment_method, dispatch_ref,
            patient:patients (
              first_name, last_name, phone, email,
              internal_ref, avatar_data
@@ -367,7 +377,9 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
              )
            )`
         )
-        .eq('status', 'arrived')
+        // arrived visits (live, in-chair) plus complete+shipping visits
+        // whose DPD label hasn't been created yet (pending dispatch).
+        .or('status.eq.arrived,and(status.eq.complete,fulfilment_method.eq.shipping,dispatch_ref.is.null)')
         .order('opened_at', { ascending: true });
 
       if (cancelled) return;
@@ -480,24 +492,24 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
         const cart = pickOne(r.cart);
         const activeItems = (cart?.items ?? []).filter((it) => !it.removed_at);
 
-        // Bucket: prefer what's actually in the basket (the live
-        // service the patient is having done), fall back to the
-        // booking metadata. A walk-in booked as a denture repair that
-        // ends up getting a same-day appliance should move into the
-        // appliance section without staff doing anything.
-        //
-        // bucketsFromCartItems also returns the secondary buckets so
-        // the card can show a "Also: …" hint when one cart spans
-        // multiple sections (denture repair + click-in veneer, etc.).
+        // Bucket: pending-dispatch visits (complete + shipping + no label
+        // yet) always land in 'dispatch' regardless of service type.
+        // For live visits prefer the active basket, fall back to booking metadata.
+        const isPendingDispatch =
+          r.status === 'complete' &&
+          r.fulfilment_method === 'shipping' &&
+          !r.dispatch_ref;
+
         const { primary: cartBucket, secondary: cartSecondary } =
           bucketsFromCartItems(activeItems);
-        const bucket =
-          cartBucket
-          ?? bucketForVisit({
-            event_type_label: eventTypeLabel,
-            service_type: serviceType,
-          });
-        const secondaryBuckets = cartSecondary;
+        const bucket: ClinicSectionKey = isPendingDispatch
+          ? 'dispatch'
+          : cartBucket ??
+            bucketForVisit({
+              event_type_label: eventTypeLabel,
+              service_type: serviceType,
+            });
+        const secondaryBuckets = isPendingDispatch ? [] : cartSecondary;
 
         // Descriptor: list the active basket lines so staff sees the
         // current items, not the booking intake snapshot. Falls back
@@ -540,6 +552,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           status: r.status,
           arrival_type: r.arrival_type,
           opened_at: r.opened_at,
+          fulfilment_method: r.fulfilment_method,
           patient_first_name: p?.first_name ?? null,
           patient_last_name: p?.last_name ?? null,
           patient_phone: p?.phone ?? null,
@@ -564,7 +577,9 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
             (paid?.paid_status ?? 'free_visit') === 'paid' ||
             (paid?.paid_status ?? 'free_visit') === 'free_visit',
           waiver_status: waiverStatus,
-          sla_target_minutes: slaTarget,
+          // SLA doesn't apply to dispatch-pending visits — the patient
+          // is gone; we're just waiting on a label.
+          sla_target_minutes: isPendingDispatch ? null : slaTarget,
         };
         enrichedVisit.searchable = searchableTextForVisit(enrichedVisit);
         return enrichedVisit;
@@ -677,7 +692,7 @@ export function useActiveVisitCount(
       const { count: c, error } = await supabase
         .from('lng_visits')
         .select('id', { count: 'exact', head: true })
-        .eq('status', 'arrived');
+        .or('status.eq.arrived,and(status.eq.complete,fulfilment_method.eq.shipping,dispatch_ref.is.null)');
       if (cancelled) return;
       if (error) {
         console.warn('[useActiveVisitCount]', error.message);
