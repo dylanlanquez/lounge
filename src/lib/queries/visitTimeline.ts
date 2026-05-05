@@ -212,6 +212,8 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Cart line removed';
     case 'visit_ended_early':
       return 'Visit ended early';
+    case 'visit_shipped':
+      return 'Items dispatched';
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -501,11 +503,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             id: `visit-${visit.id}-closed`,
             type: 'visit_closed',
             timestamp: visit.closed_at,
-            title: 'Visit closed',
-            // Same staff that arrived the visit — closing fires
-            // from the same logged-in session in the common case.
-            // Future improvement: a dedicated closed_by column on
-            // lng_visits would let us record a different staff.
+            title: 'Visit complete',
             actorAccountId: visit.receptionist_id,
             hint: 'flag',
           });
@@ -883,6 +881,11 @@ function composePatientEventTitle(row: PatientEventRow): string {
     const lineName = typeof row.payload?.line_name === 'string' ? row.payload.line_name : null;
     if (lineName && lineName.trim().length > 0) return `Removed ${lineName}`;
   }
+  if (row.event_type === 'visit_shipped') {
+    const payload = row.payload ?? {};
+    const items = Array.isArray(payload.items) ? (payload.items as string[]).join(', ') : null;
+    if (items) return `Dispatched: ${items}`;
+  }
   return HUMAN_PATIENT_EVENT(row.event_type);
 }
 
@@ -906,6 +909,15 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     // payload still has the text.
     const reason = typeof payload.reason === 'string' ? payload.reason : row.notes ?? null;
     return reason && reason.trim().length > 0 ? reason : undefined;
+  }
+  if (row.event_type === 'visit_shipped') {
+    const dispatchRef = typeof payload.dispatch_ref === 'string' ? payload.dispatch_ref : null;
+    const tracking = typeof payload.tracking_number === 'string' ? payload.tracking_number : null;
+    const parts = [
+      dispatchRef ? `Ref ${dispatchRef}` : null,
+      tracking ? `Tracking ${tracking}` : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : undefined;
   }
   if (row.event_type === 'visit_ended_early') {
     // Surface the reason category as the headline detail. Note text
