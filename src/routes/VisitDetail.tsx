@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -464,31 +464,6 @@ export function VisitDetail() {
     };
   }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit, paidPayments]);
 
-  // Lazy parcel code backfill — runs once when a shipped visit loads with
-  // a tracking_number but no parcel_code. DPD doesn't always return the
-  // parcel code immediately at label creation time; fill-lng-parcel-code
-  // checks Checkpoint's shipping_queue (where fill-parcel-codes has already
-  // backfilled it) and writes it back so the tracking URL is correct.
-  const parcelCodeFetchedRef = useRef(false);
-  useEffect(() => {
-    if (parcelCodeFetchedRef.current) return;
-    if (!visit?.tracking_number || visit.parcel_code) return;
-    parcelCodeFetchedRef.current = true;
-
-    const anonKey    = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      fetch(`${supabaseUrl}/functions/v1/fill-lng-parcel-code`, {
-        method:  'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization:  `Bearer ${session?.access_token ?? anonKey}`,
-          apikey:          anonKey,
-        },
-        body: JSON.stringify({ visit_id: visit.id }),
-      }).catch(() => {/* non-fatal */});
-    });
-  }, [visit?.id, visit?.tracking_number, visit?.parcel_code]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -3102,6 +3077,13 @@ function Row({ label, value, accent = false }: { label: string; value: string; a
 // Collapsible section shown above Before & After when the visit has a
 // completed dispatch. Summarises what was shipped, where to, the DPD
 // tracking number (linked), who processed it, and offers a Print label action.
+//
+// While parcel_code is null the card polls fill-lng-parcel-code every 30 s
+// with a live countdown. When Realtime pushes the parcel_code update the
+// parent hook re-renders the component with the confirmed code and the
+// polling effect cleans up automatically.
+
+const PARCEL_CODE_POLL_SECONDS = 30;
 
 function ShippedItemsCard({
   visit,
@@ -3111,14 +3093,68 @@ function ShippedItemsCard({
   onPrintLabel: () => void;
 }) {
   const addr = visit.shipping_address;
-  // Only use parcel_code for the tracking URL — this includes the depot
-  // suffix (e.g. 15976969376288*21297) that DPD requires. When parcel_code
-  // is null (not yet available from DPD), show the bare tracking number as
-  // text only. The lazy fill-lng-parcel-code fetch running on mount will
-  // write it back via Realtime once Checkpoint's queue has it.
   const trackingUrl = visit.parcel_code
     ? `https://track.dpdlocal.co.uk/parcels/${visit.parcel_code}#results`
     : null;
+
+  // ── Polling state (only active while parcel_code is null) ──────────────
+  const [nextCheckIn, setNextCheckIn] = useState<number>(PARCEL_CODE_POLL_SECONDS);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    // Stop as soon as we have the code — Realtime handled the update.
+    if (visit.parcel_code || !visit.tracking_number) return;
+
+    const anonKey    = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+
+    let alive = true;
+
+    async function doFill() {
+      if (!alive) return;
+      setChecking(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        await fetch(`${supabaseUrl}/functions/v1/fill-lng-parcel-code`, {
+          method:  'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization:  `Bearer ${session?.access_token ?? anonKey}`,
+            apikey:          anonKey,
+          },
+          body: JSON.stringify({ visit_id: visit.id }),
+        });
+        // If fill-lng-parcel-code wrote parcel_code, the Realtime subscription
+        // on lng_visits in useVisitDetail picks it up and re-renders this
+        // component with the confirmed code — the effect will then clean up.
+      } catch { /* non-fatal */ }
+      if (alive) {
+        setChecking(false);
+        setNextCheckIn(PARCEL_CODE_POLL_SECONDS);
+      }
+    }
+
+    // Immediate first check
+    doFill();
+
+    // 1-second ticker that counts down and re-polls when it hits 0
+    const ticker = setInterval(() => {
+      if (!alive) return;
+      setNextCheckIn((prev) => {
+        if (prev <= 1) {
+          doFill();
+          return PARCEL_CODE_POLL_SECONDS;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      alive = false;
+      clearInterval(ticker);
+    };
+  // Re-run when visit.id or visit.parcel_code changes (code just arrived via Realtime)
+  }, [visit.id, visit.tracking_number, visit.parcel_code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addrLines = addr
     ? [addr.name, addr.address1, addr.address2, addr.city, addr.zip].filter(Boolean)
@@ -3127,6 +3163,13 @@ function ShippedItemsCard({
   const dispatchedAt = visit.dispatched_at
     ? new Date(visit.dispatched_at).toLocaleString('en-GB', {
         day: 'numeric', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
+    : null;
+
+  const emailSentAt = visit.shipping_email_sent_at
+    ? new Date(visit.shipping_email_sent_at).toLocaleString('en-GB', {
+        day: 'numeric', month: 'short',
         hour: '2-digit', minute: '2-digit',
       })
     : null;
@@ -3173,21 +3216,56 @@ function ShippedItemsCard({
                 <ExternalLink size={14} aria-hidden />
               </a>
             ) : (
-              // parcel_code not yet available — lazy fetch is running.
-              // Show the bare number as text; the link will appear once
-              // fill-lng-parcel-code writes back via Realtime.
-              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+              // parcel_code pending — live countdown shows next check,
+              // Realtime will push the update when it resolves.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
                 <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
                   {visit.tracking_number}
                 </p>
-                <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-                  Tracking link loading, check back shortly
-                </p>
+                <div style={{
+                  display: 'flex', flexDirection: 'column', gap: theme.space[1],
+                  background: theme.color.bg,
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  padding: `${theme.space[3]} ${theme.space[3]}`,
+                }}>
+                  <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                    Tracking link registering with DPD
+                  </p>
+                  <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                    DPD registers new parcels within a few minutes of dispatch. This page will update automatically.
+                  </p>
+                  <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+                    {checking
+                      ? 'Checking now…'
+                      : `Next check in ${nextCheckIn}s`}
+                  </p>
+                </div>
               </div>
             )
           ) : (
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
               Tracking unavailable
+            </p>
+          )}
+        </div>
+
+        <hr style={{ margin: 0, border: 'none', borderTop: `1px solid ${theme.color.border}` }} />
+
+        {/* Patient email status */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Patient notification
+          </p>
+          {emailSentAt ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.accent }}>
+              Email sent {emailSentAt}
+            </p>
+          ) : (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
+              {visit.parcel_code
+                ? 'Email sending…'
+                : 'Email sends when tracking link is confirmed'}
             </p>
           )}
         </div>

@@ -29,6 +29,7 @@
 //   { ok: false, error }
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { sendShippingEmail } from '../_shared/shippingEmail.ts';
 
 const SUPABASE_URL             = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -330,50 +331,35 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
-  // ── Send patient email ───────────────────────────────────────────────────
-  if (patient?.email && RESEND_API_KEY) {
-    const { data: tplRow } = await admin
-      .from('lng_email_templates')
-      .select('subject, body_syntax, enabled')
-      .eq('key', 'visit_shipped')
-      .maybeSingle();
+  // ── Send patient email (only when parcel_code is confirmed) ─────────────
+  // Sending with just tracking_number builds a broken DPD URL. If
+  // parcel_code is still null here, fill-lng-parcel-code will send the
+  // email atomically once it resolves the code.
+  if (parcelCode && patient?.email && RESEND_API_KEY) {
+    // Atomic claim: only send if shipping_email_sent_at is still null.
+    const { data: claimed } = await admin
+      .from('lng_visits')
+      .update({ shipping_email_sent_at: now })
+      .eq('id', visit_id)
+      .is('shipping_email_sent_at', null)
+      .select('id');
 
-    const tpl = tplRow as { subject: string; body_syntax: string; enabled: boolean } | null;
-    if (tpl?.enabled) {
-      const patientFirstName = patient.first_name ?? 'there';
-      const trackingIdentifier = parcelCode ?? trackingNumber;
-      const trackingUrl = trackingIdentifier
-        ? `https://track.dpdlocal.co.uk/parcels/${trackingIdentifier}#results`
-        : '';
-      const addrLines = [
-        addrSnapshot.name,
-        addrSnapshot.address1,
-        addrSnapshot.address2,
-        addrSnapshot.city,
-        addrSnapshot.zip,
-      ].filter(Boolean).join(', ');
-      const itemsList = items.length ? items.join('\n') : 'Your completed dental work';
-
-      const variables: Record<string, string> = {
-        patientFirstName,
-        trackingNumber:  trackingNumber ?? '',
-        trackingUrl,
-        shippingAddress: addrLines,
-        itemsList,
-        dispatchRef:     dispatch_ref,
-      };
-
-      const subject  = substituteVariables(tpl.subject, variables);
-      const bodyText = substituteVariables(tpl.body_syntax, variables);
-      const html     = simpleHtml(bodyText, patientFirstName);
-      const text     = bodyText;
-
-      await fetch('https://api.resend.com/emails', {
-        method:  'POST',
-        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: RESEND_FROM, to: [patient.email], subject, html, text }),
+    if (claimed && claimed.length > 0) {
+      await sendShippingEmail(admin, {
+        visitId:          visit_id,
+        patientEmail:     patient.email,
+        patientFirstName: patient.first_name,
+        trackingNumber,
+        parcelCode,
+        shippingAddress:  addrSnapshot,
+        items,
+        dispatchRef:      dispatch_ref,
+        resendApiKey:     RESEND_API_KEY,
+        resendFrom:       RESEND_FROM,
       }).catch((e) => console.error('Resend dispatch email failed:', e));
     }
+  } else if (!parcelCode) {
+    console.log(`book-lng-shipment: parcel_code not yet available for ${dispatch_ref}; email deferred to fill-lng-parcel-code`);
   }
 
   return json({
@@ -385,45 +371,3 @@ async function handle(req: Request): Promise<Response> {
   });
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function substituteVariables(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
-  );
-}
-
-function simpleHtml(bodyText: string, _name: string): string {
-  const paragraphs = bodyText
-    .split(/\n\n+/)
-    .map((block) => {
-      const lines = block.split('\n').map((l) => {
-        const bold = l.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        return escapeHtml(bold).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      });
-      const inner = block
-        .split('\n')
-        .map((l) => {
-          const esc = l.replace(/[&<>"']/g, (c) =>
-            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
-          );
-          return esc.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        })
-        .join('<br>');
-      return `<p style="margin:0 0 16px;color:#0E1414;line-height:1.6;">${inner}</p>`;
-    })
-    .join('');
-
-  return `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,system-ui,sans-serif;color:#0E1414;">
-  <div style="max-width:520px;margin:0 auto;padding:32px 24px;">
-    <h1 style="margin:0 0 20px;font-size:20px;font-weight:600;color:#0E1414;">Your order is on its way</h1>
-    ${paragraphs}
-    <p style="margin:32px 0 0;color:#7B8285;font-size:12px;">Venneir Limited · Questions? Reply to this email.</p>
-  </div>
-</body></html>`;
-}

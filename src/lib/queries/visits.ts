@@ -45,7 +45,8 @@ export interface VisitRow {
     country_code: string;
     phone: string;
   } | null;
-  dispatch_ref:     string | null;
+  dispatch_ref:          string | null;
+  shipping_email_sent_at: string | null;
 }
 
 export interface CreateWalkInInput {
