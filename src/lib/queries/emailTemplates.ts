@@ -446,6 +446,45 @@ const CANCELLATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = APPOINTMENT
   (v) => v.name !== 'googleCalendarUrl',
 );
 
+const RECEIPT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'patientFirstName',
+    label: 'Patient first name',
+    description: 'The patient\'s first name. Falls back to "there" if empty.',
+    sample: 'Sarah',
+  },
+  {
+    name: 'totalAmount',
+    label: 'Total amount',
+    description: 'Formatted total charged, e.g. "£24.00".',
+    sample: '£120.00',
+  },
+  {
+    name: 'paidBy',
+    label: 'Payment method',
+    description: 'How the patient paid: Card, Cash, Klarna, or Clearpay.',
+    sample: 'Card',
+  },
+  {
+    name: 'itemsList',
+    label: 'Items purchased',
+    description: 'One item per line with quantity if more than one, e.g. "Upper Night Guard × 2".',
+    sample: 'Upper Night Guard × 2\nLower Retainer',
+  },
+  {
+    name: 'receiptRef',
+    label: 'Receipt reference',
+    description: 'Short 8-character payment reference.',
+    sample: 'a1b2c3d4',
+  },
+  {
+    name: 'paymentDate',
+    label: 'Payment date',
+    description: 'Date the payment was taken, e.g. "5 May 2026".',
+    sample: '5 May 2026',
+  },
+];
+
 const SHIPPING_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   {
     name: 'patientFirstName',
@@ -525,6 +564,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent to the patient when their completed work is dispatched via DPD. Includes the tracking number and delivery address.',
     variables: SHIPPING_VARIABLES,
+  },
+  {
+    key: 'payment_receipt',
+    label: 'Payment receipt',
+    group: 'Payments',
+    description:
+      'Sent to the patient immediately after a payment is taken at the Lounge. Includes a line-item list, total, payment method, and reference.',
+    variables: RECEIPT_VARIABLES,
   },
 ];
 

@@ -122,14 +122,48 @@ Deno.serve(async (req) => {
   }
 
   const totalPence = cart?.total_pence ?? payment.amount_pence;
-  const subjectMethod =
+  const paidBy =
     payment.payment_journey === 'klarna' ? 'Klarna' :
     payment.payment_journey === 'clearpay' ? 'Clearpay' :
     payment.method === 'cash' ? 'Cash' : 'Card';
-  const subject = `Your Venneir Lounge receipt · ${formatPence(totalPence)} · ${subjectMethod}`;
 
-  const html = renderHtml({ items, totalPence, subjectMethod, payment, patient });
-  const text = renderText({ items, totalPence, subjectMethod, payment, patient });
+  // Try admin-editable template first; fall back to hardcoded render if
+  // the row is missing or disabled (delivery should never silently vanish).
+  const { data: tplRaw } = await supabase
+    .from('lng_email_templates')
+    .select('subject, body_syntax, enabled')
+    .eq('key', 'payment_receipt')
+    .maybeSingle();
+  const tpl = tplRaw as { subject: string; body_syntax: string; enabled: boolean } | null;
+
+  let subject: string;
+  let html: string;
+  let text: string;
+
+  if (tpl?.enabled) {
+    const itemsListText = items
+      .map((i) => `${i.name}${i.quantity > 1 ? ` × ${i.quantity}` : ''}`)
+      .join('\n');
+    const paymentDate = payment.succeeded_at
+      ? new Date(payment.succeeded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+      : new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    const variables: Record<string, string> = {
+      patientFirstName: patient?.first_name ?? 'there',
+      totalAmount:      formatPence(totalPence),
+      paidBy,
+      itemsList:        itemsListText,
+      receiptRef:       payment.id.slice(0, 8),
+      paymentDate,
+    };
+    subject = substituteVariables(tpl.subject, variables);
+    const bodyAfterVars = substituteVariables(tpl.body_syntax, variables);
+    html = wrapReceiptHtml(parseFormatting(bodyAfterVars));
+    text = bodyToText(bodyAfterVars);
+  } else {
+    subject = `Your Venneir Lounge receipt · ${formatPence(totalPence)} · ${paidBy}`;
+    html = renderHtml({ items, totalPence, subjectMethod: paidBy, payment, patient });
+    text = renderText({ items, totalPence, subjectMethod: paidBy, payment, patient });
+  }
 
   // 2. Deliver
   let deliveryResult: { ok: true; provider: string; messageId?: string } | { ok: false; error: string };
@@ -311,6 +345,108 @@ interface ReceiptItem {
 
 function formatPence(p: number): string {
   return `£${(p / 100).toFixed(2)}`;
+}
+
+// ── Template rendering ────────────────────────────────────────────────────────
+// Mirror of the renderer in send-appointment-confirmation. Keep these
+// byte-for-byte aligned so the in-app preview matches sent emails.
+
+function substituteVariables(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (full, key) => {
+    if (Object.prototype.hasOwnProperty.call(vars, key)) return vars[key] ?? '';
+    return full;
+  });
+}
+
+const _BLOCK_MB  = '0 0 8px 0';
+const _STYLE_PARA = `margin:${_BLOCK_MB}`;
+const _STYLE_H2   = `font-size:20px;font-weight:600;margin:${_BLOCK_MB};color:#0E1414;letter-spacing:-0.01em`;
+const _STYLE_H3   = `font-size:16px;font-weight:600;margin:${_BLOCK_MB};color:#0E1414;letter-spacing:-0.01em`;
+const _STYLE_HR   = `border:none;border-top:1px solid #E5E2DC;margin:${_BLOCK_MB}`;
+const _STYLE_LIST = `margin:${_BLOCK_MB}`;
+const _STYLE_LI   = 'display:block;padding-left:16px;position:relative;margin:0';
+const _STYLE_BUL  = 'position:absolute;left:0;top:0;color:#0E1414';
+
+function _applyInlines(t: string): string {
+  let out = t;
+  out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  out = out.replace(/\[button:(.+?)(?:\|([^|\]]*)\|([^|\]]*)\|([^\]]*))?\]\((.+?)\)/g,
+    (_: string, label: string, bg?: string, tc?: string, rad?: string, url?: string) =>
+      `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bg||'#0E1414'};color:${tc||'#FFFFFF'};text-decoration:none;border-radius:${rad||'999'}px;font-weight:600;font-size:14px;margin:12px 0;letter-spacing:-0.005em">${label}</a>`
+  );
+  out = out.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" style="color:#0E1414;text-decoration:underline">$1</a>');
+  return out;
+}
+
+function parseFormatting(syntax: string): string {
+  if (!syntax) return '';
+  const trimmed = syntax.replace(/^\n+|\n+$/g, '');
+  if (!trimmed) return '';
+  const lines = trimmed.split('\n');
+  const blocks: string[] = [];
+  let buffer: string[]    = [];
+  let listItems: string[] = [];
+  let emptyStreak = 0;
+  const flushBuffer = () => {
+    if (!buffer.length) return;
+    blocks.push(`<p style="${_STYLE_PARA}">${_applyInlines(buffer.join('<br>'))}</p>`);
+    buffer = [];
+  };
+  const flushList = () => {
+    if (!listItems.length) return;
+    const items = listItems
+      .map((item) => `<span style="${_STYLE_LI}"><span style="${_STYLE_BUL}">•</span>${_applyInlines(item)}</span>`)
+      .join('');
+    blocks.push(`<div style="${_STYLE_LIST}">${items}</div>`);
+    listItems = [];
+  };
+  for (const line of lines) {
+    if (line === '') {
+      flushBuffer(); flushList(); emptyStreak++; continue;
+    }
+    if (emptyStreak > 1) {
+      for (let i = 0; i < emptyStreak - 1; i++) blocks.push(`<p style="${_STYLE_PARA}">&nbsp;</p>`);
+    }
+    emptyStreak = 0;
+    if (/^---+$/.test(line.trim())) { flushBuffer(); flushList(); blocks.push(`<hr style="${_STYLE_HR}">`); continue; }
+    const h2 = line.match(/^## (.+)$/);
+    if (h2?.[1]) { flushBuffer(); flushList(); blocks.push(`<h2 style="${_STYLE_H2}">${_applyInlines(h2[1])}</h2>`); continue; }
+    const h3 = line.match(/^### (.+)$/);
+    if (h3?.[1]) { flushBuffer(); flushList(); blocks.push(`<h3 style="${_STYLE_H3}">${_applyInlines(h3[1])}</h3>`); continue; }
+    const li = line.match(/^- (.+)$/);
+    if (li?.[1]) { flushBuffer(); listItems.push(li[1]); continue; }
+    flushList();
+    buffer.push(line);
+  }
+  flushBuffer(); flushList();
+  return blocks.join('');
+}
+
+function bodyToText(syntax: string): string {
+  if (!syntax) return '';
+  return syntax
+    .replace(/### (.+)/g, '$1')
+    .replace(/## (.+)/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
+    .replace(/!\[([^\]]*)\]\((.+?)\)/g, '[image: $1]')
+    .replace(/\[button:([^|\]]+)(?:\|[^\]]*)?\]\((.+?)\)/g, '$1: $2')
+    .replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)')
+    .replace(/^---$/gm, '────────────')
+    .trim();
+}
+
+function wrapReceiptHtml(bodyHtml: string): string {
+  return `<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
+  <div style="max-width:520px;margin:0 auto;padding:32px 24px">
+    <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
+      ${bodyHtml}
+    </div>
+    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center">Venneir Limited · Questions? Reply to this email.</p>
+  </div>
+</body></html>`;
 }
 
 function escapeHtml(s: string): string {

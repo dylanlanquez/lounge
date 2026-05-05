@@ -71,7 +71,14 @@ function generateDispatchRef(): string {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
+  try {
+    return await handle(req);
+  } catch (e) {
+    return json({ ok: false, error: `book-lng-shipment crashed: ${e instanceof Error ? e.message : String(e)}` });
+  }
+});
 
+async function handle(req: Request): Promise<Response> {
   // Auth
   const userJwt = req.headers.get('authorization') ?? '';
   if (!userJwt.startsWith('Bearer ')) return json({ ok: false, error: 'No bearer token' }, 401);
@@ -160,11 +167,14 @@ Deno.serve(async (req) => {
     },
   });
   if (!authRes.ok) {
-    return json({ ok: false, error: 'DPD authentication failed' }, 502);
+    const errBody = await authRes.text().catch(() => '');
+    return json({ ok: false, error: `DPD authentication failed (${authRes.status}): ${errBody.slice(0, 200)}` });
   }
   const authData    = await authRes.json();
   const accessToken = authData?.data?.accessToken;
-  if (!accessToken) return json({ ok: false, error: 'No DPD access token in response' }, 502);
+  if (!accessToken) {
+    return json({ ok: false, error: `DPD auth: no access token. Response: ${JSON.stringify(authData).slice(0, 200)}` });
+  }
 
   // ── DPD: create shipment ─────────────────────────────────────────────────
   const dispatch_ref = generateDispatchRef();
@@ -413,7 +423,7 @@ Deno.serve(async (req) => {
     shipment_id:     shipmentId,
     label_data:      labelData,
   });
-});
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
