@@ -289,7 +289,9 @@ export function syntaxToHtml(text: string): string {
     // Full-line button: convert at the text level so that the inline
     // regex chain never runs on assembled multi-paragraph HTML (which
     // would allow greedy parameter groups to match across <p> tags).
-    const btnM = line.match(BUTTON_LINE_RE);
+    // Trim defensively: a trailing \r (CRLF input) or space would break
+    // the $ anchor even though the syntax itself is valid.
+    const btnM = line.trim().match(BUTTON_LINE_RE);
     if (btnM) {
       if (inList) { htmlLines.push('</ul>'); inList = false; }
       htmlLines.push(buildEditorButtonSpan(btnM));
