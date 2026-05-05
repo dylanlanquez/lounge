@@ -20,6 +20,7 @@ import {
   User as UserIcon,
   UserCheck,
   UserX,
+  Video,
   XCircle,
 } from 'lucide-react';
 import {
@@ -54,7 +55,7 @@ import {
   relativeDay,
 } from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
-import { markNoShow, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
@@ -286,6 +287,7 @@ function Loaded({
         hasPatientEmail: !!appt.patient.email,
         hasVisit: !!appt.visit,
         hasRescheduleTarget: !!appt.reschedule_to_id,
+        isVirtual: !!appt.join_url,
       }),
     [
       appt.status,
@@ -293,6 +295,7 @@ function Loaded({
       appt.patient.email,
       appt.visit,
       appt.reschedule_to_id,
+      appt.join_url,
     ],
   );
 
@@ -305,6 +308,30 @@ function Loaded({
   // capture every booked appointment requires before chair time.
   const handleArrived = () => {
     navigate(`/arrival/appointment/${appt.id}`);
+  };
+
+  // Virtual appointments: first join records that the meeting started
+  // (sets status → arrived, writes a patient event) then opens the URL.
+  // Rejoin skips the status mutation — the appointment is already arrived.
+  const handleJoinMeeting = async () => {
+    try {
+      await markVirtualMeetingJoined(appt.id);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not record meeting join';
+      await logFailure({
+        source: 'AppointmentDetail.joinMeeting',
+        severity: 'error',
+        message,
+        context: { appointmentId: appt.id },
+      });
+      setActionError(message);
+    }
+    if (appt.join_url) window.open(appt.join_url, '_blank', 'noopener,noreferrer');
+    onChanged();
+  };
+
+  const handleRejoinMeeting = () => {
+    if (appt.join_url) window.open(appt.join_url, '_blank', 'noopener,noreferrer');
   };
 
   const handleResendConfirmation = async () => {
@@ -451,6 +478,8 @@ function Loaded({
           })
         }
         onMarkArrived={handleArrived}
+        onJoinMeeting={handleJoinMeeting}
+        onRejoinMeeting={handleRejoinMeeting}
         onMarkNoShow={() => setConfirmNoShowOpen(true)}
         onReschedule={() => setRescheduling(true)}
         onCancel={() => setCancelling(true)}
@@ -1532,6 +1561,8 @@ function Actions({
   resending,
   onPatientProfile,
   onMarkArrived,
+  onJoinMeeting,
+  onRejoinMeeting,
   onMarkNoShow,
   onReschedule,
   onCancel,
@@ -1545,6 +1576,8 @@ function Actions({
   resending: boolean;
   onPatientProfile: () => void;
   onMarkArrived: () => void;
+  onJoinMeeting: () => void;
+  onRejoinMeeting: () => void;
   onMarkNoShow: () => void;
   onReschedule: () => void;
   onCancel: () => void;
@@ -1554,6 +1587,7 @@ function Actions({
   onViewRescheduledTo: () => void;
 }) {
   const has = (a: AppointmentAction) => actions.includes(a);
+  const isFirstAction = !has('join_meeting') && !has('mark_arrived');
   return (
     <section
       aria-label="Actions"
@@ -1567,6 +1601,16 @@ function Actions({
         overflow: 'hidden',
       }}
     >
+      {has('join_meeting') ? (
+        <ActionRow
+          first
+          icon={<Video size={16} aria-hidden />}
+          label="Join meeting"
+          description={appt.join_url ?? undefined}
+          onClick={onJoinMeeting}
+          accent
+        />
+      ) : null}
       {has('mark_arrived') ? (
         <ActionRow
           first
@@ -1581,7 +1625,7 @@ function Actions({
         icon={<UserIcon size={16} aria-hidden />}
         label="Patient profile"
         onClick={onPatientProfile}
-        first={!has('mark_arrived')}
+        first={isFirstAction}
       />
       {has('mark_no_show') ? (
         <ActionRow
@@ -1616,6 +1660,14 @@ function Actions({
           label="Reverse cancellation"
           description="Restore the booking to its scheduled time"
           onClick={onReverseCancellation}
+        />
+      ) : null}
+      {has('rejoin_meeting') ? (
+        <ActionRow
+          icon={<Video size={16} aria-hidden />}
+          label="Rejoin meeting"
+          description={appt.join_url ?? undefined}
+          onClick={onRejoinMeeting}
         />
       ) : null}
       {has('reverse_no_show') ? (

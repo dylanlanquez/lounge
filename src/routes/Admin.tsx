@@ -2100,6 +2100,7 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         sla_target_minutes: slaTargetMinutes,
         include_on_lwo: draft.include_on_lwo,
         allocate_job_box: draft.allocate_job_box,
+        is_virtual: draft.is_virtual,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
@@ -2278,6 +2279,7 @@ interface CatalogueDraft {
   sla_target_minutes: string;
   include_on_lwo: boolean;
   allocate_job_box: boolean;
+  is_virtual: boolean;
   sort_order: string;
   active: boolean;
 }
@@ -2311,6 +2313,7 @@ function emptyDraft(mode: CatalogueMode): CatalogueDraft {
     sla_target_minutes: '',
     include_on_lwo: isService,
     allocate_job_box: isService,
+    is_virtual: false,
     sort_order: '0',
     active: true,
   };
@@ -2339,6 +2342,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     sla_target_minutes: row.sla_target_minutes != null ? String(row.sla_target_minutes) : '',
     include_on_lwo: row.include_on_lwo,
     allocate_job_box: row.allocate_job_box,
+    is_virtual: row.is_virtual,
     sort_order: String(row.sort_order),
     active: row.active,
   };
@@ -2971,6 +2975,11 @@ function ServiceForm({
                 />
               ) : null}
             </div>
+            <Checkbox
+              checked={draft.is_virtual}
+              onChange={(v) => set('is_virtual', v)}
+              label="Virtual service (remote session). Replaces the arrival wizard with Join meeting, Rejoin, and No-show actions."
+            />
           </div>
         </ServiceSection>
 

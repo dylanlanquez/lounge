@@ -12,6 +12,7 @@ const base: AvailableActionsInput = {
   hasPatientEmail: true,
   hasVisit: false,
   hasRescheduleTarget: false,
+  isVirtual: false,
 };
 
 describe('availableActions', () => {

@@ -23,6 +23,7 @@ const baseRow = (over: Partial<CatalogueRow> = {}): CatalogueRow => ({
   sla_target_minutes: null,
   include_on_lwo: true,
   allocate_job_box: true,
+  is_virtual: false,
   sort_order: 0,
   active: true,
   created_at: '2026-04-28T00:00:00Z',

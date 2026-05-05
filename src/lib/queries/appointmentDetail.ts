@@ -331,7 +331,9 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
 
 export type AppointmentAction =
   | 'view_patient_profile'   // every state
-  | 'mark_arrived'           // booked, on or near the slot day
+  | 'mark_arrived'           // booked, in-person only
+  | 'join_meeting'           // booked, virtual only — first join
+  | 'rejoin_meeting'         // arrived, virtual only — reconnect
   | 'mark_no_show'           // booked, past start time
   | 'reschedule'             // booked + native source
   | 'cancel'                 // booked + native source
@@ -339,11 +341,7 @@ export type AppointmentAction =
   | 'reverse_cancellation'   // cancelled
   | 'reverse_no_show'        // no_show
   | 'view_rescheduled_to'    // rescheduled with a forward link
-  | 'view_visit';            // arrived / complete with a visit
-//
-// 'edit' was removed — note edits happen inline on the Notes card,
-// and staff reassignment is rare enough that pushing it back to the
-// Schedule edit sheet keeps the appointment detail surface focused.
+  | 'view_visit';            // arrived / complete with an in-person visit
 
 export interface AvailableActionsInput {
   status: AppointmentStatus;
@@ -351,15 +349,17 @@ export interface AvailableActionsInput {
   hasPatientEmail: boolean;
   hasVisit: boolean;
   hasRescheduleTarget: boolean;
+  isVirtual: boolean;
 }
 
 export function availableActions(input: AvailableActionsInput): AppointmentAction[] {
   const out: AppointmentAction[] = ['view_patient_profile'];
-  const { status, source, hasPatientEmail, hasVisit, hasRescheduleTarget } = input;
+  const { status, source, hasPatientEmail, hasVisit, hasRescheduleTarget, isVirtual } = input;
   const isCalendly = source === 'calendly';
 
   if (status === 'booked') {
-    out.push('mark_arrived');
+    // Virtual: Join replaces the arrival wizard; in-person: normal arrival flow.
+    out.push(isVirtual ? 'join_meeting' : 'mark_arrived');
     out.push('mark_no_show');
     if (!isCalendly) {
       out.push('reschedule');
@@ -373,7 +373,9 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
   } else if (status === 'rescheduled') {
     if (hasRescheduleTarget) out.push('view_rescheduled_to');
   } else if (status === 'arrived' || status === 'complete') {
-    if (hasVisit) out.push('view_visit');
+    // Virtual appointments never produce a visit row, so offer Rejoin instead.
+    if (isVirtual) out.push('rejoin_meeting');
+    else if (hasVisit) out.push('view_visit');
   }
 
   return out;
