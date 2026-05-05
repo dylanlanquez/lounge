@@ -824,11 +824,18 @@ interface VisitorMapServicesResult {
 }
 
 /** Live list of service categories the heatmap should slice by.
- *  Reads lng_widget_booking_types — same canonical source the
- *  customer-facing booking widget uses, so what the patient sees
- *  in the funnel matches what the heatmap legend shows. Any
- *  new service added in admin appears automatically with its
- *  display_label; 'Other' is appended as the catch-all bucket. */
+ *  Reads parent rows from lng_booking_type_config — every service
+ *  that's been configured in admin, regardless of whether it's
+ *  exposed to the customer widget. This is the right source for
+ *  reports because the heatmap aggregates over EVERY visit
+ *  (Calendly, manual, native, future channels), not just widget-
+ *  bookable ones.
+ *
+ *  Label fallback: display_label first (admin-editable rename),
+ *  then a humanised version of the service_type slug. 'Other' is
+ *  always appended to the tail so any service_type not in the
+ *  config (legacy data, removed services) still has somewhere to
+ *  land in the legend. */
 export function useVisitorMapServices(): VisitorMapServicesResult {
   const [data, setData] = useState<VisitorMapServiceDef[]>(VISITOR_MAP_FALLBACK_SERVICES);
   const [loading, setLoading] = useState(true);
@@ -838,24 +845,31 @@ export function useVisitorMapServices(): VisitorMapServicesResult {
     let cancelled = false;
     (async () => {
       const { data: rows, error: err } = await supabase
-        .from('lng_widget_booking_types')
-        .select('service_type, label')
-        .order('label', { ascending: true });
+        .from('lng_booking_type_config')
+        .select('service_type, display_label')
+        .is('repair_variant', null)
+        .is('product_key', null)
+        .is('arch', null)
+        .order('display_label', { ascending: true, nullsFirst: false });
       if (cancelled) return;
       if (err) {
         setError(err.message);
         setLoading(false);
         return;
       }
-      const live: VisitorMapServiceDef[] = (rows ?? [])
-        .map((r) => ({
-          id: ((r.service_type as string) ?? '').trim() || null,
-          label: ((r.label as string) ?? '').trim() || null,
-        }))
-        .filter((s): s is VisitorMapServiceDef => s.id !== null && s.label !== null);
+      const seen = new Set<string>();
+      const live: VisitorMapServiceDef[] = [];
+      for (const r of rows ?? []) {
+        const id = ((r.service_type as string) ?? '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const display = ((r.display_label as string | null) ?? '').trim();
+        live.push({ id, label: display || prettyServiceLabel(id) });
+      }
+      live.sort((a, b) => a.label.localeCompare(b.label));
       // 'Other' always wraps the tail so any service_type that
-      // isn't in the live list (legacy data, removed services)
-      // still has somewhere to land in the legend.
+      // isn't in the config (legacy data, removed services) still
+      // has a slot in the legend.
       live.push({ id: 'other', label: 'Other' });
       setData(live);
       setError(null);
@@ -867,6 +881,14 @@ export function useVisitorMapServices(): VisitorMapServicesResult {
   }, []);
 
   return { data, loading, error };
+}
+
+function prettyServiceLabel(slug: string): string {
+  if (!slug) return 'Service';
+  const parts = slug.split('_').filter(Boolean);
+  if (parts.length === 0) return 'Service';
+  parts[0] = parts[0]!.charAt(0).toUpperCase() + parts[0]!.slice(1);
+  return parts.join(' ');
 }
 
 // One drill-down level beneath VisitorMapService. Each parent service
