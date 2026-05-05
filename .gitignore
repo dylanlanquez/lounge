@@ -29,6 +29,11 @@ storybook-static
 # Build artefacts
 node_modules/.tmp
 
+# Adobe Illustrator / Photoshop / Office scratch files
+**/~ai-*
+**/~$*
+*.tmp
+
 # Vercel
 .vercel
 
