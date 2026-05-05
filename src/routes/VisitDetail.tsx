@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  BadgeCheck,
   Ban,
   CheckCircle2,
   CheckCircle,
@@ -83,6 +84,11 @@ import {
   updateCartItemQuantity,
   useCart,
 } from '../lib/queries/carts.ts';
+import {
+  useCartPayments,
+  type CartPaymentRow,
+  type PaymentMethod,
+} from '../lib/queries/payments.ts';
 import { useCatalogueActive } from '../lib/queries/catalogue.ts';
 import {
   composeUpgradeLabel,
@@ -112,6 +118,14 @@ export function VisitDetail() {
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
   const { active: activeDiscount, refresh: refreshDiscount } = useActiveCartDiscount(cart?.id ?? null);
+  // Captured payments power the Paid banner — once the cart is paid,
+  // the operator should see WHICH methods landed (cash + card split,
+  // etc.) and WHEN, not just the final total.
+  const { data: succeededPayments } = useCartPayments(cart?.id ?? null);
+  const paidPayments = useMemo(
+    () => succeededPayments.filter((p) => p.status === 'succeeded'),
+    [succeededPayments],
+  );
   // Catalogue is the source of truth for include_on_lwo. Cart items
   // carry catalogue_id snapshots, so we can look the live flag up at
   // print time without snapshotting it onto cart_items (snapshotted
@@ -952,19 +966,42 @@ export function VisitDetail() {
                 action row below stays at full opacity so the
                 Reverse affordance reads as the only live thing. */}
             <div style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-            <Card padding="lg">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: theme.space[4] }}>
-                <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-                  Cart
-                </h2>
-                {items.length > 0 && !productiveLocked ? (
-                  <Button variant="secondary" size="sm" onClick={openPicker}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                      <Plus size={16} /> Add item
-                    </span>
-                  </Button>
-                ) : null}
-              </div>
+            <Card
+              padding="lg"
+              style={
+                cart?.status === 'paid'
+                  ? {
+                      // Card itself reads as a settled receipt: subtle
+                      // accent wash + accent ring. Pairs with the
+                      // PaidBanner inside so the surface reads as
+                      // "this is paid" before the eye even lands on
+                      // the line items.
+                      background: theme.color.accentBg,
+                      border: '1px solid rgba(31, 77, 58, 0.18)',
+                    }
+                  : undefined
+              }
+            >
+              {cart?.status === 'paid' ? (
+                <PaidBanner
+                  amountPence={cart.total_pence}
+                  paidAt={cart.closed_at ?? null}
+                  payments={paidPayments}
+                />
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: theme.space[4] }}>
+                  <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+                    Cart
+                  </h2>
+                  {items.length > 0 && !productiveLocked ? (
+                    <Button variant="secondary" size="sm" onClick={openPicker}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                        <Plus size={16} /> Add item
+                      </span>
+                    </Button>
+                  ) : null}
+                </div>
+              )}
 
               {cartLoading ? (
                 <p style={{ color: theme.color.inkMuted }}>Loading cart…</p>
@@ -1012,6 +1049,13 @@ export function VisitDetail() {
                   depositPence={depositPence}
                   depositProvider={deposit?.provider ?? null}
                   total={total}
+                  // Suppress the giant "Total £X.XX" row when the cart
+                  // is paid — the PaidBanner above already carries that
+                  // amount, and showing it twice (once as a hero "what
+                  // they owe" number, once as a settled fact) was the
+                  // exact ambiguity that made it impossible to tell at
+                  // a glance whether the visit was paid or outstanding.
+                  hideTotalRow={cart?.status === 'paid'}
                 />
               ) : null}
 
@@ -2580,7 +2624,11 @@ function cartStatusLabel(s: 'open' | 'paid' | 'voided'): string {
     case 'open':
       return 'Cart open';
     case 'paid':
-      return 'Cart paid';
+      // Headline language used everywhere a paid sale appears (waiver
+      // PDF, ledger pill, this hero). "Cart paid" reads as jargon —
+      // "Paid in full" reads as plain English a non-staff onlooker
+      // can interpret in a glance.
+      return 'Paid in full';
     case 'voided':
       return 'Cart voided';
   }
@@ -2688,12 +2736,16 @@ function Totals({
   depositPence,
   depositProvider,
   total,
+  hideTotalRow = false,
 }: {
   subtotal: number;
   discount: number;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
   total: number;
+  /** When true, suppress the bottom "Total £X.XX" hero row — used when
+   * the cart is paid and the PaidBanner already states the amount. */
+  hideTotalRow?: boolean;
 }) {
   return (
     <div
@@ -2715,25 +2767,172 @@ function Totals({
           accent
         />
       ) : null}
-      <div
+      {hideTotalRow ? null : (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            paddingTop: theme.space[3],
+            marginTop: theme.space[2],
+            borderTop: `1px solid ${theme.color.border}`,
+          }}
+        >
+          <span style={{ fontSize: theme.type.size.md, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
+            {depositPence > 0 ? 'To collect' : 'Total'}
+          </span>
+          <span style={{ fontSize: theme.type.size.xxl, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
+            {formatPence(total)}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// PaidBanner — sits at the top of the Cart card when cart.status='paid'.
+// Communicates the same fact in three layers so a glance, a quick scan,
+// and a full read all carry the answer:
+//
+//   • Big BadgeCheck mark + "Paid in full" headline.
+//   • Hero amount (xxl, tabular nums) — the receptionist's eye lands
+//     here, never on a "Total" they have to interpret.
+//   • Method breakdown + timestamp underneath, so when a manager asks
+//     "how was this paid?" they don't need to dig into the timeline.
+//
+// Multi-method: a £100 split as £50 cash + £50 card renders as
+// "Paid £50.00 cash + £50.00 card" instead of one line per payment so
+// the banner stays one block.
+function PaidBanner({
+  amountPence,
+  paidAt,
+  payments,
+}: {
+  amountPence: number;
+  paidAt: string | null;
+  payments: CartPaymentRow[];
+}) {
+  const methodBreakdown = formatMethodBreakdown(payments);
+  const when = paidAt ? `${formatPaidAtDate(paidAt)} at ${formatTime(paidAt)}` : null;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[4],
+        padding: theme.space[5],
+        marginBottom: theme.space[5],
+        borderRadius: theme.radius.card,
+        background: theme.color.surface,
+        border: '1px solid rgba(31, 77, 58, 0.22)',
+      }}
+    >
+      <span
+        aria-hidden
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          paddingTop: theme.space[3],
-          marginTop: theme.space[2],
-          borderTop: `1px solid ${theme.color.border}`,
+          width: 44,
+          height: 44,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: theme.type.size.md, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
-          {depositPence > 0 ? 'To collect' : 'Total'}
-        </span>
-        <span style={{ fontSize: theme.type.size.xxl, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
-          {formatPence(total)}
-        </span>
+        <BadgeCheck size={22} aria-hidden />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.accent,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.wide,
+            textTransform: 'uppercase',
+          }}
+        >
+          Paid in full
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xxl,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1.05,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatPence(amountPence)}
+        </p>
+        {methodBreakdown || when ? (
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.relaxed,
+            }}
+          >
+            {methodBreakdown}
+            {methodBreakdown && when ? ' · ' : ''}
+            {when}
+          </p>
+        ) : null}
       </div>
     </div>
   );
+}
+
+// Renders captured payments as a single human line. One method →
+// "Received in cash." Two methods → "£50 cash + £50 card." Used by
+// PaidBanner so the meta line stays compact regardless of split count.
+function formatMethodBreakdown(payments: CartPaymentRow[]): string {
+  if (payments.length === 0) return '';
+  if (payments.length === 1) {
+    return `Received in ${humanisePaymentMethod(payments[0]!.method)}`;
+  }
+  // Group by method so a 3-payment split (e.g. £20 cash + £20 cash +
+  // £40 card) prints as "£40.00 cash + £40.00 card", not three rows.
+  const totals = new Map<PaymentMethod, number>();
+  for (const p of payments) {
+    totals.set(p.method, (totals.get(p.method) ?? 0) + p.amount_pence);
+  }
+  const parts = Array.from(totals.entries()).map(
+    ([m, sum]) => `${formatPence(sum)} ${humanisePaymentMethod(m)}`,
+  );
+  return parts.join(' + ');
+}
+
+function humanisePaymentMethod(m: PaymentMethod): string {
+  switch (m) {
+    case 'cash':
+      return 'cash';
+    case 'card_terminal':
+      return 'card';
+    case 'gift_card':
+      return 'gift card';
+    case 'account_credit':
+      return 'account credit';
+    default:
+      return m;
+  }
+}
+
+function formatPaidAtDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  if (sameDay) return 'today';
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 function Row({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
