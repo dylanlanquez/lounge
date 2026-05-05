@@ -411,6 +411,26 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     sample:
       'Monday: 09:00–18:00\nTuesday: 09:00–18:00\nWednesday: 09:00–18:00\nThursday: 09:00–18:00\nFriday: 09:00–18:00\nSaturday: 10:00–16:00\nSunday: closed',
   },
+  {
+    name: 'manageUrl',
+    label: 'Manage appointment link',
+    description:
+      'Self-serve reschedule / cancel URL for the patient. Empty for older appointments that predate the manage_token column. Use inside [Reschedule or cancel]({{manageUrl}}).',
+    sample: 'https://book.venneir.com/manage?token=abc123',
+  },
+];
+
+// Virtual-appointment-specific variables — layered on APPOINTMENT_VARIABLES
+// with the join meeting URL added as the primary new variable.
+const VIRTUAL_APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  ...APPOINTMENT_VARIABLES,
+  {
+    name: 'joinMeetingUrl',
+    label: 'Join meeting URL',
+    description:
+      'Direct link to the video session for this virtual impression appointment. Paste inside [button:Join your appointment]({{joinMeetingUrl}}) for a tappable CTA.',
+    sample: 'https://meet.example.com/session/abc123',
+  },
 ];
 
 // Reschedule-specific variables. Layered on top of the shared list
@@ -418,6 +438,29 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
 // alphabetised among the old-* trio for predictability.
 const RESCHEDULE_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   ...APPOINTMENT_VARIABLES,
+  {
+    name: 'oldAppointmentDateTime',
+    label: 'Previous date and time',
+    description:
+      'The slot the appointment was moved from, e.g. "Fri 8 May at 09:30". Use to show the change explicitly: "Was Fri 8 May at 09:30."',
+    sample: 'Fri 8 May at 09:30',
+  },
+  {
+    name: 'oldAppointmentDate',
+    label: 'Previous date',
+    description: 'Short day-of-week + date for the old slot, e.g. "Fri 8 May".',
+    sample: 'Fri 8 May',
+  },
+  {
+    name: 'oldAppointmentTime',
+    label: 'Previous time',
+    description: '24-hour HH:MM of the old slot, e.g. "09:30".',
+    sample: '09:30',
+  },
+];
+
+const VIRTUAL_RESCHEDULE_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  ...VIRTUAL_APPOINTMENT_VARIABLES,
   {
     name: 'oldAppointmentDateTime',
     label: 'Previous date and time',
@@ -556,6 +599,30 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent automatically 24 hours before each native booking. Patient gets a friendly nudge with the slot details.',
     variables: APPOINTMENT_VARIABLES,
+  },
+  {
+    key: 'booking_confirmation_virtual',
+    label: 'Booking confirmation · Virtual impression',
+    group: 'Virtual appointments',
+    description:
+      'Sent immediately when a patient books a virtual impression appointment. Join link is the primary CTA. No location address shown.',
+    variables: VIRTUAL_APPOINTMENT_VARIABLES,
+  },
+  {
+    key: 'booking_reschedule_virtual',
+    label: 'Appointment moved · Virtual impression',
+    group: 'Virtual appointments',
+    description:
+      'Sent when a virtual impression appointment is moved to a new time. Updated join link shown prominently.',
+    variables: VIRTUAL_RESCHEDULE_VARIABLES,
+  },
+  {
+    key: 'appointment_reminder_virtual',
+    label: 'Reminder · 24 hours before · Virtual impression',
+    group: 'Virtual appointments',
+    description:
+      'Sent automatically 24 hours before a virtual impression appointment. Join link is the primary CTA.',
+    variables: VIRTUAL_APPOINTMENT_VARIABLES,
   },
   {
     key: 'visit_shipped',
