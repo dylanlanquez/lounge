@@ -237,7 +237,24 @@ export async function rescheduleAppointment(input: {
     );
   }
 
-  // ── 7. patient_events audit row ────────────────────────────────
+  // ── 7. Google Meet (virtual impression only) ────────────────────
+  // Create a fresh Meet for the new slot, then remove the old one.
+  // Both are best-effort: if either fails the reschedule stands and
+  // the failure is logged server-side in lng_system_failures.
+  if (serviceType === 'virtual_impression_appointment') {
+    void supabase.functions
+      .invoke('google-meet-create', { body: { appointmentId: newAppointmentId } })
+      .catch((e: unknown) =>
+        console.warn('[rescheduleAppointment] google-meet-create failed:', e),
+      );
+    void supabase.functions
+      .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
+      .catch((e: unknown) =>
+        console.warn('[rescheduleAppointment] google-meet-delete failed:', e),
+      );
+  }
+
+  // ── 8. patient_events audit row ────────────────────────────────
   // Best-effort — failure here doesn't unwind the reschedule.
   const { data: actorAccountIdRaw } = await supabase.rpc('auth_account_id');
   const actorAccountId = (actorAccountIdRaw as string | null) ?? null;
@@ -254,7 +271,7 @@ export async function rescheduleAppointment(input: {
     },
   });
 
-  // ── 8. Email confirmation (best-effort) ────────────────────────
+  // ── 9. Email confirmation (best-effort) ────────────────────────
   // Sends a "your appointment has moved" email with a fresh REQUEST
   // .ics for the new slot AND a CANCEL .ics for the old slot, so
   // the patient's calendar updates instead of accumulating

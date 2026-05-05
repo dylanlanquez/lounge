@@ -24,9 +24,16 @@
 // so the user can't double-tap.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import {
+  deleteMeetEvent,
+  getGoogleAccessToken,
+} from '../_shared/googleCalendar.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const GOOGLE_CALENDAR_SA_EMAIL = Deno.env.get('GOOGLE_CALENDAR_SA_EMAIL') ?? '';
+const GOOGLE_CALENDAR_SA_PRIVATE_KEY = Deno.env.get('GOOGLE_CALENDAR_SA_PRIVATE_KEY') ?? '';
+const GOOGLE_CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? '';;
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -63,7 +70,7 @@ Deno.serve(async (req) => {
   // token. The token IS the auth.
   const { data: row, error: lookupErr } = await supabase
     .from('lng_appointments')
-    .select('id, status, start_at, patient_id, location_id, appointment_ref')
+    .select('id, status, start_at, patient_id, location_id, appointment_ref, google_calendar_event_id')
     .eq('manage_token', token)
     .maybeSingle();
   if (lookupErr) {
@@ -80,6 +87,7 @@ Deno.serve(async (req) => {
     patient_id: string;
     location_id: string;
     appointment_ref: string | null;
+    google_calendar_event_id: string | null;
   };
 
   // Idempotent on already-cancelled bookings — a refresh-mid-cancel
@@ -116,6 +124,31 @@ Deno.serve(async (req) => {
   if (updateErr) {
     await logFailure('update_failed', { error: updateErr.message, appointmentId: appointment.id });
     return jsonResponse(500, { error: 'update_failed' });
+  }
+
+  // Google Meet cleanup — best-effort, no-op if no event_id on row.
+  if (
+    appointment.google_calendar_event_id &&
+    GOOGLE_CALENDAR_SA_EMAIL &&
+    GOOGLE_CALENDAR_SA_PRIVATE_KEY &&
+    GOOGLE_CALENDAR_ID
+  ) {
+    try {
+      const token = await getGoogleAccessToken(
+        GOOGLE_CALENDAR_SA_EMAIL,
+        GOOGLE_CALENDAR_SA_PRIVATE_KEY,
+      );
+      await deleteMeetEvent({
+        accessToken: token,
+        calendarId: GOOGLE_CALENDAR_ID,
+        eventId: appointment.google_calendar_event_id,
+      });
+    } catch (e) {
+      await logFailure('google_meet_delete_failed', {
+        appointmentId: appointment.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   // Patient timeline event so the staff app's audit trail shows

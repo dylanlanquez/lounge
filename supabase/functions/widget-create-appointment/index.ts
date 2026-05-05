@@ -34,11 +34,18 @@
 // any deposit fields.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import {
+  createMeetEvent,
+  getGoogleAccessToken,
+} from '../_shared/googleCalendar.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
 const STRIPE_BASE = 'https://api.stripe.com/v1';
+const GOOGLE_CALENDAR_SA_EMAIL = Deno.env.get('GOOGLE_CALENDAR_SA_EMAIL') ?? '';
+const GOOGLE_CALENDAR_SA_PRIVATE_KEY = Deno.env.get('GOOGLE_CALENDAR_SA_PRIVATE_KEY') ?? '';
+const GOOGLE_CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? '';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -307,6 +314,41 @@ Deno.serve(async (req) => {
   const apptRow = appt as { id: string; appointment_ref: string | null; manage_token: string | null };
   const appointmentId = apptRow.id;
   const manageToken = apptRow.manage_token;
+
+  // ── Google Meet (virtual impression only) ──────────────────────
+  // Create the calendar event inline so the join_url is present before
+  // the confirmation email fires. Failure is best-effort: the booking
+  // succeeds even if Meet creation fails; the failure logs to
+  // lng_system_failures via the shared helper throw path.
+  if (body.serviceType === 'virtual_impression_appointment') {
+    if (GOOGLE_CALENDAR_SA_EMAIL && GOOGLE_CALENDAR_SA_PRIVATE_KEY && GOOGLE_CALENDAR_ID) {
+      try {
+        const token = await getGoogleAccessToken(
+          GOOGLE_CALENDAR_SA_EMAIL,
+          GOOGLE_CALENDAR_SA_PRIVATE_KEY,
+        );
+        const { hangoutLink, eventId } = await createMeetEvent({
+          accessToken: token,
+          calendarId: GOOGLE_CALENDAR_ID,
+          appointmentId,
+          startAt: startAt.toISOString(),
+          endAt: endAt.toISOString(),
+          summary: eventLabel,
+        });
+        await supabase
+          .from('lng_appointments')
+          .update({ join_url: hangoutLink, google_calendar_event_id: eventId })
+          .eq('id', appointmentId);
+      } catch (e) {
+        await logFailure('google_meet_create_failed', {
+          appointmentId,
+          error: e instanceof Error ? e.message : String(e),
+        }, 'error');
+      }
+    } else {
+      await logFailure('google_calendar_secrets_missing', { appointmentId }, 'warning');
+    }
+  }
 
   await supabase.from('patient_events').insert({
     patient_id: patientId,

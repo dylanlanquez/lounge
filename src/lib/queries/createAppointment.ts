@@ -158,7 +158,21 @@ export async function createAppointment(input: {
     },
   });
 
-  // ── 6. Confirmation email (opt-in) ─────────────────────────────
+  // ── 6. Google Meet link (virtual impression only) ──────────────
+  // Best-effort: a Meet creation failure is logged server-side but
+  // doesn't unwind the booking. The staff can see the appointment in
+  // the schedule and add the link manually if needed.
+  if (input.serviceType === 'virtual_impression_appointment') {
+    try {
+      await supabase.functions.invoke('google-meet-create', {
+        body: { appointmentId },
+      });
+    } catch (e) {
+      console.warn('[createAppointment] google-meet-create invoke failed:', e);
+    }
+  }
+
+  // ── 7. Confirmation email (opt-in) ─────────────────────────────
   let emailSent = false;
   let emailReason: string | null = null;
   if (input.sendEmail) {

@@ -54,6 +54,10 @@ export async function cancelAppointment(input: {
     status: string;
   };
 
+  // Note: google_calendar_event_id is checked inside google-meet-delete
+  // so we don't need to read it here — the edge function no-ops on rows
+  // that have no calendar event.
+
   if (existing.source === 'calendly') {
     throw new Error(
       'Calendly-sourced bookings cancel on Calendly. Cancel from the Calendly dashboard directly.',
@@ -83,6 +87,14 @@ export async function cancelAppointment(input: {
     })
     .eq('id', existing.id);
   if (updateErr) throw new Error(`Couldn't cancel appointment: ${updateErr.message}`);
+
+  // Google Meet cleanup — best-effort. The edge function is a no-op
+  // on non-virtual appointments and on rows that have no event_id.
+  void supabase.functions
+    .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
+    .catch((e: unknown) =>
+      console.warn('[cancelAppointment] google-meet-delete failed:', e),
+    );
 
   // patient_events audit row — best-effort, doesn't unwind the
   // cancellation if it fails.

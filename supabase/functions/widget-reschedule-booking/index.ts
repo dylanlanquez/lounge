@@ -22,9 +22,17 @@
 // Auth model: anon-callable. The 122-bit manage_token IS the auth.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import {
+  createMeetEvent,
+  deleteMeetEvent,
+  getGoogleAccessToken,
+} from '../_shared/googleCalendar.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const GOOGLE_CALENDAR_SA_EMAIL = Deno.env.get('GOOGLE_CALENDAR_SA_EMAIL') ?? '';
+const GOOGLE_CALENDAR_SA_PRIVATE_KEY = Deno.env.get('GOOGLE_CALENDAR_SA_PRIVATE_KEY') ?? '';
+const GOOGLE_CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? '';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -60,6 +68,7 @@ interface ExistingAppointment {
   deposit_provider: string | null;
   deposit_external_id: string | null;
   deposit_paid_at: string | null;
+  google_calendar_event_id: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -86,7 +95,7 @@ Deno.serve(async (req) => {
   const { data: existingRaw, error: lookupErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at',
+      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, google_calendar_event_id',
     )
     .eq('manage_token', token)
     .maybeSingle();
@@ -218,6 +227,55 @@ Deno.serve(async (req) => {
     // We've created a new row but the old row's still booked.
     // Don't unwind — the operator can fix via the Schedule sheet
     // and the patient has the new confirmation email.
+  }
+
+  // ── Google Meet (virtual impression only) ───────────────────
+  // Create a fresh Meet for the new slot and remove the old one.
+  // Both are best-effort — failures log to lng_system_failures but
+  // don't unwind the reschedule.
+  if (
+    existing.service_type === 'virtual_impression_appointment' &&
+    GOOGLE_CALENDAR_SA_EMAIL &&
+    GOOGLE_CALENDAR_SA_PRIVATE_KEY &&
+    GOOGLE_CALENDAR_ID
+  ) {
+    try {
+      const token = await getGoogleAccessToken(
+        GOOGLE_CALENDAR_SA_EMAIL,
+        GOOGLE_CALENDAR_SA_PRIVATE_KEY,
+      );
+      // Create event for the new appointment
+      const { hangoutLink, eventId } = await createMeetEvent({
+        accessToken: token,
+        calendarId: GOOGLE_CALENDAR_ID,
+        appointmentId: newRow.id,
+        startAt: newStart.toISOString(),
+        endAt: newEnd.toISOString(),
+        summary: existing.event_type_label ?? 'Virtual impression appointment',
+      });
+      await supabase
+        .from('lng_appointments')
+        .update({ join_url: hangoutLink, google_calendar_event_id: eventId })
+        .eq('id', newRow.id);
+      // Delete the old event if one exists
+      if (existing.google_calendar_event_id) {
+        await deleteMeetEvent({
+          accessToken: token,
+          calendarId: GOOGLE_CALENDAR_ID,
+          eventId: existing.google_calendar_event_id,
+        });
+        await supabase
+          .from('lng_appointments')
+          .update({ join_url: null, google_calendar_event_id: null })
+          .eq('id', existing.id);
+      }
+    } catch (e) {
+      await logFailure('google_meet_reschedule_failed', {
+        oldAppointmentId: existing.id,
+        newAppointmentId: newRow.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   // ── patient_events for both sides of the chain ──────────────
