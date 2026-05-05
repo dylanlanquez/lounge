@@ -749,7 +749,7 @@ export function VisitDetail() {
   // cart contents). Empty cart visits especially benefit — they
   // had no way to close out before. While the visit is active and
   // not already ended, the button shows.
-  const canEndEarly = !isVisitEnded;
+  const canEndEarly = visit?.status === 'arrived';
   const unsuitWillEndAllItems =
     endReason === 'unsuitable' &&
     unsuitEligibleItems.length > 0 &&
@@ -2617,11 +2617,12 @@ function buildVisitRibbon({
   if (visit.status === 'complete') {
     const closed = visit.closed_at ?? visit.opened_at;
     const rel = closed ? relativeMinutes(closed) : null;
+    const isPaid = cart?.status === 'paid';
     return {
       icon: <CheckCircle2 size={16} aria-hidden />,
-      timeLine: 'Visit complete',
+      timeLine: isPaid ? 'Visit complete, paid in full' : 'Visit complete',
       relative: rel,
-      tone: 'neutral',
+      tone: 'accent',
     };
   }
   if (visit.status === 'unsuitable') {
