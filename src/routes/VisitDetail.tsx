@@ -1035,12 +1035,17 @@ export function VisitDetail() {
                   depositProvider={deposit?.provider ?? null}
                   total={total}
                   // Suppress the giant "Total £X.XX" row when the cart
-                  // is paid — the PaidBanner above already carries that
+                  // is paid — the PaidHeader above already carries that
                   // amount, and showing it twice (once as a hero "what
                   // they owe" number, once as a settled fact) was the
                   // exact ambiguity that made it impossible to tell at
                   // a glance whether the visit was paid or outstanding.
                   hideTotalRow={cart?.status === 'paid'}
+                  // Once paid, Subtotal / Discount / Deposit rows are
+                  // reference-only — keep them readable but step them
+                  // back so the eye stays on the PaidHeader as the
+                  // headline fact.
+                  dim={cart?.status === 'paid'}
                 />
               ) : null}
 
@@ -2739,6 +2744,7 @@ function Totals({
   depositProvider,
   total,
   hideTotalRow = false,
+  dim = false,
 }: {
   subtotal: number;
   discount: number;
@@ -2746,8 +2752,11 @@ function Totals({
   depositProvider: 'paypal' | 'stripe' | null;
   total: number;
   /** When true, suppress the bottom "Total £X.XX" hero row — used when
-   * the cart is paid and the PaidBanner already states the amount. */
+   * the cart is paid and the PaidHeader already states the amount. */
   hideTotalRow?: boolean;
+  /** When true, fade the breakdown rows so the eye stays on the
+   * PaidHeader. Used when the cart is paid. */
+  dim?: boolean;
 }) {
   return (
     <div
@@ -2758,6 +2767,7 @@ function Totals({
         display: 'flex',
         flexDirection: 'column',
         gap: theme.space[2],
+        opacity: dim ? 0.55 : 1,
       }}
     >
       <Row label="Subtotal" value={formatPence(subtotal)} />
