@@ -421,8 +421,6 @@ function humaniseStatus(status: string): string {
   switch (status) {
     case 'arrived':
       return 'Arrived';
-    case 'in_chair':
-      return 'In chair';
     case 'complete':
       return 'Complete';
     case 'cancelled':

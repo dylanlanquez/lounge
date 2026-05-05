@@ -67,7 +67,7 @@ export type WaiverDisplayStatus = 'done' | 'pending' | 'not_required';
 export interface EnrichedActiveVisit {
   id: string;
   patient_id: string;
-  status: 'arrived' | 'in_chair';
+  status: 'arrived';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
   // Patient identity
@@ -307,7 +307,7 @@ interface CartSlaJoin {
 interface VisitsRowFromDb {
   id: string;
   patient_id: string;
-  status: 'arrived' | 'in_chair';
+  status: 'arrived';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
   patient: PatientJoin | PatientJoin[] | null;
@@ -367,7 +367,7 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
              )
            )`
         )
-        .in('status', ['arrived', 'in_chair'])
+        .eq('status', 'arrived')
         .order('opened_at', { ascending: true });
 
       if (cancelled) return;
@@ -677,7 +677,7 @@ export function useActiveVisitCount(
       const { count: c, error } = await supabase
         .from('lng_visits')
         .select('id', { count: 'exact', head: true })
-        .in('status', ['arrived', 'in_chair']);
+        .eq('status', 'arrived');
       if (cancelled) return;
       if (error) {
         console.warn('[useActiveVisitCount]', error.message);

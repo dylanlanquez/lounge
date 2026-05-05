@@ -10,7 +10,7 @@ export interface VisitRow {
   location_id: string;
   appointment_id: string | null;
   walk_in_id: string | null;
-  status: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early';
+  status: 'arrived' | 'complete' | 'unsuitable' | 'ended_early';
   arrival_type: 'walk_in' | 'scheduled';
   receptionist_id: string | null;
   opened_at: string;
@@ -394,7 +394,7 @@ export interface VisitAppointmentContext {
 export interface ActiveVisitRow {
   id: string;
   patient_id: string;
-  status: 'arrived' | 'in_chair';
+  status: 'arrived';
   arrival_type: 'walk_in' | 'scheduled';
   opened_at: string;
   patient_first_name: string | null;
@@ -424,7 +424,7 @@ export function useActiveVisits(): ActiveVisitsResult {
         .select(
           'id, patient_id, status, arrival_type, opened_at, patient:patients ( first_name, last_name, phone )'
         )
-        .in('status', ['arrived', 'in_chair'])
+        .eq('status', 'arrived')
         .order('opened_at', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -441,7 +441,7 @@ export function useActiveVisits(): ActiveVisitsResult {
         const raw = r as {
           id: string;
           patient_id: string;
-          status: 'arrived' | 'in_chair';
+          status: 'arrived';
           arrival_type: 'walk_in' | 'scheduled';
           opened_at: string;
           patient:
@@ -1026,7 +1026,11 @@ export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Pr
   const { error: visitErr } = await supabase
     .from('lng_visits')
     .update({
-      status: 'in_chair',
+      // Reversing an unsuitability puts the visit back into the
+      // pre-termination state. The lifecycle is now booked → arrived
+      // → complete (no in_chair); 'arrived' is the only live state we
+      // ever return to.
+      status: 'arrived',
       closed_at: null,
       visit_end_reason: null,
       visit_end_note: null,

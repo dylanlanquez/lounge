@@ -1731,9 +1731,7 @@ function VisitStatusPill({ visit }: { visit: PatientVisitRow }) {
       ? 'complete'
       : visit.status === 'unsuitable' || visit.status === 'ended_early'
         ? 'unsuitable'
-        : visit.status === 'in_chair'
-          ? 'in_progress'
-          : 'arrived';
+        : 'arrived';
   const label = humaniseVisitStatus(visit.status);
   return <StatusPill tone={tone} size="sm">{label}</StatusPill>;
 }
@@ -1767,8 +1765,6 @@ function humaniseVisitStatus(s: PatientVisitRow['status']): string {
   switch (s) {
     case 'arrived':
       return 'Arrived';
-    case 'in_chair':
-      return 'In chair';
     case 'complete':
       return 'Complete';
     case 'unsuitable':

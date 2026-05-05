@@ -53,12 +53,10 @@ import type { DateRange } from '../lib/dateRange.ts';
 // Either destination's breadcrumb reads "Ledger › ..." via the
 // `from: 'ledger'` router state we attach below.
 
-// "In progress" stands in for both lng_appointments.status='in_progress'
-// AND lng_visits.status='in_chair' (the same conceptual state living on
-// two tables). When the receptionist picks "In progress", the Ledger
-// expands the filter to BOTH database values so a chair-side patient
-// and an in-progress booking both show up. The pill on each row reads
-// "In progress" too — see ROW_STATUS_LABEL below.
+// "In progress" comes from lng_appointments.status. The visit-side
+// equivalent ('in_chair') was retired in 20260505 — once a patient
+// is marked arrived they're effectively in the chair, the extra
+// transition was never used.
 const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
   { value: 'arrived', label: 'Arrived' },
@@ -100,7 +98,6 @@ const STATUS_TO_TONE: Record<LedgerStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
   in_progress: 'in_progress',
-  in_chair: 'in_progress',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',
@@ -120,27 +117,16 @@ export function Ledger() {
   const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
 
-  // Expand the user-facing status selection back into the underlying
-  // data values. "In progress" matches both lng_appointments.status =
-  // 'in_progress' AND lng_visits.status = 'in_chair', because the
-  // receptionist treats them as one state.
-  const queryStatuses: LedgerStatus[] = useMemo(() => {
-    if (statuses.length === 0) return [];
-    const expanded = new Set<LedgerStatus>(statuses);
-    if (statuses.includes('in_progress')) expanded.add('in_chair');
-    return Array.from(expanded);
-  }, [statuses]);
-
   const filters: LedgerFilters = useMemo(
     () => ({
-      statuses: queryStatuses,
+      statuses,
       sources,
       paymentStates,
       fromDate: dateRange?.start ?? null,
       toDate: dateRange?.end ?? null,
       search,
     }),
-    [queryStatuses, sources, paymentStates, dateRange, search],
+    [statuses, sources, paymentStates, dateRange, search],
   );
 
   const { data, loading, error, hasMore } = useLedger(filters, page);

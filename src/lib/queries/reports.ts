@@ -285,17 +285,13 @@ export function aggregateBookingsVsWalkIns(
   }));
 
   // Funnel for booked appointments. Each stage is a strict superset
-  // of the next: complete ⊆ in-chair ⊆ arrived ⊆ booked.
+  // of the next: complete ⊆ arrived ⊆ booked.
   const totalBooked = appointments.length;
   const arrivalsByApptId = new Set<string>();
-  const inChairOrCompleteByApptId = new Set<string>();
   const completeByApptId = new Set<string>();
   for (const v of visits) {
     if (v.arrival_type !== 'scheduled' || !v.appointment_id) continue;
     arrivalsByApptId.add(v.appointment_id);
-    if (v.status === 'in_chair' || v.status === 'complete') {
-      inChairOrCompleteByApptId.add(v.appointment_id);
-    }
     if (v.status === 'complete') {
       completeByApptId.add(v.appointment_id);
     }
@@ -305,12 +301,10 @@ export function aggregateBookingsVsWalkIns(
   // the range doesn't double-count.
   const inRangeApptIds = new Set(appointments.map((a) => a.id));
   const arrived = countIntersect(arrivalsByApptId, inRangeApptIds);
-  const inChair = countIntersect(inChairOrCompleteByApptId, inRangeApptIds);
   const complete = countIntersect(completeByApptId, inRangeApptIds);
   const funnel = [
     { id: 'booked', label: 'Booked', count: totalBooked },
     { id: 'arrived', label: 'Arrived', count: arrived },
-    { id: 'in_chair', label: 'Reached the chair', count: inChair },
     { id: 'complete', label: 'Completed', count: complete },
   ];
 

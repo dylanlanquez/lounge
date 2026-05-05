@@ -2472,7 +2472,6 @@ function buildVisitHeroProps(
   const tone: AppointmentHeroTone = (() => {
     switch (visit.status) {
       case 'arrived':
-      case 'in_chair':
         return 'accent';
       case 'complete':
         return 'neutral';
@@ -2559,15 +2558,13 @@ function visitWhenStatusLine(
 
   switch (visit.status) {
     case 'arrived':
-      return { anchor, relative: relative ? `Arrived ${relative}` : 'Arrived' };
-    case 'in_chair':
-      return { anchor, relative: relative ? `In chair · ${relative}` : 'In chair' };
+      return { anchor, relative: relative ? `Patient in clinic · ${relative}` : 'Patient in clinic' };
     case 'complete':
-      return { anchor, relative: relative ? `Completed ${relative}` : 'Completed' };
+      return { anchor, relative: relative ? `Visit ended · ${relative}` : 'Visit ended' };
     case 'unsuitable':
-      return { anchor, relative: relative ? `Marked unsuitable ${relative}` : 'Marked unsuitable' };
+      return { anchor, relative: relative ? `Stopped, case unsuitable · ${relative}` : 'Stopped, case unsuitable' };
     case 'ended_early':
-      return { anchor, relative: relative ? `Ended early ${relative}` : 'Ended early' };
+      return { anchor, relative: relative ? `Visit ended early · ${relative}` : 'Visit ended early' };
   }
 }
 
@@ -2575,15 +2572,15 @@ function walkInRelative(visit: VisitRow, baseRelative: string | null): string | 
   if (!baseRelative) return null;
   switch (visit.status) {
     case 'arrived':
-      return `Arrived ${baseRelative}`;
-    case 'in_chair':
-      return `In chair · ${baseRelative}`;
+      // Walk-in anchor already says "Walked in 09:43" — no need to
+      // repeat "Arrived"; switch to the live state.
+      return `Patient in clinic · ${baseRelative}`;
     case 'complete':
-      return `Completed ${baseRelative}`;
+      return `Visit ended · ${baseRelative}`;
     case 'unsuitable':
-      return `Marked unsuitable ${baseRelative}`;
+      return `Stopped, case unsuitable · ${baseRelative}`;
     case 'ended_early':
-      return `Ended early ${baseRelative}`;
+      return `Visit ended early · ${baseRelative}`;
   }
 }
 
@@ -2601,12 +2598,10 @@ function showableRef(value: string | null | undefined): value is string {
 // Visit-status helpers. The DB stores the raw enum (opened /
 // in_progress / complete / cancelled); the UI shows humanised copy
 // to match the other status pills in the app.
-function visitStatusLabel(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early'): string {
+function visitStatusLabel(s: 'arrived' | 'complete' | 'unsuitable' | 'ended_early'): string {
   switch (s) {
     case 'arrived':
       return 'Arrived';
-    case 'in_chair':
-      return 'In chair';
     case 'complete':
       return 'Complete';
     case 'unsuitable':
@@ -2615,11 +2610,9 @@ function visitStatusLabel(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' 
       return 'Ended early';
   }
 }
-function visitStatusTone(s: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early') {
+function visitStatusTone(s: 'arrived' | 'complete' | 'unsuitable' | 'ended_early') {
   switch (s) {
     case 'arrived':
-      return 'in_progress' as const;
-    case 'in_chair':
       return 'in_progress' as const;
     case 'complete':
       return 'complete' as const;

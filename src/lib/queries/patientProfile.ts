@@ -414,7 +414,7 @@ export interface PatientVisitRow {
   id: string;
   opened_at: string;
   arrival_type: 'walk_in' | 'scheduled';
-  status: 'arrived' | 'in_chair' | 'complete' | 'unsuitable' | 'ended_early';
+  status: 'arrived' | 'complete' | 'unsuitable' | 'ended_early';
   // Linkage back to lng_appointments when the visit was a scheduled
   // arrival. Lets the profile timeline dedupe — appointments whose id is
   // present in this set must not be re-listed as 'unbooked' alongside the

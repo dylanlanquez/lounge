@@ -371,7 +371,7 @@ function ActiveVisitCard({
             src={visit.patient_avatar_data}
             name={name}
             size="md"
-            badge={visit.status === 'in_chair' ? 'online' : null}
+            badge={null}
           />
           <div style={{ minWidth: 0 }}>
             <p
