@@ -103,12 +103,31 @@ async function handle(req: Request): Promise<Response> {
       country_code?: string;
       phone?: string;
     };
-    items?: string[];
+    items?: Array<{ name: string; qty: number; arch: string | null }>;
     staff_name?: string;
   };
   try { body = await req.json(); } catch { body = {}; }
 
   const { visit_id, shipping_address, items = [], staff_name = '' } = body;
+
+  // Arch suffix used for both email labels and Checkpoint product names
+  const archSuffix = (arch: string | null | undefined): string => {
+    if (arch === 'both') return ' (upper & lower)';
+    if (arch === 'upper') return ' (upper)';
+    if (arch === 'lower') return ' (lower)';
+    return '';
+  };
+  // Human-readable labels for the email body
+  const itemLabels = items.map((it) =>
+    `${it.name}${archSuffix(it.arch)}${it.qty > 1 ? ` × ${it.qty}` : ''}`
+  );
+  // Structured rows for Checkpoint's dispatched_products column.
+  // ShippingQueueView reads p.label || p.name and p.qty.
+  const dispatchedProducts = items.map((it) => ({
+    label:        `${it.name}${archSuffix(it.arch)}`,
+    qty:          it.qty,
+    book_in_type: null,
+  }));
 
   if (!visit_id)                  return json({ ok: false, error: 'visit_id required' }, 400);
   if (!shipping_address?.zip)     return json({ ok: false, error: 'shipping address / postcode required' }, 400);
@@ -254,7 +273,7 @@ async function handle(req: Request): Promise<Response> {
       dispatch_ref,
       tracking_number: trackingNumber,
       dispatched_by:   staff_name,
-      items,
+      items:           itemLabels,
     },
   });
 
@@ -284,6 +303,7 @@ async function handle(req: Request): Promise<Response> {
       tracking_number:      trackingNumber ?? '',
       shipment_id:          shipmentId ?? '',
       slot_id:              null,
+      dispatched_products:  dispatchedProducts,
       shopify_line_item_ids:[],
       shopify_sync:         'skipped',
       created_by:           staff_name || 'Lounge',
@@ -352,7 +372,7 @@ async function handle(req: Request): Promise<Response> {
         trackingNumber,
         parcelCode,
         shippingAddress:  addrSnapshot,
-        items,
+        items:            itemLabels,
         dispatchRef:      dispatch_ref,
         resendApiKey:     RESEND_API_KEY,
         resendFrom:       RESEND_FROM,

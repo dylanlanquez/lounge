@@ -99,11 +99,22 @@ export function ShipVisitSheet({
     }));
   };
 
+  const archSuffix = (arch: string | null) =>
+    arch === 'both' ? ' (upper & lower)' : arch === 'upper' ? ' (upper)' : arch === 'lower' ? ' (lower)' : '';
+
+  // Formatted labels for display in the sheet review list
   const itemLabels = items.map((it) => {
-    const archSuffix = it.arch === 'both' ? ' (upper & lower)' : it.arch === 'upper' ? ' (upper)' : it.arch === 'lower' ? ' (lower)' : '';
     const qty = it.quantity > 1 ? ` × ${it.quantity}` : '';
-    return `${it.name}${archSuffix}${qty}`;
+    return `${it.name}${archSuffix(it.arch)}${qty}`;
   });
+
+  // Structured items sent to book-lng-shipment so it can build
+  // dispatched_products for Checkpoint and itemLabels for the email.
+  const structuredItems = items.map((it) => ({
+    name: it.name,
+    qty:  it.quantity,
+    arch: it.arch ?? null,
+  }));
 
   const canSubmit = addr.address1.trim().length > 0 && addr.zip.trim().length > 0;
 
@@ -129,7 +140,7 @@ export function ShipVisitSheet({
             zip:          addr.zip,
             country_code: 'GB',
           },
-          items:      itemLabels,
+          items:      structuredItems,
           staff_name: staffName,
         },
       });
