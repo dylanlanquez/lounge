@@ -23,6 +23,25 @@ export interface VisitRow {
   // values get nulled when the visit closes so the box becomes
   // available again; this column preserves the audit trail.
   jb_ref: string | null;
+  // Set when status flips to 'complete' via the Finish visit sheet.
+  fulfilment_method: 'in_person' | 'shipping' | null;
+  // Dispatch columns — populated by book-lng-shipment when
+  // fulfilment_method='shipping' and the DPD label is created.
+  dispatched_at:    string | null;
+  dispatched_by:    string | null;
+  tracking_number:  string | null;
+  shipment_id:      string | null;
+  label_data:       string | null;
+  shipping_address: {
+    name: string;
+    address1: string;
+    address2: string;
+    city: string;
+    zip: string;
+    country_code: string;
+    phone: string;
+  } | null;
+  dispatch_ref:     string | null;
 }
 
 export interface CreateWalkInInput {

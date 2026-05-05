@@ -175,3 +175,6 @@ export type { PatientFacingDurationEditorProps } from './PatientFacingDurationEd
 export { ReturnSegmentHints } from './ReturnSegmentHints/ReturnSegmentHints.tsx';
 export type { ReturnSegmentHintsProps } from './ReturnSegmentHints/ReturnSegmentHints.tsx';
 
+export { ShipVisitSheet } from './ShipVisitSheet/ShipVisitSheet.tsx';
+export type { ShipVisitSheetProps } from './ShipVisitSheet/ShipVisitSheet.tsx';
+

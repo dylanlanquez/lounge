@@ -8,7 +8,10 @@ import {
   CheckCircle,
   ChevronRight,
   CircleSlash,
+  ExternalLink,
   FileText,
+  MapPin,
+  Package,
   Plus,
   Printer,
   RotateCcw,
@@ -27,11 +30,13 @@ import {
   Breadcrumb,
   Button,
   Card,
+  CollapsibleCard,
   DropdownSelect,
   EmptyState,
   Input,
   MarketingGallery,
   MultiSelectDropdown,
+  ShipVisitSheet,
   Skeleton,
   Toast,
   VisitTimeline,
@@ -215,12 +220,17 @@ export function VisitDetail() {
   // Complete visit sheet — fires when staff hits the primary CTA on
   // a free visit or paid-cart visit. Asks the fulfilment question
   // (in person vs shipping) and writes the choice onto the visit row
-  // via completeVisit. Shipping branch surfaces a follow-up notice;
-  // the actual dispatch flow is a separate slice.
+  // via completeVisit. Shipping branch opens ShipVisitSheet.
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completeMethod, setCompleteMethod] = useState<'in_person' | 'shipping'>('in_person');
   const [completeBusy, setCompleteBusy] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+
+  // Shipping dispatch sheet — opens after completing a visit with
+  // fulfilment_method='shipping'. Also surfaces via "Process shipping"
+  // button if the visit was completed earlier but dispatch wasn't done.
+  const [shipOpen, setShipOpen] = useState(false);
+  const [shipToast, setShipToast] = useState<{ dispatch_ref: string; tracking_number: string | null } | null>(null);
 
   // Cart-level discount state. Apply / Remove share the same sheet
   // shape — picker for the manager, password for the manager,
@@ -564,6 +574,9 @@ export function VisitDetail() {
       });
       setCompleteOpen(false);
       refresh();
+      if (completeMethod === 'shipping') {
+        setShipOpen(true);
+      }
     } catch (e) {
       setCompleteError(e instanceof Error ? e.message : 'Could not complete');
     } finally {
@@ -884,6 +897,31 @@ export function VisitDetail() {
     }
   };
 
+  const printLabel = async (labelData: string | null) => {
+    if (!labelData) { setError('No label data stored for this shipment.'); return; }
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+      const res = await fetch(`${supabaseUrl}/functions/v1/render-lng-label`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          Authorization:   `Bearer ${session?.access_token ?? anonKey}`,
+          apikey:          anonKey,
+        },
+        body: JSON.stringify({ zpl: labelData }),
+      });
+      if (!res.ok) throw new Error('Label render failed');
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'width=520,height=580');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not render label.');
+    }
+  };
+
   return (
     <main
       style={{
@@ -1172,7 +1210,16 @@ export function VisitDetail() {
                   </Button>
                 </span>
               ) : null}
-              {isUnsuitable ? (
+              {visit.status === 'complete' && visit.fulfilment_method === 'shipping' && !visit.dispatch_ref ? (
+                // Visit completed with shipping method but dispatch not yet
+                // processed (e.g. sheet was closed before submitting).
+                <Button variant="primary" onClick={() => setShipOpen(true)}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <Package size={16} aria-hidden />
+                    Process shipping
+                  </span>
+                </Button>
+              ) : isUnsuitable ? (
                 <Button variant="primary" onClick={submitReverseUnsuitable} loading={reverseBusy}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                     <RotateCcw size={16} aria-hidden />
@@ -1185,7 +1232,7 @@ export function VisitDetail() {
                   // already paid → there's no till step. Primary
                   // becomes Finish visit; the sheet asks the
                   // in-person-vs-shipping question.
-                  <Button variant="primary" onClick={openCompleteVisit}>
+                  <Button variant="primary" onClick={openCompleteVisit} disabled={visit.status === 'complete'}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <CheckCircle size={16} aria-hidden />
                       Finish visit
@@ -1229,6 +1276,9 @@ export function VisitDetail() {
                   }}
                 />
                 <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+                  {visit.dispatch_ref ? (
+                    <ShippedItemsCard visit={visit} onPrintLabel={() => printLabel(visit.label_data)} />
+                  ) : null}
                   <BeforeAfterGallery
                     patient={patient}
                     files={galleryFiles}
@@ -1285,6 +1335,38 @@ export function VisitDetail() {
         visitId={visit?.id ?? null}
         patientEmail={patient?.email ?? null}
       />
+
+      {visit && patient ? (
+        <ShipVisitSheet
+          open={shipOpen}
+          onClose={() => setShipOpen(false)}
+          visitId={visit.id}
+          patientId={patient.id}
+          items={items}
+          staffName={currentAccount?.display_name ?? receptionistName ?? ''}
+          onShipped={(result) => {
+            setShipOpen(false);
+            setShipToast({ dispatch_ref: result.dispatch_ref, tracking_number: result.tracking_number });
+            refresh();
+          }}
+        />
+      ) : null}
+
+      {shipToast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast
+            tone="success"
+            title={`Dispatched · ${shipToast.dispatch_ref}`}
+            description={
+              shipToast.tracking_number
+                ? `DPD tracking: ${shipToast.tracking_number}`
+                : 'Label created. Tracking number unavailable.'
+            }
+            duration={8000}
+            onDismiss={() => setShipToast(null)}
+          />
+        </div>
+      ) : null}
 
       <BottomSheet
         open={noteOpen}
@@ -1786,8 +1868,8 @@ export function VisitDetail() {
       {/* Finish visit sheet — fired by the primary CTA when the
           balance is fully settled. Asks the fulfilment question and
           writes the choice to lng_visits.fulfilment_method via
-          completeVisit. The shipping branch is just stored for now;
-          the actual dispatch flow is a separate slice. */}
+          completeVisit. The shipping branch opens ShipVisitSheet
+          immediately after so staff can create the DPD label. */}
       <BottomSheet
         open={completeOpen}
         onClose={() => !completeBusy && setCompleteOpen(false)}
@@ -1795,7 +1877,7 @@ export function VisitDetail() {
         title="Finish visit"
         description={
           completeMethod === 'shipping'
-            ? 'The work will be shipped. The dispatch flow opens after this slice lands; for now the choice is recorded on the visit.'
+            ? 'The visit closes and the shipping form opens next so you can create the DPD label.'
             : 'Confirm the work was passed to the patient on the day. The visit closes and the job box is freed.'
         }
         footer={
@@ -2986,5 +3068,116 @@ function Row({ label, value, accent = false }: { label: string; value: string; a
         {value}
       </span>
     </div>
+  );
+}
+
+// ── Shipped items card ────────────────────────────────────────────────────────
+// Collapsible section shown above Before & After when the visit has a
+// completed dispatch. Summarises what was shipped, where to, the DPD
+// tracking number (linked), who processed it, and offers a Print label action.
+
+function ShippedItemsCard({
+  visit,
+  onPrintLabel,
+}: {
+  visit: VisitRow;
+  onPrintLabel: () => void;
+}) {
+  const addr = visit.shipping_address;
+  const trackingUrl = visit.tracking_number
+    ? `https://track.dpdlocal.co.uk/parcels/${visit.tracking_number}#results`
+    : null;
+
+  const addrLines = addr
+    ? [addr.name, addr.address1, addr.address2, addr.city, addr.zip].filter(Boolean)
+    : [];
+
+  const dispatchedAt = visit.dispatched_at
+    ? new Date(visit.dispatched_at).toLocaleString('en-GB', {
+        day: 'numeric', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
+    : null;
+
+  return (
+    <CollapsibleCard
+      icon={<Package size={20} color={theme.color.accent} aria-hidden />}
+      title="Shipped items"
+      defaultOpen
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+
+        {/* Dispatch reference + timestamp */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Dispatch reference
+          </p>
+          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
+            {visit.dispatch_ref}
+          </p>
+          {dispatchedAt ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+              {dispatchedAt}{visit.dispatched_by ? ` · Processed by ${visit.dispatched_by}` : ''}
+            </p>
+          ) : null}
+        </div>
+
+        <hr style={{ margin: 0, border: 'none', borderTop: `1px solid ${theme.color.border}` }} />
+
+        {/* Tracking */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            DPD tracking
+          </p>
+          {visit.tracking_number ? (
+            trackingUrl ? (
+              <a
+                href={trackingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.accent, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, textDecoration: 'none', fontFamily: 'monospace' }}
+              >
+                {visit.tracking_number}
+                <ExternalLink size={14} aria-hidden />
+              </a>
+            ) : (
+              <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
+                {visit.tracking_number}
+              </p>
+            )
+          ) : (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              Tracking unavailable
+            </p>
+          )}
+        </div>
+
+        <hr style={{ margin: 0, border: 'none', borderTop: `1px solid ${theme.color.border}` }} />
+
+        {/* Delivery address */}
+        {addrLines.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
+              <MapPin size={13} aria-hidden /> Delivery address
+            </p>
+            {addrLines.map((line, i) => (
+              <p key={i} style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink, fontWeight: i === 0 ? theme.type.weight.semibold : theme.type.weight.regular }}>
+                {line}
+              </p>
+            ))}
+          </div>
+        ) : null}
+
+        {/* Print label */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="secondary" size="sm" onClick={onPrintLabel} disabled={!visit.label_data}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Printer size={14} aria-hidden />
+              Print label
+            </span>
+          </Button>
+        </div>
+      </div>
+    </CollapsibleCard>
   );
 }

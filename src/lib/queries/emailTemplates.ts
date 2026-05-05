@@ -446,6 +446,45 @@ const CANCELLATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = APPOINTMENT
   (v) => v.name !== 'googleCalendarUrl',
 );
 
+const SHIPPING_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'patientFirstName',
+    label: 'Patient first name',
+    description: 'The patient\'s first name, e.g. "Sarah".',
+    sample: 'Sarah',
+  },
+  {
+    name: 'trackingNumber',
+    label: 'DPD tracking number',
+    description: 'The parcel tracking number returned by DPD.',
+    sample: '15501234567890',
+  },
+  {
+    name: 'trackingUrl',
+    label: 'DPD tracking link',
+    description: 'Full URL to the DPD parcel tracker for this shipment.',
+    sample: 'https://track.dpdlocal.co.uk/parcels/15501234567890#results',
+  },
+  {
+    name: 'shippingAddress',
+    label: 'Delivery address',
+    description: 'Single-line summary of the delivery address.',
+    sample: '14 Elm Street, Edinburgh, EH1 2AB',
+  },
+  {
+    name: 'itemsList',
+    label: 'Items shipped',
+    description: 'Newline-separated list of items being dispatched.',
+    sample: 'Upper Night Guard\nLower Retainer',
+  },
+  {
+    name: 'dispatchRef',
+    label: 'Dispatch reference',
+    description: 'The internal Lounge dispatch reference, e.g. LVO-A1B2C3D4.',
+    sample: 'LVO-A1B2C3D4',
+  },
+];
+
 export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> = [
   {
     key: 'booking_confirmation',
@@ -478,6 +517,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent automatically 24 hours before each native booking. Patient gets a friendly nudge with the slot details.',
     variables: APPOINTMENT_VARIABLES,
+  },
+  {
+    key: 'visit_shipped',
+    label: 'Order dispatched',
+    group: 'Visits',
+    description:
+      'Sent to the patient when their completed work is dispatched via DPD. Includes the tracking number and delivery address.',
+    variables: SHIPPING_VARIABLES,
   },
 ];
 
