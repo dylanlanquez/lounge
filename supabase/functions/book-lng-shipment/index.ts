@@ -298,6 +298,36 @@ async function handle(req: Request): Promise<Response> {
       const cpBody = await cpInsert.text().catch(() => '');
       console.error(`Checkpoint shipping_queue insert failed (${cpInsert.status}):`, cpBody.slice(0, 300));
     }
+
+    // If we don't have the parcel code yet (DPD can take a moment to register
+    // the parcel in their tracking system), trigger Checkpoint's fill-parcel-codes
+    // now and wait for it before sending the patient email. This guarantees the
+    // email always contains the correct tracking URL.
+    if (!parcelCode && trackingNumber) {
+      await fetch(`${CHECKPOINT_SUPABASE_URL}/functions/v1/fill-parcel-codes`, {
+        method:  'POST',
+        headers: { ...cpSb, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({}),
+      }).catch((e) => console.error('fill-parcel-codes trigger failed (non-fatal):', e));
+
+      // Allow time for the DPD tracking call inside fill-parcel-codes to complete
+      await new Promise((r) => setTimeout(r, 4000));
+
+      // Read back the parcel code that fill-parcel-codes just wrote
+      const qRes = await fetch(
+        `${CHECKPOINT_SUPABASE_URL}/rest/v1/shipping_queue?select=parcel_code&cpid=eq.${encodeURIComponent(dispatch_ref)}&parcel_code=not.is.null&limit=1`,
+        { headers: cpSb }
+      ).catch(() => null);
+      if (qRes?.ok) {
+        const qRows = await qRes.json().catch(() => []) as Array<{ parcel_code: string | null }>;
+        const fetched = qRows?.[0]?.parcel_code ?? null;
+        if (fetched) {
+          parcelCode = fetched;
+          // Persist it so the visit page shows the correct link immediately
+          await admin.from('lng_visits').update({ parcel_code: parcelCode }).eq('id', visit_id);
+        }
+      }
+    }
   }
 
   // ── Send patient email ───────────────────────────────────────────────────

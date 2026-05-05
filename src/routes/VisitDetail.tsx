@@ -3111,12 +3111,13 @@ function ShippedItemsCard({
   onPrintLabel: () => void;
 }) {
   const addr = visit.shipping_address;
-  // parcel_code includes the depot suffix (e.g. 15976969376288*21297) required
-  // for the DPD tracking URL. Fall back to tracking_number for older records
-  // created before the parcel_code column was added.
-  const trackingIdentifier = visit.parcel_code ?? visit.tracking_number;
-  const trackingUrl = trackingIdentifier
-    ? `https://track.dpdlocal.co.uk/parcels/${trackingIdentifier}#results`
+  // Only use parcel_code for the tracking URL — this includes the depot
+  // suffix (e.g. 15976969376288*21297) that DPD requires. When parcel_code
+  // is null (not yet available from DPD), show the bare tracking number as
+  // text only. The lazy fill-lng-parcel-code fetch running on mount will
+  // write it back via Realtime once Checkpoint's queue has it.
+  const trackingUrl = visit.parcel_code
+    ? `https://track.dpdlocal.co.uk/parcels/${visit.parcel_code}#results`
     : null;
 
   const addrLines = addr
@@ -3172,9 +3173,17 @@ function ShippedItemsCard({
                 <ExternalLink size={14} aria-hidden />
               </a>
             ) : (
-              <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
-                {visit.tracking_number}
-              </p>
+              // parcel_code not yet available — lazy fetch is running.
+              // Show the bare number as text; the link will appear once
+              // fill-lng-parcel-code writes back via Realtime.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+                <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
+                  {visit.tracking_number}
+                </p>
+                <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+                  Tracking link loading, check back shortly
+                </p>
+              </div>
             )
           ) : (
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
