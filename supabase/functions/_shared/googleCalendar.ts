@@ -13,80 +13,37 @@
 //   GOOGLE_CALENDAR_ID            — target calendar ID (e.g. info@venneir.com)
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
 const GOOGLE_CALENDAR_BASE = 'https://www.googleapis.com/calendar/v3';
 
-// base64url-encode a Uint8Array
-function b64urlBytes(arr: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < arr.length; i++) {
-    binary += String.fromCharCode(arr[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-// base64url-encode a UTF-8 string
-function b64urlStr(str: string): string {
-  return b64urlBytes(new TextEncoder().encode(str));
-}
-
-// Builds a service-account JWT and exchanges it for a short-lived
-// OAuth2 access token scoped to the Calendar API.
+// Exchanges a stored OAuth2 refresh token for a short-lived access token.
+// Credentials come from Supabase secrets set at deploy time.
 export async function getGoogleAccessToken(
-  saEmail: string,
-  privateKeyPem: string,
+  _saEmail: string,
+  _privateKeyPem: string,
 ): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const claims = {
-    iss: saEmail,
-    scope: GOOGLE_CALENDAR_SCOPE,
-    aud: GOOGLE_TOKEN_ENDPOINT,
-    exp: now + 3600,
-    iat: now,
-  };
+  const clientId = Deno.env.get('GOOGLE_OAUTH_CLIENT_ID') ?? '';
+  const clientSecret = Deno.env.get('GOOGLE_OAUTH_CLIENT_SECRET') ?? '';
+  const refreshToken = Deno.env.get('GOOGLE_OAUTH_REFRESH_TOKEN') ?? '';
 
-  const signingInput =
-    `${b64urlStr(JSON.stringify(header))}.${b64urlStr(JSON.stringify(claims))}`;
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('Google OAuth credentials missing (GOOGLE_OAUTH_CLIENT_ID / SECRET / REFRESH_TOKEN)');
+  }
 
-  // Google's JSON key stores the private key with literal \n sequences.
-  // Normalise to real newlines before stripping the PEM envelope.
-  const normPem = privateKeyPem.replace(/\\n/g, '\n');
-  const pemBody = normPem
-    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
-    .replace(/-----END PRIVATE KEY-----/g, '')
-    .replace(/\s+/g, '');
-
-  const derBytes = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    derBytes,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-
-  const sigBytes = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    cryptoKey,
-    new TextEncoder().encode(signingInput),
-  );
-
-  const jwt = `${signingInput}.${b64urlBytes(new Uint8Array(sigBytes))}`;
-
-  const tokenRes = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+  const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: jwt,
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
     }).toString(),
   });
-  if (!tokenRes.ok) {
-    const text = await tokenRes.text();
-    throw new Error(`Google token exchange failed (${tokenRes.status}): ${text}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google token refresh failed (${res.status}): ${text}`);
   }
-  const { access_token } = (await tokenRes.json()) as { access_token: string };
+  const { access_token } = (await res.json()) as { access_token: string };
   if (!access_token) throw new Error('Google token response missing access_token');
   return access_token;
 }
