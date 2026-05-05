@@ -224,6 +224,24 @@ export async function deleteCatalogueImage(code: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// Persists updated sort_order values for a batch of catalogue rows.
+// Called after drag-and-drop reorder in the Admin Services tab.
+// Each id gets sort_order = its new index × 10 (spacing so later
+// insertions don't require a full rewrite).
+export async function batchUpdateSortOrders(updates: Array<{ id: string; sort_order: number }>): Promise<void> {
+  await Promise.all(
+    updates.map(({ id, sort_order }) =>
+      supabase
+        .from('lwo_catalogue')
+        .update({ sort_order })
+        .eq('id', id)
+        .then(({ error }) => {
+          if (error) throw new Error(error.message);
+        })
+    )
+  );
+}
+
 // Storage object names allow letters, digits, dashes, underscores and
 // dots. Catalogue codes are already in that shape (e.g. 'den_snapped')
 // but we belt-and-braces normalise just in case admin enters something

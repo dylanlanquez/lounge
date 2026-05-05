@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, GripVertical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -67,6 +67,7 @@ import {
 } from '../lib/queries/calendlyDiagnostic.ts';
 import { formatPence, formatPounds } from '../lib/queries/carts.ts';
 import {
+  batchUpdateSortOrders,
   type CatalogueRow,
   deleteCatalogueImage,
   setCatalogueActive,
@@ -100,6 +101,23 @@ import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 import { AdminBrandingTab } from './AdminBrandingTab.tsx';
 import { AdminWidgetTab } from './AdminWidgetTab.tsx';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
 
@@ -2010,6 +2028,9 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+  // Local row order for optimistic drag-and-drop. Synced from filteredRows
+  // after every DB refresh; diverges only during / immediately after a drag.
+  const [localRows, setLocalRows] = useState<CatalogueRow[]>([]);
 
   // Filter to just this mode's rows. is_service splits the lwo_catalogue
   // table into two logical buckets — Services (treatments / appointments
@@ -2021,6 +2042,32 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
   );
   const grouped = groupByCategory(filteredRows);
   const isServices = mode === 'services';
+
+  useEffect(() => {
+    setLocalRows(filteredRows);
+  }, [filteredRows]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = localRows.findIndex((r) => r.id === String(active.id));
+    const newIndex = localRows.findIndex((r) => r.id === String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(localRows, oldIndex, newIndex);
+    setLocalRows(reordered);
+    try {
+      await batchUpdateSortOrders(reordered.map((r, i) => ({ id: r.id, sort_order: i * 10 })));
+      refresh();
+    } catch (e) {
+      setToast({ tone: 'error', title: 'Sort order save failed', description: e instanceof Error ? e.message : String(e) });
+      setLocalRows(filteredRows);
+    }
+  };
 
   const onSave = async (draft: CatalogueDraft, waiverSectionKeys: string[]) => {
     try {
@@ -2085,6 +2132,10 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
     }
   };
 
+  // Use localRows when populated (covers optimistic drag reorder), otherwise
+  // fall back to filteredRows to avoid a blank frame after initial load.
+  const displayRows = localRows.length > 0 ? localRows : filteredRows;
+
   return (
     <Card padding="md">
       <div
@@ -2098,24 +2149,12 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         }}
       >
         <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.lg,
-              fontWeight: theme.type.weight.semibold,
-            }}
-          >
+          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
             {isServices ? 'Services' : 'Products'}
           </h2>
-          <p
-            style={{
-              margin: `${theme.space[1]}px 0 0`,
-              color: theme.color.inkMuted,
-              fontSize: theme.type.size.sm,
-            }}
-          >
+          <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
             {isServices
-              ? 'Treatments and appointments your team books in. Shared with Checkpoint via lwo_catalogue.'
+              ? 'Treatments and appointments your team books in. Shared with Checkpoint.'
               : 'Care products and retail items. Surface as cart upsells at checkout.'}
           </p>
         </div>
@@ -2131,29 +2170,51 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
       ) : loading ? (
         <Skeleton height={120} radius={12} />
       ) : adding ? (
-        <CatalogueRowEditor
-          mode={mode}
-          initial={emptyDraft(mode)}
-          onSave={onSave}
-          onCancel={() => setAdding(false)}
-        />
+        isServices ? (
+          <ServiceForm initial={emptyDraft(mode)} onSave={onSave} onCancel={() => setAdding(false)} />
+        ) : (
+          <CatalogueRowEditor mode={mode} initial={emptyDraft(mode)} onSave={onSave} onCancel={() => setAdding(false)} />
+        )
+      ) : isServices ? (
+        filteredRows.length === 0 ? (
+          <EmptyState
+            icon={<Package size={24} />}
+            title="No services yet"
+            description="Tap Add service to seed your treatments."
+          />
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext
+              items={displayRows.filter((r) => r.id !== editingId).map((r) => r.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {displayRows.map((row) =>
+                  editingId === row.id ? (
+                    <li key={row.id} style={{ listStyle: 'none' }}>
+                      <ServiceForm initial={draftFromRow(row)} onSave={onSave} onCancel={() => setEditingId(null)} />
+                    </li>
+                  ) : (
+                    <SortableServiceRow
+                      key={row.id}
+                      row={row}
+                      onEdit={() => setEditingId(row.id)}
+                      onToggleActive={() => onToggleActive(row)}
+                    />
+                  )
+                )}
+              </ul>
+            </SortableContext>
+          </DndContext>
+        )
       ) : grouped.length === 0 ? (
         <EmptyState
           icon={<Package size={24} />}
-          title={isServices ? 'No services yet' : 'No products yet'}
-          description={
-            isServices
-              ? 'Tap Add service to seed your treatments.'
-              : 'Tap Add product to seed care products that show up as cart upsells.'
-          }
+          title="No products yet"
+          description="Tap Add product to seed care products that show up as cart upsells."
         />
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {/* Flat list. Category is preserved as a sort key inside
-              groupByCategory so related rows still cluster, but the
-              category eyebrow header is dropped — each card's own
-              title already carries the name and the eyebrow read
-              as duplicate noise. */}
           {grouped.flatMap(([, catRows]) =>
             catRows.map((row) =>
               editingId === row.id ? (
@@ -2187,6 +2248,8 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
   );
 }
 
+type PricingModel = 'flat' | 'per_unit' | 'per_arch';
+
 interface CatalogueDraft {
   id?: string;
   code: string;
@@ -2205,6 +2268,9 @@ interface CatalogueDraft {
   product_key: string;
   repair_variant: string;
   arch_match: ArchMatch;
+  // UI-only: drives the pricing section radio. On save, arch_match and
+  // unit_label are written from this value, not persisted directly.
+  pricingModel: PricingModel;
   is_service: boolean;
   quantity_enabled: boolean;
   sla_enabled: boolean;
@@ -2214,6 +2280,12 @@ interface CatalogueDraft {
   allocate_job_box: boolean;
   sort_order: string;
   active: boolean;
+}
+
+function derivePricingModel(row: Pick<CatalogueRow, 'arch_match' | 'unit_label'>): PricingModel {
+  if (row.arch_match === 'single' || row.arch_match === 'both') return 'per_arch';
+  if (row.unit_label) return 'per_unit';
+  return 'flat';
 }
 
 function emptyDraft(mode: CatalogueMode): CatalogueDraft {
@@ -2232,16 +2304,11 @@ function emptyDraft(mode: CatalogueMode): CatalogueDraft {
     product_key: '',
     repair_variant: '',
     arch_match: 'any',
+    pricingModel: 'flat',
     is_service: isService,
-    // Services default to one-shot (no quantity selector, e.g. an
-    // appointment isn't bought "in 3s"). Products default to
-    // quantity-enabled because retail items often are.
     quantity_enabled: !isService,
     sla_enabled: false,
     sla_target_minutes: '',
-    // LWO inclusion + JB allocation only mean anything for services
-    // (lab work flow). Default off for products — they're retail
-    // items that don't trigger lab orders.
     include_on_lwo: isService,
     allocate_job_box: isService,
     sort_order: '0',
@@ -2264,7 +2331,8 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     service_type: row.service_type ?? '',
     product_key: row.product_key ?? '',
     repair_variant: row.repair_variant ?? '',
-    arch_match: row.arch_match,
+    arch_match: row.arch_match === 'both' ? 'single' : row.arch_match,
+    pricingModel: derivePricingModel(row),
     is_service: row.is_service,
     quantity_enabled: row.quantity_enabled,
     sla_enabled: row.sla_enabled,
@@ -2276,6 +2344,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
   };
 }
 
+// ── Products-tab row (no drag handle) ────────────────────────────────────────
 function CatalogueRowDisplay({
   row,
   onEdit,
@@ -2288,56 +2357,36 @@ function CatalogueRowDisplay({
   return (
     <li
       style={{
+        listStyle: 'none',
         border: `1px solid ${theme.color.border}`,
         borderRadius: 14,
-        padding: theme.space[4],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
         background: row.active ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         gap: theme.space[3],
-        opacity: row.active ? 1 : 0.7,
+        opacity: row.active ? 1 : 0.65,
       }}
     >
-      <CatalogueThumbnail src={row.image_url} alt={row.name} size={56} />
+      <CatalogueThumbnail src={row.image_url} alt={row.name} size={44} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], flexWrap: 'wrap' }}>
           <span style={{ fontWeight: theme.type.weight.semibold, fontSize: theme.type.size.base, color: theme.color.ink }}>
             {row.name}
           </span>
           <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.xs, fontFamily: 'monospace' }}>{row.code}</span>
-          {!row.active ? (
-            <StatusPill tone="cancelled" size="sm">
-              Inactive
-            </StatusPill>
+          {!row.active ? <StatusPill tone="cancelled" size="sm">Inactive</StatusPill> : null}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginTop: theme.space[1], flexWrap: 'wrap' }}>
+          <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, fontVariantNumeric: 'tabular-nums' }}>
+            {formatPounds(row.unit_price)}
+            {row.unit_label ? ` ${row.unit_label}` : ''}
+            {row.extra_unit_price != null ? ` (extras ${formatPounds(row.extra_unit_price)})` : ''}
+          </span>
+          {row.category ? (
+            <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>{row.category}</span>
           ) : null}
         </div>
-        {row.description ? (
-          <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-            {row.description}
-          </p>
-        ) : null}
-        <p
-          style={{
-            margin: `${theme.space[2]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            fontVariantNumeric: 'tabular-nums',
-            color: theme.color.ink,
-          }}
-        >
-          {formatPounds(row.unit_price)}
-          {row.extra_unit_price != null ? ` (extras ${formatPounds(row.extra_unit_price)})` : ''}
-          {row.unit_label ? ` · ${row.unit_label}` : ''}
-        </p>
-        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-          {[
-            row.service_type,
-            row.product_key,
-            row.repair_variant,
-            row.arch_match !== 'any' ? `arch=${row.arch_match}` : null,
-          ]
-            .filter(Boolean)
-            .join(' · ') || 'no match rules'}
-        </p>
       </div>
       <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
         <Button variant="tertiary" size="sm" onClick={onToggleActive}>
@@ -2350,6 +2399,576 @@ function CatalogueRowDisplay({
         </Button>
       </div>
     </li>
+  );
+}
+
+// ── Services-tab shared constants ─────────────────────────────────────────────
+
+const PRICING_MODEL_OPTIONS: Array<{ value: PricingModel; label: string }> = [
+  { value: 'flat', label: 'Fixed price' },
+  { value: 'per_unit', label: 'Per unit' },
+  { value: 'per_arch', label: 'Per arch' },
+];
+
+const SERVICE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Any appointment' },
+  { value: 'denture_repair', label: 'Denture repair' },
+  { value: 'same_day_appliance', label: 'Same-day appliance' },
+  { value: 'click_in_veneers', label: 'Click-in veneers' },
+  { value: 'impression_appointment', label: 'Impression appointment' },
+  { value: 'other', label: 'Other' },
+];
+
+const SERVICE_TYPE_LABELS: Record<string, string> = {
+  denture_repair: 'Denture repair',
+  same_day_appliance: 'Same-day appliance',
+  click_in_veneers: 'Click-in veneers',
+  impression_appointment: 'Impression appointment',
+  other: 'Other',
+};
+
+function chipStyle(active: boolean): CSSProperties {
+  return {
+    padding: `${theme.space[2]}px ${theme.space[3]}px`,
+    borderRadius: theme.radius.pill,
+    border: `1.5px solid ${active ? theme.color.accent : theme.color.border}`,
+    background: active ? theme.color.accentBg : theme.color.surface,
+    color: active ? theme.color.accent : theme.color.inkMuted,
+    fontSize: theme.type.size.sm,
+    fontWeight: active ? theme.type.weight.semibold : theme.type.weight.regular,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+  };
+}
+
+function ServiceSection({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div style={{ borderBottom: `1px solid ${theme.color.border}`, paddingBottom: theme.space[2] }}>
+        <h3 style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+          {title}
+        </h3>
+        {hint ? (
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            {hint}
+          </p>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// ── Services-tab drag-sortable row ────────────────────────────────────────────
+function SortableServiceRow({
+  row,
+  onEdit,
+  onToggleActive,
+}: {
+  row: CatalogueRow;
+  onEdit: () => void;
+  onToggleActive: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id });
+
+  const metaParts: string[] = [];
+  if (row.service_type) metaParts.push(SERVICE_TYPE_LABELS[row.service_type] ?? row.service_type);
+  if (row.repair_variant) metaParts.push(row.repair_variant);
+  if (row.product_key) metaParts.push(row.product_key);
+  if (row.arch_match === 'single') metaParts.push('Per arch');
+  if (row.include_on_lwo) metaParts.push('LWO');
+  if (row.allocate_job_box) metaParts.push('Job box');
+  if (row.sla_enabled && row.sla_target_minutes) metaParts.push(`${row.sla_target_minutes} min target`);
+
+  const priceText = row.unit_label
+    ? `${formatPounds(row.unit_price)} ${row.unit_label}`
+    : formatPounds(row.unit_price);
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        listStyle: 'none',
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+      }}
+    >
+      <div
+        style={{
+          border: `1px solid ${isDragging ? theme.color.accent : theme.color.border}`,
+          borderRadius: 14,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          background: row.active ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          opacity: row.active ? 1 : 0.65,
+          boxShadow: isDragging ? theme.shadow.raised : 'none',
+        }}
+      >
+        <span
+          {...attributes}
+          {...listeners}
+          aria-label="Drag to reorder"
+          style={{
+            color: theme.color.inkSubtle,
+            cursor: isDragging ? 'grabbing' : 'grab',
+            flexShrink: 0,
+            touchAction: 'none',
+            display: 'flex',
+            padding: `${theme.space[1]}px`,
+            marginLeft: `-${theme.space[1]}px`,
+          }}
+        >
+          <GripVertical size={18} />
+        </span>
+        <CatalogueThumbnail src={row.image_url} alt={row.name} size={44} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: theme.type.weight.semibold, fontSize: theme.type.size.base, color: theme.color.ink }}>
+              {row.name}
+            </span>
+            <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.xs, fontFamily: 'monospace' }}>
+              {row.code}
+            </span>
+            {!row.active ? <StatusPill tone="cancelled" size="sm">Inactive</StatusPill> : null}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginTop: theme.space[1], flexWrap: 'wrap' }}>
+            <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, fontVariantNumeric: 'tabular-nums', color: theme.color.ink }}>
+              {priceText}
+            </span>
+            {metaParts.length > 0 ? (
+              <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+                {metaParts.join(' · ')}
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
+          <Button variant="tertiary" size="sm" onClick={onToggleActive}>
+            {row.active ? 'Deactivate' : 'Reactivate'}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onEdit}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Pencil size={14} /> Edit
+            </span>
+          </Button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// ── Service editor form ───────────────────────────────────────────────────────
+function ServiceForm({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: CatalogueDraft;
+  onSave: (draft: CatalogueDraft, waiverSectionKeys: string[]) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<CatalogueDraft>(initial);
+  const [busy, setBusy] = useState(false);
+  const [imgBusy, setImgBusy] = useState(false);
+  const [imgError, setImgError] = useState<string | null>(null);
+
+  const set = <K extends keyof CatalogueDraft>(k: K, v: CatalogueDraft[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+
+  const setPricingModel = (model: PricingModel) => {
+    setDraft((d) => ({
+      ...d,
+      pricingModel: model,
+      arch_match: model === 'per_arch' ? 'single' : 'any',
+      unit_label: model === 'flat' ? '' : d.unit_label,
+      both_arches_price: model !== 'per_arch' ? '' : d.both_arches_price,
+      extra_unit_price: model !== 'per_unit' ? '' : d.extra_unit_price,
+    }));
+  };
+
+  // Waiver requirements
+  const { sections: waiverSections, loading: waiverSectionsLoading } = useWaiverSections();
+  const { sectionKeys: existingWaiverKeys, loading: existingWaiverLoading } = useCatalogueWaiverRequirements(initial.id ?? null);
+  const [waiverKeys, setWaiverKeys] = useState<string[]>([]);
+  const [waiverSeeded, setWaiverSeeded] = useState(false);
+  useEffect(() => {
+    if (waiverSeeded) return;
+    if (!initial.id) { setWaiverSeeded(true); return; }
+    if (existingWaiverLoading) return;
+    setWaiverKeys(existingWaiverKeys);
+    setWaiverSeeded(true);
+  }, [initial.id, existingWaiverLoading, existingWaiverKeys, waiverSeeded]);
+  const toggleWaiver = (key: string, checked: boolean) =>
+    setWaiverKeys((cur) => (checked ? [...new Set([...cur, key])] : cur.filter((k) => k !== key)));
+
+  const submit = async () => {
+    if (!draft.code.trim() || !draft.name.trim() || !draft.category.trim()) return;
+    setBusy(true);
+    try {
+      await onSave(draft, waiverKeys);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onImageFile = async (file: File | null) => {
+    setImgError(null);
+    if (!file) return;
+    if (!draft.code.trim()) { setImgError('Set a SKU code first.'); return; }
+    setImgBusy(true);
+    try {
+      const url = await uploadCatalogueImage(file, draft.code);
+      set('image_url', url);
+    } catch (e) {
+      setImgError(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setImgBusy(false);
+    }
+  };
+
+  const onRemoveImage = async () => {
+    setImgError(null);
+    setImgBusy(true);
+    try {
+      if (draft.code.trim()) await deleteCatalogueImage(draft.code);
+      set('image_url', null);
+    } catch (e) {
+      setImgError(e instanceof Error ? e.message : 'Remove failed');
+    } finally {
+      setImgBusy(false);
+    }
+  };
+
+  const isValid = draft.code.trim() && draft.name.trim() && draft.category.trim();
+
+  return (
+    <div
+      style={{
+        border: `1.5px solid ${theme.color.ink}`,
+        borderRadius: 16,
+        background: theme.color.surface,
+        overflow: 'hidden',
+      }}
+    >
+      {/* ── Header ── */}
+      <div
+        style={{
+          padding: `${theme.space[4]}px ${theme.space[5]}px`,
+          borderBottom: `1px solid ${theme.color.border}`,
+          background: 'rgba(14, 20, 20, 0.02)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[4],
+        }}
+      >
+        <CatalogueThumbnail src={draft.image_url} alt={draft.name || 'New service'} size={52} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontWeight: theme.type.weight.medium, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+            {draft.id ? 'Editing service' : 'New service'}
+          </p>
+          <p style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+            {draft.name || 'Untitled'}
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexShrink: 0 }}>
+          <label style={{ cursor: imgBusy ? 'not-allowed' : 'pointer' }}>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={imgBusy}
+              onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
+              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+            />
+            <span
+              role="button"
+              tabIndex={0}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: `0 ${theme.space[3]}px`,
+                height: 34,
+                borderRadius: theme.radius.pill,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.surface,
+                color: theme.color.ink,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+                cursor: imgBusy ? 'not-allowed' : 'pointer',
+                opacity: imgBusy ? 0.5 : 1,
+              }}
+            >
+              <Plus size={13} /> {draft.image_url ? 'Replace image' : 'Upload image'}
+            </span>
+          </label>
+          {draft.image_url ? (
+            <Button variant="tertiary" size="sm" onClick={onRemoveImage} disabled={imgBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={14} /> Remove
+              </span>
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {imgError ? (
+        <p style={{ margin: `${theme.space[2]}px ${theme.space[5]}px 0`, color: theme.color.alert, fontSize: theme.type.size.xs }}>
+          {imgError}
+        </p>
+      ) : null}
+
+      {/* ── Body ── */}
+      <div style={{ padding: `${theme.space[5]}px`, display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+
+        {/* 1. Basics */}
+        <ServiceSection title="Basics">
+          <Input
+            label="Name"
+            value={draft.name}
+            onChange={(e) => set('name', e.target.value)}
+            placeholder="e.g. Click-in Veneers"
+          />
+          <Input
+            label="Description (optional)"
+            value={draft.description}
+            onChange={(e) => set('description', e.target.value)}
+            placeholder="What the patient receives"
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+            <Input
+              label="SKU code"
+              value={draft.code}
+              onChange={(e) => set('code', e.target.value)}
+              placeholder="e.g. civ_upper"
+            />
+            <Input
+              label="Category"
+              value={draft.category}
+              onChange={(e) => set('category', e.target.value)}
+              placeholder="e.g. Veneers"
+            />
+          </div>
+        </ServiceSection>
+
+        {/* 2. Pricing */}
+        <ServiceSection title="Pricing" hint="Choose how the price is calculated at booking">
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            {PRICING_MODEL_OPTIONS.map((opt) => (
+              <button key={opt.value} type="button" onClick={() => setPricingModel(opt.value)} style={chipStyle(draft.pricingModel === opt.value)}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+            {draft.pricingModel === 'flat'
+              ? 'One price for this service, regardless of quantity or arch.'
+              : draft.pricingModel === 'per_unit'
+              ? 'Receptionist enters a quantity at booking, e.g. number of teeth.'
+              : 'Receptionist picks upper or lower arch at booking. Optional combined price for both.'}
+          </p>
+          {draft.pricingModel === 'flat' ? (
+            <div style={{ maxWidth: 220 }}>
+              <Input
+                label="Price (£)"
+                numericFormat="currency"
+                value={draft.unit_price}
+                onChange={(e) => set('unit_price', e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          ) : draft.pricingModel === 'per_unit' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: theme.space[3] }}>
+              <Input
+                label="Price per unit (£)"
+                numericFormat="currency"
+                value={draft.unit_price}
+                onChange={(e) => set('unit_price', e.target.value)}
+                placeholder="0.00"
+              />
+              <Input
+                label="Unit label"
+                value={draft.unit_label}
+                onChange={(e) => set('unit_label', e.target.value)}
+                placeholder="e.g. per tooth"
+              />
+              <Input
+                label="Extras price (£)"
+                numericFormat="currency"
+                value={draft.extra_unit_price}
+                onChange={(e) => set('extra_unit_price', e.target.value)}
+                placeholder="optional"
+              />
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+              <Input
+                label="Price per arch (£)"
+                numericFormat="currency"
+                value={draft.unit_price}
+                onChange={(e) => set('unit_price', e.target.value)}
+                placeholder="0.00"
+              />
+              <Input
+                label="Both arches price (£)"
+                numericFormat="currency"
+                value={draft.both_arches_price}
+                onChange={(e) => set('both_arches_price', e.target.value)}
+                placeholder="optional"
+              />
+            </div>
+          )}
+        </ServiceSection>
+
+        {/* 3. When to suggest */}
+        <ServiceSection title="When to suggest" hint="Auto-suggest this service when the patient's booking matches the appointment type below">
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            {SERVICE_TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  set('service_type', opt.value);
+                  if (opt.value !== 'denture_repair') set('repair_variant', '');
+                }}
+                style={chipStyle(draft.service_type === opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {draft.service_type === 'denture_repair' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+              <Input
+                label="Repair type"
+                value={draft.repair_variant}
+                onChange={(e) => set('repair_variant', e.target.value)}
+                placeholder="e.g. Snapped denture"
+              />
+              <Input
+                label="Sub-type tag (optional)"
+                value={draft.product_key}
+                onChange={(e) => set('product_key', e.target.value)}
+                placeholder="e.g. partial"
+              />
+            </div>
+          ) : draft.service_type ? (
+            <div style={{ maxWidth: 320 }}>
+              <Input
+                label="Sub-type tag (optional)"
+                value={draft.product_key}
+                onChange={(e) => set('product_key', e.target.value)}
+                placeholder="e.g. retainer, night_guard"
+              />
+            </div>
+          ) : null}
+          {draft.product_key && draft.service_type ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+              Narrows matching further. Leave blank to match all {SERVICE_TYPE_LABELS[draft.service_type] ?? 'bookings of this type'}.
+            </p>
+          ) : null}
+        </ServiceSection>
+
+        {/* 4. Lab and operations */}
+        <ServiceSection title="Lab and operations">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <Checkbox
+              checked={draft.include_on_lwo}
+              onChange={(v) => set('include_on_lwo', v)}
+              label="Appears on the Lab Work Order (LWO)"
+            />
+            <Checkbox
+              checked={draft.allocate_job_box}
+              onChange={(v) => set('allocate_job_box', v)}
+              label="Allocate a job box at patient arrival"
+            />
+            <Checkbox
+              checked={draft.quantity_enabled}
+              onChange={(v) => set('quantity_enabled', v)}
+              label="Allow quantity selector at booking (for services priced per unit)"
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+              <Checkbox
+                checked={draft.sla_enabled}
+                onChange={(v) => set('sla_enabled', v)}
+                label="Enforce a time target from arrival to completion"
+              />
+              {draft.sla_enabled ? (
+                <Input
+                  label="Target (minutes)"
+                  numericFormat="integer"
+                  value={draft.sla_target_minutes}
+                  onChange={(e) => set('sla_target_minutes', e.target.value)}
+                  placeholder="e.g. 120"
+                  style={{ maxWidth: 180 }}
+                />
+              ) : null}
+            </div>
+          </div>
+        </ServiceSection>
+
+        {/* 5. Required waivers */}
+        <ServiceSection title="Required waivers" hint="The patient must sign these sections before the service is confirmed. Leave all unchecked to use the service-type default.">
+          {waiverSectionsLoading || existingWaiverLoading ? (
+            <Skeleton height={80} radius={8} />
+          ) : waiverSections.length === 0 ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              No active waiver sections. Add some on the Waivers tab.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {waiverSections.map((sec) => (
+                <Checkbox
+                  key={sec.key}
+                  checked={waiverKeys.includes(sec.key)}
+                  onChange={(v) => toggleWaiver(sec.key, v)}
+                  label={`${sec.title}  ·  v${sec.version}`}
+                />
+              ))}
+            </div>
+          )}
+        </ServiceSection>
+
+        {/* 6. Upgrades */}
+        {draft.id ? (
+          <ProductUpgradesEditor catalogueId={draft.id} archEnabled={draft.arch_match !== 'any'} />
+        ) : (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontStyle: 'italic' }}>
+            Save the service first to attach upgrades.
+          </p>
+        )}
+
+      </div>
+
+      {/* ── Footer ── */}
+      <div
+        style={{
+          padding: `${theme.space[3]}px ${theme.space[5]}px`,
+          borderTop: `1px solid ${theme.color.border}`,
+          background: 'rgba(14, 20, 20, 0.02)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+        }}
+      >
+        <Checkbox checked={draft.active} onChange={(v) => set('active', v)} label="Active (visible to receptionist)" />
+        <div style={{ display: 'flex', gap: theme.space[2] }}>
+          <Button variant="tertiary" onClick={onCancel} disabled={busy}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <X size={16} /> Cancel
+            </span>
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy} disabled={!isValid || busy}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Check size={16} /> {draft.id ? 'Save changes' : 'Add service'}
+            </span>
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
