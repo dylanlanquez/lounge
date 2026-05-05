@@ -6,10 +6,10 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarOff,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleDashed,
   List,
   Mail,
   Monitor,
@@ -1882,7 +1882,11 @@ function DepositLine({
   provider: 'paypal' | 'stripe' | null;
 }) {
   const isPaid = status === 'paid';
-  const badgeColor = isPaid ? theme.color.accent : theme.color.alert;
+  // Sage green — partial-payment colour, distinct from the dark forest
+  // accent we reserve for fully-settled carts. Failed branches stay on
+  // the alert red because that genuinely is a problem.
+  const DEPOSIT_GREEN = '#5C8E76';
+  const badgeColor = isPaid ? DEPOSIT_GREEN : theme.color.alert;
   const labelColor = isPaid ? theme.color.ink : theme.color.alert;
   const labelWeight = isPaid ? theme.type.weight.medium : theme.type.weight.semibold;
   const text = isPaid
@@ -1909,12 +1913,18 @@ function DepositLine({
           width: 20,
           height: 20,
           borderRadius: 999,
-          background: badgeColor,
-          color: theme.color.surface,
+          // CircleDashed reads as "partial" rather than the solid Check
+          // (which implies "all done"). On a paid deposit the badge is
+          // a light-green outlined ring so the visual screams partial,
+          // not finished. Failed keeps the solid red X for the loud
+          // chase-the-patient signal.
+          background: isPaid ? 'transparent' : badgeColor,
+          color: isPaid ? badgeColor : theme.color.surface,
+          border: isPaid ? `1.5px solid ${badgeColor}` : 'none',
           flexShrink: 0,
         }}
       >
-        {isPaid ? <Check size={13} strokeWidth={3} /> : <X size={13} strokeWidth={3} />}
+        {isPaid ? <CircleDashed size={13} strokeWidth={2.5} /> : <X size={13} strokeWidth={3} />}
       </span>
       <span>{text}</span>
     </div>

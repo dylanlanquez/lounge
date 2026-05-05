@@ -567,13 +567,15 @@ function Hero({
   const sourceLabel = humaniseLedgerSource(appt.source);
   const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
   const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
-  const dateLong = formatDateLongOrdinal(appt.start_at);
 
-  // State-driven ribbon — icon + anchor + relative + tone all picked
-  // together so a glance answers "what is this booking doing right
-  // now" without the operator having to interpret a generic clock
-  // icon and stale time copy.
+  // State-driven ribbon — icon + dateLong + anchor + relative + tone
+  // all picked together so a glance answers "what is this booking
+  // doing right now". The dateLong override matters for rescheduled,
+  // where the row's start_at is the OLD slot — without a prefix the
+  // big bold date reads as the active booking date and confuses the
+  // operator about which row this is.
   const ribbon = buildApptRibbon(appt);
+  const dateLong = ribbon.dateLong ?? formatDateLongOrdinal(appt.start_at);
 
   // Pills sit next to the patient name in the hero. Status is always
   // present; "Deposit paid" joins it when the booking-time deposit has
@@ -612,6 +614,11 @@ function Hero({
 // not look like the language for "rescheduled to a new slot".
 function buildApptRibbon(appt: AppointmentDetailRow): {
   icon: ReactNode;
+  /** Optional override for the big bold date heading. Most states
+   * keep the appointment's own start_at (formatted long); rescheduled
+   * uses this to label the date as past so the operator never thinks
+   * the OLD slot is the live one. */
+  dateLong?: string;
   timeLine: string;
   relative: string | null;
   tone: AppointmentHeroTone;
@@ -687,13 +694,19 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
       };
     }
     case 'rescheduled': {
-      // The detailed "Rescheduled to {date}" lives in its own card on
-      // the page; the ribbon stays a single-line summary so the eye
-      // doesn't have to pick a date out of two places.
+      // The big bold date on a rescheduled row is the OLD slot
+      // (appt.start_at hasn't moved — the new booking is a separate
+      // row reachable via reschedule_to_id). Prefix the date with
+      // "Old slot ·" so the heading itself states past tense, and
+      // make the secondary line read as a clear pointer to the
+      // replacement card below. Without the prefix an onlooker can't
+      // tell whether the bold date is the upcoming or the cancelled
+      // moment.
       return {
         icon: <RotateCcw size={16} aria-hidden />,
-        timeLine: 'Booking moved',
-        relative: 'New slot below',
+        dateLong: `Old slot · ${formatDateLongOrdinal(appt.start_at)}`,
+        timeLine: 'This booking has been moved',
+        relative: 'See new slot below',
         tone: 'warn',
       };
     }

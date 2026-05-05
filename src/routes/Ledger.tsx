@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleDashed,
   RotateCcw,
   Search,
   X,
@@ -681,12 +682,17 @@ function PaymentLine({ state }: { state: LedgerPaymentState }) {
         };
       case 'deposit_paid':
         return {
-          icon: <Check size={12} strokeWidth={2.5} aria-hidden />,
+          // CircleDashed reads as "partial / not all the way" — the
+          // visual cue lines up with what a deposit actually is: money
+          // in, but not the full bill yet. Distinct from BadgeCheck
+          // which lands when the cart is settled in full.
+          icon: <CircleDashed size={12} strokeWidth={2.5} aria-hidden />,
           label: 'Deposit paid',
-          // Same accent green at lower opacity so a fully-paid sale
-          // and a deposit-only booking read as related but distinct
-          // states, without inventing a second green token.
-          color: 'rgba(31, 77, 58, 0.65)',
+          // Sage green — clearly green-family (positive money fact)
+          // but visually distinct from the dark forest accent used by
+          // "Paid in full", so a glance differentiates partial from
+          // full at a glance without pulling in any alert tone.
+          color: '#5C8E76',
         };
       case 'refunded':
         return {
