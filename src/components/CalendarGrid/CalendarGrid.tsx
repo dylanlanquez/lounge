@@ -39,7 +39,7 @@ export function CalendarGrid({
   const hours = Array.from({ length: totalHours + 1 }, (_, i) => startHour + i);
 
   const isToday = !isoDate || isoDate === todayIso();
-  const nowOffset = useNowOffset(startHour, pxPerHour, isToday);
+  const nowOffset = useNowOffset(startHour, endHour, pxPerHour, isToday);
 
   const showNow = showNowIndicator && nowOffset !== null;
 
@@ -179,11 +179,13 @@ function NowPill({ offset }: { offset: number }) {
 
   // Anchor to the right edge of the time-axis column so the pill ends just
   // before the slot column starts — never overlaps appointment cards.
+  // Clamp top so the pill rests on the grid's top edge before the first
+  // visible hour rather than floating above it.
   return (
     <div
       style={{
         position: 'absolute',
-        top: offset - 10,
+        top: Math.max(0, offset - 10),
         right: 4,
         padding: '2px 8px',
         background: theme.color.accent,
@@ -349,7 +351,7 @@ function isoForY(
   return d.toISOString();
 }
 
-function useNowOffset(startHour: number, pxPerHour: number, isToday: boolean) {
+function useNowOffset(startHour: number, endHour: number, pxPerHour: number, isToday: boolean) {
   const [offset, setOffset] = useState<number | null>(null);
   useEffect(() => {
     if (!isToday) {
@@ -360,12 +362,22 @@ function useNowOffset(startHour: number, pxPerHour: number, isToday: boolean) {
       const now = new Date();
       const minutes = now.getHours() * 60 + now.getMinutes();
       const startMinutes = startHour * 60;
-      const off = ((minutes - startMinutes) / 60) * pxPerHour;
-      setOffset(off);
+      const endMinutes = endHour * 60;
+      // Past the last visible hour, drop the indicator entirely so it
+      // doesn't dangle below the grid.
+      if (minutes >= endMinutes) {
+        setOffset(null);
+        return;
+      }
+      // Before the first visible hour, clamp to the top edge so the pill
+      // and line rest at the top of the calendar instead of floating
+      // above it.
+      const raw = ((minutes - startMinutes) / 60) * pxPerHour;
+      setOffset(Math.max(0, raw));
     };
     update();
     const t = setInterval(update, 60_000);
     return () => clearInterval(t);
-  }, [startHour, pxPerHour, isToday]);
+  }, [startHour, endHour, pxPerHour, isToday]);
   return offset;
 }
