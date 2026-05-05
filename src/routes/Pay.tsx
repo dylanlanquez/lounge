@@ -510,7 +510,7 @@ export function Pay() {
             >
               <Input
                 label="Amount to charge now (£)"
-                inputMode="decimal"
+                numericFormat="currency"
                 placeholder={(outstandingPence / 100).toFixed(2)}
                 value={chargeAmountText}
                 onChange={(e) => setChargeAmountText(e.target.value)}
@@ -593,7 +593,7 @@ export function Pay() {
             <Input
               label="Tendered (£)"
               autoFocus
-              inputMode="decimal"
+              numericFormat="currency"
               placeholder={`min ${formatPence(chargeAmountPence)}`}
               value={tendered}
               onChange={(e) => setTendered(e.target.value)}
@@ -800,6 +800,14 @@ export function Pay() {
             <Input
               label="Manager email"
               type="email"
+              // Browser must not autofill the cashier's own credentials
+              // here. autoComplete=off + a non-standard name keeps
+              // Chromium / Safari from pattern-matching, and the password
+              // managers honour the data-* opt-outs.
+              autoComplete="off"
+              name="lng-void-approver-email"
+              data-lpignore="true"
+              data-1p-ignore
               value={voidApproverEmail}
               onChange={(e) => setVoidApproverEmail(e.target.value)}
               placeholder="manager@venneir.com"
@@ -807,6 +815,10 @@ export function Pay() {
             <Input
               label="Manager password"
               type="password"
+              autoComplete="new-password"
+              name="lng-void-approver-password"
+              data-lpignore="true"
+              data-1p-ignore
               value={voidApproverPassword}
               onChange={(e) => setVoidApproverPassword(e.target.value)}
             />

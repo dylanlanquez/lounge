@@ -701,7 +701,7 @@ function NewCountSheet({
 
         <Input
           label="Counted in safe (£)"
-          inputMode="decimal"
+          numericFormat="currency"
           value={actualText}
           onChange={(e) => setActualText(e.target.value)}
           placeholder="e.g. 405.00"
@@ -798,6 +798,14 @@ function NewCountSheet({
           <Input
             label="Manager password"
             type="password"
+            // Block saved-password autofill — the manager must re-enter
+            // their password every count so the audit row reflects an
+            // intentional, in-the-room sign-off rather than a cached
+            // credential drifting across sessions.
+            autoComplete="new-password"
+            name="lng-cash-count-manager-password"
+            data-lpignore="true"
+            data-1p-ignore
             value={managerPassword}
             onChange={(e) => setManagerPassword(e.target.value)}
           />

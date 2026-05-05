@@ -1476,7 +1476,20 @@ function PoundsInput({
         type="text"
         inputMode="decimal"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          // Drop anything that isn't a digit or decimal point, keep at most
+          // one dot, and cap fraction digits at 2 — the field is currency.
+          const stripped = e.target.value.replace(/[^0-9.]/g, '');
+          const dot = stripped.indexOf('.');
+          const cleaned =
+            dot === -1
+              ? stripped
+              : `${stripped.slice(0, dot)}.${stripped
+                  .slice(dot + 1)
+                  .replace(/\./g, '')
+                  .slice(0, 2)}`;
+          onChange(cleaned);
+        }}
         placeholder="0.00"
         style={{
           flex: 1,

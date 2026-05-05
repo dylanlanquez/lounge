@@ -296,12 +296,11 @@ function FixedField({
       <FieldLabel>How long?</FieldLabel>
       <div style={{ maxWidth: 200 }}>
         <Input
-          type="number"
-          inputMode="numeric"
+          numericFormat="integer"
           min={1}
           autoFocus
           value={value}
-          onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ''))}
+          onChange={(e) => onChange(e.target.value)}
           trailingIcon={<MinSuffix />}
         />
       </div>
@@ -332,12 +331,11 @@ function RangeFields({
       >
         <div style={{ flex: 1, maxWidth: 160 }}>
           <Input
-            type="number"
-            inputMode="numeric"
+            numericFormat="integer"
             min={1}
             autoFocus
             value={minValue}
-            onChange={(e) => onMinChange(e.target.value.replace(/[^0-9]/g, ''))}
+            onChange={(e) => onMinChange(e.target.value)}
             trailingIcon={<MinSuffix />}
           />
         </div>
@@ -352,11 +350,10 @@ function RangeFields({
         </span>
         <div style={{ flex: 1, maxWidth: 160 }}>
           <Input
-            type="number"
-            inputMode="numeric"
+            numericFormat="integer"
             min={1}
             value={maxValue}
-            onChange={(e) => onMaxChange(e.target.value.replace(/[^0-9]/g, ''))}
+            onChange={(e) => onMaxChange(e.target.value)}
             trailingIcon={<MinSuffix />}
           />
         </div>

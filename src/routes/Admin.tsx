@@ -2528,13 +2528,13 @@ function CatalogueRowEditor({
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: theme.space[3] }}>
         <Input
           label="Unit price (£)"
-          inputMode="decimal"
+          numericFormat="currency"
           value={draft.unit_price}
           onChange={(e) => set('unit_price', e.target.value)}
         />
         <Input
           label="Extras price (£)"
-          inputMode="decimal"
+          numericFormat="currency"
           value={draft.extra_unit_price}
           onChange={(e) => set('extra_unit_price', e.target.value)}
           placeholder="optional"
@@ -2550,7 +2550,7 @@ function CatalogueRowEditor({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
           <Input
             label="Both arches price (£)"
-            inputMode="decimal"
+            numericFormat="currency"
             value={draft.both_arches_price}
             onChange={(e) => set('both_arches_price', e.target.value)}
             placeholder="optional, picker uses unit price when blank"
@@ -2628,7 +2628,7 @@ function CatalogueRowEditor({
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
         <Input
           label="Sort order"
-          inputMode="numeric"
+          numericFormat="integer"
           value={draft.sort_order}
           onChange={(e) => set('sort_order', e.target.value)}
           style={{ maxWidth: 140 }}
@@ -2695,7 +2695,7 @@ function CatalogueRowEditor({
             {draft.sla_enabled ? (
               <Input
                 label="SLA target (minutes)"
-                inputMode="numeric"
+                numericFormat="integer"
                 value={draft.sla_target_minutes}
                 onChange={(e) => set('sla_target_minutes', e.target.value)}
                 placeholder="e.g. 120"
@@ -3185,14 +3185,14 @@ function UpgradeEditor({
       >
         <Input
           label="Price (£)"
-          inputMode="decimal"
+          numericFormat="currency"
           value={draft.price}
           onChange={(e) => set('price', e.target.value)}
         />
         {archEnabled ? (
           <Input
             label="Both arches price (£)"
-            inputMode="decimal"
+            numericFormat="currency"
             value={draft.both_arches_price}
             onChange={(e) => set('both_arches_price', e.target.value)}
             placeholder="optional"
@@ -3202,7 +3202,7 @@ function UpgradeEditor({
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
         <Input
           label="Sort order"
-          inputMode="numeric"
+          numericFormat="integer"
           value={draft.sort_order}
           onChange={(e) => set('sort_order', e.target.value)}
           style={{ maxWidth: 140 }}
@@ -3720,7 +3720,7 @@ function WaiverSectionEditor({
         </label>
         <Input
           label="Sort order"
-          inputMode="numeric"
+          numericFormat="integer"
           value={String(draft.sort_order)}
           onChange={(e) => set('sort_order', parseInt(e.target.value, 10) || 0)}
         />

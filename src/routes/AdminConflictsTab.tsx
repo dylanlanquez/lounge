@@ -815,7 +815,7 @@ function PoolEditorDialog({
           <Input
             label="How many do you have?"
             required
-            type="number"
+            numericFormat="integer"
             value={unitsInput}
             onChange={(e) => setUnitsInput(e.target.value)}
             placeholder="1"
@@ -825,7 +825,7 @@ function PoolEditorDialog({
         <Input
           label={isStaffRole ? 'Each person handles how many at a time?' : 'Each one handles how many at a time?'}
           required
-          type="number"
+          numericFormat="integer"
           value={perUnitInput}
           onChange={(e) => setPerUnitInput(e.target.value)}
           placeholder="1"

@@ -1912,7 +1912,7 @@ export function VisitDetail() {
           {discountSheet === 'apply' || discountSheet === 'amend' ? (
             <Input
               label="Discount amount (£)"
-              inputMode="decimal"
+              numericFormat="currency"
               value={discountAmountText}
               onChange={(e) => setDiscountAmountText(e.target.value)}
               placeholder="e.g. 25.00"
@@ -1965,6 +1965,14 @@ export function VisitDetail() {
             <Input
               label="Manager password"
               type="password"
+              // Manager re-enters their password live every time. Block
+              // any cached / saved-password autofill so a second person
+              // can't be approved by stale credentials sitting in the
+              // browser store.
+              autoComplete="new-password"
+              name="lng-discount-approver-password"
+              data-lpignore="true"
+              data-1p-ignore
               value={discountManagerPassword}
               onChange={(e) => setDiscountManagerPassword(e.target.value)}
             />

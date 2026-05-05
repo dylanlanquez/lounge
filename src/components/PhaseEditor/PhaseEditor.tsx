@@ -317,11 +317,10 @@ export function PhaseEditor({
         <Section title="How long?" subtitle="In minutes.">
           <div style={{ maxWidth: 200 }}>
             <Input
-              type="number"
-              inputMode="numeric"
+              numericFormat="integer"
               min={1}
               value={durationDefault}
-              onChange={(e) => setDurationDefault(e.target.value.replace(/[^0-9]/g, ''))}
+              onChange={(e) => setDurationDefault(e.target.value)}
               trailingIcon={
                 <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
                   min
