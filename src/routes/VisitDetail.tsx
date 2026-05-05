@@ -907,7 +907,7 @@ export function VisitDetail() {
                 the visit timeline at the bottom. */}
             <div style={{ marginBottom: theme.space[6] }}>
               <AppointmentHero
-                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable)}
+                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable, paidPayments)}
                 trailing={
                   patient ? (
                     <Button
@@ -966,24 +966,9 @@ export function VisitDetail() {
                 action row below stays at full opacity so the
                 Reverse affordance reads as the only live thing. */}
             <div style={isUnsuitable ? { opacity: 0.55 } : undefined}>
-            <Card
-              padding="lg"
-              style={
-                cart?.status === 'paid'
-                  ? {
-                      // Card itself reads as a settled receipt: subtle
-                      // accent wash + accent ring. Pairs with the
-                      // PaidBanner inside so the surface reads as
-                      // "this is paid" before the eye even lands on
-                      // the line items.
-                      background: theme.color.accentBg,
-                      border: '1px solid rgba(31, 77, 58, 0.18)',
-                    }
-                  : undefined
-              }
-            >
+            <Card padding="lg">
               {cart?.status === 'paid' ? (
-                <PaidBanner
+                <PaidHeader
                   amountPence={cart.total_pence}
                   paidAt={cart.closed_at ?? null}
                   payments={paidPayments}
@@ -2444,13 +2429,21 @@ function buildVisitHeroProps(
   visit: VisitRow,
   appointment: VisitAppointmentContext | null,
   patient: (PatientRow & { avatar_data?: string | null }) | null,
-  cart: { status: 'open' | 'paid' | 'voided' } | null,
+  cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null; total_pence: number } | null,
   latestUnsuitable: { recorded_at: string | null } | null,
+  paidPayments: CartPaymentRow[],
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
   const dateLong = formatDateLongOrdinal(headlineIso);
-  const lineParts = visitWhenStatusLine(visit, appointment, isWalkIn);
+  // When the cart is paid, the "Scheduled 09:15 · Arrived 1 hour ago"
+  // ribbon line is stale — those moments are behind the operator now.
+  // Replace it with a payment summary so the ribbon answers "what is
+  // happening with this visit" with the live, current fact: paid.
+  const lineParts =
+    cart?.status === 'paid'
+      ? visitWhenPaidLine(cart, paidPayments)
+      : visitWhenStatusLine(visit, appointment, isWalkIn);
   const service =
     humaniseEventTypeLabel(appointment?.event_type_label ?? null) ?? (isWalkIn ? 'Walk-in' : 'Appointment');
 
@@ -2514,6 +2507,22 @@ function buildVisitHeroProps(
 // ago", "In chair · 14 minutes", "Completed 5 minutes ago"). The
 // pair is deliberately split so the renderer can colour them
 // differently without re-parsing the string.
+// When the cart is paid, the ribbon answers "what state is this visit
+// in?" with the current fact (paid in cash · 5 minutes ago) instead of
+// stale arrival timing. Formatter mirrors the PaidHeader inside the
+// cart so the two read consistently.
+function visitWhenPaidLine(
+  cart: { closed_at: string | null; total_pence: number },
+  payments: CartPaymentRow[],
+): { anchor: string; relative: string | null } {
+  const breakdown = formatMethodBreakdown(payments);
+  const anchor = breakdown
+    ? `Paid · ${breakdown.replace(/^Received in /, '')}`
+    : 'Paid in full';
+  const relative = cart.closed_at ? relativeMinutes(cart.closed_at) : null;
+  return { anchor, relative: relative ? `${relative}` : null };
+}
+
 function visitWhenStatusLine(
   visit: VisitRow,
   appointment: VisitAppointmentContext | null,
@@ -2790,20 +2799,19 @@ function Totals({
   );
 }
 
-// PaidBanner — sits at the top of the Cart card when cart.status='paid'.
-// Communicates the same fact in three layers so a glance, a quick scan,
-// and a full read all carry the answer:
+// PaidHeader — inline header rendered at the top of the Cart card when
+// cart.status='paid'. Replaces the "Cart" h2 + "Add item" row entirely.
+// Deliberately NOT a nested card — that earlier nesting read as visual
+// noise. Just typography, an icon, and a divider so the card chrome
+// stays one surface and the line items below read as a receipt.
 //
-//   • Big BadgeCheck mark + "Paid in full" headline.
-//   • Hero amount (xxl, tabular nums) — the receptionist's eye lands
-//     here, never on a "Total" they have to interpret.
-//   • Method breakdown + timestamp underneath, so when a manager asks
-//     "how was this paid?" they don't need to dig into the timeline.
+//   ✓  Paid in full
+//      £1.00  ·  Received in cash · today at 08:16
+//   ─────────────────────────────────────────────────
 //
-// Multi-method: a £100 split as £50 cash + £50 card renders as
-// "Paid £50.00 cash + £50.00 card" instead of one line per payment so
-// the banner stays one block.
-function PaidBanner({
+// Multi-method splits roll up by method (e.g. "£50.00 cash + £50.00
+// card") so a 3-payment cart still prints as a single line.
+function PaidHeader({
   amountPence,
   paidAt,
   payments,
@@ -2814,24 +2822,23 @@ function PaidBanner({
 }) {
   const methodBreakdown = formatMethodBreakdown(payments);
   const when = paidAt ? `${formatPaidAtDate(paidAt)} at ${formatTime(paidAt)}` : null;
+  const meta = [methodBreakdown, when].filter(Boolean).join(' · ');
   return (
     <div
       style={{
         display: 'flex',
-        alignItems: 'flex-start',
-        gap: theme.space[4],
-        padding: theme.space[5],
-        marginBottom: theme.space[5],
-        borderRadius: theme.radius.card,
-        background: theme.color.surface,
-        border: '1px solid rgba(31, 77, 58, 0.22)',
+        alignItems: 'center',
+        gap: theme.space[3],
+        marginBottom: theme.space[4],
+        paddingBottom: theme.space[4],
+        borderBottom: `1px solid ${theme.color.border}`,
       }}
     >
       <span
         aria-hidden
         style={{
-          width: 44,
-          height: 44,
+          width: 40,
+          height: 40,
           borderRadius: theme.radius.pill,
           background: theme.color.accentBg,
           color: theme.color.accent,
@@ -2841,46 +2848,42 @@ function PaidBanner({
           flexShrink: 0,
         }}
       >
-        <BadgeCheck size={22} aria-hidden />
+        <BadgeCheck size={20} aria-hidden />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p
+        <h2
           style={{
             margin: 0,
-            fontSize: theme.type.size.sm,
-            color: theme.color.accent,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.wide,
-            textTransform: 'uppercase',
-          }}
-        >
-          Paid in full
-        </p>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.xxl,
+            fontSize: theme.type.size.lg,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
             letterSpacing: theme.type.tracking.tight,
-            lineHeight: 1.05,
-            fontVariantNumeric: 'tabular-nums',
+            lineHeight: 1.2,
           }}
         >
-          {formatPence(amountPence)}
-        </p>
-        {methodBreakdown || when ? (
-          <p
+          Paid in full
+          <span
             style={{
-              margin: `${theme.space[2]}px 0 0`,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.relaxed,
+              marginLeft: theme.space[3],
+              fontSize: theme.type.size.lg,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: theme.type.weight.semibold,
             }}
           >
-            {methodBreakdown}
-            {methodBreakdown && when ? ' · ' : ''}
-            {when}
+            {formatPence(amountPence)}
+          </span>
+        </h2>
+        {meta ? (
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: 1.3,
+            }}
+          >
+            {meta}
           </p>
         ) : null}
       </div>
