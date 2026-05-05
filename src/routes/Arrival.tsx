@@ -458,18 +458,28 @@ export function Arrival() {
   // Runs once when both the appointment context and the catalogue are
   // loaded. Does nothing for walk-ins (no prior booking) or when the
   // staff has already manually staged items (preserve their intent).
+  //
+  // Native bookings have service_type + axis pins set directly on the row.
+  // Calendly bookings only have event_type_label — we infer the service type
+  // from that so both paths get pre-populated.
   const prePopulatedRef = useRef(false);
   useEffect(() => {
     if (mode !== 'appointment') return;
-    if (!appointment?.service_type) return;
+    if (!appointment) return; // not loaded yet
     if (catalogueRows.length === 0) return;
     if (prePopulatedRef.current) return;
     if (stagedItems.length > 0) return;
 
+    // Prefer the axis-pinned service_type (native bookings); fall back to
+    // inferring from the Calendly event label.
+    const serviceType =
+      appointment.service_type ?? inferServiceTypeFromEventLabel(eventTypeLabel);
+    if (!serviceType) return;
+
     prePopulatedRef.current = true;
 
     const criteria = {
-      service_type:   appointment.service_type,
+      service_type:   serviceType,
       product_key:    appointment.product_key    ?? null,
       repair_variant: appointment.repair_variant ?? null,
       arch:           appointment.arch           ?? null,
@@ -479,14 +489,14 @@ export function Arrival() {
     const best = matches[0];
     if (!best) return;
 
-    const arch = appointment.arch as 'upper' | 'lower' | 'both' | null ?? null;
+    const arch = (appointment.arch ?? null) as 'upper' | 'lower' | 'both' | null;
     setStagedItems([{
-      key:      `${best.id}-prefill`,
+      key:       `${best.id}-prefill`,
       catalogue: best,
       qty:       1,
       options:   { arch },
     }]);
-  }, [mode, appointment, catalogueRows, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, appointment, catalogueRows, eventTypeLabel, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
