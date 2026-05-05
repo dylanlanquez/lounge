@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowRight,
+  BadgeCheck,
   Ban,
   CalendarCheck,
   CalendarClock,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import {
   AppointmentHero,
+  type AppointmentHeroPill,
   type AppointmentHeroTone,
   AppointmentTimeline,
   BottomSheet,
@@ -582,10 +584,21 @@ function Hero({
         ? 'warn'
         : 'neutral';
 
+  // Pills sit next to the patient name in the hero. Status is always
+  // present; "Paid" joins it when the booking-time deposit has settled
+  // so the page reads as paid the moment a glance lands on the hero,
+  // before the eye ever reaches the deposit card below.
+  const pills: AppointmentHeroPill[] = [
+    { tone, label: humaniseAppointmentStatus(appt.status) },
+  ];
+  if (appt.deposit_status === 'paid' && (appt.deposit_pence ?? 0) > 0) {
+    pills.push({ tone: 'arrived', label: 'Paid' });
+  }
+
   return (
     <AppointmentHero
       patient={{ name: fullName, avatarSrc: appt.patient.avatar_data }}
-      pills={[{ tone, label: humaniseAppointmentStatus(appt.status) }]}
+      pills={pills}
       subtitle={refLine}
       when={{
         dateLong,
@@ -786,10 +799,70 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   if (appt.deposit_pence == null) return null;
   const amount = formatPence(appt.deposit_pence);
   const provider =
-    appt.deposit_provider === 'paypal' ? 'PayPal' : appt.deposit_provider === 'stripe' ? 'Stripe' : 'Unknown';
+    appt.deposit_provider === 'paypal'
+      ? 'PayPal'
+      : appt.deposit_provider === 'stripe'
+        ? 'Stripe'
+        : 'Unknown';
   const paid = appt.deposit_status === 'paid';
   const failed = appt.deposit_status === 'failed';
-  const statusLabel = paid ? 'Paid' : failed ? 'Failed' : 'Unknown';
+
+  // Paid: an accent-tinted card with the BadgeCheck mark and "Paid in
+  // full" headline — the same phrase the waiver document uses for a
+  // settled booking. The card itself reads as good news at a glance,
+  // pairing with the "Paid" pill in the hero so a receptionist scanning
+  // the page from top to bottom never has to hunt for the payment state.
+  if (paid) {
+    return (
+      <Card
+        padding="lg"
+        style={{
+          background: theme.color.accentBg,
+          border: '1px solid rgba(31, 77, 58, 0.18)',
+        }}
+      >
+        <DetailSectionHeader
+          icon={<BadgeCheck size={16} aria-hidden />}
+          title="Paid in full"
+        />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: theme.space[3],
+            marginTop: theme.space[1],
+            flexWrap: 'wrap',
+          }}
+        >
+          <span
+            style={{
+              fontSize: 32,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {amount}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+            }}
+          >
+            settled via {provider} at booking
+          </span>
+        </div>
+      </Card>
+    );
+  }
+
+  // Failed / unknown: keep the deposit framing — staff still need to
+  // see the amount that was attempted, and the alert box when failed
+  // turns the card into a clear call to action.
+  const statusLabel = failed ? 'Failed' : 'Unknown';
   const statusPill = (
     <span
       style={{
@@ -798,12 +871,8 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
         gap: theme.space[1],
         padding: '4px 10px',
         borderRadius: theme.radius.pill,
-        background: paid
-          ? theme.color.accentBg
-          : failed
-            ? 'rgba(184, 58, 42, 0.10)'
-            : 'rgba(14, 20, 20, 0.05)',
-        color: paid ? theme.color.accent : failed ? theme.color.alert : theme.color.inkMuted,
+        background: failed ? 'rgba(184, 58, 42, 0.10)' : 'rgba(14, 20, 20, 0.05)',
+        color: failed ? theme.color.alert : theme.color.inkMuted,
         fontSize: theme.type.size.xs,
         fontWeight: theme.type.weight.semibold,
         letterSpacing: theme.type.tracking.tight,
