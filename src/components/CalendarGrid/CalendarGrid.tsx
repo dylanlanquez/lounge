@@ -142,21 +142,24 @@ export function CalendarGrid({
         {children}
 
         {/* Now-line — full-width across slot column at low opacity. */}
-        {showNow ? <NowLine offset={now!.offset} /> : null}
+        {showNow ? <NowLine offset={now!.offset} beforeStart={now!.beforeStart} /> : null}
       </div>
     </div>
   );
 }
 
-function NowLine({ offset }: { offset: number }) {
+function NowLine({ offset, beforeStart }: { offset: number; beforeStart: boolean }) {
   // Extend 5px past both edges of the slot column. Left side meets the
   // right edge of the NowPill on the time axis; right side mirrors that
   // overhang so the line reads as a balanced horizontal stroke.
+  // Before start: line lifts above the grid edge to stay aligned with
+  // the pill's centre, so the indicator reads as a single unit.
+  const top = beforeStart ? -22 : offset;
   return (
     <div
       style={{
         position: 'absolute',
-        top: offset,
+        top,
         left: -5,
         right: -5,
         height: 1,
@@ -181,8 +184,9 @@ function NowPill({ offset, beforeStart }: { offset: number; beforeStart: boolean
   // before the slot column starts — never overlaps appointment cards.
   // Default: vertically centred on the now-line. Before the first visible
   // hour, perch the pill above the top edge so it doesn't cover the
-  // first hour label (which sits at top: -6).
-  const top = beforeStart ? -26 : offset - 10;
+  // first hour label (which sits at top: -6). The line lifts to top: -22
+  // alongside it so both stay vertically aligned as one unit.
+  const top = beforeStart ? -32 : offset - 10;
   return (
     <div
       style={{
