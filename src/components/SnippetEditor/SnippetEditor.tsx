@@ -71,7 +71,7 @@ const StyledButton = TiptapNode.create({
       },
       label: {
         default: 'Click here',
-        parseHTML: (el) => (el as HTMLElement).textContent?.trim() || 'Click here',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-label') || (el as HTMLElement).textContent?.trim() || 'Click here',
       },
       bgColor: {
         default: '#0E1414',
@@ -131,6 +131,7 @@ const StyledButton = TiptapNode.create({
         'data-radius': borderRadius,
         'data-mt': marginTop,
         'data-mb': marginBottom,
+        'data-label': label,
         'data-bw': borderWidth || '0',
         'data-bc': borderColor || '#0E1414',
         'data-icon': iconName || '',
@@ -326,7 +327,7 @@ export function syntaxToHtml(text: string): string {
         const iconHtml = iconName && EMAIL_ICONS[iconName]
           ? `<span style="display:inline-block;margin-right:5px;vertical-align:middle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${textColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[iconName]}</svg></span>`
           : '';
-        return `<span data-type="styled-button" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="${marginTop}" data-mb="${marginBottom}" data-bw="${borderWidth}" data-bc="${borderColor}" data-icon="${iconName}" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0${borderStyleStr}">${iconHtml}${label}</span>`;
+        return `<span data-type="styled-button" data-label="${label}" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="${marginTop}" data-mb="${marginBottom}" data-bw="${borderWidth}" data-bc="${borderColor}" data-icon="${iconName}" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0${borderStyleStr}">${iconHtml}${label}</span>`;
       },
     )
     // Backward compat: 3-param button
@@ -343,7 +344,7 @@ export function syntaxToHtml(text: string): string {
         const bgColor = bg || '#0E1414';
         const textColor = tc || '#FFFFFF';
         const borderRadius = rad || '999';
-        return `<span data-type="styled-button" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="12" data-mb="12" data-bw="0" data-bc="#0E1414" data-icon="" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:12px 0">${label}</span>`;
+        return `<span data-type="styled-button" data-label="${label}" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="12" data-mb="12" data-bw="0" data-bc="#0E1414" data-icon="" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:12px 0">${label}</span>`;
       },
     )
     .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
@@ -391,7 +392,7 @@ export function htmlToSyntax(html: string): string {
     if (tag === 'SPAN') {
       if (el.getAttribute('data-type') === 'styled-button') {
         const url   = el.getAttribute('data-url') ?? '';
-        const label = el.textContent?.trim() ?? 'Click here';
+        const label = el.getAttribute('data-label') || el.textContent?.trim() || 'Click here';
         const bg    = el.getAttribute('data-bg') ?? '#0E1414';
         const tc    = el.getAttribute('data-text-color') ?? '#FFFFFF';
         const rad   = el.getAttribute('data-radius') ?? '999';
