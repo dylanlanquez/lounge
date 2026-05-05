@@ -7,6 +7,7 @@ import {
   Ban,
   CalendarCheck,
   CalendarClock,
+  CheckCircle2,
   ChevronRight,
   CircleSlash,
   ClipboardList,
@@ -18,6 +19,7 @@ import {
   StickyNote,
   User as UserIcon,
   UserCheck,
+  UserX,
   XCircle,
 } from 'lucide-react';
 import {
@@ -566,23 +568,12 @@ function Hero({
   const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
   const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
   const dateLong = formatDateLongOrdinal(appt.start_at);
-  const timeRange = formatTimeRange(appt.start_at, appt.end_at);
-  const relative = appt.status === 'booked' ? relativeDay(appt.start_at) : null;
 
-  // Tone routes:
-  //   booked-future  → accent (upcoming, lean in)
-  //   booked-past    → neutral (overdue but not terminated)
-  //   cancelled      → alert
-  //   no_show / rescheduled → warn
-  //   anything else  → neutral fallback
-  const upcoming = appt.status === 'booked' && new Date(appt.start_at).getTime() > Date.now();
-  const heroTone: AppointmentHeroTone = upcoming
-    ? 'accent'
-    : appt.status === 'cancelled'
-      ? 'alert'
-      : appt.status === 'no_show' || appt.status === 'rescheduled'
-        ? 'warn'
-        : 'neutral';
+  // State-driven ribbon — icon + anchor + relative + tone all picked
+  // together so a glance answers "what is this booking doing right
+  // now" without the operator having to interpret a generic clock
+  // icon and stale time copy.
+  const ribbon = buildApptRibbon(appt);
 
   // Pills sit next to the patient name in the hero. Status is always
   // present; "Deposit paid" joins it when the booking-time deposit has
@@ -604,13 +595,118 @@ function Hero({
       subtitle={refLine}
       when={{
         dateLong,
-        timeLine: timeRange,
-        relative,
+        timeLine: ribbon.timeLine,
+        relative: ribbon.relative,
         service,
-        tone: heroTone,
+        tone: ribbon.tone,
+        icon: ribbon.icon,
       }}
     />
   );
+}
+
+// One source of truth for what the ribbon says + which icon it shows
+// for every appointment status. Each branch returns a fully-formed
+// "what's going on now, in plain English" — no shared scaffolding
+// across statuses, because the language for "did not turn up" should
+// not look like the language for "rescheduled to a new slot".
+function buildApptRibbon(appt: AppointmentDetailRow): {
+  icon: ReactNode;
+  timeLine: string;
+  relative: string | null;
+  tone: AppointmentHeroTone;
+} {
+  const startMs = new Date(appt.start_at).getTime();
+  const now = Date.now();
+  const timeRange = formatTimeRange(appt.start_at, appt.end_at);
+
+  switch (appt.status) {
+    case 'booked': {
+      // Future booking — calendar icon, accent tone, "in 5 days" copy.
+      // Past booking still flagged 'booked' is a missed slot the
+      // operator hasn't actioned (no arrived / no-show / cancel) —
+      // surface that as overdue with a warn tone so it doesn't blend
+      // in with normal upcoming bookings on the page.
+      if (startMs > now) {
+        return {
+          icon: <CalendarClock size={16} aria-hidden />,
+          timeLine: `Booked for ${timeRange}`,
+          relative: relativeDay(appt.start_at),
+          tone: 'accent',
+        };
+      }
+      return {
+        icon: <AlertTriangle size={16} aria-hidden />,
+        timeLine: `Booked for ${timeRange}`,
+        relative: 'Patient overdue',
+        tone: 'warn',
+      };
+    }
+    case 'arrived': {
+      // Transient — the arrival flow opens a visit immediately so
+      // AppointmentDetail rarely lands here. When it does, the page
+      // is about to redirect; a friendly "checked in, opening visit"
+      // bridges the gap.
+      return {
+        icon: <UserCheck size={16} aria-hidden />,
+        timeLine: 'Patient checked in',
+        relative: 'Opening visit',
+        tone: 'accent',
+      };
+    }
+    case 'in_progress': {
+      return {
+        icon: <UserCheck size={16} aria-hidden />,
+        timeLine: 'Visit in progress',
+        relative: null,
+        tone: 'accent',
+      };
+    }
+    case 'complete': {
+      return {
+        icon: <CheckCircle2 size={16} aria-hidden />,
+        timeLine: 'Visit complete',
+        relative: null,
+        tone: 'neutral',
+      };
+    }
+    case 'no_show': {
+      return {
+        icon: <UserX size={16} aria-hidden />,
+        timeLine: 'Patient did not turn up',
+        relative: appt.cancel_reason ? humaniseNoShowReason(appt.cancel_reason) : null,
+        tone: 'warn',
+      };
+    }
+    case 'cancelled': {
+      return {
+        icon: <Ban size={16} aria-hidden />,
+        timeLine: 'Cancelled',
+        relative: appt.cancel_reason ? truncateRibbonReason(appt.cancel_reason) : null,
+        tone: 'alert',
+      };
+    }
+    case 'rescheduled': {
+      // The detailed "Rescheduled to {date}" lives in its own card on
+      // the page; the ribbon stays a single-line summary so the eye
+      // doesn't have to pick a date out of two places.
+      return {
+        icon: <RotateCcw size={16} aria-hidden />,
+        timeLine: 'Booking moved',
+        relative: 'New slot below',
+        tone: 'warn',
+      };
+    }
+  }
+}
+
+// Long cancel reasons would push the relative line off the ribbon and
+// truncate awkwardly; keep them to a glance-readable length, the full
+// reason still shows in the ReasonCard below.
+function truncateRibbonReason(reason: string): string {
+  const trimmed = reason.trim();
+  if (trimmed.length <= 60) return trimmed;
+  return `${trimmed.slice(0, 57)}…`;
 }
 
 // Date helpers live in src/lib/dateFormat.ts so VisitDetail's "When"

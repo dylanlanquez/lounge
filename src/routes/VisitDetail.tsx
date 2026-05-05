@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   CheckCircle,
   ChevronRight,
+  CircleSlash,
   FileText,
   Plus,
   Printer,
   RotateCcw,
   ShoppingCart,
   StickyNote,
+  UserCheck,
   X,
 } from 'lucide-react';
 import {
@@ -43,7 +45,6 @@ import { humaniseEventTypeLabel, usePatientProfileFiles } from '../lib/queries/p
 import {
   formatDateLongOrdinal,
   formatTime,
-  formatTimeRange,
   relativeMinutes,
 } from '../lib/dateFormat.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
@@ -907,7 +908,7 @@ export function VisitDetail() {
                 the visit timeline at the bottom. */}
             <div style={{ marginBottom: theme.space[6] }}>
               <AppointmentHero
-                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable)}
+                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable, items.length > 0)}
                 trailing={
                   patient ? (
                     <Button
@@ -2436,20 +2437,20 @@ function buildVisitHeroProps(
   patient: (PatientRow & { avatar_data?: string | null }) | null,
   cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null; total_pence: number } | null,
   latestUnsuitable: { recorded_at: string | null } | null,
+  hasItems: boolean,
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
   const dateLong = formatDateLongOrdinal(headlineIso);
-  // When the cart is paid, the "Scheduled 09:15 · Arrived 1 hour ago"
-  // ribbon line is stale — those moments are behind the operator now.
-  // Replace it with a payment summary so the ribbon answers "what is
-  // happening with this visit" with the live, current fact: paid.
-  const lineParts =
-    cart?.status === 'paid'
-      ? visitWhenPaidLine()
-      : visitWhenStatusLine(visit, appointment, isWalkIn);
   const service =
     humaniseEventTypeLabel(appointment?.event_type_label ?? null) ?? (isWalkIn ? 'Walk-in' : 'Appointment');
+
+  // State-driven ribbon — every (visit status × cart status × walk-in
+  // vs scheduled) combination resolves to a single triple of icon +
+  // anchor + action prompt. The relative slot lands in the accent
+  // colour, so action prompts there pull the operator's eye to the
+  // next thing on the page (Add item / Take payment / Finish visit).
+  const ribbon = buildVisitRibbon({ visit, appointment, isWalkIn, cart, hasItems });
 
   // Pills row — visit status always; cart status when one exists and
   // the visit isn't terminated (a "Cart open" pill on an unsuitable
@@ -2473,28 +2474,10 @@ function buildVisitHeroProps(
   if (appointment?.jb_ref) subtitleParts.push(`JB${appointment.jb_ref}`);
   subtitleParts.push(isWalkIn ? 'Walk-in' : 'Scheduled');
 
-  const tone: AppointmentHeroTone = (() => {
-    switch (visit.status) {
-      case 'arrived':
-        return 'accent';
-      case 'complete':
-        return 'neutral';
-      case 'unsuitable':
-      case 'ended_early':
-        return 'warn';
-    }
-  })();
-
   // Suppress unused-arg warning until we surface the unsuitable-at
   // moment in the ribbon copy. Keeping the arg in the signature so
   // future enrichment doesn't need a callsite churn.
   void latestUnsuitable;
-
-  // Once paid, the ribbon's leading icon should read as "settled
-  // receipt" not "calendar clock" — the calendar implies pending
-  // chronology, which is the wrong message for a sale that's done.
-  const ribbonIcon =
-    cart?.status === 'paid' ? <BadgeCheck size={16} aria-hidden /> : undefined;
 
   return {
     patient: { name: patient ? patientFullName(patient) : 'Patient', avatarSrc: patient?.avatar_data ?? null },
@@ -2502,96 +2485,109 @@ function buildVisitHeroProps(
     subtitle: subtitleParts.join(' · '),
     when: {
       dateLong,
-      timeLine: lineParts.anchor,
-      relative: lineParts.relative,
+      timeLine: ribbon.timeLine,
+      relative: ribbon.relative,
       service,
-      tone,
-      icon: ribbonIcon,
+      tone: ribbon.tone,
+      icon: ribbon.icon,
     },
   };
 }
 
-// Build the second-line "anchor + relative" pair for the ribbon.
-// Anchor reads as a fact ("Scheduled 09:00", "Walked in 09:43");
-// relative phrases what's happening right now ("Arrived 23 minutes
-// ago", "In chair · 14 minutes", "Completed 5 minutes ago"). The
-// pair is deliberately split so the renderer can colour them
-// differently without re-parsing the string.
-// When the cart is paid, the ribbon answers two things at once: the
-// state ("Paid in full") AND the next action ("Ready to finish"). The
-// relative slot is rendered in the accent colour by AppointmentHero,
-// so putting "Ready to finish" there pulls the receptionist's eye
-// straight to the next thing they need to do — Finish visit at the
-// bottom of the page. The detailed receipt (amount, method, exact
-// time) lives in the PaidHeader inside the Cart card; the ribbon
-// stays a quiet state-and-prompt summary.
-function visitWhenPaidLine(): { anchor: string; relative: string | null } {
-  return {
-    anchor: 'Paid in full',
-    relative: 'Ready to finish',
-  };
-}
-
-function visitWhenStatusLine(
-  visit: VisitRow,
-  appointment: VisitAppointmentContext | null,
-  isWalkIn: boolean,
-): { anchor: string; relative: string | null } {
-  // Reference time for "X minutes ago": closed_at when the visit has
-  // ended, opened_at while it's still active. Falls through to
-  // null-safe parsing on either side.
-  const reference =
-    visit.status === 'complete' || visit.status === 'unsuitable' || visit.status === 'ended_early'
-      ? visit.closed_at ?? visit.opened_at
-      : visit.opened_at;
-  const relative = reference ? relativeMinutes(reference) : null;
-
-  // Anchor sentence varies with origin + status. Walk-ins never had a
-  // booked slot so we phrase the time as the arrival moment; scheduled
-  // visits show the booked time so staff can see at a glance whether
-  // the patient was on time, early, or late.
-  if (isWalkIn) {
+// Single source of truth for the visit ribbon. Each branch returns a
+// fully-formed (icon + anchor + relative + tone) — no shared
+// scaffolding, because the language for "stopped, case unsuitable"
+// shouldn't look like the language for "patient in the clinic". The
+// relative slot is the accent-coloured one in the renderer, so
+// action prompts ("Build the cart", "Take payment", "Ready to
+// finish") land there to pull the operator forward. Terminal states
+// drop the prompt and use a relative time instead.
+function buildVisitRibbon({
+  visit,
+  appointment,
+  isWalkIn,
+  cart,
+  hasItems,
+}: {
+  visit: VisitRow;
+  appointment: VisitAppointmentContext | null;
+  isWalkIn: boolean;
+  cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null } | null;
+  hasItems: boolean;
+}): {
+  icon: ReactNode;
+  timeLine: string;
+  relative: string | null;
+  tone: AppointmentHeroTone;
+} {
+  // Terminal visit states ignore cart status — once a visit is
+  // complete/unsuitable/ended_early the cart can't change, and
+  // "stopped, case unsuitable" reads more clearly than mixing in
+  // payment fact.
+  if (visit.status === 'complete') {
+    const closed = visit.closed_at ?? visit.opened_at;
+    const rel = closed ? relativeMinutes(closed) : null;
     return {
-      anchor: `Walked in ${formatTime(visit.opened_at)}`,
-      relative: walkInRelative(visit, relative),
+      icon: <CheckCircle2 size={16} aria-hidden />,
+      timeLine: 'Visit complete',
+      relative: rel,
+      tone: 'neutral',
+    };
+  }
+  if (visit.status === 'unsuitable') {
+    const closed = visit.closed_at ?? visit.opened_at;
+    const rel = closed ? relativeMinutes(closed) : null;
+    return {
+      icon: <Ban size={16} aria-hidden />,
+      timeLine: 'Stopped, case unsuitable',
+      relative: rel,
+      tone: 'warn',
+    };
+  }
+  if (visit.status === 'ended_early') {
+    const closed = visit.closed_at ?? visit.opened_at;
+    const rel = closed ? relativeMinutes(closed) : null;
+    return {
+      icon: <CircleSlash size={16} aria-hidden />,
+      timeLine: 'Visit ended early',
+      relative: rel,
+      tone: 'warn',
     };
   }
 
-  const slotRange = appointment ? formatTimeRange(appointment.start_at, '') : '';
-  // formatTimeRange returns '' when end is unparseable; for visits we
-  // don't have end_at on the appointment context, so render just the
-  // start time using formatTime instead.
-  const slotStart = appointment ? formatTime(appointment.start_at) : '';
-  const anchor = slotStart ? `Scheduled ${slotStart}` : 'Scheduled';
-  // Suppress slotRange usage warning — see comment above.
-  void slotRange;
-
-  switch (visit.status) {
-    case 'arrived':
-      return { anchor, relative: relative ? `Patient in clinic · ${relative}` : 'Patient in clinic' };
-    case 'complete':
-      return { anchor, relative: relative ? `Visit ended · ${relative}` : 'Visit ended' };
-    case 'unsuitable':
-      return { anchor, relative: relative ? `Stopped, case unsuitable · ${relative}` : 'Stopped, case unsuitable' };
-    case 'ended_early':
-      return { anchor, relative: relative ? `Visit ended early · ${relative}` : 'Visit ended early' };
+  // visit.status === 'arrived' from here on. Branch on cart state.
+  if (cart?.status === 'paid') {
+    return {
+      icon: <BadgeCheck size={16} aria-hidden />,
+      timeLine: 'Paid in full',
+      relative: 'Ready to finish',
+      tone: 'accent',
+    };
   }
-}
-
-function walkInRelative(visit: VisitRow, baseRelative: string | null): string | null {
-  if (!baseRelative) return null;
-  switch (visit.status) {
-    case 'arrived':
-      // Walk-in anchor already says "Walked in 09:43" — no need to
-      // repeat "Arrived"; switch to the live state.
-      return `Patient in clinic · ${baseRelative}`;
-    case 'complete':
-      return `Visit ended · ${baseRelative}`;
-    case 'unsuitable':
-      return `Stopped, case unsuitable · ${baseRelative}`;
-    case 'ended_early':
-      return `Visit ended early · ${baseRelative}`;
+  if (cart?.status === 'voided') {
+    return {
+      icon: <RotateCcw size={16} aria-hidden />,
+      timeLine: 'Payment voided',
+      relative: 'Take payment again',
+      tone: 'warn',
+    };
   }
+
+  // Cart is open (or absent). Anchor stays as the chronological fact
+  // (when the patient walked in / what slot they were booked into),
+  // relative becomes the next-step prompt the bottom CTA echoes.
+  const anchor = isWalkIn
+    ? `Walked in ${formatTime(visit.opened_at)}`
+    : appointment
+      ? `Scheduled ${formatTime(appointment.start_at)}`
+      : 'Patient in clinic';
+  const prompt = hasItems ? 'Take payment' : 'Build the cart';
+  return {
+    icon: <UserCheck size={16} aria-hidden />,
+    timeLine: anchor,
+    relative: prompt,
+    tone: 'accent',
+  };
 }
 
 // Filters out internal placeholders and empty refs. Anything starting
