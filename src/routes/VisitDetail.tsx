@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -463,6 +463,32 @@ export function VisitDetail() {
       accentColor: theme.color.accent,
     };
   }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit, paidPayments]);
+
+  // Lazy parcel code backfill — runs once when a shipped visit loads with
+  // a tracking_number but no parcel_code. DPD doesn't always return the
+  // parcel code immediately at label creation time; fill-lng-parcel-code
+  // checks Checkpoint's shipping_queue (where fill-parcel-codes has already
+  // backfilled it) and writes it back so the tracking URL is correct.
+  const parcelCodeFetchedRef = useRef(false);
+  useEffect(() => {
+    if (parcelCodeFetchedRef.current) return;
+    if (!visit?.tracking_number || visit.parcel_code) return;
+    parcelCodeFetchedRef.current = true;
+
+    const anonKey    = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      fetch(`${supabaseUrl}/functions/v1/fill-lng-parcel-code`, {
+        method:  'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization:  `Bearer ${session?.access_token ?? anonKey}`,
+          apikey:          anonKey,
+        },
+        body: JSON.stringify({ visit_id: visit.id }),
+      }).catch(() => {/* non-fatal */});
+    });
+  }, [visit?.id, visit?.tracking_number, visit?.parcel_code]);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
