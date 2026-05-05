@@ -41,6 +41,7 @@ import { type ParsedAddress } from '../lib/useAddressAutocomplete.ts';
 import { supabase } from '../lib/supabase.ts';
 import {
   type CatalogueRow,
+  useCatalogueActive,
 } from '../lib/queries/catalogue.ts';
 import {
   addCatalogueItemsToCart,
@@ -48,7 +49,7 @@ import {
   type CatalogueAddOptions,
   type CartRow,
 } from '../lib/queries/carts.ts';
-import { totalForQtyWithArch } from '../lib/catalogueMatch.ts';
+import { findMatches, totalForQtyWithArch } from '../lib/catalogueMatch.ts';
 import { properCase } from '../lib/queries/appointments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
@@ -117,6 +118,13 @@ interface AppointmentContext {
   deposit_pence: number | null;
   deposit_status: 'paid' | 'failed' | null;
   deposit_provider: 'paypal' | 'stripe' | null;
+  // Booking-type axis pins — set when the receptionist or widget
+  // pinned a specific child config at booking time. Used to
+  // pre-populate the arrival-form basket with the intended product.
+  service_type: string | null;
+  product_key: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  repair_variant: string | null;
 }
 
 interface PatientLite {
@@ -275,6 +283,8 @@ export function Arrival() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const { rows: catalogueRows } = useCatalogueActive();
+
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -399,7 +409,7 @@ export function Arrival() {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider'
+              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider, service_type, product_key, arch, repair_variant'
             )
             .eq('id', id)
             .maybeSingle();
@@ -443,6 +453,40 @@ export function Arrival() {
       cancelled = true;
     };
   }, [id, mode]);
+
+  // Pre-populate the basket from the appointment's axis pins.
+  // Runs once when both the appointment context and the catalogue are
+  // loaded. Does nothing for walk-ins (no prior booking) or when the
+  // staff has already manually staged items (preserve their intent).
+  const prePopulatedRef = useRef(false);
+  useEffect(() => {
+    if (mode !== 'appointment') return;
+    if (!appointment?.service_type) return;
+    if (catalogueRows.length === 0) return;
+    if (prePopulatedRef.current) return;
+    if (stagedItems.length > 0) return;
+
+    prePopulatedRef.current = true;
+
+    const criteria = {
+      service_type:   appointment.service_type,
+      product_key:    appointment.product_key    ?? null,
+      repair_variant: appointment.repair_variant ?? null,
+      arch:           appointment.arch           ?? null,
+    };
+
+    const matches = findMatches(catalogueRows, criteria);
+    const best = matches[0];
+    if (!best) return;
+
+    const arch = appointment.arch as 'upper' | 'lower' | 'both' | null ?? null;
+    setStagedItems([{
+      key:      `${best.id}-prefill`,
+      catalogue: best,
+      qty:       1,
+      options:   { arch },
+    }]);
+  }, [mode, appointment, catalogueRows, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
