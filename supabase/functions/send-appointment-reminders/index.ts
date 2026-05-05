@@ -41,6 +41,8 @@ const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venne
 // any manual ops trigger can both work.
 const CRON_SECRET = Deno.env.get('LNG_REMINDERS_CRON_SECRET') ?? '';
 
+const WIDGET_PUBLIC_URL = (Deno.env.get('WIDGET_PUBLIC_URL') ?? 'https://book.venneir.com').replace(/\/+$/, '');
+
 // Reminder window. Default 23-25h covers an hourly cron with
 // generous slack. Configurable via env in case ops wants to tune
 // without redeploying.
@@ -99,22 +101,25 @@ async function handle(req: Request): Promise<Response> {
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // ── Load template ──────────────────────────────────────────────
-  const { data: tplRaw, error: tplErr } = await admin
-    .from('lng_email_templates')
-    .select('subject, body_syntax, enabled')
-    .eq('key', 'appointment_reminder')
-    .maybeSingle();
-  if (tplErr) {
-    return jsonResponse(200, { ok: false, error: `Template read failed: ${tplErr.message}` });
+  // ── Load templates ─────────────────────────────────────────────
+  // Load standard + virtual reminder templates in parallel. The
+  // virtual template is optional — a missing row means virtual
+  // appointments are skipped (logged per-row), not a hard failure.
+  const [stdResult, vrtResult] = await Promise.all([
+    admin.from('lng_email_templates').select('subject, body_syntax, enabled').eq('key', 'appointment_reminder').maybeSingle(),
+    admin.from('lng_email_templates').select('subject, body_syntax, enabled').eq('key', 'appointment_reminder_virtual').maybeSingle(),
+  ]);
+  if (stdResult.error) {
+    return jsonResponse(200, { ok: false, error: `Template read failed: ${stdResult.error.message}` });
   }
-  if (!tplRaw) {
+  if (!stdResult.data) {
     return jsonResponse(200, { ok: false, error: 'No appointment_reminder template configured' });
   }
-  const template = tplRaw as { subject: string; body_syntax: string; enabled: boolean };
-  if (!template.enabled) {
+  const standardTemplate = stdResult.data as { subject: string; body_syntax: string; enabled: boolean };
+  if (!standardTemplate.enabled) {
     return jsonResponse(200, { ok: true, sent: 0, skipped: 0, failed: 0, paused: true });
   }
+  const virtualTemplate = (vrtResult.data ?? null) as { subject: string; body_syntax: string; enabled: boolean } | null;
 
   // ── Compute sweep window ───────────────────────────────────────
   const now = new Date();
@@ -125,7 +130,7 @@ async function handle(req: Request): Promise<Response> {
   const { data: rowsRaw, error: sweepErr } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url',
+      'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url, manage_token',
     )
     .eq('status', 'booked')
     .neq('source', 'calendly')
@@ -144,7 +149,7 @@ async function handle(req: Request): Promise<Response> {
 
   for (const apt of rows) {
     try {
-      const result = await processOne(admin, template, apt);
+      const result = await processOne(admin, { standard: standardTemplate, virtual: virtualTemplate }, apt);
       if (result.outcome === 'sent') sent += 1;
       else if (result.outcome === 'skipped') skipped += 1;
       else {
@@ -194,11 +199,25 @@ interface ProcessResult {
   reason?: string;
 }
 
+type TemplateRow = { subject: string; body_syntax: string; enabled: boolean };
+
 async function processOne(
   admin: SupabaseClient,
-  template: { subject: string; body_syntax: string },
+  templates: { standard: TemplateRow; virtual: TemplateRow | null },
   apt: AppointmentRow,
 ): Promise<ProcessResult> {
+  // Select the appropriate template. Virtual appointments (those with
+  // a join_url) use the appointment_reminder_virtual template; all
+  // others use the standard appointment_reminder template.
+  const isVirtual = !!apt.join_url;
+  if (isVirtual && !templates.virtual) {
+    return { outcome: 'skipped', reason: 'appointment_reminder_virtual template not configured' };
+  }
+  const template = isVirtual ? templates.virtual! : templates.standard;
+  if (!template.enabled) {
+    return { outcome: 'skipped', reason: 'template_disabled' };
+  }
+
   // Hydrate patient + location.
   const [{ data: patientRaw }, { data: locationRaw }] = await Promise.all([
     admin
@@ -362,8 +381,9 @@ function buildVariables(
       formatPatientFacingDurationForEmail(patientFacingMinMinutes, patientFacingMaxMinutes),
       formatHmm,
     ),
-    joinMeetingButton: apt.join_url
-      ? `[button:Join your video appointment|#0D9488|#FFFFFF|999|20|8](${apt.join_url})`
+    joinMeetingUrl: apt.join_url ?? '',
+    manageUrl: apt.manage_token
+      ? `${WIDGET_PUBLIC_URL}/manage?token=${apt.manage_token}`
       : '',
   };
 }
@@ -862,6 +882,7 @@ interface AppointmentRow {
   event_type_label: string | null;
   appointment_ref: string | null;
   join_url: string | null;
+  manage_token: string | null;
 }
 
 interface PatientRow {

@@ -243,12 +243,17 @@ async function handle(req: Request): Promise<Response> {
   // right behaviour because the operator likely paused the template
   // deliberately and the receptionist needs to know "no email left
   // the building" rather than guess.
+  // Virtual appointments (those with a join_url) use their own
+  // dedicated templates so copy, structure, and CTAs can be written
+  // specifically for a remote consultation — no location address,
+  // join link as primary CTA, appropriate pre-appointment guidance.
+  const isVirtual = !!apt.join_url;
   const templateKey =
     kind === 'cancellation'
       ? 'booking_cancellation'
       : kind === 'reschedule'
-      ? 'booking_reschedule'
-      : 'booking_confirmation';
+      ? isVirtual ? 'booking_reschedule_virtual' : 'booking_reschedule'
+      : isVirtual ? 'booking_confirmation_virtual' : 'booking_confirmation';
 
   const { data: tplRaw, error: tplErr } = await admin
     .from('lng_email_templates')
@@ -836,9 +841,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
       ),
       time24,
     ),
-    joinMeetingButton: apt.join_url
-      ? `[button:Join your video appointment|#0D9488|#FFFFFF|999|20|8](${apt.join_url})`
-      : '',
+    joinMeetingUrl: apt.join_url ?? '',
   };
 
   if (oldApt) {
