@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -75,13 +75,34 @@ const StyledButton = TiptapNode.create({
   atom: true,
   addAttributes() {
     return {
-      url: { default: '' },
-      label: { default: 'Click here' },
-      bgColor: { default: '#0E1414' },
-      textColor: { default: '#FFFFFF' },
-      borderRadius: { default: '999' },
-      marginTop: { default: '12' },
-      marginBottom: { default: '12' },
+      url: {
+        default: '',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-url') ?? '',
+      },
+      label: {
+        default: 'Click here',
+        parseHTML: (el) => (el as HTMLElement).textContent?.trim() || 'Click here',
+      },
+      bgColor: {
+        default: '#0E1414',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-bg') ?? '#0E1414',
+      },
+      textColor: {
+        default: '#FFFFFF',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-text-color') ?? '#FFFFFF',
+      },
+      borderRadius: {
+        default: '999',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-radius') ?? '999',
+      },
+      marginTop: {
+        default: '12',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-mt') ?? '12',
+      },
+      marginBottom: {
+        default: '12',
+        parseHTML: (el) => (el as HTMLElement).getAttribute('data-mb') ?? '12',
+      },
     };
   },
   parseHTML() {
@@ -112,6 +133,38 @@ const StyledButton = TiptapNode.create({
       }),
       label,
     ];
+  },
+  addNodeView() {
+    return ({ node, getPos }) => {
+      const url           = (node.attrs.url           as string | null) ?? '';
+      const bgColor       = (node.attrs.bgColor       as string | null) ?? '#0E1414';
+      const textColor     = (node.attrs.textColor     as string | null) ?? '#FFFFFF';
+      const borderRadius  = (node.attrs.borderRadius  as string | null) ?? '999';
+      const marginTop     = (node.attrs.marginTop     as string | null) ?? '12';
+      const marginBottom  = (node.attrs.marginBottom  as string | null) ?? '12';
+      const label         = (node.attrs.label         as string | null) ?? 'Click here';
+      const dom = document.createElement('span');
+      dom.setAttribute('data-type', 'styled-button');
+      dom.setAttribute('data-url', url);
+      dom.setAttribute('data-bg', bgColor);
+      dom.setAttribute('data-text-color', textColor);
+      dom.setAttribute('data-radius', borderRadius);
+      dom.setAttribute('data-mt', marginTop);
+      dom.setAttribute('data-mb', marginBottom);
+      dom.style.cssText = `display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:pointer;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0;user-select:none`;
+      dom.textContent = label;
+      dom.addEventListener('click', () => {
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (pos === undefined) return;
+        dom.dispatchEvent(
+          new CustomEvent('snippet-button-click', {
+            bubbles: true,
+            detail: { pos, attrs: node.attrs },
+          }),
+        );
+      });
+      return { dom };
+    };
   },
 });
 
@@ -504,49 +557,63 @@ interface ButtonAttrs {
 }
 
 function ButtonDialog({
+  initial,
   onConfirm,
   onCancel,
+  onDelete,
 }: {
+  initial?: ButtonAttrs;
   onConfirm: (attrs: ButtonAttrs) => void;
   onCancel: () => void;
+  onDelete?: () => void;
 }) {
-  const [label, setLabel] = useState('Click here');
-  const [url, setUrl] = useState('https://');
-  const [bgColor, setBgColor] = useState('#0E1414');
-  const [textColor, setTextColor] = useState('#FFFFFF');
-  const [borderRadius, setBorderRadius] = useState('999');
-  const [marginTop, setMarginTop] = useState('12');
-  const [marginBottom, setMarginBottom] = useState('12');
+  const isEdit = !!initial;
+  const [label, setLabel] = useState(initial?.label ?? 'Click here');
+  const [url, setUrl] = useState(initial?.url ?? 'https://');
+  const [bgColor, setBgColor] = useState(initial?.bgColor ?? '#0E1414');
+  const [textColor, setTextColor] = useState(initial?.textColor ?? '#FFFFFF');
+  const [borderRadius, setBorderRadius] = useState(initial?.borderRadius ?? '999');
+  const [marginTop, setMarginTop] = useState(initial?.marginTop ?? '12');
+  const [marginBottom, setMarginBottom] = useState(initial?.marginBottom ?? '12');
   const ok = label && url && url !== 'https://';
 
   return (
     <BottomSheet
       open
       onClose={onCancel}
-      title="Add button"
+      title={isEdit ? 'Edit button' : 'Add button'}
       description="Buttons render as inline-block tap targets in the email. Tweak the styling below; the preview shows the final result."
       footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
-          <Button variant="tertiary" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={!ok}
-            onClick={() =>
-              onConfirm({
-                label,
-                url,
-                bgColor,
-                textColor,
-                borderRadius,
-                marginTop,
-                marginBottom,
-              })
-            }
-          >
-            Add button
-          </Button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: theme.space[2] }}>
+          {isEdit && onDelete ? (
+            <Button variant="tertiary" onClick={onDelete}>
+              Delete button
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div style={{ display: 'flex', gap: theme.space[2] }}>
+            <Button variant="tertiary" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!ok}
+              onClick={() =>
+                onConfirm({
+                  label,
+                  url,
+                  bgColor,
+                  textColor,
+                  borderRadius,
+                  marginTop,
+                  marginBottom,
+                })
+              }
+            >
+              {isEdit ? 'Save changes' : 'Add button'}
+            </Button>
+          </div>
         </div>
       }
     >
@@ -1008,6 +1075,14 @@ export function SnippetEditor({
   const [buttonOpen, setButtonOpen] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
   const [colorOpen, setColorOpen] = useState(false);
+  // editingButton: set when the user clicks an existing button node in
+  // the editor. Stores the document position + current attrs so the
+  // edit dialog can pre-fill and update/delete the right node.
+  const [editingButton, setEditingButton] = useState<{
+    pos: number;
+    attrs: ButtonAttrs;
+  } | null>(null);
+  const editorWrapperRef = useRef<HTMLDivElement>(null);
 
   const editor = useEditor(
     {
@@ -1084,6 +1159,20 @@ export function SnippetEditor({
     };
   }, [editor, editorRef]);
 
+  // Listen for click events dispatched by the styledButton node view.
+  // When a button is clicked in the editor, open the edit dialog
+  // pre-filled with its current attrs.
+  useEffect(() => {
+    const el = editorWrapperRef.current;
+    if (!el) return;
+    const handler = (e: Event) => {
+      const { pos, attrs } = (e as CustomEvent<{ pos: number; attrs: ButtonAttrs }>).detail;
+      setEditingButton({ pos, attrs });
+    };
+    el.addEventListener('snippet-button-click', handler);
+    return () => el.removeEventListener('snippet-button-click', handler);
+  }, []);
+
   // Sync external value changes (e.g. version restore from history).
   useEffect(() => {
     if (!editor) return;
@@ -1146,6 +1235,38 @@ export function SnippetEditor({
     setButtonOpen(false);
   };
 
+  const confirmEditButton = (newAttrs: ButtonAttrs) => {
+    if (!editor || editingButton === null) return;
+    const { pos } = editingButton;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== 'styledButton') {
+      setEditingButton(null);
+      return;
+    }
+    editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(pos, undefined, {
+        url: newAttrs.url,
+        label: newAttrs.label,
+        bgColor: newAttrs.bgColor,
+        textColor: newAttrs.textColor,
+        borderRadius: newAttrs.borderRadius,
+        marginTop: newAttrs.marginTop,
+        marginBottom: newAttrs.marginBottom,
+      }),
+    );
+    setEditingButton(null);
+  };
+
+  const deleteEditButton = () => {
+    if (!editor || editingButton === null) return;
+    const { pos } = editingButton;
+    const node = editor.state.doc.nodeAt(pos);
+    if (node) {
+      editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize));
+    }
+    setEditingButton(null);
+  };
+
   const confirmImage = ({ url, alt }: { url: string; alt: string }) => {
     if (!editor || !url) {
       setImageOpen(false);
@@ -1156,7 +1277,7 @@ export function SnippetEditor({
   };
 
   return (
-    <>
+    <div ref={editorWrapperRef}>
       {/* Toolbar */}
       <div
         style={{
@@ -1307,6 +1428,14 @@ export function SnippetEditor({
       {buttonOpen ? (
         <ButtonDialog onConfirm={confirmButton} onCancel={() => setButtonOpen(false)} />
       ) : null}
+      {editingButton ? (
+        <ButtonDialog
+          initial={editingButton.attrs}
+          onConfirm={confirmEditButton}
+          onCancel={() => setEditingButton(null)}
+          onDelete={deleteEditButton}
+        />
+      ) : null}
       {imageOpen ? (
         <ImageDialog onConfirm={confirmImage} onCancel={() => setImageOpen(false)} />
       ) : null}
@@ -1320,6 +1449,6 @@ export function SnippetEditor({
           onClose={() => setColorOpen(false)}
         />
       ) : null}
-    </>
+    </div>
   );
 }
