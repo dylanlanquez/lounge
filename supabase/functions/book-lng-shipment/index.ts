@@ -34,9 +34,9 @@ const SUPABASE_URL             = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY                 = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-const DPD_USERNAME = Deno.env.get('DPD_USERNAME') ?? '';
-const DPD_PASSWORD = Deno.env.get('DPD_PASSWORD') ?? '';
-const DPD_BASE     = 'https://api.customers.dpd.co.uk';
+// DPD calls are proxied through Checkpoint's edge function which runs on
+// the IP already whitelisted with DPD. Direct calls from this project's
+// egress IP are rejected by DPD's IP allowlist.
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
 const RESEND_FROM    = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
@@ -57,9 +57,6 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function normalisePhone(p: string): string {
-  return (p || '').replace(/\s+/g, '').replace(/^\+44/, '0').substring(0, 15);
-}
 
 function generateDispatchRef(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -153,123 +150,63 @@ async function handle(req: Request): Promise<Response> {
     lwo_ref: string | null;
   } | null;
 
-  // ── DPD: auth token ──────────────────────────────────────────────────────
-  if (!DPD_USERNAME || !DPD_PASSWORD) {
-    return json({ ok: false, error: 'DPD credentials missing from env' }, 500);
-  }
-
-  const authRes = await fetch(`${DPD_BASE}/v1/customer/auth/access`, {
-    method: 'GET',
-    headers: {
-      Authorization: 'Basic ' + btoa(`${DPD_USERNAME}:${DPD_PASSWORD}`),
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-  });
-  if (!authRes.ok) {
-    const errBody = await authRes.text().catch(() => '');
-    return json({ ok: false, error: `DPD authentication failed (${authRes.status}): ${errBody.slice(0, 200)}` });
-  }
-  const authData    = await authRes.json();
-  const accessToken = authData?.data?.accessToken;
-  if (!accessToken) {
-    return json({ ok: false, error: `DPD auth: no access token. Response: ${JSON.stringify(authData).slice(0, 200)}` });
-  }
-
-  // ── DPD: create shipment ─────────────────────────────────────────────────
+  // ── DPD: book via Checkpoint proxy ──────────────────────────────────────
+  // Checkpoint's book-dpd-shipment function runs on an IP already whitelisted
+  // with DPD. We call it with the service-role key (same pattern as the
+  // shipping_queue insert below).
   const dispatch_ref = generateDispatchRef();
-  const phone        = normalisePhone(shipping_address.phone ?? patient?.phone ?? '');
-  const today        = new Date().toISOString().split('T')[0] + 'T00:00:00';
-
-  const dpdPayload = {
-    shipmentDate: today,
-    outboundConsignment: {
-      collectionDetails: {
-        address: {
-          organisation: 'VENNEIR LIMITED',
-          countryCode:  'GB',
-          postcode:     'ML5 4AQ',
-          street:       'BLOCK 2 UNIT 6 DUNDYVAN IND EST',
-          locality:     '',
-          town:         'COATBRIDGE',
-          county:       'LANARKSHIRE',
-        },
-        contactDetails: {
-          contactName: 'Venneir Lab',
-          telephone:   '07447256367',
-        },
-      },
-      deliveryDetails: {
-        address: {
-          organisation: '',
-          countryCode:  (shipping_address.country_code || 'GB'),
-          postcode:     (shipping_address.zip || '').trim(),
-          street:       (shipping_address.address1 || '').substring(0, 35),
-          locality:     (shipping_address.address2 || '').substring(0, 35),
-          town:         (shipping_address.city || '').substring(0, 35),
-          county:       '',
-        },
-        contactDetails: {
-          contactName: (shipping_address.name || `${patient?.first_name ?? ''} ${patient?.last_name ?? ''}`.trim() || 'Customer').substring(0, 35),
-          telephone:   phone || '07000000000',
-        },
-        notificationDetails: {
-          email:  patient?.email || '',
-          mobile: phone          || '',
-        },
-      },
-      networkCode:     '2^32',
-      numberOfParcels: 1,
-      totalWeight:     0.5,
-      shippingRef1:    dispatch_ref.substring(0, 25),
-      shippingRef2:    '',
-      shippingRef3:    '',
-      liability:       false,
-    },
-  };
-
-  const shipRes = await fetch(`${DPD_BASE}/v1/customer/shipping/shipments/domestic`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Client-Id':   DPD_USERNAME,
-      Accept:        'application/json',
-      'Content-Type':'application/json',
-    },
-    body: JSON.stringify(dpdPayload),
-  });
 
   let trackingNumber: string | null = null;
   let shipmentId: string | null = null;
   let labelData: string | null = null;
 
-  if (shipRes.ok) {
-    const shipData = await shipRes.json();
-    shipmentId   = shipData?.data?.shipmentId ?? null;
-    trackingNumber = shipData?.data?.consignments?.[0]?.parcelNumber?.[0]
-                  ?? shipData?.data?.consignments?.[0]?.consignmentNumber
-                  ?? shipmentId;
-
-    // Fetch ZPL label
-    if (shipmentId) {
-      const labelRes = await fetch(
-        `${DPD_BASE}/v1/customer/shipping/shipments/${shipmentId}/labels?printerType=3`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Client-Id':   DPD_USERNAME,
-            Accept:        'application/json',
-          },
-        }
-      );
-      if (labelRes.ok) {
-        try {
-          const lData = await labelRes.json();
-          labelData = lData?.data?.printString?.[0] ?? null;
-        } catch { /* label optional */ }
-      }
-    }
+  if (!CHECKPOINT_SUPABASE_URL || !CHECKPOINT_SERVICE_ROLE_KEY) {
+    return json({ ok: false, error: 'CHECKPOINT_SUPABASE_URL / CHECKPOINT_SERVICE_ROLE_KEY not set' });
   }
+
+  const dpdRes = await fetch(`${CHECKPOINT_SUPABASE_URL}/functions/v1/book-dpd-shipment`, {
+    method: 'POST',
+    headers: {
+      Authorization:  `Bearer ${CHECKPOINT_SERVICE_ROLE_KEY}`,
+      apikey:          CHECKPOINT_SERVICE_ROLE_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      shippingAddress: {
+        name:         (shipping_address.name || `${patient?.first_name ?? ''} ${patient?.last_name ?? ''}`.trim() || 'Customer'),
+        address1:     shipping_address.address1 ?? '',
+        address2:     shipping_address.address2 ?? '',
+        city:         shipping_address.city     ?? '',
+        zip:          shipping_address.zip      ?? '',
+        country_code: shipping_address.country_code ?? 'GB',
+        phone:        shipping_address.phone    ?? '',
+      },
+      customerEmail: patient?.email ?? '',
+      customerPhone: patient?.phone ?? '',
+      orderName:     dispatch_ref,
+    }),
+  });
+
+  if (!dpdRes.ok) {
+    const errText = await dpdRes.text().catch(() => '');
+    return json({ ok: false, error: `DPD booking failed (${dpdRes.status}): ${errText.slice(0, 300)}` });
+  }
+
+  const dpdData = await dpdRes.json() as {
+    success?: boolean;
+    trackingNumber?: string | null;
+    shipmentId?: string | null;
+    labelData?: string | null;
+    error?: string;
+  };
+
+  if (!dpdData.success) {
+    return json({ ok: false, error: `DPD booking error: ${dpdData.error ?? 'unknown'}` });
+  }
+
+  trackingNumber = dpdData.trackingNumber ?? null;
+  shipmentId     = dpdData.shipmentId     ?? null;
+  labelData      = dpdData.labelData      ?? null;
   // DPD failure is non-fatal for the record — we stamp what we have and
   // surface status in the shipped card. Staff can re-trigger later.
 
