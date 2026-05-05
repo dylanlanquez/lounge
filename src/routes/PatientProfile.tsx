@@ -596,9 +596,11 @@ function Hero({
   );
 }
 
-// Static pill that confirms which arch scans are on file. Matches the
-// ShopifyLinkedPill's accent palette so the two read as a row of
-// at-a-glance "what we have for this patient" badges.
+// Static pill that confirms which arch scans are on file. Uses the
+// app's accent green to read as "we have something on file"; sits in
+// the same row as the Linked-account pill but in its own palette so
+// the two states (we have a scan / connected to the customer's online
+// account) are visually distinct, not competing for the same slot.
 function ScanOnFilePill({ label }: { label: string }) {
   return (
     <span
@@ -665,11 +667,11 @@ function ShopifyLinkedPill() {
           gap: theme.space[1],
           padding: `2px ${theme.space[2]}px 2px ${theme.space[2]}px`,
           borderRadius: theme.radius.pill,
-          // Pastel blue tint with a tonally-paired ink so the
-          // "Linked" pill reads as the connected-services slot
-          // distinct from the green scan / veneer pills next to it.
-          background: '#E5EEF8',
-          color: '#1E5BA8',
+          // Deep-teal tint paired with the matching ink. Distinct from
+          // the green scan / veneer pills next to it so the "Linked"
+          // pill reads as the connected-services slot at a glance.
+          background: 'rgba(2, 45, 51, 0.12)',
+          color: '#022d33',
           fontSize: theme.type.size.xs,
           fontWeight: theme.type.weight.semibold,
           border: 'none',
@@ -694,7 +696,7 @@ function ShopifyLinkedPill() {
           height={12}
           style={{ display: 'block', flexShrink: 0, marginLeft: -1 }}
         />
-        Linked to venneir.com &amp; One Click
+        Linked to venneir.com and One Click
         <Info size={12} aria-hidden style={{ opacity: 0.75 }} />
       </button>
 
@@ -748,7 +750,7 @@ function ShopifyLinkedPill() {
               paddingRight: theme.space[5],
             }}
           >
-            Linked to venneir.com &amp; One Click
+            Linked to venneir.com and One Click
           </p>
           <p
             style={{
@@ -759,11 +761,11 @@ function ShopifyLinkedPill() {
             }}
           >
             These details come from the customer&apos;s venneir.com / One Click account.
-            They can update them any time in the One Click app or on Shopify (it&apos;s
-            the same account, so a change in one shows up in the other). If you
-            edit them here at the lab, the change syncs back to the customer&apos;s
-            online account too — only edit when the customer is in front of you and
-            has agreed.
+            They can update them any time in One Click or on Shopify (it&apos;s the
+            same account, so a change in one shows up in the other). If you edit
+            them here at the lab, the change syncs back to the customer&apos;s online
+            account too, only edit when the customer is in front of you and has
+            agreed.
           </p>
         </div>
       ) : null}
