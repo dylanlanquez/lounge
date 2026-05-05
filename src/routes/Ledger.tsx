@@ -30,6 +30,7 @@ import {
   humaniseLedgerStatus,
   useLedger,
   type LedgerFilters,
+  type LedgerPaymentState,
   type LedgerRow,
   type LedgerSource,
   type LedgerStatus,
@@ -52,11 +53,16 @@ import type { DateRange } from '../lib/dateRange.ts';
 // Either destination's breadcrumb reads "Ledger › ..." via the
 // `from: 'ledger'` router state we attach below.
 
+// "In progress" stands in for both lng_appointments.status='in_progress'
+// AND lng_visits.status='in_chair' (the same conceptual state living on
+// two tables). When the receptionist picks "In progress", the Ledger
+// expands the filter to BOTH database values so a chair-side patient
+// and an in-progress booking both show up. The pill on each row reads
+// "In progress" too — see ROW_STATUS_LABEL below.
 const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
   { value: 'arrived', label: 'Arrived' },
   { value: 'in_progress', label: 'In progress' },
-  { value: 'in_chair', label: 'In chair' },
   { value: 'complete', label: 'Complete' },
   { value: 'no_show', label: 'No-show' },
   { value: 'cancelled', label: 'Cancelled' },
@@ -70,6 +76,16 @@ const SOURCE_OPTIONS: ReadonlyArray<{ value: LedgerSource; label: string }> = [
   { value: 'native', label: 'Native (Lounge)' },
   { value: 'manual', label: 'Manually added' },
   { value: 'walk_in', label: 'Walk-in' },
+];
+
+// Payment axis filter — Paid / Unpaid / Refunded. Independent of the
+// workflow Status filter (a row can be Complete and Paid; the two
+// pills compose). Refunded surfaces voided carts so an admin can
+// audit "what money came back this month".
+const PAYMENT_OPTIONS: ReadonlyArray<{ value: LedgerPaymentState; label: string }> = [
+  { value: 'paid', label: 'Paid' },
+  { value: 'unpaid', label: 'Unpaid' },
+  { value: 'refunded', label: 'Refunded' },
 ];
 
 // Status pill tone mapping. Every status surfaces explicitly — no
@@ -96,18 +112,31 @@ export function Ledger() {
   const [search, setSearch] = useState('');
   const [statuses, setStatuses] = useState<LedgerStatus[]>([]);
   const [sources, setSources] = useState<LedgerSource[]>([]);
+  const [paymentStates, setPaymentStates] = useState<LedgerPaymentState[]>([]);
   const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
 
+  // Expand the user-facing status selection back into the underlying
+  // data values. "In progress" matches both lng_appointments.status =
+  // 'in_progress' AND lng_visits.status = 'in_chair', because the
+  // receptionist treats them as one state.
+  const queryStatuses: LedgerStatus[] = useMemo(() => {
+    if (statuses.length === 0) return [];
+    const expanded = new Set<LedgerStatus>(statuses);
+    if (statuses.includes('in_progress')) expanded.add('in_chair');
+    return Array.from(expanded);
+  }, [statuses]);
+
   const filters: LedgerFilters = useMemo(
     () => ({
-      statuses,
+      statuses: queryStatuses,
       sources,
+      paymentStates,
       fromDate: dateRange?.start ?? null,
       toDate: dateRange?.end ?? null,
       search,
     }),
-    [statuses, sources, dateRange, search],
+    [queryStatuses, sources, paymentStates, dateRange, search],
   );
 
   const { data, loading, error, hasMore } = useLedger(filters, page);
@@ -116,7 +145,7 @@ export function Ledger() {
   // new search, not flicking through the previous result set.
   useEffect(() => {
     setPage(0);
-  }, [statuses, sources, dateRange, search]);
+  }, [statuses, sources, paymentStates, dateRange, search]);
 
   useEffect(() => {
     document.getElementById('root')?.scrollTo(0, 0);
@@ -129,10 +158,15 @@ export function Ledger() {
   const outerPaddingX = isMobile ? theme.space[4] : theme.space[6];
   const innerMaxWidth = theme.layout.pageMaxWidth;
   const filtersActive =
-    statuses.length > 0 || sources.length > 0 || dateRange !== null || trimmed.length > 0;
+    statuses.length > 0 ||
+    sources.length > 0 ||
+    paymentStates.length > 0 ||
+    dateRange !== null ||
+    trimmed.length > 0;
   const clearAll = () => {
     setStatuses([]);
     setSources([]);
+    setPaymentStates([]);
     setDateRange(null);
     setSearch('');
   };
@@ -167,6 +201,8 @@ export function Ledger() {
               onStatusesChange={setStatuses}
               sources={sources}
               onSourcesChange={setSources}
+              paymentStates={paymentStates}
+              onPaymentStatesChange={setPaymentStates}
               dateRange={dateRange}
               onDateRangeChange={setDateRange}
               filtersActive={filtersActive}
@@ -262,6 +298,8 @@ function FiltersRow({
   onStatusesChange,
   sources,
   onSourcesChange,
+  paymentStates,
+  onPaymentStatesChange,
   dateRange,
   onDateRangeChange,
   filtersActive,
@@ -273,6 +311,8 @@ function FiltersRow({
   onStatusesChange: (next: LedgerStatus[]) => void;
   sources: LedgerSource[];
   onSourcesChange: (next: LedgerSource[]) => void;
+  paymentStates: LedgerPaymentState[];
+  onPaymentStatesChange: (next: LedgerPaymentState[]) => void;
   dateRange: DateRange | null;
   onDateRangeChange: (next: DateRange | null) => void;
   filtersActive: boolean;
@@ -297,6 +337,14 @@ function FiltersRow({
           options={STATUS_OPTIONS}
           onChange={onStatusesChange}
           totalNoun="statuses"
+        />
+        <FilterPill<LedgerPaymentState>
+          label="Payment"
+          placeholder="Any payment"
+          values={paymentStates}
+          options={PAYMENT_OPTIONS}
+          onChange={onPaymentStatesChange}
+          totalNoun="payment states"
         />
         <FilterPill<LedgerSource>
           label="Source"
@@ -601,7 +649,20 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
           {dateLabel}
           <span style={{ color: theme.color.inkSubtle, marginLeft: theme.space[2] }}>{timeLabel}</span>
         </p>
-        <div style={{ justifySelf: 'end' }}>
+        <div
+          style={{
+            justifySelf: 'end',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: theme.space[1],
+          }}
+        >
+          {row.payment_state === 'paid' ? (
+            <StatusPill tone="arrived" size="sm">Paid</StatusPill>
+          ) : row.payment_state === 'refunded' ? (
+            <StatusPill tone="unsuitable" size="sm">Refunded</StatusPill>
+          ) : null}
           <StatusPill tone={tone} size="sm">
             {humaniseLedgerStatus(row.status)}
           </StatusPill>
