@@ -1528,11 +1528,9 @@ export function VisitDetail() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             <span
               style={{
-                fontSize: theme.type.size.xs,
+                fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
               }}
             >
               Reason <span style={{ color: theme.color.alert }}>*</span>
@@ -1617,11 +1615,9 @@ export function VisitDetail() {
             <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               <span
                 style={{
-                  fontSize: theme.type.size.xs,
+                  fontSize: theme.type.size.sm,
                   color: theme.color.inkMuted,
                   fontWeight: theme.type.weight.medium,
-                  textTransform: 'uppercase',
-                  letterSpacing: theme.type.tracking.wide,
                 }}
               >
                 {removeReason === 'unsuitable' ? 'Reason' : 'Note'}
@@ -1717,11 +1713,9 @@ export function VisitDetail() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             <span
               style={{
-                fontSize: theme.type.size.xs,
+                fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
               }}
             >
               Reason category <span style={{ color: theme.color.alert }}>*</span>
@@ -1816,11 +1810,9 @@ export function VisitDetail() {
           <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             <span
               style={{
-                fontSize: theme.type.size.xs,
+                fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
               }}
             >
               Reason <span style={{ color: theme.color.alert }}>*</span>
@@ -1908,11 +1900,9 @@ export function VisitDetail() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             <span
               style={{
-                fontSize: theme.type.size.xs,
+                fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
               }}
             >
               How is the work being handed off? <span style={{ color: theme.color.alert }}>*</span>
@@ -2068,17 +2058,17 @@ export function VisitDetail() {
               gap: theme.space[3],
             }}
           >
-            <span
+            <h3
               style={{
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
+                margin: 0,
+                fontSize: theme.type.size.md,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
               }}
             >
               Manager sign-off
-            </span>
+            </h3>
             <DropdownSelect<string>
               label="Approving manager"
               required
@@ -3162,7 +3152,7 @@ function ShippedItemsCard({
 
         {/* Dispatch reference + timestamp */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
             Dispatch reference
           </p>
           <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace', letterSpacing: theme.type.tracking.tight }}>
@@ -3179,7 +3169,7 @@ function ShippedItemsCard({
 
         {/* Tracking */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
             DPD tracking
           </p>
 
@@ -3246,7 +3236,7 @@ function ShippedItemsCard({
 
         {/* Patient notification */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
             Patient notification
           </p>
           {emailSentAt ? (
@@ -3266,7 +3256,7 @@ function ShippedItemsCard({
         {/* Delivery address */}
         {addrLines.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-            <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide, display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
               <MapPin size={12} aria-hidden /> Delivery address
             </p>
             {addrLines.map((line, i) => (

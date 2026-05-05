@@ -186,9 +186,9 @@ export function ShipVisitSheet({
         {/* Items summary */}
         {itemLabels.length > 0 && (
           <div>
-            <p style={{ margin: `0 0 ${theme.space[2]}px`, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+            <h3 style={{ margin: `0 0 ${theme.space[2]}px`, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
               Items being shipped
-            </p>
+            </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
               {itemLabels.map((label, i) => (
                 <p key={i} style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.ink }}>
@@ -203,9 +203,9 @@ export function ShipVisitSheet({
 
         {/* Address form */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+          <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
             Delivery address
-          </p>
+          </h3>
 
           {prefillLoading ? (
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
