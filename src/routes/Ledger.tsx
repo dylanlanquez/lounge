@@ -1,10 +1,12 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import {
+  BadgeCheck,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  RotateCcw,
   Search,
   X,
 } from 'lucide-react';
@@ -625,36 +627,24 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
         >
           {serviceLabel}
         </p>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-            fontVariantNumeric: 'tabular-nums',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {dateLabel}
-          <span style={{ color: theme.color.inkSubtle, marginLeft: theme.space[2] }}>{timeLabel}</span>
-        </p>
-        <div
-          style={{
-            justifySelf: 'end',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: theme.space[1],
-          }}
-        >
-          {row.payment_state === 'paid' ? (
-            <StatusPill tone="arrived" size="sm">Paid in full</StatusPill>
-          ) : row.payment_state === 'deposit_paid' ? (
-            <StatusPill tone="deposit_paid" size="sm">Deposit paid</StatusPill>
-          ) : row.payment_state === 'refunded' ? (
-            <StatusPill tone="unsuitable" size="sm">Refunded</StatusPill>
-          ) : null}
+        <div style={{ minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {dateLabel}
+            <span style={{ color: theme.color.inkSubtle, marginLeft: theme.space[2] }}>{timeLabel}</span>
+          </p>
+          <PaymentLine state={row.payment_state} />
+        </div>
+        <div style={{ justifySelf: 'end' }}>
           <StatusPill tone={tone} size="sm">
             {humaniseLedgerStatus(row.status)}
           </StatusPill>
@@ -670,6 +660,58 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
         }}
       />
     </button>
+  );
+}
+
+// PaymentLine — colour-coded icon + text rendered under the date/time
+// in each ledger row. Replaces the earlier trailing pill so the
+// payment fact reads as a quiet annotation on the row's chronology
+// rather than a second status competing with the appointment status
+// pill on the right. Unpaid renders nothing — that's the default
+// state, the absence is the signal.
+function PaymentLine({ state }: { state: LedgerPaymentState }) {
+  if (state === 'unpaid') return null;
+  const config = (() => {
+    switch (state) {
+      case 'paid':
+        return {
+          icon: <BadgeCheck size={12} aria-hidden />,
+          label: 'Paid in full',
+          color: theme.color.accent,
+        };
+      case 'deposit_paid':
+        return {
+          icon: <Check size={12} strokeWidth={2.5} aria-hidden />,
+          label: 'Deposit paid',
+          // Same accent green at lower opacity so a fully-paid sale
+          // and a deposit-only booking read as related but distinct
+          // states, without inventing a second green token.
+          color: 'rgba(31, 77, 58, 0.65)',
+        };
+      case 'refunded':
+        return {
+          icon: <RotateCcw size={12} aria-hidden />,
+          label: 'Refunded',
+          color: theme.color.warn,
+        };
+    }
+  })();
+  return (
+    <p
+      style={{
+        margin: '2px 0 0',
+        fontSize: theme.type.size.xs,
+        color: config.color,
+        fontWeight: theme.type.weight.medium,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {config.icon}
+      {config.label}
+    </p>
   );
 }
 

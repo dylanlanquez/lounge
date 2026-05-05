@@ -1169,12 +1169,12 @@ export function VisitDetail() {
                 noBalanceToCollect ? (
                   // Free visit, fully covered by deposit, or cart
                   // already paid → there's no till step. Primary
-                  // becomes Complete visit; the sheet asks the
+                  // becomes Finish visit; the sheet asks the
                   // in-person-vs-shipping question.
                   <Button variant="primary" onClick={openCompleteVisit}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <CheckCircle size={16} aria-hidden />
-                      Complete visit
+                      Finish visit
                     </span>
                   </Button>
                 ) : (
@@ -1769,7 +1769,7 @@ export function VisitDetail() {
         </div>
       </BottomSheet>
 
-      {/* Complete visit sheet — fired by the primary CTA when the
+      {/* Finish visit sheet — fired by the primary CTA when the
           balance is fully settled. Asks the fulfilment question and
           writes the choice to lng_visits.fulfilment_method via
           completeVisit. The shipping branch is just stored for now;
@@ -1778,7 +1778,7 @@ export function VisitDetail() {
         open={completeOpen}
         onClose={() => !completeBusy && setCompleteOpen(false)}
         dismissable={!completeBusy}
-        title="Complete visit"
+        title="Finish visit"
         description={
           completeMethod === 'shipping'
             ? 'The work will be shipped. The dispatch flow opens after this slice lands; for now the choice is recorded on the visit.'
@@ -1801,7 +1801,7 @@ export function VisitDetail() {
             </Button>
             <Button variant="primary" onClick={submitCompleteVisit} loading={completeBusy}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <CheckCircle size={16} aria-hidden /> Complete visit
+                <CheckCircle size={16} aria-hidden /> Finish visit
               </span>
             </Button>
           </div>
