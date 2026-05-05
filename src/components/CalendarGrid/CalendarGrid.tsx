@@ -179,13 +179,12 @@ function NowPill({ offset }: { offset: number }) {
 
   // Anchor to the right edge of the time-axis column so the pill ends just
   // before the slot column starts — never overlaps appointment cards.
-  // Clamp top so the pill rests on the grid's top edge before the first
-  // visible hour rather than floating above it.
+  // top: offset - 10 keeps the pill vertically centred on the now-line.
   return (
     <div
       style={{
         position: 'absolute',
-        top: Math.max(0, offset - 10),
+        top: offset - 10,
         right: 4,
         padding: '2px 8px',
         background: theme.color.accent,
