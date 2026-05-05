@@ -203,6 +203,33 @@ const StyledButton = TiptapNode.create({
 // emailRenderer.ts AND these functions AND emailRenderer.test.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Regex that matches a full-line button. Parameter character class
+// [^|<>\]"(]* excludes every HTML-structural character so it can never
+// match across tag boundaries or paragraph separators.
+// Group indices: 1=label, 2=bg, 3=tc, 4=rad, 5=mt, 6=mb,
+//               7=bw, 8=bc, 9=icon  (7-9 optional), 10=url
+const BUTTON_LINE_RE =
+  /^\[button:(.+?)(?:\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)(?:\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*))?)?\]\(([^)]+)\)$/;
+
+function buildEditorButtonSpan(m: RegExpMatchArray): string {
+  const label        = m[1]  ?? '';
+  const bgColor      = m[2]  || '#0E1414';
+  const textColor    = m[3]  || '#FFFFFF';
+  const borderRadius = m[4]  || '999';
+  const marginTop    = m[5]  || '12';
+  const marginBottom = m[6]  || '12';
+  const borderWidth  = m[7]  || '0';
+  const borderColor  = m[8]  || '#0E1414';
+  const iconName     = m[9]  || '';
+  const url          = m[10] ?? '';
+  const bwNum = Number(borderWidth);
+  const borderStr = bwNum > 0 ? `;border:${bwNum}px solid ${borderColor}` : '';
+  const iconHtml = iconName && EMAIL_ICONS[iconName]
+    ? `<span style="display:inline-block;margin-right:5px;vertical-align:middle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${textColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[iconName]}</svg></span>`
+    : '';
+  return `<span data-type="styled-button" data-label="${label}" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="${marginTop}" data-mb="${marginBottom}" data-bw="${borderWidth}" data-bc="${borderColor}" data-icon="${iconName}" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0${borderStr}">${iconHtml}${label}</span>`;
+}
+
 export function syntaxToHtml(text: string): string {
   if (!text) return '<p></p>';
   const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -259,6 +286,15 @@ export function syntaxToHtml(text: string): string {
       if (m) htmlLines.push(`<img src="${m[2]}" alt="${m[1]}">`);
       continue;
     }
+    // Full-line button: convert at the text level so that the inline
+    // regex chain never runs on assembled multi-paragraph HTML (which
+    // would allow greedy parameter groups to match across <p> tags).
+    const btnM = line.match(BUTTON_LINE_RE);
+    if (btnM) {
+      if (inList) { htmlLines.push('</ul>'); inList = false; }
+      htmlLines.push(buildEditorButtonSpan(btnM));
+      continue;
+    }
     if (inList) { htmlLines.push('</ul>'); inList = false; }
     if (line.trim() === '') { htmlLines.push(''); continue; }
     htmlLines.push(line);
@@ -291,62 +327,15 @@ export function syntaxToHtml(text: string): string {
   }
   if (currentP.length) html += `<p>${currentP.join('<br>')}</p>`;
 
-  // Inline formatting. Buttons run before plain links so the button
-  // regex consumes its URL fragment first.
+  // Inline formatting only. Button syntax is resolved at the line level
+  // above; running a button regex on assembled multi-paragraph HTML is
+  // unsafe because the greedy parameter groups can match across </p><p>
+  // boundaries and consume entire paragraphs of content.
   html = html
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>')
     .replace(/\{w:([^}]+)\}(.+?)\{\/w\}/g, '<span style="font-weight:$1">$2</span>')
     .replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>')
-    // 9-param button (handles existing 6-param + new 9-param; last 3 optional)
-    .replace(
-      /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?)?\]\((.+?)\)/g,
-      (
-        _: string,
-        label: string,
-        bg: string | undefined,
-        tc: string | undefined,
-        rad: string | undefined,
-        mt: string | undefined,
-        mb: string | undefined,
-        bw: string | undefined,
-        bc: string | undefined,
-        icon: string | undefined,
-        url: string,
-      ) => {
-        const bgColor = bg || '#0E1414';
-        const textColor = tc || '#FFFFFF';
-        const borderRadius = rad || '999';
-        const marginTop = mt || '12';
-        const marginBottom = mb || '12';
-        const borderWidth = bw || '0';
-        const borderColor = bc || '#0E1414';
-        const iconName = icon || '';
-        const bwNum = Number(borderWidth);
-        const borderStyleStr = bwNum > 0 ? `;border:${bwNum}px solid ${borderColor}` : '';
-        const iconHtml = iconName && EMAIL_ICONS[iconName]
-          ? `<span style="display:inline-block;margin-right:5px;vertical-align:middle"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${textColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${EMAIL_ICONS[iconName]}</svg></span>`
-          : '';
-        return `<span data-type="styled-button" data-label="${label}" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="${marginTop}" data-mb="${marginBottom}" data-bw="${borderWidth}" data-bc="${borderColor}" data-icon="${iconName}" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:${marginTop}px 0 ${marginBottom}px 0${borderStyleStr}">${iconHtml}${label}</span>`;
-      },
-    )
-    // Backward compat: 3-param button
-    .replace(
-      /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
-      (
-        _: string,
-        label: string,
-        bg: string | undefined,
-        tc: string | undefined,
-        rad: string | undefined,
-        url: string,
-      ) => {
-        const bgColor = bg || '#0E1414';
-        const textColor = tc || '#FFFFFF';
-        const borderRadius = rad || '999';
-        return `<span data-type="styled-button" data-label="${label}" data-url="${url}" data-bg="${bgColor}" data-text-color="${textColor}" data-radius="${borderRadius}" data-mt="12" data-mb="12" data-bw="0" data-bc="#0E1414" data-icon="" style="display:inline-block;padding:8px 20px;background:${bgColor};color:${textColor};border-radius:${borderRadius}px;font-weight:600;font-size:13px;cursor:default;text-decoration:none;margin:12px 0">${label}</span>`;
-      },
-    )
     .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
   return html || '<p></p>';

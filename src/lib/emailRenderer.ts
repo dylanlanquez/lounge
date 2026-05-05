@@ -276,8 +276,10 @@ function applyInlines(text: string): string {
   // 9-param button: [button:label|bg|tc|rad|mt|mb|bw|bc|icon](url)
   // Params 7-9 (bw/bc/icon) are an optional sub-group; params 2-6
   // are also optional. Falls back to sensible defaults for each.
+  // Character class [^|<>\]"(]* excludes HTML-structural characters so
+  // the groups cannot match across <br> tags when buttons are adjacent.
   out = out.replace(
-    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?)?\]\((.+?)\)/g,
+    /\[button:(.+?)(?:\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)(?:\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*))?)?\]\(([^)]+)\)/g,
     (
       _: string,
       label: string,
