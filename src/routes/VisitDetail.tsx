@@ -3074,16 +3074,12 @@ function Row({ label, value, accent = false }: { label: string; value: string; a
 }
 
 // ── Shipped items card ────────────────────────────────────────────────────────
-// Collapsible section shown above Before & After when the visit has a
-// completed dispatch. Summarises what was shipped, where to, the DPD
-// tracking number (linked), who processed it, and offers a Print label action.
-//
-// While parcel_code is null the card polls fill-lng-parcel-code every 30 s
-// with a live countdown. When Realtime pushes the parcel_code update the
-// parent hook re-renders the component with the confirmed code and the
-// polling effect cleans up automatically.
+// Collapsible section shown when the visit has a completed dispatch.
+// On mount, fires fill-lng-parcel-code once as a fast path. The server-side
+// pg_cron job (sync-parcel-codes, every 3 min) handles ongoing sync.
+// Realtime on lng_visits drives all UI updates — no client polling.
 
-const PARCEL_CODE_POLL_SECONDS = 30;
+const DPD_REGISTRATION_WINDOW_MS = 30 * 60 * 1000; // typical DPD registration time
 
 function ShippedItemsCard({
   visit,
@@ -3097,22 +3093,20 @@ function ShippedItemsCard({
     ? `https://track.dpdlocal.co.uk/parcels/${visit.parcel_code}#results`
     : null;
 
-  // ── Polling state (only active while parcel_code is null) ──────────────
-  const [nextCheckIn, setNextCheckIn] = useState<number>(PARCEL_CODE_POLL_SECONDS);
+  // One-shot fast path: trigger fill-lng-parcel-code immediately on mount.
+  // If the parcel code is already in Checkpoint's queue this resolves in ~3s.
+  // The pg_cron job handles the ongoing sync if DPD hasn't registered yet.
   const [checking, setChecking] = useState(false);
 
   useEffect(() => {
-    // Stop as soon as we have the code — Realtime handled the update.
     if (visit.parcel_code || !visit.tracking_number) return;
 
-    const anonKey    = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+    const anonKey     = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-
     let alive = true;
 
-    async function doFill() {
-      if (!alive) return;
-      setChecking(true);
+    setChecking(true);
+    (async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         await fetch(`${supabaseUrl}/functions/v1/fill-lng-parcel-code`, {
@@ -3124,37 +3118,21 @@ function ShippedItemsCard({
           },
           body: JSON.stringify({ visit_id: visit.id }),
         });
-        // If fill-lng-parcel-code wrote parcel_code, the Realtime subscription
-        // on lng_visits in useVisitDetail picks it up and re-renders this
-        // component with the confirmed code — the effect will then clean up.
+        // Realtime picks up any parcel_code write and re-renders this component.
       } catch { /* non-fatal */ }
-      if (alive) {
-        setChecking(false);
-        setNextCheckIn(PARCEL_CODE_POLL_SECONDS);
-      }
-    }
+      if (alive) setChecking(false);
+    })();
 
-    // Immediate first check
-    doFill();
-
-    // 1-second ticker that counts down and re-polls when it hits 0
-    const ticker = setInterval(() => {
-      if (!alive) return;
-      setNextCheckIn((prev) => {
-        if (prev <= 1) {
-          doFill();
-          return PARCEL_CODE_POLL_SECONDS;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => {
-      alive = false;
-      clearInterval(ticker);
-    };
-  // Re-run when visit.id or visit.parcel_code changes (code just arrived via Realtime)
+    return () => { alive = false; };
   }, [visit.id, visit.tracking_number, visit.parcel_code]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Progress bar: fills over DPD_REGISTRATION_WINDOW_MS from dispatch.
+  // Computed once per render — updates whenever Realtime triggers a re-render.
+  const elapsedMs = visit.dispatched_at
+    ? Date.now() - new Date(visit.dispatched_at).getTime()
+    : 0;
+  const elapsedMin = Math.floor(elapsedMs / 60000);
+  const progressPct = Math.min((elapsedMs / DPD_REGISTRATION_WINDOW_MS) * 100, 96);
 
   const addrLines = addr
     ? [addr.name, addr.address1, addr.address2, addr.city, addr.zip].filter(Boolean)
@@ -3184,15 +3162,15 @@ function ShippedItemsCard({
 
         {/* Dispatch reference + timestamp */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
             Dispatch reference
           </p>
-          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace', letterSpacing: theme.type.tracking.tight }}>
             {visit.dispatch_ref}
           </p>
           {dispatchedAt ? (
             <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-              {dispatchedAt}{visit.dispatched_by ? ` · Processed by ${visit.dispatched_by}` : ''}
+              {dispatchedAt}{visit.dispatched_by ? ` · ${visit.dispatched_by}` : ''}
             </p>
           ) : null}
         </div>
@@ -3200,45 +3178,59 @@ function ShippedItemsCard({
         <hr style={{ margin: 0, border: 'none', borderTop: `1px solid ${theme.color.border}` }} />
 
         {/* Tracking */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
             DPD tracking
           </p>
+
           {visit.tracking_number ? (
             trackingUrl ? (
               <a
                 href={trackingUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.accent, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, textDecoration: 'none', fontFamily: 'monospace' }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: theme.space[1],
+                  color: theme.color.accent, fontSize: theme.type.size.base,
+                  fontWeight: theme.type.weight.semibold, textDecoration: 'none',
+                  fontFamily: 'monospace', letterSpacing: theme.type.tracking.tight,
+                }}
               >
                 {visit.tracking_number}
                 <ExternalLink size={14} aria-hidden />
               </a>
             ) : (
-              // parcel_code pending — live countdown shows next check,
-              // Realtime will push the update when it resolves.
-              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, fontFamily: 'monospace', letterSpacing: theme.type.tracking.tight }}>
                   {visit.tracking_number}
                 </p>
-                <div style={{
-                  display: 'flex', flexDirection: 'column', gap: theme.space[1],
-                  background: theme.color.bg,
-                  border: `1px solid ${theme.color.border}`,
-                  borderRadius: theme.radius.input,
-                  padding: `${theme.space[3]} ${theme.space[3]}`,
-                }}>
-                  <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-                    Tracking link registering with DPD
-                  </p>
-                  <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                    DPD registers new parcels within a few minutes of dispatch. This page will update automatically.
-                  </p>
+
+                {/* Progress bar */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                  <div style={{
+                    height: 4, borderRadius: 999,
+                    background: theme.color.border,
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${progressPct}%`,
+                      borderRadius: 999,
+                      background: theme.color.accent,
+                      transition: 'width 1.2s ease',
+                    }} />
+                  </div>
                   <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
                     {checking
-                      ? 'Checking now…'
-                      : `Next check in ${nextCheckIn}s`}
+                      ? 'Checking with DPD now...'
+                      : elapsedMin < 1
+                        ? 'Registering with DPD, usually takes a few minutes'
+                        : elapsedMin < 30
+                          ? `Registering with DPD · dispatched ${elapsedMin}m ago`
+                          : `Dispatched ${elapsedMin}m ago · DPD registration taking longer than usual`}
+                  </p>
+                  <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, opacity: 0.7 }}>
+                    This page updates automatically when the link is ready.
                   </p>
                 </div>
               </div>
@@ -3252,21 +3244,20 @@ function ShippedItemsCard({
 
         <hr style={{ margin: 0, border: 'none', borderTop: `1px solid ${theme.color.border}` }} />
 
-        {/* Patient email status */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+        {/* Patient notification */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
             Patient notification
           </p>
           {emailSentAt ? (
-            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.accent }}>
-              Email sent {emailSentAt}
-            </p>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.accent }}>
+              <CheckCircle2 size={13} aria-hidden />
+              Sent {emailSentAt}
+            </span>
           ) : (
-            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
-              {visit.parcel_code
-                ? 'Email sending…'
-                : 'Email sends when tracking link is confirmed'}
-            </p>
+            <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+              {visit.parcel_code ? 'Notification pending' : 'Awaiting tracking confirmation'}
+            </span>
           )}
         </div>
 
@@ -3275,11 +3266,11 @@ function ShippedItemsCard({
         {/* Delivery address */}
         {addrLines.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
-              <MapPin size={13} aria-hidden /> Delivery address
+            <p style={{ margin: 0, fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide, display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
+              <MapPin size={12} aria-hidden /> Delivery address
             </p>
             {addrLines.map((line, i) => (
-              <p key={i} style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink, fontWeight: i === 0 ? theme.type.weight.semibold : theme.type.weight.regular }}>
+              <p key={i} style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: i === 0 ? theme.type.weight.semibold : theme.type.weight.regular }}>
                 {line}
               </p>
             ))}

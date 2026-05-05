@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, CreditCard, FileSignature, FlaskConical, GripVertical, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -2431,9 +2431,9 @@ function chipStyle(active: boolean): CSSProperties {
   return {
     padding: `${theme.space[2]}px ${theme.space[3]}px`,
     borderRadius: theme.radius.pill,
-    border: `1.5px solid ${active ? theme.color.accent : theme.color.border}`,
-    background: active ? theme.color.accentBg : theme.color.surface,
-    color: active ? theme.color.accent : theme.color.inkMuted,
+    border: `1.5px solid ${active ? theme.color.ink : theme.color.border}`,
+    background: active ? theme.color.ink : theme.color.surface,
+    color: active ? '#fff' : theme.color.inkMuted,
     fontSize: theme.type.size.sm,
     fontWeight: active ? theme.type.weight.semibold : theme.type.weight.regular,
     cursor: 'pointer',
@@ -2575,6 +2575,13 @@ function ServiceForm({
   const [busy, setBusy] = useState(false);
   const [imgBusy, setImgBusy] = useState(false);
   const [imgError, setImgError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(initial);
+
+  const handleCollapse = () => {
+    if (isDirty) { setConfirmDiscard(true); } else { onCancel(); }
+  };
 
   const set = <K extends keyof CatalogueDraft>(k: K, v: CatalogueDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
@@ -2675,53 +2682,111 @@ function ServiceForm({
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexShrink: 0 }}>
-          <label style={{ cursor: imgBusy ? 'not-allowed' : 'pointer' }}>
-            <input
-              type="file"
-              accept="image/*"
-              disabled={imgBusy}
-              onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
-              style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-            />
-            <span
-              role="button"
-              tabIndex={0}
+          {confirmDiscard ? (
+            <>
+              <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>Discard unsaved changes?</span>
+              <Button variant="tertiary" size="sm" onClick={() => setConfirmDiscard(false)}>Keep editing</Button>
+              <Button variant="secondary" size="sm" onClick={onCancel}>Discard</Button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={handleCollapse}
+              aria-label="Collapse editor"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 4,
+                gap: 6,
                 padding: `0 ${theme.space[3]}px`,
                 height: 34,
                 borderRadius: theme.radius.pill,
                 border: `1px solid ${theme.color.border}`,
                 background: theme.color.surface,
-                color: theme.color.ink,
+                color: theme.color.inkMuted,
                 fontSize: theme.type.size.sm,
                 fontWeight: theme.type.weight.medium,
-                cursor: imgBusy ? 'not-allowed' : 'pointer',
-                opacity: imgBusy ? 0.5 : 1,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
               }}
             >
-              <Plus size={13} /> {draft.image_url ? 'Replace image' : 'Upload image'}
-            </span>
-          </label>
-          {draft.image_url ? (
-            <Button variant="tertiary" size="sm" onClick={onRemoveImage} disabled={imgBusy}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <X size={14} /> Remove
-              </span>
-            </Button>
-          ) : null}
+              <ChevronUp size={15} />
+              Collapse
+              {isDirty && (
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.color.accent, flexShrink: 0 }} />
+              )}
+            </button>
+          )}
         </div>
       </div>
-      {imgError ? (
-        <p style={{ margin: `${theme.space[2]}px ${theme.space[5]}px 0`, color: theme.color.alert, fontSize: theme.type.size.xs }}>
-          {imgError}
-        </p>
-      ) : null}
 
       {/* ── Body ── */}
       <div style={{ padding: `${theme.space[5]}px`, display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+
+        {/* 0. Image */}
+        <ServiceSection title="Image" hint="Shown in the booking widget and EPOS cart.">
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4] }}>
+            <CatalogueThumbnail src={draft.image_url} alt={draft.name || 'Service'} size={72} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              <label style={{ cursor: imgBusy ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={imgBusy}
+                  onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
+                  style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                />
+                <span
+                  role="button"
+                  tabIndex={0}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: `0 ${theme.space[3]}px`,
+                    height: 36,
+                    borderRadius: theme.radius.pill,
+                    border: `1px solid ${theme.color.border}`,
+                    background: theme.color.surface,
+                    color: theme.color.ink,
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.medium,
+                    cursor: imgBusy ? 'not-allowed' : 'pointer',
+                    opacity: imgBusy ? 0.5 : 1,
+                  }}
+                >
+                  <ImageIcon size={14} />
+                  {draft.image_url ? 'Replace image' : 'Upload image'}
+                </span>
+              </label>
+              {draft.image_url ? (
+                <button
+                  type="button"
+                  onClick={onRemoveImage}
+                  disabled={imgBusy}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: `0 ${theme.space[2]}px`,
+                    height: 28,
+                    border: 'none',
+                    background: 'transparent',
+                    color: theme.color.inkSubtle,
+                    fontSize: theme.type.size.sm,
+                    cursor: imgBusy ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                    opacity: imgBusy ? 0.5 : 1,
+                  }}
+                >
+                  <Trash2 size={13} /> Remove image
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {imgError ? (
+            <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.xs }}>{imgError}</p>
+          ) : null}
+        </ServiceSection>
 
         {/* 1. Basics */}
         <ServiceSection title="Basics">
