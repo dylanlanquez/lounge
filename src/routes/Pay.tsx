@@ -598,6 +598,11 @@ export function Pay() {
               value={tendered}
               onChange={(e) => setTendered(e.target.value)}
             />
+            <QuickAmountChips
+              chargeAmountPence={chargeAmountPence}
+              tendered={tendered}
+              onSelect={setTendered}
+            />
             <ChangeRow tendered={tendered} totalPence={chargeAmountPence} />
             <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', marginTop: theme.space[4] }}>
               <Button variant="tertiary" onClick={() => setStage('choose')}>
@@ -963,6 +968,81 @@ function MethodCard({
         </p>
       </div>
     </button>
+  );
+}
+
+// Generates 4 round amounts >= chargeAmountPence that a patient is
+// likely to hand over in cash. Step size scales with the bill size
+// so the chips stay useful rather than bunching at tiny increments
+// for large amounts or jumping too far for small ones.
+function quickAmounts(chargeAmountPence: number): number[] {
+  if (chargeAmountPence <= 0) return [];
+  const pounds = chargeAmountPence / 100;
+  const step =
+    pounds < 50 ? 500        // £5 steps
+    : pounds < 200 ? 1000    // £10 steps
+    : pounds < 500 ? 2000    // £20 steps
+    : 5000;                  // £50 steps
+  const first = Math.ceil(chargeAmountPence / step) * step;
+  return [first, first + step, first + step * 2, first + step * 3];
+}
+
+function QuickAmountChips({
+  chargeAmountPence,
+  tendered,
+  onSelect,
+}: {
+  chargeAmountPence: number;
+  tendered: string;
+  onSelect: (value: string) => void;
+}) {
+  const amounts = quickAmounts(chargeAmountPence);
+  if (amounts.length === 0) return null;
+
+  // Determine which chip (if any) matches the current tendered value
+  const tenderedPence = Math.round(Number(tendered.replace(/[^\d.]/g, '')) * 100);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: theme.space[2],
+        marginTop: theme.space[3],
+        flexWrap: 'wrap',
+      }}
+    >
+      {amounts.map((pence) => {
+        const label = `£${(pence / 100).toLocaleString('en-GB')}`;
+        const isSelected = tenderedPence === pence;
+        return (
+          <button
+            key={pence}
+            type="button"
+            onClick={() => onSelect((pence / 100).toFixed(2))}
+            style={{
+              appearance: 'none',
+              border: `1.5px solid ${isSelected ? theme.color.accent : theme.color.border}`,
+              background: isSelected ? theme.color.accentBg : theme.color.surface,
+              borderRadius: theme.radius.pill,
+              padding: `${theme.space[2]}px ${theme.space[4]}px`,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: isSelected ? theme.color.accent : theme.color.ink,
+              cursor: 'pointer',
+              minHeight: theme.layout.minTouchTarget,
+              display: 'inline-flex',
+              alignItems: 'center',
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: theme.type.tracking.tight,
+              transition: `border-color 120ms ease, background 120ms ease, color 120ms ease`,
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
