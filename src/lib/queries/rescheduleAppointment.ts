@@ -177,7 +177,7 @@ export async function rescheduleAppointment(input: {
       `No booking config for service "${serviceType}". Set the parent defaults in Admin → Booking types first.`,
     );
   }
-  const durationMin = config.duration_default;
+  const durationMin = config.duration_default ?? config.block_duration_minutes ?? 0;
   const newStart = new Date(input.newStartAt);
   if (Number.isNaN(newStart.getTime())) throw new Error('Invalid new-start timestamp.');
   const newEnd = new Date(newStart.getTime() + durationMin * 60_000);

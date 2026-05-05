@@ -85,7 +85,7 @@ export async function createAppointment(input: {
   const durationMin =
     typeof input.durationMinutes === 'number' && input.durationMinutes > 0
       ? input.durationMinutes
-      : config.duration_default;
+      : (config.duration_default ?? config.block_duration_minutes ?? 0);
   const end = new Date(start.getTime() + durationMin * 60_000);
 
   // ── 3. Conflict check ──────────────────────────────────────────
