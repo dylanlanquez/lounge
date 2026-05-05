@@ -157,6 +157,7 @@ async function handle(req: Request): Promise<Response> {
   const dispatch_ref = generateDispatchRef();
 
   let trackingNumber: string | null = null;
+  let parcelCode: string | null = null;
   let shipmentId: string | null = null;
   let labelData: string | null = null;
 
@@ -197,6 +198,7 @@ async function handle(req: Request): Promise<Response> {
     trackingNumber?: string | null;
     shipmentId?: string | null;
     labelData?: string | null;
+    parcelCode?: string | null;
     error?: string;
   };
 
@@ -205,6 +207,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   trackingNumber = dpdData.trackingNumber ?? null;
+  parcelCode     = dpdData.parcelCode     ?? null;
   shipmentId     = dpdData.shipmentId     ?? null;
   labelData      = dpdData.labelData      ?? null;
   // DPD failure is non-fatal for the record — we stamp what we have and
@@ -228,6 +231,7 @@ async function handle(req: Request): Promise<Response> {
       dispatched_at:    now,
       dispatched_by:    staff_name || null,
       tracking_number:  trackingNumber,
+      parcel_code:      parcelCode,
       shipment_id:      shipmentId,
       label_data:       labelData,
       shipping_address: addrSnapshot,
@@ -307,8 +311,9 @@ async function handle(req: Request): Promise<Response> {
     const tpl = tplRow as { subject: string; body_syntax: string; enabled: boolean } | null;
     if (tpl?.enabled) {
       const patientFirstName = patient.first_name ?? 'there';
-      const trackingUrl = trackingNumber
-        ? `https://track.dpdlocal.co.uk/parcels/${trackingNumber}#results`
+      const trackingIdentifier = parcelCode ?? trackingNumber;
+      const trackingUrl = trackingIdentifier
+        ? `https://track.dpdlocal.co.uk/parcels/${trackingIdentifier}#results`
         : '';
       const addrLines = [
         addrSnapshot.name,

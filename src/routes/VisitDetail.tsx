@@ -3085,8 +3085,12 @@ function ShippedItemsCard({
   onPrintLabel: () => void;
 }) {
   const addr = visit.shipping_address;
-  const trackingUrl = visit.tracking_number
-    ? `https://track.dpdlocal.co.uk/parcels/${visit.tracking_number}#results`
+  // parcel_code includes the depot suffix (e.g. 15976969376288*21297) required
+  // for the DPD tracking URL. Fall back to tracking_number for older records
+  // created before the parcel_code column was added.
+  const trackingIdentifier = visit.parcel_code ?? visit.tracking_number;
+  const trackingUrl = trackingIdentifier
+    ? `https://track.dpdlocal.co.uk/parcels/${trackingIdentifier}#results`
     : null;
 
   const addrLines = addr

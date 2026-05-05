@@ -30,6 +30,10 @@ export interface VisitRow {
   dispatched_at:    string | null;
   dispatched_by:    string | null;
   tracking_number:  string | null;
+  // parcel_code includes the depot suffix (e.g. 15976969376288*21297) and
+  // is required to build a working DPD tracking URL. tracking_number alone
+  // resolves to the wrong URL.
+  parcel_code:      string | null;
   shipment_id:      string | null;
   label_data:       string | null;
   shipping_address: {
