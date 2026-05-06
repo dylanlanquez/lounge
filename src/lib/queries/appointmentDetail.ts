@@ -375,7 +375,7 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
     out.push('reverse_no_show');
   } else if (status === 'rescheduled') {
     if (hasRescheduleTarget) out.push('view_rescheduled_to');
-  } else if (status === 'arrived' || status === 'complete') {
+  } else if (status === 'joined' || status === 'arrived' || status === 'complete') {
     // Virtual appointments never produce a visit row, so offer Rejoin instead.
     if (isVirtual) out.push('rejoin_meeting');
     else if (hasVisit) out.push('view_visit');

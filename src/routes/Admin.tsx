@@ -660,8 +660,8 @@ function TestingTab() {
                       flexWrap: 'wrap',
                     }}
                   >
-                    <StatusPill tone={row.status === 'arrived' ? 'arrived' : row.status === 'no_show' ? 'no_show' : 'neutral'} size="sm">
-                      {humaniseStatus(row.status as 'booked' | 'arrived' | 'complete' | 'no_show' | 'cancelled' | 'rescheduled')}
+                    <StatusPill tone={row.status === 'arrived' || row.status === 'joined' ? 'arrived' : row.status === 'no_show' ? 'no_show' : 'neutral'} size="sm">
+                      {humaniseStatus(row.status as 'booked' | 'arrived' | 'joined' | 'complete' | 'no_show' | 'cancelled' | 'rescheduled')}
                     </StatusPill>
                     <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
                       {name}

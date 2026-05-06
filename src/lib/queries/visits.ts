@@ -295,14 +295,14 @@ export async function reverseNoShow(
 }
 
 // Records that staff joined a virtual meeting. Flips the appointment to
-// 'arrived' (re-uses the existing status — virtual attendance is still
-// "the patient turned up") and writes a patient_events row so the
-// timeline shows when the meeting was actually attended. Does NOT create
-// an lng_visit — virtual impressions don't need an EPOS visit lifecycle.
+// 'joined' (virtual-specific — "arrived" is meaningless for a Google Meet)
+// and writes a patient_events row so the timeline shows when the meeting
+// was attended. Does NOT create an lng_visit — virtual appointments don't
+// need an EPOS visit lifecycle.
 export async function markVirtualMeetingJoined(appointmentId: string): Promise<void> {
   const { data: appt, error: apptErr } = await supabase
     .from('lng_appointments')
-    .update({ status: 'arrived' })
+    .update({ status: 'joined' })
     .eq('id', appointmentId)
     .select('id, patient_id, location_id')
     .single();

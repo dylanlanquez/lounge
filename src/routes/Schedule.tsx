@@ -625,11 +625,11 @@ export function Schedule() {
                   const isVirtualOnNonDesktop = isVirtual && !isDesktop;
                   const showNoShow =
                     !isVirtualOnNonDesktop &&
-                    (status === 'booked' || (isVirtual && status === 'arrived'));
+                    (status === 'booked' || (isVirtual && (status === 'arrived' || status === 'joined')));
                   const showVirtualJoin =
                     isVirtual &&
                     isDesktop &&
-                    (status === 'booked' || status === 'arrived' || status === 'no_show');
+                    (status === 'booked' || status === 'arrived' || status === 'joined' || status === 'no_show');
                   const showMarkArrived = !isVirtual && status === 'booked';
                   const showCloseOnly =
                     !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
@@ -641,7 +641,7 @@ export function Schedule() {
                     );
                   }
                   const joinLabel =
-                    status === 'arrived' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
+                    status === 'arrived' || status === 'joined' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
                   const showUndoNoShow = status === 'no_show';
                   return (
                     <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
@@ -694,7 +694,7 @@ export function Schedule() {
                           onClick={async () => {
                             if (!selected || !selected.join_url) return;
                             window.open(selected.join_url, '_blank', 'noopener,noreferrer');
-                            if (status === 'arrived' || status === 'no_show') return;
+                            if (status === 'arrived' || status === 'joined' || status === 'no_show') return;
                             setBusy(true);
                             try {
                               await markVirtualMeetingJoined(selected.id);
@@ -747,7 +747,7 @@ export function Schedule() {
                   await markNoShow(selected.id, reason, {
                     patientId: selected.patient_id,
                     wasVirtual: isVirtual,
-                    joinedBeforeNoShow: selected.status === 'arrived',
+                    joinedBeforeNoShow: selected.status === 'arrived' || selected.status === 'joined',
                   });
                   setPickingNoShowReason(false);
                   setSelected(null);
@@ -961,7 +961,7 @@ export function Schedule() {
                   ? selected.join_url
                     ? 'Tap Join meeting on a desktop when the call begins. Mark no-show 15 min after the start time if they have not connected.'
                     : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
-                  : selected.status === 'arrived' && selected.join_url
+                  : (selected.status === 'arrived' || selected.status === 'joined') && selected.join_url
                     ? 'You joined the meeting. If the patient does not connect, mark them as a no-show.'
                     : selected.status === 'no_show'
                       ? selected.join_url
@@ -1478,11 +1478,11 @@ function DetailQuickActions({
     appointment.status === 'booked' &&
     appointment.source !== 'calendly' &&
     !!appointment.patient_email;
-  // Cancel is allowed on booked or arrived (rare — patient changed
-  // their mind on the way to the chair). Native source only;
+  // Cancel is allowed on booked (rare — patient changed their mind).
+  // Arrived / joined are active sessions; cancel from the visit page.
   // Calendly-source bookings cancel on Calendly itself.
   const showCancel =
-    (appointment.status === 'booked' || appointment.status === 'arrived') &&
+    appointment.status === 'booked' &&
     appointment.source !== 'calendly';
   const sendingThis = resendingConfirmationId === appointment.id;
 
@@ -1776,7 +1776,7 @@ function NoShowReasonPicker({
 function statusToTone(s: AppointmentRow['status']) {
   return s === 'booked'
     ? 'neutral'
-    : s === 'arrived'
+    : s === 'arrived' || s === 'joined'
       ? 'arrived'
       : s === 'complete'
         ? 'complete'

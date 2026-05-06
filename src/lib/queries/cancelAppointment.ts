@@ -71,9 +71,9 @@ export async function cancelAppointment(input: {
   ) {
     throw new Error(`Can't cancel an appointment with status "${existing.status}".`);
   }
-  // 'arrived' bookings have a live visit. Cancelling here would orphan
-  // the cart; void from the visit page instead.
-  if (existing.status === 'arrived') {
+  // 'arrived' / 'joined' bookings are active. Cancelling here would
+  // orphan any in-progress work; void from the visit page instead.
+  if (existing.status === 'arrived' || existing.status === 'joined') {
     throw new Error(
       'This visit is in progress. Void the cart from the visit page instead of cancelling here.',
     );

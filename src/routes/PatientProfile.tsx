@@ -1750,7 +1750,7 @@ function ApptStatusPill({ status }: { status: ScheduledApptStatus }) {
         ? 'no_show'
         : status === 'cancelled' || status === 'rescheduled'
           ? 'cancelled'
-          : status === 'arrived'
+          : status === 'arrived' || status === 'joined'
             ? 'arrived'
             : 'neutral';
   const label = humaniseApptStatus(status);
@@ -1780,6 +1780,8 @@ function humaniseApptStatus(s: ScheduledApptStatus): string {
       return 'Booked';
     case 'arrived':
       return 'Arrived';
+    case 'joined':
+      return 'Joined';
     case 'complete':
       return 'Complete';
     case 'no_show':

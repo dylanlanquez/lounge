@@ -62,6 +62,7 @@ import type { DateRange } from '../lib/dateRange.ts';
 const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
   { value: 'arrived', label: 'Arrived' },
+  { value: 'joined', label: 'Joined' },
   { value: 'complete', label: 'Complete' },
   { value: 'no_show', label: 'No-show' },
   { value: 'cancelled', label: 'Cancelled' },
@@ -100,6 +101,7 @@ const PAYMENT_OPTIONS: ReadonlyArray<{ value: LedgerPaymentState; label: string 
 const STATUS_TO_TONE: Record<LedgerStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
+  joined: 'arrived',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',

@@ -115,7 +115,7 @@ export function isAppointmentDimmed(
   row: { end_at: string; status: AppointmentStatus },
   now: Date | number
 ): boolean {
-  if (row.status === 'arrived') return false;
+  if (row.status === 'arrived' || row.status === 'joined') return false;
   if (row.status === 'complete' || row.status === 'cancelled' || row.status === 'rescheduled') {
     return true;
   }
@@ -172,6 +172,8 @@ export function humaniseStatus(status: AppointmentRow['status']): string {
       return 'Booked';
     case 'arrived':
       return 'Arrived';
+    case 'joined':
+      return 'Joined';
     case 'complete':
       return 'Complete';
     case 'no_show':

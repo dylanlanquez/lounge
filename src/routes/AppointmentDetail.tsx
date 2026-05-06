@@ -579,6 +579,7 @@ function Loaded({
 const STATUS_TONE: Record<AppointmentStatus, StatusTone> = {
   booked: 'pending',
   arrived: 'arrived',
+  joined: 'arrived',
   complete: 'complete',
   no_show: 'no_show',
   cancelled: 'cancelled',
@@ -734,6 +735,7 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
         tone: 'warn',
       };
     }
+    case 'joined':
     case 'arrived': {
       // Virtual appointments stay on this page after joining (no visit
       // row is created), so the ribbon must read as an active meeting.
@@ -819,6 +821,8 @@ function humaniseAppointmentStatus(status: AppointmentStatus): string {
       return 'Booked';
     case 'arrived':
       return 'Arrived';
+    case 'joined':
+      return 'Joined';
     case 'complete':
       return 'Complete';
     case 'no_show':
@@ -1222,7 +1226,8 @@ function NotesCard({
   onChanged: () => void;
 }) {
   const canEdit =
-    appt.source !== 'calendly' && (appt.status === 'booked' || appt.status === 'arrived');
+    appt.source !== 'calendly' &&
+    (appt.status === 'booked' || appt.status === 'arrived' || appt.status === 'joined');
   const trimmed = appt.notes?.trim() ?? '';
 
   const [editing, setEditing] = useState(false);
