@@ -497,7 +497,7 @@ export function Schedule() {
         </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>
-          {day.loading && (day.data.length === 0 || !day.hasLoaded) ? (
+          {day.loading && !day.hasLoaded ? (
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>

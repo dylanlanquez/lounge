@@ -66,6 +66,12 @@ export function WeekStrip({
   // scroll settle, so we don't feed back into our own selectedIso
   // effect and trigger a redundant scroll-to-self.
   const lastEmittedRef = useRef<string | null>(null);
+  // True while a programmatic scrollTo() animation is in flight.
+  // The scroll-settle listener ignores scroll events during this
+  // window — otherwise the settle fires mid-animation, finds an
+  // intermediate pill at centre, emits onSelect for the wrong date,
+  // and fights the animation back to the old position.
+  const isProgrammaticScrollRef = useRef(false);
 
   // Fixed window anchored at today. Re-rendering this every time
   // selectedIso moves would shift the pills under the user's
@@ -80,17 +86,24 @@ export function WeekStrip({
     return out;
   }, [todayIso]);
 
-  // Centre the selected day in the viewport whenever the prop
-  // changes externally. The < 4px guard avoids a no-op smooth
-  // scroll right after a user-driven scroll already left us at
-  // the right position — that tiny jitter would re-trigger our
-  // own scroll-end handler in a loop.
+  // Centre the selected day in the viewport whenever the prop changes
+  // externally (arrow-key nav, chevron button, Today button, etc.).
+  //
+  // The < 4px guard skips no-op scrolls so we don't accidentally set
+  // isProgrammaticScrollRef for a sub-pixel adjustment that would then
+  // suppress the very next user-scroll settle.
+  //
+  // When the animation IS needed we set isProgrammaticScrollRef and
+  // poll via requestAnimationFrame until scrollLeft stops moving —
+  // only then do we clear the flag. This prevents the scroll-settle
+  // listener from firing mid-animation and emitting onSelect for
+  // whatever intermediate pill happens to be at centre at that moment,
+  // which would fight the animation back to the wrong date.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     if (lastEmittedRef.current === selectedIso) {
       // We just emitted this; the user already scrolled to it.
-      // Don't overwrite their scroll position.
       lastEmittedRef.current = null;
       return;
     }
@@ -100,11 +113,38 @@ export function WeekStrip({
     if (!pill) return;
     const target = pill.offsetLeft + pill.clientWidth / 2 - container.clientWidth / 2;
     if (Math.abs(container.scrollLeft - target) < 4) return;
-    container.scrollTo({
-      left: target,
-      behavior: initialisedRef.current ? 'smooth' : 'auto',
-    });
+
+    const smooth = initialisedRef.current;
     initialisedRef.current = true;
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'auto' });
+
+    if (!smooth) {
+      // 'auto' is synchronous — no scroll events, clear immediately.
+      isProgrammaticScrollRef.current = false;
+      return;
+    }
+
+    // Poll every frame until scrollLeft stops changing, then release
+    // the suppression flag. This is more reliable than a fixed timeout
+    // because smooth-scroll duration varies by distance and browser.
+    let rafId: number;
+    let lastLeft = container.scrollLeft;
+    const poll = () => {
+      const cur = container.scrollLeft;
+      if (Math.abs(cur - lastLeft) > 0.5) {
+        lastLeft = cur;
+        rafId = requestAnimationFrame(poll);
+      } else {
+        isProgrammaticScrollRef.current = false;
+      }
+    };
+    rafId = requestAnimationFrame(poll);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      isProgrammaticScrollRef.current = false;
+    };
   }, [selectedIso]);
 
   // Detect the centred pill after the user stops scrolling and
@@ -116,6 +156,8 @@ export function WeekStrip({
     if (!container) return;
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const settle = () => {
+      // Ignore scroll events fired by our own programmatic animation.
+      if (isProgrammaticScrollRef.current) return;
       const center = container.scrollLeft + container.clientWidth / 2;
       let bestDate: string | null = null;
       let bestDelta = Infinity;

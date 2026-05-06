@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { AppointmentRow } from './appointments.ts';
 import { formatDateIso } from '../calendarMonth.ts';
@@ -136,24 +136,34 @@ function localDayBounds(dateIso: string): { startIso: string; endIso: string } {
 }
 
 export function useDayAppointments(dateIso: string): DayResult {
-  const [data, setData] = useState<AppointmentRow[]>([]);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  // Per-day cache: Map<dateIso, AppointmentRow[]>.
+  //
+  // Storing rows in a ref (not state) prevents stale cross-day data from
+  // ever being the source of truth for the CURRENT day. `data` and
+  // `hasLoaded` are derived synchronously on every render from the cache
+  // entry for the active dateIso — so switching from a day that had zero
+  // appointments to a day that has many will ALWAYS show a skeleton while
+  // the new day's data is in-flight, never a false "No appointments" state.
+  //
+  // Stale-while-revalidate still works for revisited days: the cached rows
+  // are shown immediately (dimmed via DayReloadingWrapper) while the fresh
+  // fetch runs in the background, then swapped atomically when it lands.
+  const cache = useRef<Map<string, AppointmentRow[]>>(new Map());
+  // forceUpdate() is the only mechanism that causes React to re-render
+  // after a cache write (refs are invisible to the reconciler).
+  const [, forceUpdate] = useReducer((n: number) => n + 1, 0);
   const [error, setError] = useState<string | null>(null);
-  // Bumping this counter triggers the effect below to re-run the
-  // query without changing dateIso — used by `refresh()`.
   const [refreshTick, setRefreshTick] = useState(0);
-  // dateIso IS the resource key — switching days is a real key
-  // transition (the previous day's rows are stale). Refresh ticks
-  // for the same day reuse data without flicker.
+
   const { loading, settle } = useStaleQueryLoading(dateIso);
+
+  // Derived from cache — always the correct data for the current date.
+  const data = cache.current.get(dateIso) ?? [];
+  const hasLoaded = cache.current.has(dateIso);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Data is intentionally NOT cleared here. Keeping the previous
-      // day's rows visible while the new fetch is in flight lets the
-      // parent dim them in place rather than flashing a skeleton on
-      // every tap.
       const { startIso, endIso } = localDayBounds(dateIso);
       const run = (sel: string) =>
         supabase
@@ -174,18 +184,19 @@ export function useDayAppointments(dateIso: string): DayResult {
       if (err) {
         // PGRST200 / 42P01 = pre-migration; treat as empty rather than error.
         if (err.code === 'PGRST200' || err.code === '42P01') {
-          setData([]);
+          cache.current.set(dateIso, []);
+          forceUpdate();
           setError(null);
         } else {
           setError(err.message);
         }
         settle();
-        setHasLoaded(true);
         return;
       }
-      setData(mapRows(rows ?? []));
+      cache.current.set(dateIso, mapRows(rows ?? []));
+      forceUpdate();
+      setError(null);
       settle();
-      setHasLoaded(true);
     })();
     return () => {
       cancelled = true;
