@@ -1584,6 +1584,15 @@ function StaffTab() {
   const [addManager, setAddManager] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  // When the edge function provisions the account but Resend can't
+  // deliver the invite email, we show the action_link inline so the
+  // admin can copy + send manually rather than us swallowing it.
+  const [addManualInviteLink, setAddManualInviteLink] = useState<{
+    name: string;
+    email: string;
+    link: string;
+    reason: string | null;
+  } | null>(null);
 
   // Deactivate confirm sheet
   const [deactivating, setDeactivating] = useState<StaffRow | null>(null);
@@ -1658,6 +1667,7 @@ function StaffTab() {
     setAddAdmin(false);
     setAddManager(false);
     setAddError(null);
+    setAddManualInviteLink(null);
     setAddOpen(true);
   };
 
@@ -1683,13 +1693,27 @@ function StaffTab() {
           setAddError('Enter a first and last name to create a new Lounge account.');
           return;
         }
-        await inviteNewStaffMember({
+        const invited = await inviteNewStaffMember({
           email: addEmail,
           first_name: addFirstName,
           last_name: addLastName,
           is_admin: addAdmin && canEditAdmin,
           is_manager: addManager,
         });
+        // If Resend couldn't deliver, hold the sheet open and show
+        // the action_link so the admin can copy and forward
+        // manually. The staff record itself is provisioned and
+        // valid; this is purely a delivery fallback.
+        if (!invited.emailSent && invited.manualInviteLink) {
+          setAddManualInviteLink({
+            name: invited.display_name,
+            email: addEmail.trim(),
+            link: invited.manualInviteLink,
+            reason: invited.emailError ?? null,
+          });
+          staff.refresh();
+          return;
+        }
       }
       staff.refresh();
       setAddOpen(false);
@@ -2009,6 +2033,67 @@ function StaffTab() {
             <p role="alert" style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
               {addError}
             </p>
+          ) : null}
+          {addManualInviteLink ? (
+            <div
+              style={{
+                margin: 0,
+                padding: theme.space[4],
+                background: theme.color.accentBg,
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[3],
+              }}
+            >
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                Account created for {addManualInviteLink.name}, but the invite email could not be delivered.
+              </p>
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+                Copy this one-time invite link and send it to {addManualInviteLink.email} yourself. It expires in 24 hours.
+                {addManualInviteLink.reason ? ` (Reason: ${addManualInviteLink.reason})` : null}
+              </p>
+              <textarea
+                readOnly
+                value={addManualInviteLink.link}
+                onFocus={(e) => e.currentTarget.select()}
+                style={{
+                  width: '100%',
+                  minHeight: 80,
+                  padding: theme.space[3],
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontSize: theme.type.size.xs,
+                  background: theme.color.surface,
+                  color: theme.color.ink,
+                  resize: 'vertical',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <div style={{ display: 'flex', gap: theme.space[2] }}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(addManualInviteLink.link).catch(() => {});
+                  }}
+                >
+                  Copy link
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setAddManualInviteLink(null);
+                    setAddOpen(false);
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
           ) : null}
         </div>
       </BottomSheet>

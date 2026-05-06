@@ -329,25 +329,41 @@ export async function addStaffMemberByEmail(
 }
 
 // Provisions a brand-new Lounge identity end-to-end: auth.users +
-// accounts + lng_staff_members. Uses the lng-create-staff-account
-// edge function because creating auth users requires the service
-// role. Used by the Add staff sheet when the supplied email has no
-// existing accounts row, so the new staff member gets two distinct
-// sign-ins from any Meridian identity (different login_email →
-// different auth.users → completely separate from Meridian).
+// accounts + lng_staff_members + invite email via Resend. Uses the
+// lng-create-staff-account edge function because creating auth users
+// requires the service role. Used by the Add staff sheet when the
+// supplied email has no existing accounts row, so the new staff
+// member gets two distinct sign-ins from any Meridian identity
+// (different login_email → different auth.users → completely
+// separate from Meridian).
+//
+// Returns the standard AddByEmailResult plus delivery telemetry:
+// emailSent indicates whether Resend accepted the invite email. If
+// emailSent is false, manualInviteLink contains the action_link the
+// admin can copy and deliver themselves rather than re-running the
+// flow (which would fail because the auth user already exists).
+export interface InviteResult extends AddByEmailResult {
+  emailSent: boolean;
+  manualInviteLink?: string;
+  emailError?: string;
+}
+
 export async function inviteNewStaffMember(args: {
   email: string;
   first_name: string;
   last_name: string;
   is_admin?: boolean;
   is_manager?: boolean;
-}): Promise<AddByEmailResult> {
+}): Promise<InviteResult> {
   const { data: invocation, error } = await supabase.functions.invoke<{
     ok: boolean;
     error?: string;
     staff_member_id?: string;
     account_id?: string;
     display_name?: string;
+    email_sent?: boolean;
+    manual_invite_link?: string;
+    email_error?: string;
   }>('lng-create-staff-account', {
     body: {
       email: args.email.trim().toLowerCase(),
@@ -365,6 +381,9 @@ export async function inviteNewStaffMember(args: {
     staff_member_id: invocation.staff_member_id!,
     account_id: invocation.account_id!,
     display_name: invocation.display_name!,
+    emailSent: invocation.email_sent === true,
+    manualInviteLink: invocation.manual_invite_link,
+    emailError: invocation.email_error,
   };
 }
 

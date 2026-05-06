@@ -9,6 +9,7 @@ import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 
 const SignIn = lazy(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })));
+const Welcome = lazy(() => import('./routes/Welcome.tsx').then((m) => ({ default: m.Welcome })));
 const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })));
 const NewWalkIn = lazy(() => import('./routes/NewWalkIn.tsx').then((m) => ({ default: m.NewWalkIn })));
 const VisitDetail = lazy(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })));
@@ -138,6 +139,7 @@ function RoutedErrorBoundary() {
         <Routes>
           <Route path="/" element={<RequireStaff><Navigate to="/schedule" replace /></RequireStaff>} />
           <Route path="/sign-in" element={<SignIn />} />
+          <Route path="/welcome" element={<Welcome />} />
           <Route path="/no-access" element={<NoAccess />} />
           <Route path="/schedule" element={<RequireStaff><Schedule /></RequireStaff>} />
           <Route path="/walk-in/new" element={<RequireStaff><NewWalkIn /></RequireStaff>} />
