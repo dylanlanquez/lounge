@@ -191,7 +191,7 @@ export function ScheduleListRow({
             }}
           >
             {row.join_url && (
-              <img src={googleMeetIcon} width={13} height={13} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+              <img src={googleMeetIcon} height={13} aria-label="Virtual meeting" style={{ flexShrink: 0, display: 'block', width: 'auto' }} />
             )}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {[formatBookingSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}

@@ -925,7 +925,7 @@ export function Schedule() {
                         }}
                       >
                         {selected.join_url && (
-                          <img src={googleMeetIcon} width={18} height={18} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+                          <img src={googleMeetIcon} height={18} aria-label="Virtual meeting" style={{ flexShrink: 0, display: 'block', width: 'auto' }} />
                         )}
                         {headingText}
                       </p>

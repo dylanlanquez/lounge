@@ -236,7 +236,7 @@ export function AppointmentCard({
             }}
           >
             {isVirtual && (
-              <img src={googleMeetIcon} width={11} height={11} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+              <img src={googleMeetIcon} height={11} aria-label="Virtual meeting" style={{ flexShrink: 0, display: 'block', width: 'auto' }} />
             )}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {formatTime(startAt)}
