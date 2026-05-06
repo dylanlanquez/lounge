@@ -910,29 +910,16 @@ function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
   }
 
   const displayUrl = joinUrl.replace(/^https?:\/\//, '');
-  const shadow = hovered ? theme.shadow.raised : theme.shadow.card;
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={handleCopy}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCopy(); }
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      aria-label={copied ? 'Meeting link copied' : 'Copy meeting link'}
       style={{
         background: theme.color.surface,
         borderRadius: theme.radius.card,
-        boxShadow: shadow,
-        border: `1px solid ${hovered ? 'rgba(61,143,160,0.28)' : theme.color.border}`,
+        boxShadow: theme.shadow.card,
+        border: `1px solid ${theme.color.border}`,
         borderLeft: `3px solid ${teal}`,
         padding: `${theme.space[4]}px ${theme.space[5]}px`,
-        cursor: 'pointer',
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
-        userSelect: 'none',
       }}
     >
       {/* Header */}
@@ -953,17 +940,29 @@ function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
         </span>
       </div>
 
-      {/* Link row */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
-        background: `rgba(61,143,160,0.06)`,
-        border: `1px solid rgba(61,143,160,${hovered ? '0.22' : '0.12'})`,
-        borderRadius: 10,
-        padding: `${theme.space[2] + 2}px ${theme.space[3]}px`,
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-      }}>
+      {/* Clickable link row */}
+      <button
+        type="button"
+        onClick={handleCopy}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        aria-label={copied ? 'Meeting link copied' : 'Copy meeting link'}
+        style={{
+          appearance: 'none',
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          background: hovered ? `rgba(61,143,160,0.1)` : `rgba(61,143,160,0.06)`,
+          border: `1px solid rgba(61,143,160,${hovered ? '0.28' : '0.12'})`,
+          borderRadius: 10,
+          padding: `${theme.space[2] + 2}px ${theme.space[3]}px`,
+          cursor: 'pointer',
+          textAlign: 'left',
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          userSelect: 'none',
+        }}
+      >
         {/* URL */}
         <span style={{
           flex: 1,
@@ -999,7 +998,7 @@ function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
             : <><Copy size={13} aria-hidden /> Copy link</>
           }
         </div>
-      </div>
+      </button>
 
       {/* Hint */}
       <p style={{
@@ -1008,7 +1007,7 @@ function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
         color: theme.color.inkSubtle,
         lineHeight: theme.type.leading.snug,
       }}>
-        Click anywhere to copy the link and share with the patient.
+        Click the link to copy it and share with the patient.
       </p>
     </div>
   );
