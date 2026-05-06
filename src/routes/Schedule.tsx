@@ -444,6 +444,38 @@ export function Schedule() {
             {!onToday ? (
               <TodayPill onClick={handleJumpToToday} />
             ) : null}
+            <button
+              type="button"
+              onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
+              aria-label="New booking"
+              style={{
+                appearance: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: theme.space[1],
+                padding: `5px ${theme.space[3]}px`,
+                background: 'transparent',
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.inkMuted,
+                lineHeight: 1,
+                transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = theme.color.accent;
+                (e.currentTarget as HTMLElement).style.color = theme.color.accent;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
+                (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
+              }}
+            >
+              <Plus size={13} aria-hidden />
+              New booking
+            </button>
             <SegmentedControl<Layout>
               ariaLabel="Day view layout"
               value={layout}
