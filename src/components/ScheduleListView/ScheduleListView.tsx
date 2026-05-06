@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react';
+import googleMeetIcon from '../../assets/google-meet.png';
 import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
 import { theme } from '../../theme/index.ts';
@@ -184,9 +185,17 @@ export function ScheduleListRow({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
             }}
           >
-            {[formatBookingSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
+            {row.join_url && (
+              <img src={googleMeetIcon} width={13} height={13} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {[formatBookingSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
+            </span>
           </p>
         </div>
         {isLate ? (

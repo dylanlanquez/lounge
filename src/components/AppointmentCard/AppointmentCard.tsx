@@ -7,6 +7,7 @@ import {
   type AppointmentSource,
   formatLateDuration,
 } from '../../lib/queries/appointments.ts';
+import googleMeetIcon from '../../assets/google-meet.png';
 
 // Subset of lng_appointment_phases the card needs to render its
 // two-tone phase ribbon. Always passed in phase_index order. When the
@@ -44,6 +45,9 @@ export interface AppointmentCardProps {
   // threshold so the card flags the receptionist to mark a no-show. Ignored
   // on every status other than 'booked'.
   lateMinutes?: number | null;
+  // Show the Google Meet icon in the subtitle so virtual appointments are
+  // instantly recognisable at a glance on the calendar grid.
+  isVirtual?: boolean;
   // Reduce opacity to push the row into the visual background — used on
   // appointments whose slot has finished or whose status is terminal so
   // the eye lands on active work first. Parent decides; the card just
@@ -109,6 +113,7 @@ export function AppointmentCard({
   barColor,
   source = 'calendly',
   lateMinutes,
+  isVirtual = false,
   dimmed = false,
   phases,
   onClick,
@@ -205,16 +210,24 @@ export function AppointmentCard({
             whiteSpace: 'nowrap',
             lineHeight: theme.type.leading.snug,
             fontVariantNumeric: 'tabular-nums',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 3,
           }}
         >
-          {formatTime(startAt)}
-          {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
-          {showLate ? (
-            <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
-              {' · '}
-              {formatLateDuration(lateMinutes!)} late
-            </span>
-          ) : null}
+          {isVirtual && (
+            <img src={googleMeetIcon} width={11} height={11} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+          )}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {formatTime(startAt)}
+            {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
+            {showLate ? (
+              <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+                {' · '}
+                {formatLateDuration(lateMinutes!)} late
+              </span>
+            ) : null}
+          </span>
         </p>
         {showPhaseRibbon && (
           <PhaseStrip

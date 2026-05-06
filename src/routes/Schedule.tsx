@@ -89,6 +89,7 @@ import {
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
 import { cancelAppointment } from '../lib/queries/cancelAppointment.ts';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
+import googleMeetIcon from '../assets/google-meet.png';
 
 type Layout = 'calendar' | 'list';
 const LAYOUT_KEY = 'lounge.scheduleLayout';
@@ -514,6 +515,7 @@ export function Schedule() {
                       status={item.data.status}
                       staffName={staffDisplayName(item.data)}
                       serviceLabel={formatBookingSummary(item.data) || undefined}
+                      isVirtual={!!item.data.join_url}
                       top={offsetForTime(item.data.start_at, startHour, 80)}
                       height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
                       lane={item.lane}
@@ -917,8 +919,14 @@ export function Schedule() {
                           fontWeight: theme.type.weight.semibold,
                           color: theme.color.ink,
                           lineHeight: theme.type.leading.snug,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: theme.space[2],
                         }}
                       >
+                        {selected.join_url && (
+                          <img src={googleMeetIcon} width={18} height={18} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+                        )}
                         {headingText}
                       </p>
                       {detailText ? (
