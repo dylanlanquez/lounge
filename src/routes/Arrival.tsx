@@ -30,7 +30,7 @@ import {
 } from '../components/index.ts';
 import { WaiverInline, type WaiverInlineHandle } from '../components/WaiverInline/WaiverInline.tsx';
 import { MAX_TECH_NOTE_LENGTH } from '../lib/printLwo.ts';
-import { CataloguePicker, criteriaFromAppointment } from '../components/CataloguePicker/CataloguePicker.tsx';
+import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
@@ -50,7 +50,7 @@ import {
   type CartRow,
 } from '../lib/queries/carts.ts';
 import { findMatches, totalForQtyWithArch } from '../lib/catalogueMatch.ts';
-import { type IntakeAnswer, properCase } from '../lib/queries/appointments.ts';
+import { type IntakeAnswer, archToAnatomy, filterCareIntake, properCase } from '../lib/queries/appointments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   appointmentRequiresJbRef,
@@ -501,16 +501,7 @@ export function Arrival() {
         arch:           appointment.arch           ?? null,
       };
     } else {
-      const intakeParsed = criteriaFromAppointment(appointment.intake, eventTypeLabel);
-      criteria = {
-        product_key:    intakeParsed.product_key    ?? null,
-        repair_variant: intakeParsed.repair_variant ?? null,
-        arch:           intakeParsed.arch           ?? null,
-        // Use the canonical service-type from waiver.ts (impression_appointment,
-        // virtual_impression_appointment, etc.) over the picker-local function
-        // which collapses impression labels into same_day_appliance.
-        service_type: inferServiceTypeFromEventLabel(eventTypeLabel) ?? intakeParsed.service_type ?? null,
-      };
+      criteria = buildCriteriaFromIntake(appointment.intake, eventTypeLabel);
     }
 
     let matches = findMatches(catalogueRows, criteria);
@@ -3300,6 +3291,86 @@ function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
 
 function capitalise(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
+}
+
+// ── Intake → match-criteria ───────────────────────────────────────────────────
+// Broader than criteriaFromAppointment (CataloguePicker) which was designed
+// for the picker's live filter, not for pre-population. Key differences:
+//
+//   • Repair detection uses /\brepair\b/ so old Calendly phrasings like
+//     "what type of repair would you like done" (no adjacent "repair type")
+//     still pick up the repair_variant answer.
+//   • Product detection falls back to scanning every answer for a known
+//     product name when no question label matched — handles custom question
+//     wording that doesn't contain "appliance/product/service/treatment".
+//   • missing_tooth is checked before retainer so "Missing Tooth Retainer"
+//     maps to 'missing_tooth', not 'retainer'.
+//   • Arch uses the answer-pattern fallback (ARCH_ANSWER_RE) from
+//     formatBookingSummary so unrecognised question labels still resolve
+//     when the answer is clearly "Top" / "Bottom" / "Both" etc.
+//   • service_type always comes from inferServiceTypeFromEventLabel (waiver.ts)
+//     which correctly maps impression labels to 'impression_appointment'
+//     rather than collapsing them into 'same_day_appliance'.
+
+const INTAKE_ARCH_Q_RE =
+  /\b(arch|jaw|upper\s*or\s*lower|top\s*or\s*bottom|which\s+side)\b/i;
+const INTAKE_ARCH_ANS_RE =
+  /^(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower)(\s*[,;\n]+\s*(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower))*\s*$/i;
+
+function productKeyFromAnswer(answer: string): string | null {
+  const a = answer.split(/\r?\n+/)[0]?.toLowerCase().trim() ?? '';
+  if (!a) return null;
+  // missing_tooth before retainer — "Missing Tooth Retainer" must not match retainer first
+  if (/missing[\s-]?tooth/.test(a)) return 'missing_tooth';
+  if (/retainer/.test(a)) return 'retainer';
+  if (/aligner/.test(a)) return 'aligner';
+  if (/night[\s-]?guard/.test(a)) return 'night_guard';
+  if (/day[\s-]?guard|sports?[\s-]?guard/.test(a)) return 'day_guard';
+  if (/whitening[\s-]?kit/.test(a)) return 'whitening_kit';
+  if (/whitening/.test(a)) return 'whitening_tray';
+  if (/click[\s-]?in[\s-]?veneer|veneer/.test(a)) return 'click_in_veneers';
+  return null;
+}
+
+function buildCriteriaFromIntake(
+  intake: IntakeAnswer[] | null,
+  eventTypeLabel: string | null
+): { service_type: string | null; product_key: string | null; repair_variant: string | null; arch: 'upper' | 'lower' | 'both' | null } {
+  const service_type = inferServiceTypeFromEventLabel(eventTypeLabel);
+  const filtered = filterCareIntake(intake);
+
+  // Arch — question label first, then answer-pattern fallback
+  const archByQ = filtered.find((a) => INTAKE_ARCH_Q_RE.test(a.question ?? ''));
+  const archByAns = archByQ ? null : filtered.find((a) => INTAKE_ARCH_ANS_RE.test(a.answer ?? ''));
+  const archLabel = archToAnatomy((archByQ ?? archByAns)?.answer);
+  const arch =
+    archLabel === 'Upper' ? 'upper'
+    : archLabel === 'Lower' ? 'lower'
+    : archLabel === 'Upper and Lower' ? 'both'
+    : null;
+
+  // Repair variant — any question that mentions "repair" (covers old
+  // Calendly phrasings: "type of repair", "what type of repair would you
+  // like done", "repair type", "repair")
+  const repairQ = filtered.find((a) => /\brepair\b/i.test(a.question ?? ''));
+  const repair_variant = repairQ?.answer.split(/\r?\n+/)[0]?.trim() ?? null;
+
+  // Product — question-label match first, then scan all answers
+  const archOrRepair = new Set([archByQ, archByAns, repairQ].filter(Boolean));
+  const productQ = filtered.find(
+    (a) => !archOrRepair.has(a) && /\b(appliance|product|service|treatment)\b/i.test(a.question ?? '')
+  );
+  let product_key: string | null = productQ ? productKeyFromAnswer(productQ.answer) : null;
+  if (!product_key) {
+    // No question matched — scan remaining answers for a known product name
+    for (const qa of filtered) {
+      if (archOrRepair.has(qa) || qa === productQ) continue;
+      product_key = productKeyFromAnswer(qa.answer);
+      if (product_key) break;
+    }
+  }
+
+  return { service_type, product_key, repair_variant, arch };
 }
 
 // Selectable chip used by the service-type grid. Reads as a card-like
