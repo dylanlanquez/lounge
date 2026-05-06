@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleSlash,
   ClipboardList,
+  Copy,
   CreditCard,
   Mail,
   MapPin,
@@ -426,6 +427,7 @@ function Loaded({
           marginTop: theme.space[5],
         }}
       >
+        {appt.join_url ? <MeetingLinkCard joinUrl={appt.join_url} /> : null}
         <BookingFactsCard appt={appt} />
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
@@ -885,6 +887,131 @@ function platformIcon(platform: string | null, joinUrl: string | null): ReactNod
     );
   }
   return <Video size={13} aria-hidden />;
+}
+
+function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
+  const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const teal = theme.category.virtualImpression;
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(joinUrl);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = joinUrl;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2200);
+  }
+
+  const displayUrl = joinUrl.replace(/^https?:\/\//, '');
+  const shadow = hovered ? theme.shadow.raised : theme.shadow.card;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleCopy}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCopy(); }
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      aria-label={copied ? 'Meeting link copied' : 'Copy meeting link'}
+      style={{
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        boxShadow: shadow,
+        border: `1px solid ${hovered ? 'rgba(61,143,160,0.28)' : theme.color.border}`,
+        borderLeft: `3px solid ${teal}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        cursor: 'pointer',
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+        userSelect: 'none',
+      }}
+    >
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[3] }}>
+        <img
+          src={googleMeetIcon}
+          height={18}
+          aria-hidden
+          style={{ display: 'block', width: 'auto', flexShrink: 0 }}
+        />
+        <span style={{
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+        }}>
+          Virtual meeting link
+        </span>
+      </div>
+
+      {/* Link row */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        background: `rgba(61,143,160,0.06)`,
+        border: `1px solid rgba(61,143,160,${hovered ? '0.22' : '0.12'})`,
+        borderRadius: 10,
+        padding: `${theme.space[2] + 2}px ${theme.space[3]}px`,
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}>
+        {/* URL */}
+        <span style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: theme.type.size.sm,
+          color: teal,
+          fontWeight: theme.type.weight.medium,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {displayUrl}
+        </span>
+
+        {/* Vertical divider */}
+        <div style={{ width: 1, height: 16, background: `rgba(61,143,160,0.18)`, flexShrink: 0 }} aria-hidden />
+
+        {/* Copy state */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: copied ? theme.color.accent : teal,
+          flexShrink: 0,
+          minWidth: 72,
+          justifyContent: 'flex-end',
+          transition: `color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}>
+          {copied
+            ? <><CheckCircle2 size={13} aria-hidden /> Copied!</>
+            : <><Copy size={13} aria-hidden /> Copy link</>
+          }
+        </div>
+      </div>
+
+      {/* Hint */}
+      <p style={{
+        margin: `${theme.space[2]}px 0 0`,
+        fontSize: theme.type.size.xs,
+        color: theme.color.inkSubtle,
+        lineHeight: theme.type.leading.snug,
+      }}>
+        Click anywhere to copy the link and share with the patient.
+      </p>
+    </div>
+  );
 }
 
 function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {

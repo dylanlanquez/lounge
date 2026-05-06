@@ -453,23 +453,24 @@ export function Schedule() {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: theme.space[1],
-                padding: `5px ${theme.space[3]}px`,
-                background: 'transparent',
-                border: `1px solid ${theme.color.border}`,
-                borderRadius: 8,
+                height: 36,
+                padding: `0 ${theme.space[3]}px`,
+                background: 'rgba(14,20,20,0.05)',
+                border: 'none',
+                borderRadius: theme.radius.pill,
                 cursor: 'pointer',
                 fontSize: theme.type.size.sm,
                 fontWeight: theme.type.weight.medium,
                 color: theme.color.inkMuted,
                 lineHeight: 1,
-                transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = theme.color.accent;
+                (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
                 (e.currentTarget as HTMLElement).style.color = theme.color.accent;
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
+                (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
                 (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
               }}
             >
