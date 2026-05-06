@@ -878,6 +878,12 @@ export function Schedule() {
                   // other path.
                   const sharingSpaceWithVirtualNotice =
                     !!selected.join_url && !isDesktop;
+                  // Split "Virtual impression appointment for lower whitening tray"
+                  // into a large service-name heading + a smaller detail line.
+                  const summary = formatBookingSummary(selected);
+                  const forIdx = summary.indexOf(' for ');
+                  const headingText = forIdx !== -1 ? summary.slice(0, forIdx) : summary;
+                  const detailText = forIdx !== -1 ? summary.slice(forIdx + 1) : null; // keeps "for …"
                   return (
                     <div
                       style={{
@@ -913,8 +919,21 @@ export function Schedule() {
                           lineHeight: theme.type.leading.snug,
                         }}
                       >
-                        {formatBookingSummary(selected)}
+                        {headingText}
                       </p>
+                      {detailText ? (
+                        <p
+                          style={{
+                            margin: `${theme.space[1]}px 0 0`,
+                            fontSize: theme.type.size.sm,
+                            fontWeight: theme.type.weight.regular,
+                            color: theme.color.inkMuted,
+                            lineHeight: theme.type.leading.snug,
+                          }}
+                        >
+                          {detailText}
+                        </p>
+                      ) : null}
                     </div>
                   );
                 })()
