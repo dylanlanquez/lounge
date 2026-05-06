@@ -3297,7 +3297,6 @@ const subtleLinkStyle: CSSProperties = {
 // text + chevron) that reads instantly as tappable.
 const emptyItemsStyle: CSSProperties = {
   width: '100%',
-  maxWidth: 520,
   appearance: 'none',
   border: `1px solid ${theme.color.border}`,
   borderRadius: theme.radius.card,
