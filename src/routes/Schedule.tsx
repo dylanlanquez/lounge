@@ -453,7 +453,7 @@ export function Schedule() {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: theme.space[1],
-                height: 36,
+                height: 44,
                 padding: `0 ${theme.space[3]}px`,
                 background: 'rgba(14,20,20,0.05)',
                 border: 'none',
