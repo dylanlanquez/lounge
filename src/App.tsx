@@ -2,6 +2,7 @@ import { lazy, Suspense, useLayoutEffect, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth.tsx';
 import { useCurrentAccount } from './lib/queries/currentAccount.ts';
+import { useMfaStatus } from './lib/mfa.ts';
 import { theme } from './theme/index.ts';
 import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
@@ -10,6 +11,8 @@ import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 
 const SignIn = lazy(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })));
 const Welcome = lazy(() => import('./routes/Welcome.tsx').then((m) => ({ default: m.Welcome })));
+const Enroll2fa = lazy(() => import('./routes/Enroll2fa.tsx').then((m) => ({ default: m.Enroll2fa })));
+const Verify2fa = lazy(() => import('./routes/Verify2fa.tsx').then((m) => ({ default: m.Verify2fa })));
 const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })));
 const NewWalkIn = lazy(() => import('./routes/NewWalkIn.tsx').then((m) => ({ default: m.NewWalkIn })));
 const VisitDetail = lazy(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })));
@@ -87,9 +90,23 @@ function ScrollToTop() {
 function RequireStaff({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
   const { account, loading: accountLoading } = useCurrentAccount();
+  const mfa = useMfaStatus();
   if (authLoading || accountLoading) return <RouteFallback />;
   if (!user) return <Navigate to="/sign-in" replace />;
   if (!account || !account.is_lng_staff) return <Navigate to="/no-access" replace />;
+
+  // 2FA gate. If the staff row has require_2fa = true and the live
+  // session is not yet AAL2, route through one of the MFA surfaces:
+  //   • factor enrolled → /verify-2fa (just the challenge form)
+  //   • no factor yet   → /enroll-2fa (QR + first verify)
+  // Super admin is exempt (currentAccount.require_2fa is forced false
+  // for the super admin to avoid a bootstrap chicken-and-egg).
+  if (account.require_2fa && mfa.aal !== 'aal2') {
+    if (mfa.loading) return <RouteFallback />;
+    return mfa.hasVerifiedFactor
+      ? <Navigate to="/verify-2fa" replace />
+      : <Navigate to="/enroll-2fa" replace />;
+  }
   return <>{children}</>;
 }
 
@@ -140,6 +157,8 @@ function RoutedErrorBoundary() {
           <Route path="/" element={<RequireStaff><Navigate to="/schedule" replace /></RequireStaff>} />
           <Route path="/sign-in" element={<SignIn />} />
           <Route path="/welcome" element={<Welcome />} />
+          <Route path="/enroll-2fa" element={<Enroll2fa />} />
+          <Route path="/verify-2fa" element={<Verify2fa />} />
           <Route path="/no-access" element={<NoAccess />} />
           <Route path="/schedule" element={<RequireStaff><Schedule /></RequireStaff>} />
           <Route path="/walk-in/new" element={<RequireStaff><NewWalkIn /></RequireStaff>} />

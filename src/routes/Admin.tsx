@@ -1982,17 +1982,17 @@ function StaffTab() {
                   key={s.staff_member_id}
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
+                    flexDirection: 'column',
+                    alignItems: 'stretch',
                     gap: theme.space[3],
-                    padding: theme.space[3],
+                    padding: theme.space[4],
                     background: isInactive ? theme.color.bg : theme.color.surface,
                     border: `1px solid ${theme.color.border}`,
                     borderRadius: 12,
-                    flexWrap: 'wrap',
                     opacity: isInactive ? 0.65 : 1,
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: 200 }}>
+                  <div>
                     <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
                       <span>{s.display_name}</span>
                       {isInactive ? (
@@ -2390,7 +2390,7 @@ function StaffTab() {
               <ActionRow
                 icon={<ShieldCheck size={16} aria-hidden />}
                 title="Require two-factor authentication"
-                description="When enabled, this person must enrol an authenticator app on their next sign-in before they can use Lounge. If they already have 2FA set up, nothing changes for them. Enforcement at sign-in lands in the next slice."
+                description="When enabled, this person must enrol an authenticator app on their next sign-in before they can use Lounge. If they already have 2FA set up, nothing changes for them."
                 toggleChecked={actionsOpen.require_2fa}
                 onToggle={handleToggleRequire2fa}
                 toggleDisabled={!!actionBusy}

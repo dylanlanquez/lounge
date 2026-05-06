@@ -533,6 +533,7 @@ export interface CurrentStaffMembership {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  require_2fa: boolean;
   status: 'active' | 'inactive';
 }
 
@@ -541,7 +542,7 @@ export async function fetchCurrentStaffMembership(
 ): Promise<CurrentStaffMembership | null> {
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, status')
+    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -559,6 +560,7 @@ export async function fetchCurrentStaffMembership(
     can_view_reports: boolean | null;
     can_view_financials: boolean | null;
     can_count_cash: boolean | null;
+    require_2fa: boolean | null;
     status: 'active' | 'inactive';
   };
   return {
@@ -568,6 +570,7 @@ export async function fetchCurrentStaffMembership(
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
+    require_2fa: r.require_2fa === true,
     status: r.status,
   };
 }

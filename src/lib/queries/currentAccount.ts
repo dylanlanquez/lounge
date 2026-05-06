@@ -52,6 +52,11 @@ export interface CurrentAccount {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  // Per-staff "Require 2FA" policy. Read by the auth gate to decide
+  // whether to route into /enroll-2fa or /verify-2fa before granting
+  // access to protected routes. Super admin always passes the gate
+  // regardless to avoid a bootstrap chicken-and-egg.
+  require_2fa: boolean;
   is_super_admin: boolean;
 }
 
@@ -151,6 +156,10 @@ export function useCurrentAccount(): Result {
           (isActiveStaff && membership?.can_view_financials === true) || isSuperAdmin,
         can_count_cash:
           (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
+        // Super admin is exempt from the require_2fa gate so a
+        // brand-new install can never lock itself out. Every other
+        // staff member's flag mirrors lng_staff_members.require_2fa.
+        require_2fa: isActiveStaff && membership?.require_2fa === true && !isSuperAdmin,
         is_super_admin: isSuperAdmin,
       });
       setLoading(false);
