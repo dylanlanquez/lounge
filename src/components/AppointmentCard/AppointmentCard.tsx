@@ -232,7 +232,7 @@ export function AppointmentCard({
               fontVariantNumeric: 'tabular-nums',
               display: 'flex',
               alignItems: 'center',
-              gap: 3,
+              gap: 5,
             }}
           >
             {isVirtual && (
