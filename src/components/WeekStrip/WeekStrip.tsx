@@ -116,27 +116,37 @@ export function WeekStrip({
 
     const smooth = initialisedRef.current;
     initialisedRef.current = true;
+
+    // Clamp to 0 — browsers do this automatically but we need the
+    // clamped value to compare against in the poll below.
+    const clamped = Math.max(0, target);
     isProgrammaticScrollRef.current = true;
-    container.scrollTo({ left: target, behavior: smooth ? 'smooth' : 'auto' });
+    container.scrollTo({ left: clamped, behavior: smooth ? 'smooth' : 'auto' });
 
     if (!smooth) {
-      // 'auto' is synchronous — no scroll events, clear immediately.
+      // 'auto' is synchronous — scrollLeft has already landed.
       isProgrammaticScrollRef.current = false;
       return;
     }
 
-    // Poll every frame until scrollLeft stops changing, then release
-    // the suppression flag. This is more reliable than a fixed timeout
-    // because smooth-scroll duration varies by distance and browser.
+    // Poll via requestAnimationFrame until scrollLeft has reached the
+    // target position (within 2px), then release the suppression flag.
+    //
+    // Critically: we compare against the DESTINATION (clamped), NOT
+    // against the previous scrollLeft. The "stop when movement detected"
+    // pattern fails because the first RAF can fire before the browser
+    // has started moving the scroll position — cur === lastLeft → flag
+    // clears immediately → settle fires mid-animation → wrong date emitted.
+    //
+    // Destination-based polling is immune to this: on the first frame
+    // the scroll is at its origin (far from clamped) so the poll keeps
+    // running. It only clears when scrollLeft is actually at the target.
     let rafId: number;
-    let lastLeft = container.scrollLeft;
     const poll = () => {
-      const cur = container.scrollLeft;
-      if (Math.abs(cur - lastLeft) > 0.5) {
-        lastLeft = cur;
-        rafId = requestAnimationFrame(poll);
-      } else {
+      if (Math.abs(container.scrollLeft - clamped) < 2) {
         isProgrammaticScrollRef.current = false;
+      } else {
+        rafId = requestAnimationFrame(poll);
       }
     };
     rafId = requestAnimationFrame(poll);

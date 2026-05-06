@@ -421,10 +421,11 @@ export function Schedule() {
                 fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontVariantNumeric: 'tabular-nums',
-                // Stale count would lie about the day; suppress until the
-                // refetch settles. Once we have any prior data, holding back
-                // the count for ~150ms feels less janky than flicker.
-                opacity: day.loading && day.hasLoaded ? 0 : 1,
+                // Hide while any fetch is in flight — data may be stale
+                // (revalidating a visited day) or absent (first visit,
+                // skeleton showing). Either way the count is unreliable
+                // until loading settles.
+                opacity: day.loading ? 0 : 1,
                 transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
               }}
             >
