@@ -206,7 +206,7 @@ export function Ledger() {
 
         {error ? (
           <ErrorPanel message={error} />
-        ) : loading && data.length === 0 ? (
+        ) : loading ? (
           <SkeletonList />
         ) : data.length === 0 ? (
           <div style={{ paddingTop: theme.space[6] }}>
@@ -455,7 +455,7 @@ function Counter({
   page: number;
   filtersActive: boolean;
 }) {
-  if (loading && count === 0) return <span aria-hidden style={{ minWidth: 56 }} />;
+  if (loading) return <span aria-hidden style={{ minWidth: 56 }} />;
   let label: string;
   if (filtersActive) {
     label = count === 0 ? '0' : `${formatThousands(count)}${hasMore ? '+' : ''}`;
@@ -721,7 +721,7 @@ function PaymentLine({ state }: { state: LedgerPaymentState }) {
 function SkeletonList() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {Array.from({ length: LEDGER_PAGE_SIZE }).map((_, i) => (
+      {Array.from({ length: 8 }).map((_, i) => (
         <div
           key={i}
           style={{
