@@ -55,7 +55,7 @@ import {
   relativeDay,
 } from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
-import { markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
@@ -332,8 +332,18 @@ function Loaded({
     onChanged();
   };
 
-  const handleRejoinMeeting = () => {
+  const handleRejoinMeeting = async () => {
     if (appt.join_url) window.open(appt.join_url, '_blank', 'noopener,noreferrer');
+    try {
+      await logVirtualMeetingRejoin(appt.id, appt.patient_id);
+    } catch (e) {
+      await logFailure({
+        source: 'AppointmentDetail.rejoinMeeting',
+        severity: 'warning',
+        message: e instanceof Error ? e.message : 'Could not log rejoin event',
+        context: { appointmentId: appt.id },
+      });
+    }
   };
 
   const handleResendConfirmation = async () => {
@@ -2056,7 +2066,7 @@ function NoShowSheet({
       await markNoShow(appt.id, reason, {
         patientId: appt.patient_id,
         wasVirtual: !!appt.join_url,
-        joinedBeforeNoShow: false,
+        joinedBeforeNoShow: appt.status === 'joined' || appt.status === 'arrived',
         storedReason,
       });
       onMarked();

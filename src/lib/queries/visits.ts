@@ -322,6 +322,22 @@ export async function markVirtualMeetingJoined(appointmentId: string): Promise<v
   });
 }
 
+// Records that staff rejoined an already-joined virtual meeting. No
+// status flip — the appointment stays 'joined'. Writes a patient_events
+// row so the timeline tracks every time the link was reopened.
+export async function logVirtualMeetingRejoin(appointmentId: string, patientId: string): Promise<void> {
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+  await supabase.from('patient_events').insert({
+    patient_id: patientId,
+    event_type: 'virtual_meeting_rejoined',
+    actor_account_id: (accountId as string | null) ?? null,
+    payload: {
+      appointment_id: appointmentId,
+      rejoined_at: new Date().toISOString(),
+    },
+  });
+}
+
 export async function markAppointmentArrived(
   appointmentId: string
 ): Promise<{ visit_id: string; opened_at: string }> {
