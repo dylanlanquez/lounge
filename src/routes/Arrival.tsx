@@ -462,10 +462,20 @@ export function Arrival() {
   // loaded. Does nothing for walk-ins (no prior booking) or when the
   // staff has already manually staged items (preserve their intent).
   //
-  // Native / widget bookings have service_type + axis pins set directly
-  // on the row — used as-is. Calendly bookings only have intake Q&A and
-  // event_type_label — criteriaFromAppointment parses both into criteria
-  // so both booking paths get pre-populated wherever possible.
+  // Two paths:
+  //   Native/widget — axis pins (service_type + product_key + arch +
+  //     repair_variant) are set on the row and used directly.
+  //   Calendly/legacy — no axis pins; we combine the canonical service-type
+  //     inference from waiver.ts (which correctly maps impression labels to
+  //     'impression_appointment' rather than collapsing them into
+  //     'same_day_appliance') with intake Q&A parsing for product detail.
+  //
+  // findMatches requires an explicit product_key to match catalogue rows
+  // that have one set. When the strict match yields nothing but we have a
+  // service type, we fall back to a single-row unambiguous match (i.e. the
+  // service maps to exactly one active catalogue item such as
+  // 'impression_appointment'). Services with many products (same_day_appliance,
+  // denture_repair) are left unpopulated so staff choose the right variant.
   const prePopulatedRef = useRef(false);
   useEffect(() => {
     if (mode !== 'appointment') return;
@@ -476,18 +486,47 @@ export function Arrival() {
 
     prePopulatedRef.current = true;
 
-    // Axis pins present → native booking; use them directly.
-    // Axis pins absent → Calendly booking; parse intake Q&A for signals.
-    const criteria = appointment.service_type
-      ? {
-          service_type:   appointment.service_type,
-          product_key:    appointment.product_key    ?? null,
-          repair_variant: appointment.repair_variant ?? null,
-          arch:           appointment.arch           ?? null,
-        }
-      : criteriaFromAppointment(appointment.intake, eventTypeLabel);
+    let criteria: {
+      service_type:   string | null;
+      product_key:    string | null;
+      repair_variant: string | null;
+      arch:           'upper' | 'lower' | 'both' | null;
+    };
 
-    const matches = findMatches(catalogueRows, criteria);
+    if (appointment.service_type) {
+      criteria = {
+        service_type:   appointment.service_type,
+        product_key:    appointment.product_key    ?? null,
+        repair_variant: appointment.repair_variant ?? null,
+        arch:           appointment.arch           ?? null,
+      };
+    } else {
+      const intakeParsed = criteriaFromAppointment(appointment.intake, eventTypeLabel);
+      criteria = {
+        product_key:    intakeParsed.product_key    ?? null,
+        repair_variant: intakeParsed.repair_variant ?? null,
+        arch:           intakeParsed.arch           ?? null,
+        // Use the canonical service-type from waiver.ts (impression_appointment,
+        // virtual_impression_appointment, etc.) over the picker-local function
+        // which collapses impression labels into same_day_appliance.
+        service_type: inferServiceTypeFromEventLabel(eventTypeLabel) ?? intakeParsed.service_type ?? null,
+      };
+    }
+
+    let matches = findMatches(catalogueRows, criteria);
+
+    // Fallback: if strict matching returned nothing but we know the service
+    // type, check whether exactly one active catalogue row covers it.
+    // Single-row services (impression_appointment) get auto-selected;
+    // multi-variant services (same_day_appliance, denture_repair) are left
+    // blank so the staff can pick the right product.
+    if (matches.length === 0 && criteria.service_type) {
+      const byService = catalogueRows.filter(
+        (r) => r.active && r.service_type === criteria.service_type
+      );
+      if (byService.length === 1) matches = byService;
+    }
+
     const best = matches[0];
     if (!best) return;
 
