@@ -2101,6 +2101,7 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         include_on_lwo: draft.include_on_lwo,
         allocate_job_box: draft.allocate_job_box,
         is_virtual: draft.is_virtual,
+        meeting_platform: draft.is_virtual && draft.meeting_platform ? draft.meeting_platform : null,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
@@ -2280,6 +2281,7 @@ interface CatalogueDraft {
   include_on_lwo: boolean;
   allocate_job_box: boolean;
   is_virtual: boolean;
+  meeting_platform: string;
   sort_order: string;
   active: boolean;
 }
@@ -2314,6 +2316,7 @@ function emptyDraft(mode: CatalogueMode): CatalogueDraft {
     include_on_lwo: isService,
     allocate_job_box: isService,
     is_virtual: false,
+    meeting_platform: '',
     sort_order: '0',
     active: true,
   };
@@ -2343,6 +2346,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     include_on_lwo: row.include_on_lwo,
     allocate_job_box: row.allocate_job_box,
     is_virtual: row.is_virtual,
+    meeting_platform: row.meeting_platform ?? '',
     sort_order: String(row.sort_order),
     active: row.active,
   };
@@ -2977,9 +2981,27 @@ function ServiceForm({
             </div>
             <Checkbox
               checked={draft.is_virtual}
-              onChange={(v) => set('is_virtual', v)}
+              onChange={(v) => {
+                set('is_virtual', v);
+                if (!v) set('meeting_platform', '');
+              }}
               label="Virtual service (remote session). Replaces the arrival wizard with Join meeting, Rejoin, and No-show actions."
             />
+            {draft.is_virtual ? (
+              <DropdownSelect<string>
+                label="Meeting platform"
+                required
+                value={draft.meeting_platform}
+                options={[
+                  { value: 'google_meet', label: 'Google Meet' },
+                  { value: 'zoom', label: 'Zoom' },
+                  { value: 'microsoft_teams', label: 'Microsoft Teams' },
+                  { value: 'whereby', label: 'Whereby' },
+                ]}
+                onChange={(v) => set('meeting_platform', v)}
+                placeholder="Select a platform"
+              />
+            ) : null}
           </div>
         </ServiceSection>
 

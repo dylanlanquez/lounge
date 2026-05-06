@@ -66,6 +66,7 @@ import {
   type AppointmentDetailRow,
 } from '../lib/queries/appointmentDetail.ts';
 import { humaniseLedgerSource } from '../lib/queries/ledger.ts';
+import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 
 // AppointmentDetail — full-page surface for appointments that don't
 // have a visit yet (Booked future, Cancelled, No-show, Rescheduled).
@@ -834,10 +835,49 @@ function humaniseAppointmentStatus(status: AppointmentStatus): string {
 // Info cards — booking facts, intake, deposit, notes, reasons.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const PLATFORM_LABELS: Record<string, string> = {
+  google_meet: 'Google Meet',
+  zoom: 'Zoom',
+  microsoft_teams: 'Microsoft Teams',
+  whereby: 'Whereby',
+};
+
+function platformLabel(platform: string | null, joinUrl: string | null): string {
+  if (platform && PLATFORM_LABELS[platform]) return PLATFORM_LABELS[platform];
+  // Fallback: infer from join URL domain for legacy rows without a stored platform.
+  if (joinUrl?.includes('meet.google.com')) return 'Google Meet';
+  if (joinUrl?.includes('zoom.us')) return 'Zoom';
+  if (joinUrl?.includes('teams.microsoft')) return 'Microsoft Teams';
+  if (joinUrl?.includes('whereby.com')) return 'Whereby';
+  return 'Online';
+}
+
+function platformIcon(platform: string | null, joinUrl: string | null): ReactNode {
+  const label = platformLabel(platform, joinUrl);
+  if (label === 'Google Meet') {
+    return (
+      <img
+        src="/google-meet.png"
+        alt="Google Meet"
+        width={13}
+        height={13}
+        style={{ display: 'block', objectFit: 'contain' }}
+      />
+    );
+  }
+  return <Video size={13} aria-hidden />;
+}
+
 function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
-  const locationLine = appt.location?.name
-    ? [appt.location.name, appt.location.city].filter(Boolean).join(', ')
-    : null;
+  const { data: clinicSettings } = useClinicSettings();
+  const isVirtual = !!appt.join_url;
+
+  const locationLine = isVirtual
+    ? platformLabel(appt.meeting_platform, appt.join_url)
+    : appt.location?.name
+      ? [appt.location.name, appt.location.city].filter(Boolean).join(', ')
+      : null;
+
   const staffLine = appt.staff
     ? [properCase(appt.staff.first_name), properCase(appt.staff.last_name)].filter(Boolean).join(' ').trim()
     : null;
@@ -847,7 +887,18 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
 
   const rows: Array<{ icon: ReactNode; label: string; value: ReactNode }> = [];
   if (locationLine) {
-    rows.push({ icon: <MapPin size={13} aria-hidden />, label: 'Location', value: locationLine });
+    rows.push({
+      icon: isVirtual ? platformIcon(appt.meeting_platform, appt.join_url) : <MapPin size={13} aria-hidden />,
+      label: 'Location',
+      value: locationLine,
+    });
+  }
+  if (isVirtual && clinicSettings.virtualHostEmail) {
+    rows.push({
+      icon: <Mail size={13} aria-hidden />,
+      label: 'Join from',
+      value: clinicSettings.virtualHostEmail,
+    });
   }
   if (staffLine) {
     rows.push({ icon: <UserCheck size={13} aria-hidden />, label: 'Staff', value: staffLine });

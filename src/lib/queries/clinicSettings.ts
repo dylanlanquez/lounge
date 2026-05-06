@@ -55,6 +55,8 @@ export interface ClinicSettings {
   companyNumber: string;
   vatNumber: string;
   registeredAddress: string;
+  // Virtual meetings
+  virtualHostEmail: string;
 }
 
 const DEFAULT_OPENING: OpeningHoursWeek = [
@@ -82,6 +84,7 @@ const DEFAULTS: ClinicSettings = {
   companyNumber: '',
   vatNumber: '',
   registeredAddress: '',
+  virtualHostEmail: '',
 };
 
 /** Storage key → ClinicSettings field name. Keep in lockstep with
@@ -102,6 +105,7 @@ const KEY_MAP = {
   'legal.company_number': 'companyNumber',
   'legal.vat_number': 'vatNumber',
   'legal.registered_address': 'registeredAddress',
+  'virtual.host_email': 'virtualHostEmail',
 } as const satisfies Record<string, keyof ClinicSettings>;
 
 type SettingsKey = keyof typeof KEY_MAP;
@@ -130,7 +134,7 @@ export function useClinicSettings(): ReadResult {
       const { data: rows, error: err } = await supabase
         .from('lng_settings')
         .select('key, value')
-        .or('key.like.email.%,key.like.clinic.%,key.like.legal.%')
+        .or('key.like.email.%,key.like.clinic.%,key.like.legal.%,key.like.virtual.%')
         .is('location_id', null);
       if (cancelled) return;
       if (err) {

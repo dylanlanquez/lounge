@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Clock, Image as ImageIcon, Mail, Scale, Trash2, Upload } from 'lucide-react';
+import { Building2, Clock, Image as ImageIcon, Mail, Scale, Trash2, Upload, Video } from 'lucide-react';
 import { Button, Card, Checkbox, Input, Skeleton, Toast } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import {
@@ -88,6 +88,7 @@ export function AdminBrandingTab() {
             onToast={setToast}
           />
           <LegalCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
+          <VirtualMeetingCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
         </>
       )}
 
@@ -971,6 +972,67 @@ function LegalCard({
           value={registeredAddress}
           onChange={(e) => setRegisteredAddress(e.target.value)}
           placeholder="Companies House registered address"
+        />
+      </FieldGroup>
+      <SaveRow dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />
+    </Section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Virtual meetings card — host email (which Venneir account joins the call)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VirtualMeetingCard({
+  data,
+  onRefresh,
+  onToast,
+}: {
+  data: ClinicSettings;
+  onRefresh: () => void;
+  onToast: (t: Toast) => void;
+}) {
+  const [hostEmail, setHostEmail] = useState(data.virtualHostEmail);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setHostEmail(data.virtualHostEmail);
+  }, [data.virtualHostEmail]);
+
+  const dirty = hostEmail !== data.virtualHostEmail;
+  const reset = () => setHostEmail(data.virtualHostEmail);
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      await saveClinicSetting('virtualHostEmail', hostEmail.trim());
+      onRefresh();
+      onToast({ tone: 'success', title: 'Virtual meeting settings saved' });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not save virtual meeting settings',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section
+      icon={<Video size={16} aria-hidden />}
+      title="Virtual meetings"
+      description="The Venneir account that hosts every video call. Staff join using this address. Set the platform per-service under Services."
+    >
+      <FieldGroup>
+        <Input
+          label="Host joining email"
+          value={hostEmail}
+          onChange={(e) => setHostEmail(e.target.value)}
+          placeholder="venneirlaboratory@gmail.com"
+          type="email"
+          helper="Shown on the appointment detail page so staff know which account to join from."
         />
       </FieldGroup>
       <SaveRow dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />

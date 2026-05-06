@@ -60,6 +60,9 @@ export interface CatalogueRow {
   // with Join/Rejoin/No-show actions. Applies to any remote service,
   // not just virtual impressions.
   is_virtual: boolean;
+  // Which video platform this service uses. Only meaningful when
+  // is_virtual is true. Values: 'google_meet' | 'zoom' | 'microsoft_teams' | 'whereby'.
+  meeting_platform: string | null;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -96,7 +99,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -154,6 +157,7 @@ export async function upsertCatalogueRow(
     include_on_lwo: draft.include_on_lwo,
     allocate_job_box: draft.allocate_job_box,
     is_virtual: draft.is_virtual,
+    meeting_platform: draft.meeting_platform ?? null,
     sort_order: draft.sort_order,
     active: draft.active,
   };

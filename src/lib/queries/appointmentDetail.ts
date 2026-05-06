@@ -43,6 +43,7 @@ export interface AppointmentDetailRow {
   location_id: string;
   patient_id: string;
   join_url: string | null;
+  meeting_platform: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   // Deposit captured at booking time. Null when no deposit was taken
   // (Calendly event without one, or native booking pre-deposit
@@ -108,6 +109,7 @@ interface RawAppointment {
   location_id: string;
   patient_id: string;
   join_url: string | null;
+  meeting_platform: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   deposit_pence: number | null;
   deposit_currency: string | null;
@@ -141,7 +143,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, meeting_platform, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -283,6 +285,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           location_id: appt.location_id,
           patient_id: appt.patient_id,
           join_url: appt.join_url,
+          meeting_platform: appt.meeting_platform,
           intake: appt.intake,
           deposit_pence: appt.deposit_pence,
           deposit_currency: appt.deposit_currency,
