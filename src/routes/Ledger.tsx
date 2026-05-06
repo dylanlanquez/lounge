@@ -35,7 +35,7 @@ import {
   type LedgerFilters,
   type LedgerPaymentState,
   type LedgerRow,
-  type LedgerSource,
+  type LedgerServiceType,
   type LedgerStatus,
 } from '../lib/queries/ledger.ts';
 import type { DateRange } from '../lib/dateRange.ts';
@@ -70,11 +70,13 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'ended_early', label: 'Ended early' },
 ];
 
-const SOURCE_OPTIONS: ReadonlyArray<{ value: LedgerSource; label: string }> = [
-  { value: 'calendly', label: 'Calendly' },
-  { value: 'native', label: 'Native (Lounge)' },
-  { value: 'manual', label: 'Manually added' },
-  { value: 'walk_in', label: 'Walk-in' },
+const SERVICE_TYPE_OPTIONS: ReadonlyArray<{ value: LedgerServiceType; label: string }> = [
+  { value: 'denture_repair', label: 'Denture repair' },
+  { value: 'impression_appointment', label: 'Impression appointment' },
+  { value: 'virtual_impression_appointment', label: 'Virtual appointment' },
+  { value: 'same_day_appliance', label: 'Same-day appliance' },
+  { value: 'click_in_veneers', label: 'Click-in veneers' },
+  { value: 'other', label: 'Other' },
 ];
 
 // Payment axis filter — independent of the workflow Status filter (a
@@ -112,7 +114,7 @@ export function Ledger() {
   const isMobile = useIsMobile(640);
   const [search, setSearch] = useState('');
   const [statuses, setStatuses] = useState<LedgerStatus[]>([]);
-  const [sources, setSources] = useState<LedgerSource[]>([]);
+  const [serviceTypes, setServiceTypes] = useState<LedgerServiceType[]>([]);
   const [paymentStates, setPaymentStates] = useState<LedgerPaymentState[]>([]);
   const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
@@ -120,13 +122,13 @@ export function Ledger() {
   const filters: LedgerFilters = useMemo(
     () => ({
       statuses,
-      sources,
+      serviceTypes,
       paymentStates,
       fromDate: dateRange?.start ?? null,
       toDate: dateRange?.end ?? null,
       search,
     }),
-    [statuses, sources, paymentStates, dateRange, search],
+    [statuses, serviceTypes, paymentStates, dateRange, search],
   );
 
   const { data, loading, error, hasMore } = useLedger(filters, page);
@@ -135,7 +137,7 @@ export function Ledger() {
   // new search, not flicking through the previous result set.
   useEffect(() => {
     setPage(0);
-  }, [statuses, sources, paymentStates, dateRange, search]);
+  }, [statuses, serviceTypes, paymentStates, dateRange, search]);
 
   useEffect(() => {
     document.getElementById('root')?.scrollTo(0, 0);
@@ -149,13 +151,13 @@ export function Ledger() {
   const innerMaxWidth = theme.layout.pageMaxWidth;
   const filtersActive =
     statuses.length > 0 ||
-    sources.length > 0 ||
+    serviceTypes.length > 0 ||
     paymentStates.length > 0 ||
     dateRange !== null ||
     trimmed.length > 0;
   const clearAll = () => {
     setStatuses([]);
-    setSources([]);
+    setServiceTypes([]);
     setPaymentStates([]);
     setDateRange(null);
     setSearch('');
@@ -189,8 +191,8 @@ export function Ledger() {
               onSearchChange={setSearch}
               statuses={statuses}
               onStatusesChange={setStatuses}
-              sources={sources}
-              onSourcesChange={setSources}
+              serviceTypes={serviceTypes}
+              onServiceTypesChange={setServiceTypes}
               paymentStates={paymentStates}
               onPaymentStatesChange={setPaymentStates}
               dateRange={dateRange}
@@ -286,8 +288,8 @@ function FiltersRow({
   onSearchChange,
   statuses,
   onStatusesChange,
-  sources,
-  onSourcesChange,
+  serviceTypes,
+  onServiceTypesChange,
   paymentStates,
   onPaymentStatesChange,
   dateRange,
@@ -299,8 +301,8 @@ function FiltersRow({
   onSearchChange: (v: string) => void;
   statuses: LedgerStatus[];
   onStatusesChange: (next: LedgerStatus[]) => void;
-  sources: LedgerSource[];
-  onSourcesChange: (next: LedgerSource[]) => void;
+  serviceTypes: LedgerServiceType[];
+  onServiceTypesChange: (next: LedgerServiceType[]) => void;
   paymentStates: LedgerPaymentState[];
   onPaymentStatesChange: (next: LedgerPaymentState[]) => void;
   dateRange: DateRange | null;
@@ -336,13 +338,13 @@ function FiltersRow({
           onChange={onPaymentStatesChange}
           totalNoun="payment states"
         />
-        <FilterPill<LedgerSource>
-          label="Source"
-          placeholder="All sources"
-          values={sources}
-          options={SOURCE_OPTIONS}
-          onChange={onSourcesChange}
-          totalNoun="sources"
+        <FilterPill<LedgerServiceType>
+          label="Type"
+          placeholder="All types"
+          values={serviceTypes}
+          options={SERVICE_TYPE_OPTIONS}
+          onChange={onServiceTypesChange}
+          totalNoun="types"
         />
         <DateRangePicker
           value={dateRange}
