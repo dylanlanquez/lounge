@@ -50,8 +50,18 @@ import {
   type CartRow,
 } from '../lib/queries/carts.ts';
 import { findMatches, totalForQtyWithArch } from '../lib/catalogueMatch.ts';
-import { type IntakeAnswer, archToAnatomy, filterCareIntake, properCase } from '../lib/queries/appointments.ts';
-import { useCalendlyTypeMap } from '../lib/queries/calendlyTypeMap.ts';
+import {
+  ARCH_ANSWER_RE,
+  ARCH_QUESTION,
+  type IntakeAnswer,
+  archToAnatomy,
+  filterCareIntake,
+  properCase,
+} from '../lib/queries/appointments.ts';
+import {
+  answerMapKey,
+  useCalendlyAnswerMap,
+} from '../lib/queries/calendlyAnswerMap.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   appointmentRequiresJbRef,
@@ -288,7 +298,7 @@ export function Arrival() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const { rows: catalogueRows } = useCatalogueActive();
-  const { byLabel: typeMapByLabel } = useCalendlyTypeMap();
+  const { byQuestionAnswer: answerMapByQA } = useCalendlyAnswerMap();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
@@ -488,67 +498,84 @@ export function Arrival() {
 
     prePopulatedRef.current = true;
 
-    let criteria: {
-      service_type:   string | null;
-      product_key:    string | null;
-      repair_variant: string | null;
-      arch:           'upper' | 'lower' | 'both' | null;
-    };
-
     if (appointment.service_type) {
-      // Native / widget booking — axis pins are authoritative.
-      criteria = {
+      // Native / widget booking — axis pins are authoritative. Use
+      // findMatches so the specificity scorer picks the best row.
+      const criteria = {
         service_type:   appointment.service_type,
         product_key:    appointment.product_key    ?? null,
         repair_variant: appointment.repair_variant ?? null,
         arch:           appointment.arch           ?? null,
       };
-    } else {
-      // Calendly / legacy booking. Check the admin event-type map first
-      // (explicit beats regex). Fall back to intake Q&A parsing.
-      const mapKey = (appointment.event_type_label ?? '').toLowerCase().trim();
-      const mapped = mapKey ? typeMapByLabel.get(mapKey) : undefined;
-      if (mapped) {
-        const mappedRow = catalogueRows.find((r) => r.id === mapped.catalogue_id && r.active);
-        if (mappedRow) {
-          const { arch } = buildCriteriaFromIntake(appointment.intake, eventTypeLabel);
-          setStagedItems([{
-            key:       `${mappedRow.id}-prefill`,
-            catalogue: mappedRow,
-            qty:       1,
-            options:   { arch: arch ?? null },
-          }]);
-          return;
+      let matches = findMatches(catalogueRows, criteria);
+      if (matches.length === 0 && criteria.service_type) {
+        const byService = catalogueRows.filter(
+          (r) => r.active && r.service_type === criteria.service_type
+        );
+        if (byService.length === 1) matches = byService;
+      }
+      const best = matches[0];
+      if (!best) return;
+      const arch = (criteria.arch ?? null) as 'upper' | 'lower' | 'both' | null;
+      setStagedItems([{ key: `${best.id}-prefill`, catalogue: best, qty: 1, options: { arch } }]);
+      return;
+    }
+
+    // Calendly / legacy booking. The admin has mapped specific intake
+    // answer values (e.g. "Snapped Denture" under "Repair Type") to
+    // catalogue rows. We scan non-arch intake answers; the first answer
+    // that hits a mapping resolves the basket item. Arch is always
+    // derived separately from the arch-labelled question.
+    const filtered = filterCareIntake(appointment.intake);
+
+    // Derive arch from the arch-labelled question, or from an answer
+    // whose value is itself a recognisable arch indicator ("Top", "Both"…).
+    const archQa =
+      filtered.find((a) => ARCH_QUESTION.test(a.question ?? '')) ??
+      filtered.find((a) => ARCH_ANSWER_RE.test(a.answer ?? ''));
+    const archLabel = archToAnatomy(archQa?.answer);
+    const arch =
+      archLabel === 'Upper'            ? 'upper'
+      : archLabel === 'Lower'          ? 'lower'
+      : archLabel === 'Upper and Lower' ? 'both'
+      : null;
+
+    // Try the answer map for every non-arch intake answer.
+    // Multi-select answers are newline-delimited — split and try each line.
+    const archSet = new Set<IntakeAnswer>([archQa].filter((x): x is IntakeAnswer => x != null));
+    let mappedRow: (typeof catalogueRows)[number] | undefined;
+
+    outer: for (const qa of filtered) {
+      if (archSet.has(qa)) continue;
+      const lines = (qa.answer ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+      for (const line of lines) {
+        const hit = answerMapByQA.get(answerMapKey(qa.question ?? '', line));
+        if (hit) {
+          mappedRow = catalogueRows.find((r) => r.id === hit.catalogue_id && r.active);
+          if (mappedRow) break outer;
         }
       }
-      criteria = buildCriteriaFromIntake(appointment.intake, eventTypeLabel);
     }
 
-    let matches = findMatches(catalogueRows, criteria);
-
-    // Fallback: if strict matching returned nothing but we know the service
-    // type, check whether exactly one active catalogue row covers it.
-    // Single-row services (impression_appointment) get auto-selected;
-    // multi-variant services (same_day_appliance, denture_repair) are left
-    // blank so the staff can pick the right product.
-    if (matches.length === 0 && criteria.service_type) {
-      const byService = catalogueRows.filter(
-        (r) => r.active && r.service_type === criteria.service_type
-      );
-      if (byService.length === 1) matches = byService;
+    if (mappedRow) {
+      setStagedItems([{ key: `${mappedRow.id}-prefill`, catalogue: mappedRow, qty: 1, options: { arch } }]);
+      return;
     }
 
-    const best = matches[0];
-    if (!best) return;
-
-    const arch = (criteria.arch ?? null) as 'upper' | 'lower' | 'both' | null;
-    setStagedItems([{
-      key:       `${best.id}-prefill`,
-      catalogue: best,
-      qty:       1,
-      options:   { arch },
-    }]);
-  }, [mode, appointment, catalogueRows, eventTypeLabel, typeMapByLabel, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    // No answer-map hit. Fall back to service-type inference for
+    // unambiguous services (impression_appointment has exactly one
+    // catalogue row, so it auto-resolves). Multi-variant services
+    // (same_day_appliance, denture_repair) are left blank so staff
+    // choose the correct product.
+    const service_type = inferServiceTypeFromEventLabel(eventTypeLabel);
+    if (service_type) {
+      const byService = catalogueRows.filter((r) => r.active && r.service_type === service_type);
+      const sole = byService[0];
+      if (byService.length === 1 && sole) {
+        setStagedItems([{ key: `${sole.id}-prefill`, catalogue: sole, qty: 1, options: { arch } }]);
+      }
+    }
+  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -3311,86 +3338,6 @@ function StaffOnlyBanner({ subtitle }: { subtitle: string }) {
 
 function capitalise(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
-}
-
-// ── Intake → match-criteria ───────────────────────────────────────────────────
-// Broader than criteriaFromAppointment (CataloguePicker) which was designed
-// for the picker's live filter, not for pre-population. Key differences:
-//
-//   • Repair detection uses /\brepair\b/ so old Calendly phrasings like
-//     "what type of repair would you like done" (no adjacent "repair type")
-//     still pick up the repair_variant answer.
-//   • Product detection falls back to scanning every answer for a known
-//     product name when no question label matched — handles custom question
-//     wording that doesn't contain "appliance/product/service/treatment".
-//   • missing_tooth is checked before retainer so "Missing Tooth Retainer"
-//     maps to 'missing_tooth', not 'retainer'.
-//   • Arch uses the answer-pattern fallback (ARCH_ANSWER_RE) from
-//     formatBookingSummary so unrecognised question labels still resolve
-//     when the answer is clearly "Top" / "Bottom" / "Both" etc.
-//   • service_type always comes from inferServiceTypeFromEventLabel (waiver.ts)
-//     which correctly maps impression labels to 'impression_appointment'
-//     rather than collapsing them into 'same_day_appliance'.
-
-const INTAKE_ARCH_Q_RE =
-  /\b(arch|jaw|upper\s*or\s*lower|top\s*or\s*bottom|which\s+side)\b/i;
-const INTAKE_ARCH_ANS_RE =
-  /^(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower)(\s*[,;\n]+\s*(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower))*\s*$/i;
-
-function productKeyFromAnswer(answer: string): string | null {
-  const a = answer.split(/\r?\n+/)[0]?.toLowerCase().trim() ?? '';
-  if (!a) return null;
-  // missing_tooth before retainer — "Missing Tooth Retainer" must not match retainer first
-  if (/missing[\s-]?tooth/.test(a)) return 'missing_tooth';
-  if (/retainer/.test(a)) return 'retainer';
-  if (/aligner/.test(a)) return 'aligner';
-  if (/night[\s-]?guard/.test(a)) return 'night_guard';
-  if (/day[\s-]?guard|sports?[\s-]?guard/.test(a)) return 'day_guard';
-  if (/whitening[\s-]?kit/.test(a)) return 'whitening_kit';
-  if (/whitening/.test(a)) return 'whitening_tray';
-  if (/click[\s-]?in[\s-]?veneer|veneer/.test(a)) return 'click_in_veneers';
-  return null;
-}
-
-function buildCriteriaFromIntake(
-  intake: IntakeAnswer[] | null,
-  eventTypeLabel: string | null
-): { service_type: string | null; product_key: string | null; repair_variant: string | null; arch: 'upper' | 'lower' | 'both' | null } {
-  const service_type = inferServiceTypeFromEventLabel(eventTypeLabel);
-  const filtered = filterCareIntake(intake);
-
-  // Arch — question label first, then answer-pattern fallback
-  const archByQ = filtered.find((a) => INTAKE_ARCH_Q_RE.test(a.question ?? ''));
-  const archByAns = archByQ ? null : filtered.find((a) => INTAKE_ARCH_ANS_RE.test(a.answer ?? ''));
-  const archLabel = archToAnatomy((archByQ ?? archByAns)?.answer);
-  const arch =
-    archLabel === 'Upper' ? 'upper'
-    : archLabel === 'Lower' ? 'lower'
-    : archLabel === 'Upper and Lower' ? 'both'
-    : null;
-
-  // Repair variant — any question that mentions "repair" (covers old
-  // Calendly phrasings: "type of repair", "what type of repair would you
-  // like done", "repair type", "repair")
-  const repairQ = filtered.find((a) => /\brepair\b/i.test(a.question ?? ''));
-  const repair_variant = repairQ?.answer.split(/\r?\n+/)[0]?.trim() ?? null;
-
-  // Product — question-label match first, then scan all answers
-  const archOrRepair = new Set([archByQ, archByAns, repairQ].filter(Boolean));
-  const productQ = filtered.find(
-    (a) => !archOrRepair.has(a) && /\b(appliance|product|service|treatment)\b/i.test(a.question ?? '')
-  );
-  let product_key: string | null = productQ ? productKeyFromAnswer(productQ.answer) : null;
-  if (!product_key) {
-    // No question matched — scan remaining answers for a known product name
-    for (const qa of filtered) {
-      if (archOrRepair.has(qa) || qa === productQ) continue;
-      product_key = productKeyFromAnswer(qa.answer);
-      if (product_key) break;
-    }
-  }
-
-  return { service_type, product_key, repair_variant, arch };
 }
 
 // Selectable chip used by the service-type grid. Reads as a card-like

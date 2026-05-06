@@ -66,10 +66,14 @@ import {
   type VerifyResult,
 } from '../lib/queries/calendlyDiagnostic.ts';
 import {
-  addCalendlyTypeMap,
-  deleteCalendlyTypeMap,
-  useCalendlyTypeMap,
-} from '../lib/queries/calendlyTypeMap.ts';
+  answerMapKey,
+  deleteCalendlyAnswerMap,
+  saveCalendlyAnswerMap,
+  useCalendlyAnswerMap,
+  useCalendlyDiscoveredAnswers,
+  type CalendlyAnswerMapRow,
+  type CalendlyDiscoveredAnswer,
+} from '../lib/queries/calendlyAnswerMap.ts';
 import { formatPence, formatPounds } from '../lib/queries/carts.ts';
 import {
   batchUpdateSortOrders,
@@ -402,7 +406,7 @@ function CalendlyTab() {
         </ol>
       </Card>
 
-      <EventTypeMappingsCard onError={(msg) => setToast({ tone: 'error', title: msg })} />
+      <CalendlyAnswerMappingsCard onError={(msg) => setToast({ tone: 'error', title: msg })} />
 
       {toast ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
@@ -413,131 +417,190 @@ function CalendlyTab() {
   );
 }
 
-function EventTypeMappingsCard({ onError }: { onError: (msg: string) => void }) {
-  const { rows, loading, refresh } = useCalendlyTypeMap();
+function CalendlyAnswerMappingsCard({ onError }: { onError: (msg: string) => void }) {
+  const { byQuestionAnswer, loading: mappingsLoading, refresh } = useCalendlyAnswerMap();
+  const { answers: discovered, loading: discoveredLoading } = useCalendlyDiscoveredAnswers();
   const { rows: catalogueRows } = useCatalogueActive();
-  const [label, setLabel] = useState('');
-  const [catalogueId, setCatalogueId] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const catalogueOptions = catalogueRows.map((r) => ({
-    value: r.id,
-    label: `${r.name} — ${r.category}`,
-  }));
+  // Pending catalogue selection per (question, answer_text) key — used for
+  // unmapped rows where the admin has opened the dropdown but not yet saved.
+  const [pending, setPending] = useState<Map<string, string>>(new Map());
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState<Set<string>>(new Set());
 
-  const onAdd = async () => {
-    if (!label.trim() || !catalogueId) return;
-    setSaving(true);
-    const { error } = await addCalendlyTypeMap(label, catalogueId);
-    setSaving(false);
+  const catalogueOptions = [
+    { value: '', label: 'Choose a catalogue item…' },
+    ...catalogueRows.map((r) => ({ value: r.id, label: `${r.name} — ${r.category}` })),
+  ];
+
+  // Group discovered answers by question label for section rendering.
+  const byQuestion = useMemo(() => {
+    const map = new Map<string, CalendlyDiscoveredAnswer[]>();
+    for (const a of discovered) {
+      const arr = map.get(a.question) ?? [];
+      arr.push(a);
+      map.set(a.question, arr);
+    }
+    return map;
+  }, [discovered]);
+
+  const onMap = async (question: string, answer_text: string) => {
+    const key = answerMapKey(question, answer_text);
+    const catalogueId = pending.get(key);
+    if (!catalogueId) return;
+    setSaving((s) => new Set(s).add(key));
+    const { error } = await saveCalendlyAnswerMap(question, answer_text, catalogueId);
+    setSaving((s) => { const n = new Set(s); n.delete(key); return n; });
     if (error) { onError(error); return; }
-    setLabel('');
-    setCatalogueId('');
     refresh();
   };
 
-  const onDelete = async (id: string) => {
-    setDeletingId(id);
-    const { error } = await deleteCalendlyTypeMap(id);
-    setDeletingId(null);
+  const onRemove = async (row: CalendlyAnswerMapRow) => {
+    setDeleting((d) => new Set(d).add(row.id));
+    const { error } = await deleteCalendlyAnswerMap(row.id);
+    setDeleting((d) => { const n = new Set(d); n.delete(row.id); return n; });
     if (error) { onError(error); return; }
     refresh();
   };
+
+  const loading = mappingsLoading || discoveredLoading;
 
   return (
     <Card padding="lg">
       <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-        Event type mappings
+        Intake answer mappings
       </h2>
       <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-        When a Calendly booking arrives with no axis pins set, Lounge looks up the event type label here and pre-fills the arrival basket with the mapped catalogue item. Intake Q&A answers (arch, repair variant) still apply on top.
+        These are all the answer values seen in real Calendly bookings. Map each one to the catalogue item it represents so Lounge can pre-fill the arrival basket automatically. Arch is always derived from the arch question separately.
       </p>
 
       {loading ? (
-        <Skeleton height={80} />
-      ) : rows.length === 0 ? (
-        <p style={{ margin: `0 0 ${theme.space[4]}px`, color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
-          No mappings yet. Add one below.
+        <Skeleton height={200} />
+      ) : byQuestion.size === 0 ? (
+        <p style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm, margin: 0 }}>
+          No Calendly intake data found. Run a backfill first.
         </p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginBottom: theme.space[4] }}>
-          {rows.map((row) => (
-            <div
-              key={row.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: theme.space[3],
-                padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                background: theme.color.bg,
-                borderRadius: theme.radius.card,
-                border: `1px solid ${theme.color.border}`,
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {row.label}
-                </div>
-                <div style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {row.catalogue_name}
-                  {row.catalogue_category ? ` — ${row.catalogue_category}` : ''}
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={deletingId === row.id}
-                onClick={() => void onDelete(row.id)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+          {[...byQuestion.entries()].map(([question, answers]) => (
+            <div key={question}>
+              {/* Question section header */}
+              <div
                 style={{
-                  appearance: 'none',
-                  border: 'none',
-                  background: 'none',
-                  cursor: 'pointer',
-                  color: theme.color.inkSubtle,
-                  padding: theme.space[1],
-                  flexShrink: 0,
-                  opacity: deletingId === row.id ? 0.4 : 1,
+                  fontSize: theme.type.size.xs,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.inkMuted,
+                  textTransform: 'uppercase',
+                  letterSpacing: theme.type.tracking.wide,
+                  marginBottom: theme.space[3],
                 }}
               >
-                <Trash2 size={15} />
-              </button>
+                {question}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {answers.map(({ answer_text, frequency }) => {
+                  const key = answerMapKey(question, answer_text);
+                  const existing = byQuestionAnswer.get(key);
+                  const pendingId = pending.get(key) ?? '';
+                  const isSaving = saving.has(key);
+                  const isDeleting = existing ? deleting.has(existing.id) : false;
+
+                  return (
+                    <div
+                      key={answer_text}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: theme.space[3],
+                        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                        background: existing ? theme.color.accentBg : theme.color.bg,
+                        borderRadius: theme.radius.card,
+                        border: `1px solid ${existing ? theme.color.accent + '40' : theme.color.border}`,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      {/* Answer text + frequency badge */}
+                      <div style={{ flex: '1 1 160px', minWidth: 0, display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {answer_text}
+                        </span>
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: theme.type.size.xs,
+                            color: theme.color.inkSubtle,
+                            background: theme.color.surface,
+                            border: `1px solid ${theme.color.border}`,
+                            borderRadius: theme.radius.pill,
+                            padding: `1px ${theme.space[2]}px`,
+                          }}
+                        >
+                          ×{frequency}
+                        </span>
+                      </div>
+
+                      {/* Right-hand controls */}
+                      {existing ? (
+                        // Already mapped: show catalogue name + remove button
+                        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexShrink: 0 }}>
+                          <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>
+                            {existing.catalogue_name}
+                            {existing.catalogue_category ? (
+                              <span style={{ color: theme.color.inkMuted }}> — {existing.catalogue_category}</span>
+                            ) : null}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={isDeleting}
+                            onClick={() => void onRemove(existing)}
+                            title="Remove mapping"
+                            style={{
+                              appearance: 'none',
+                              border: 'none',
+                              background: 'none',
+                              cursor: isDeleting ? 'default' : 'pointer',
+                              color: theme.color.inkSubtle,
+                              padding: theme.space[1],
+                              opacity: isDeleting ? 0.4 : 1,
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+                      ) : (
+                        // Unmapped: dropdown + Map button
+                        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flex: '1 1 280px' }}>
+                          <div style={{ flex: 1, minWidth: 180 }}>
+                            <DropdownSelect
+                              value={pendingId}
+                              onChange={(id) =>
+                                setPending((p) => { const n = new Map(p); n.set(key, id); return n; })
+                              }
+                              options={catalogueOptions}
+                            />
+                          </div>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            loading={isSaving}
+                            disabled={!pendingId}
+                            onClick={() => void onMap(question, answer_text)}
+                          >
+                            Map
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ))}
         </div>
       )}
-
-      <div style={{ display: 'flex', gap: theme.space[3], flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-          <label style={{ display: 'block', fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, marginBottom: theme.space[1], textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
-            Calendly event type label
-          </label>
-          <Input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. In-person Impression Appointment"
-          />
-        </div>
-        <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-          <label style={{ display: 'block', fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, marginBottom: theme.space[1], textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
-            Catalogue item
-          </label>
-          <DropdownSelect
-            value={catalogueId}
-            onChange={setCatalogueId}
-            options={[{ value: '', label: 'Choose item…' }, ...catalogueOptions]}
-          />
-        </div>
-        <Button
-          variant="primary"
-          loading={saving}
-          disabled={!label.trim() || !catalogueId}
-          onClick={() => void onAdd()}
-        >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <Plus size={16} /> Add mapping
-          </span>
-        </Button>
-      </div>
     </Card>
   );
 }

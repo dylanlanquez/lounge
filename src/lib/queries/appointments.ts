@@ -227,14 +227,14 @@ export function filterCareIntake(intake: ReadonlyArray<IntakeAnswer> | null | un
 
 // Question-label patterns. Broad enough to catch Calendly variations:
 //   "Arch", "Which Arch?", "Upper or Lower?", "Top or Bottom?", "Which jaw?"
-const ARCH_QUESTION =
+export const ARCH_QUESTION =
   /\b(arch|jaw|upper\s*or\s*lower|top\s*or\s*bottom|which\s+side)\b/i;
 const SUBJECT_QUESTION = /\b(appliance|repair[\s_]*type|treatment|product|service)\b/i;
 
 // Answer-only fallback: if no question label matched ARCH_QUESTION but an
 // answer is clearly an arch indicator (Top / Bottom / Upper / Lower / Both /
 // Full mouth, possibly multi-select with newlines), treat it as the arch.
-const ARCH_ANSWER_RE =
+export const ARCH_ANSWER_RE =
   /^(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower)(\s*[,;\n]+\s*(top|bottom|upper|lower|both|full[\s\-_]?mouth|upper\s+and\s+lower))*\s*$/i;
 
 // Map "Top" / "Bottom" / "Both" answers to anatomical labels.
