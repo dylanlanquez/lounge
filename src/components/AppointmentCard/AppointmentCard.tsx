@@ -1,5 +1,5 @@
 import { type CSSProperties } from 'react';
-import { Footprints } from 'lucide-react';
+import { Ban, Footprints, RotateCcw } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
 import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
@@ -135,7 +135,7 @@ export function AppointmentCard({
     display: 'flex',
     cursor: isInteractive ? 'pointer' : 'default',
     transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-    textDecoration: status === 'cancelled' ? 'line-through' : 'none',
+    textDecoration: 'none',
     opacity: dimmed ? 0.55 : 1,
     zIndex: 1,
   };
@@ -180,7 +180,7 @@ export function AppointmentCard({
           display: 'flex',
           flexDirection: 'column',
           gap: 2,
-          color: status === 'complete' || status === 'cancelled' ? theme.color.inkMuted : theme.color.ink,
+          color: status === 'complete' || status === 'cancelled' || status === 'rescheduled' ? theme.color.inkMuted : theme.color.ink,
         }}
       >
         <p
@@ -200,35 +200,56 @@ export function AppointmentCard({
           <SourceGlyph source={source} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{patientName}</span>
         </p>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkMuted,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            lineHeight: theme.type.leading.snug,
-            fontVariantNumeric: 'tabular-nums',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 3,
-          }}
-        >
-          {isVirtual && (
-            <img src={googleMeetIcon} width={11} height={11} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
-          )}
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {formatTime(startAt)}
-            {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
-            {showLate ? (
-              <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
-                {' · '}
-                {formatLateDuration(lateMinutes!)} late
-              </span>
-            ) : null}
-          </span>
-        </p>
+        {status === 'cancelled' || status === 'rescheduled' ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xs,
+              lineHeight: theme.type.leading.snug,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 3,
+              color: status === 'cancelled' ? theme.color.alert : theme.color.warn,
+              fontWeight: theme.type.weight.medium,
+            }}
+          >
+            {status === 'cancelled'
+              ? <Ban size={10} aria-hidden style={{ flexShrink: 0 }} />
+              : <RotateCcw size={10} aria-hidden style={{ flexShrink: 0 }} />
+            }
+            {status === 'cancelled' ? 'Cancelled' : 'Rescheduled'}
+          </p>
+        ) : (
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              lineHeight: theme.type.leading.snug,
+              fontVariantNumeric: 'tabular-nums',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 3,
+            }}
+          >
+            {isVirtual && (
+              <img src={googleMeetIcon} width={11} height={11} aria-label="Virtual meeting" style={{ flexShrink: 0 }} />
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {formatTime(startAt)}
+              {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
+              {showLate ? (
+                <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+                  {' · '}
+                  {formatLateDuration(lateMinutes!)} late
+                </span>
+              ) : null}
+            </span>
+          </p>
+        )}
         {showPhaseRibbon && (
           <PhaseStrip
             phases={phases!}
