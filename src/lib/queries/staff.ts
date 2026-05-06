@@ -328,6 +328,46 @@ export async function addStaffMemberByEmail(
   };
 }
 
+// Provisions a brand-new Lounge identity end-to-end: auth.users +
+// accounts + lng_staff_members. Uses the lng-create-staff-account
+// edge function because creating auth users requires the service
+// role. Used by the Add staff sheet when the supplied email has no
+// existing accounts row, so the new staff member gets two distinct
+// sign-ins from any Meridian identity (different login_email →
+// different auth.users → completely separate from Meridian).
+export async function inviteNewStaffMember(args: {
+  email: string;
+  first_name: string;
+  last_name: string;
+  is_admin?: boolean;
+  is_manager?: boolean;
+}): Promise<AddByEmailResult> {
+  const { data: invocation, error } = await supabase.functions.invoke<{
+    ok: boolean;
+    error?: string;
+    staff_member_id?: string;
+    account_id?: string;
+    display_name?: string;
+  }>('lng-create-staff-account', {
+    body: {
+      email: args.email.trim().toLowerCase(),
+      first_name: args.first_name.trim(),
+      last_name: args.last_name.trim(),
+      is_admin: args.is_admin === true,
+      is_manager: args.is_manager === true,
+    },
+  });
+  if (error) throw new Error(error.message);
+  if (!invocation || invocation.ok !== true) {
+    throw new Error(invocation?.error ?? 'Could not provision the staff account.');
+  }
+  return {
+    staff_member_id: invocation.staff_member_id!,
+    account_id: invocation.account_id!,
+    display_name: invocation.display_name!,
+  };
+}
+
 function composeDisplay(a: {
   first_name: string | null;
   last_name: string | null;

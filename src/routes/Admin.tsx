@@ -30,6 +30,7 @@ import {
 } from '../lib/queries/terminalReaders.ts';
 import {
   addStaffMemberByEmail,
+  inviteNewStaffMember,
   deactivateStaffMember,
   reactivateStaffMember,
   setCanCountCash,
@@ -1577,6 +1578,8 @@ function StaffTab() {
   // Add-staff sheet
   const [addOpen, setAddOpen] = useState(false);
   const [addEmail, setAddEmail] = useState('');
+  const [addFirstName, setAddFirstName] = useState('');
+  const [addLastName, setAddLastName] = useState('');
   const [addAdmin, setAddAdmin] = useState(false);
   const [addManager, setAddManager] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
@@ -1650,6 +1653,8 @@ function StaffTab() {
 
   const openAdd = () => {
     setAddEmail('');
+    setAddFirstName('');
+    setAddLastName('');
     setAddAdmin(false);
     setAddManager(false);
     setAddError(null);
@@ -1660,15 +1665,31 @@ function StaffTab() {
     setAddBusy(true);
     setAddError(null);
     try {
-      const result = await addStaffMemberByEmail(addEmail, {
+      // First try the existing-account path. If the email is already
+      // in public.accounts (typically a Meridian person being given
+      // Lounge access too), this just adds the lng_staff_members row
+      // and reuses their identity.
+      const existing = await addStaffMemberByEmail(addEmail, {
         is_admin: addAdmin && canEditAdmin,
         is_manager: addManager,
       });
-      if (!result) {
-        setAddError(
-          'No account exists with that email. Ask the person to sign in to Meridian first, or send them a Supabase invite.',
-        );
-        return;
+      if (!existing) {
+        // No account row exists for this email. Provision a fresh
+        // identity (auth user + accounts row + staff row) so the new
+        // staff member ends up with sign-in credentials entirely
+        // separate from any Meridian account. Requires first/last
+        // name because accounts.name is NOT NULL.
+        if (!addFirstName.trim() || !addLastName.trim()) {
+          setAddError('Enter a first and last name to create a new Lounge account.');
+          return;
+        }
+        await inviteNewStaffMember({
+          email: addEmail,
+          first_name: addFirstName,
+          last_name: addLastName,
+          is_admin: addAdmin && canEditAdmin,
+          is_manager: addManager,
+        });
       }
       staff.refresh();
       setAddOpen(false);
@@ -1936,7 +1957,7 @@ function StaffTab() {
         onClose={() => !addBusy && setAddOpen(false)}
         dismissable={!addBusy}
         title="Add staff member"
-        description="Adds an existing account to the Lounge staff list. They keep their existing access elsewhere; this just opts them into Lounge with the roles you pick."
+        description="If the email already has an account, they keep that login and just gain Lounge access. If not, we create a brand-new Lounge sign-in and email them an invite to set a password."
         footer={
           <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
             <Button variant="secondary" onClick={() => setAddOpen(false)} disabled={addBusy}>
@@ -1949,13 +1970,27 @@ function StaffTab() {
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <div style={{ display: 'flex', gap: theme.space[3] }}>
+            <Input
+              label="First name"
+              value={addFirstName}
+              onChange={(e) => setAddFirstName(e.target.value)}
+              placeholder="e.g. Sarah"
+              autoFocus
+            />
+            <Input
+              label="Last name"
+              value={addLastName}
+              onChange={(e) => setAddLastName(e.target.value)}
+              placeholder="e.g. Mackay"
+            />
+          </div>
           <Input
             label="Login email"
             type="email"
             value={addEmail}
             onChange={(e) => setAddEmail(e.target.value)}
             placeholder="e.g. sarah@venneir.com"
-            autoFocus
           />
           <div style={{ display: 'flex', gap: theme.space[5], flexWrap: 'wrap' }}>
             <Checkbox
