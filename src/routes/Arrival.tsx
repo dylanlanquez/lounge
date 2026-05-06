@@ -30,7 +30,7 @@ import {
 } from '../components/index.ts';
 import { WaiverInline, type WaiverInlineHandle } from '../components/WaiverInline/WaiverInline.tsx';
 import { MAX_TECH_NOTE_LENGTH } from '../lib/printLwo.ts';
-import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
+import { CataloguePicker, criteriaFromAppointment } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
@@ -50,7 +50,7 @@ import {
   type CartRow,
 } from '../lib/queries/carts.ts';
 import { findMatches, totalForQtyWithArch } from '../lib/catalogueMatch.ts';
-import { properCase } from '../lib/queries/appointments.ts';
+import { type IntakeAnswer, properCase } from '../lib/queries/appointments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   appointmentRequiresJbRef,
@@ -125,6 +125,9 @@ interface AppointmentContext {
   product_key: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
   repair_variant: string | null;
+  // Calendly Q&A answers — used to infer product/arch when axis pins
+  // are absent (Calendly bookings that didn't go through the native widget).
+  intake: IntakeAnswer[] | null;
 }
 
 interface PatientLite {
@@ -409,7 +412,7 @@ export function Arrival() {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider, service_type, product_key, arch, repair_variant'
+              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider, service_type, product_key, arch, repair_variant, intake'
             )
             .eq('id', id)
             .maybeSingle();
@@ -454,42 +457,41 @@ export function Arrival() {
     };
   }, [id, mode]);
 
-  // Pre-populate the basket from the appointment's axis pins.
+  // Pre-populate the basket from the appointment's booking data.
   // Runs once when both the appointment context and the catalogue are
   // loaded. Does nothing for walk-ins (no prior booking) or when the
   // staff has already manually staged items (preserve their intent).
   //
-  // Native bookings have service_type + axis pins set directly on the row.
-  // Calendly bookings only have event_type_label — we infer the service type
-  // from that so both paths get pre-populated.
+  // Native / widget bookings have service_type + axis pins set directly
+  // on the row — used as-is. Calendly bookings only have intake Q&A and
+  // event_type_label — criteriaFromAppointment parses both into criteria
+  // so both booking paths get pre-populated wherever possible.
   const prePopulatedRef = useRef(false);
   useEffect(() => {
     if (mode !== 'appointment') return;
-    if (!appointment) return; // not loaded yet
+    if (!appointment) return;
     if (catalogueRows.length === 0) return;
     if (prePopulatedRef.current) return;
     if (stagedItems.length > 0) return;
 
-    // Prefer the axis-pinned service_type (native bookings); fall back to
-    // inferring from the Calendly event label.
-    const serviceType =
-      appointment.service_type ?? inferServiceTypeFromEventLabel(eventTypeLabel);
-    if (!serviceType) return;
-
     prePopulatedRef.current = true;
 
-    const criteria = {
-      service_type:   serviceType,
-      product_key:    appointment.product_key    ?? null,
-      repair_variant: appointment.repair_variant ?? null,
-      arch:           appointment.arch           ?? null,
-    };
+    // Axis pins present → native booking; use them directly.
+    // Axis pins absent → Calendly booking; parse intake Q&A for signals.
+    const criteria = appointment.service_type
+      ? {
+          service_type:   appointment.service_type,
+          product_key:    appointment.product_key    ?? null,
+          repair_variant: appointment.repair_variant ?? null,
+          arch:           appointment.arch           ?? null,
+        }
+      : criteriaFromAppointment(appointment.intake, eventTypeLabel);
 
     const matches = findMatches(catalogueRows, criteria);
     const best = matches[0];
     if (!best) return;
 
-    const arch = (appointment.arch ?? null) as 'upper' | 'lower' | 'both' | null;
+    const arch = (criteria.arch ?? null) as 'upper' | 'lower' | 'both' | null;
     setStagedItems([{
       key:       `${best.id}-prefill`,
       catalogue: best,
@@ -968,7 +970,7 @@ export function Arrival() {
       <CataloguePicker
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        intake={null}
+        intake={appointment?.intake ?? null}
         eventTypeLabel={eventTypeLabel}
         onStage={(cat, qty, opts) =>
           setStagedItems((s) => [
