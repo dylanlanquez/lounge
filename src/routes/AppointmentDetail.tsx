@@ -909,7 +909,7 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
     rows.push({ icon: <UserCheck size={13} aria-hidden />, label: 'Staff', value: staffLine });
   }
   if (appt.patient.email) {
-    rows.push({ icon: <Mail size={13} aria-hidden />, label: 'Email', value: appt.patient.email });
+    rows.push({ icon: <Mail size={13} aria-hidden />, label: 'Patient email', value: appt.patient.email });
   }
 
   return (
