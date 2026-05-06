@@ -67,6 +67,7 @@ import {
 } from '../lib/queries/appointmentDetail.ts';
 import { humaniseLedgerSource } from '../lib/queries/ledger.ts';
 import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
+import googleMeetIcon from '../assets/google-meet.png';
 
 // AppointmentDetail — full-page surface for appointments that don't
 // have a visit yet (Booked future, Cancelled, No-show, Rescheduled).
@@ -857,7 +858,7 @@ function platformIcon(platform: string | null, joinUrl: string | null): ReactNod
   if (label === 'Google Meet') {
     return (
       <img
-        src="/google-meet.png"
+        src={googleMeetIcon}
         alt="Google Meet"
         width={13}
         height={13}
