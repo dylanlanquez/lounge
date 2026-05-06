@@ -217,7 +217,7 @@ const INTAKE_SKIP_PATTERNS = [
   /\btime\s*zone\b/i,
 ];
 
-export function filterCareIntake(intake: IntakeAnswer[] | null | undefined): IntakeAnswer[] {
+export function filterCareIntake(intake: ReadonlyArray<IntakeAnswer> | null | undefined): IntakeAnswer[] {
   if (!intake) return [];
   return intake.filter((a) => {
     if (!a || typeof a.answer !== 'string' || a.answer.trim() === '') return false;
@@ -294,7 +294,12 @@ function joinMultiSelect(answer: string | undefined | null): string | undefined 
   return parts.join(', ');
 }
 
-export function formatBookingSummary(row: AppointmentRow): string {
+// Accepts the two fields actually needed — works with both AppointmentRow
+// and AppointmentDetailRow without requiring a full type cast.
+export function formatBookingSummary(row: {
+  event_type_label: string | null;
+  intake: ReadonlyArray<IntakeAnswer> | null;
+}): string {
   const answers = filterCareIntake(row.intake);
   // Match arch by question label first; if no question matches, fall back to
   // any answer that is itself a recognisable arch indicator.
@@ -307,14 +312,37 @@ export function formatBookingSummary(row: AppointmentRow): string {
   const archLabel = arch ? archToAnatomy(arch.answer) : undefined;
   const subjectLabel = joinMultiSelect(subject?.answer);
 
-  const event = row.event_type_label?.trim() ?? '';
+  // Native bookings sometimes store the full formatted summary inside
+  // event_type_label (e.g. "Virtual impression appointment · Whitening Tray
+  // · Lower arch"). Split on ' · ' so the base service name stays clean and
+  // any embedded tokens can be parsed for arch/item context.
+  const rawLabel = row.event_type_label?.trim() ?? '';
+  const splitParts = rawLabel.split(/\s*·\s*/);
+  const event = (splitParts[0] ?? '').trim();
+  const embedded = splitParts.slice(1);
 
-  // Impression appointments are special: the "product" question describes
-  // what's being impressioned (Whitening Trays, Retainers etc.) — but on its
-  // own that reads like a Same-day Appliances booking. Keep the full event
-  // label as the primary descriptor and use "for {product}" as the suffix.
+  // Impression appointments: keep the service name as the primary descriptor
+  // and append arch + item as natural English ("for lower whitening tray").
   if (/impression/i.test(event)) {
-    if (subjectLabel) return `${event} for ${subjectLabel}`;
+    // Arch comes from intake first; fall back to any embedded token that
+    // looks like an arch indicator (Upper / Lower / Both).
+    const embeddedArchToken = embedded.find(p => /\b(upper|lower|both|top|bottom)\b/i.test(p));
+    const effectiveArch = archLabel ?? (embeddedArchToken ? archToAnatomy(embeddedArchToken) : undefined);
+
+    // Item: specific SUBJECT_QUESTION match → any non-arch intake answer →
+    // embedded tokens that aren't the arch.
+    const nonArchAnswer = subject ?? answers.find(a => a !== arch);
+    const embeddedItems = embedded.filter(p => p !== embeddedArchToken);
+    const effectiveItem =
+      subjectLabel ??
+      (nonArchAnswer ? joinMultiSelect(nonArchAnswer.answer) : undefined) ??
+      (embeddedItems.length > 0 ? embeddedItems.join(', ') : undefined);
+
+    const parts: string[] = [];
+    if (effectiveArch) parts.push(effectiveArch.toLowerCase());
+    if (effectiveItem) parts.push(effectiveItem.toLowerCase());
+
+    if (parts.length > 0) return `${event} for ${parts.join(' ')}`;
     return event;
   }
 
@@ -339,5 +367,5 @@ export function formatBookingSummary(row: AppointmentRow): string {
       .filter((s): s is string => !!s)
       .join(' · ');
   }
-  return event;
+  return event || rawLabel;
 }

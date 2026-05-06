@@ -44,6 +44,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { logFailure } from '../lib/failureLog.ts';
 import {
+  formatBookingSummary,
   patientFullDisplayName,
   properCase,
 } from '../lib/queries/appointments.ts';
@@ -608,7 +609,10 @@ function Hero({
   const navigate = useNavigate();
   const sourceLabel = humaniseLedgerSource(appt.source);
   const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
-  const service = humaniseEventTypeLabel(appt.event_type_label) ?? 'Appointment';
+  const service =
+    formatBookingSummary({ event_type_label: appt.event_type_label, intake: appt.intake }) ||
+    humaniseEventTypeLabel(appt.event_type_label) ||
+    'Appointment';
 
   // State-driven ribbon — icon + dateLong + anchor + relative + tone
   // all picked together so a glance answers "what is this booking
