@@ -65,6 +65,11 @@ import {
   verifyCalendlyWebhook,
   type VerifyResult,
 } from '../lib/queries/calendlyDiagnostic.ts';
+import {
+  addCalendlyTypeMap,
+  deleteCalendlyTypeMap,
+  useCalendlyTypeMap,
+} from '../lib/queries/calendlyTypeMap.ts';
 import { formatPence, formatPounds } from '../lib/queries/carts.ts';
 import {
   batchUpdateSortOrders,
@@ -73,6 +78,7 @@ import {
   setCatalogueActive,
   uploadCatalogueImage,
   upsertCatalogueRow,
+  useCatalogueActive,
   useCatalogueAll,
   type ArchMatch,
 } from '../lib/queries/catalogue.ts';
@@ -396,12 +402,143 @@ function CalendlyTab() {
         </ol>
       </Card>
 
+      <EventTypeMappingsCard onError={(msg) => setToast({ tone: 'error', title: msg })} />
+
       {toast ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
           <Toast tone={toast.tone === 'info' ? 'info' : toast.tone === 'error' ? 'error' : 'success'} title={toast.title} description={toast.description} duration={6000} onDismiss={() => setToast(null)} />
         </div>
       ) : null}
     </div>
+  );
+}
+
+function EventTypeMappingsCard({ onError }: { onError: (msg: string) => void }) {
+  const { rows, loading, refresh } = useCalendlyTypeMap();
+  const { rows: catalogueRows } = useCatalogueActive();
+  const [label, setLabel] = useState('');
+  const [catalogueId, setCatalogueId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const catalogueOptions = catalogueRows.map((r) => ({
+    value: r.id,
+    label: `${r.name} — ${r.category}`,
+  }));
+
+  const onAdd = async () => {
+    if (!label.trim() || !catalogueId) return;
+    setSaving(true);
+    const { error } = await addCalendlyTypeMap(label, catalogueId);
+    setSaving(false);
+    if (error) { onError(error); return; }
+    setLabel('');
+    setCatalogueId('');
+    refresh();
+  };
+
+  const onDelete = async (id: string) => {
+    setDeletingId(id);
+    const { error } = await deleteCalendlyTypeMap(id);
+    setDeletingId(null);
+    if (error) { onError(error); return; }
+    refresh();
+  };
+
+  return (
+    <Card padding="lg">
+      <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+        Event type mappings
+      </h2>
+      <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+        When a Calendly booking arrives with no axis pins set, Lounge looks up the event type label here and pre-fills the arrival basket with the mapped catalogue item. Intake Q&A answers (arch, repair variant) still apply on top.
+      </p>
+
+      {loading ? (
+        <Skeleton height={80} />
+      ) : rows.length === 0 ? (
+        <p style={{ margin: `0 0 ${theme.space[4]}px`, color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
+          No mappings yet. Add one below.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginBottom: theme.space[4] }}>
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[3],
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                background: theme.color.bg,
+                borderRadius: theme.radius.card,
+                border: `1px solid ${theme.color.border}`,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {row.label}
+                </div>
+                <div style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {row.catalogue_name}
+                  {row.catalogue_category ? ` — ${row.catalogue_category}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={deletingId === row.id}
+                onClick={() => void onDelete(row.id)}
+                style={{
+                  appearance: 'none',
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  color: theme.color.inkSubtle,
+                  padding: theme.space[1],
+                  flexShrink: 0,
+                  opacity: deletingId === row.id ? 0.4 : 1,
+                }}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: theme.space[3], flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+          <label style={{ display: 'block', fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, marginBottom: theme.space[1], textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+            Calendly event type label
+          </label>
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. In-person Impression Appointment"
+          />
+        </div>
+        <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+          <label style={{ display: 'block', fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, marginBottom: theme.space[1], textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+            Catalogue item
+          </label>
+          <DropdownSelect
+            value={catalogueId}
+            onChange={setCatalogueId}
+            options={[{ value: '', label: 'Choose item…' }, ...catalogueOptions]}
+          />
+        </div>
+        <Button
+          variant="primary"
+          loading={saving}
+          disabled={!label.trim() || !catalogueId}
+          onClick={() => void onAdd()}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Plus size={16} /> Add mapping
+          </span>
+        </Button>
+      </div>
+    </Card>
   );
 }
 

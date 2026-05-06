@@ -51,6 +51,7 @@ import {
 } from '../lib/queries/carts.ts';
 import { findMatches, totalForQtyWithArch } from '../lib/catalogueMatch.ts';
 import { type IntakeAnswer, archToAnatomy, filterCareIntake, properCase } from '../lib/queries/appointments.ts';
+import { useCalendlyTypeMap } from '../lib/queries/calendlyTypeMap.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   appointmentRequiresJbRef,
@@ -287,6 +288,7 @@ export function Arrival() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const { rows: catalogueRows } = useCatalogueActive();
+  const { byLabel: typeMapByLabel } = useCalendlyTypeMap();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
@@ -494,6 +496,7 @@ export function Arrival() {
     };
 
     if (appointment.service_type) {
+      // Native / widget booking — axis pins are authoritative.
       criteria = {
         service_type:   appointment.service_type,
         product_key:    appointment.product_key    ?? null,
@@ -501,6 +504,23 @@ export function Arrival() {
         arch:           appointment.arch           ?? null,
       };
     } else {
+      // Calendly / legacy booking. Check the admin event-type map first
+      // (explicit beats regex). Fall back to intake Q&A parsing.
+      const mapKey = (appointment.event_type_label ?? '').toLowerCase().trim();
+      const mapped = mapKey ? typeMapByLabel.get(mapKey) : undefined;
+      if (mapped) {
+        const mappedRow = catalogueRows.find((r) => r.id === mapped.catalogue_id && r.active);
+        if (mappedRow) {
+          const { arch } = buildCriteriaFromIntake(appointment.intake, eventTypeLabel);
+          setStagedItems([{
+            key:       `${mappedRow.id}-prefill`,
+            catalogue: mappedRow,
+            qty:       1,
+            options:   { arch: arch ?? null },
+          }]);
+          return;
+        }
+      }
       criteria = buildCriteriaFromIntake(appointment.intake, eventTypeLabel);
     }
 
@@ -528,7 +548,7 @@ export function Arrival() {
       qty:       1,
       options:   { arch },
     }]);
-  }, [mode, appointment, catalogueRows, eventTypeLabel, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, appointment, catalogueRows, eventTypeLabel, typeMapByLabel, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
