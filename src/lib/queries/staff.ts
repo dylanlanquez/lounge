@@ -25,6 +25,10 @@ export interface StaffRow {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  // Per-staff "Require 2FA" policy. Stored alone for now; the
+  // sign-in gate that enforces AAL2 lands in chunk 3 alongside the
+  // /enroll-2fa and /verify-2fa screens.
+  require_2fa: boolean;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -51,6 +55,7 @@ interface RawJoinedRow {
   can_view_reports: boolean | null;
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
+  require_2fa: boolean | null;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -88,6 +93,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
+    require_2fa: r.require_2fa === true,
     status: r.status,
     hired_at: r.hired_at,
     deactivated_at: r.deactivated_at,
@@ -100,7 +106,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
+  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -385,6 +391,92 @@ export async function inviteNewStaffMember(args: {
     manualInviteLink: invocation.manual_invite_link,
     emailError: invocation.email_error,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account actions (chunk 2). Per-staff one-shot actions an admin can
+// take from the Staff tab → "Account actions" sheet:
+//   • sendPasswordReset   — emails a one-time recovery link
+//   • sendMagicLink       — emails a one-time sign-in link (no password)
+//   • resetTwoFactor      — wipes the staff member's enrolled MFA factors
+//   • setRequire2fa       — toggles whether 2FA is required at sign-in
+//                           (enforcement wires up in chunk 3)
+//
+// All four reuse the admin RLS already in place on lng_staff_members
+// for the boolean toggle, and edge functions for everything that
+// needs the service role (link minting, email send, MFA factor
+// deletion).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SendLinkResult {
+  emailSent: boolean;
+  manualLink?: string;
+  emailError?: string;
+}
+
+interface SendLinkResponse {
+  ok: boolean;
+  error?: string;
+  email_sent?: boolean;
+  email_error?: string;
+  manual_recovery_link?: string;
+  manual_signin_link?: string;
+}
+
+async function invokeAndUnpackLink(
+  fn: 'lng-send-password-reset' | 'lng-send-magic-link',
+  staffMemberId: string,
+): Promise<SendLinkResult> {
+  const { data, error } = await supabase.functions.invoke<SendLinkResponse>(fn, {
+    body: { staff_member_id: staffMemberId },
+  });
+  if (error) throw new Error(error.message);
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error ?? 'The action could not be completed.');
+  }
+  return {
+    emailSent: data.email_sent === true,
+    manualLink: data.manual_recovery_link ?? data.manual_signin_link,
+    emailError: data.email_error,
+  };
+}
+
+export async function sendPasswordReset(staffMemberId: string): Promise<SendLinkResult> {
+  return invokeAndUnpackLink('lng-send-password-reset', staffMemberId);
+}
+
+export async function sendMagicLink(staffMemberId: string): Promise<SendLinkResult> {
+  return invokeAndUnpackLink('lng-send-magic-link', staffMemberId);
+}
+
+export interface Reset2faResult {
+  factorsRemoved: number;
+}
+
+export async function resetTwoFactor(staffMemberId: string): Promise<Reset2faResult> {
+  const { data, error } = await supabase.functions.invoke<{
+    ok: boolean;
+    error?: string;
+    factors_removed?: number;
+  }>('lng-reset-2fa', {
+    body: { staff_member_id: staffMemberId },
+  });
+  if (error) throw new Error(error.message);
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error ?? 'Could not reset 2FA.');
+  }
+  return { factorsRemoved: data.factors_removed ?? 0 };
+}
+
+// Direct boolean update on lng_staff_members. RLS already gates
+// writes to admins via lng_staff_members_write, so no edge function
+// is needed.
+export async function setRequire2fa(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ require_2fa: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
 }
 
 function composeDisplay(a: {

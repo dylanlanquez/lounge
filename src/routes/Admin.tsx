@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -33,11 +33,15 @@ import {
   inviteNewStaffMember,
   deactivateStaffMember,
   reactivateStaffMember,
+  resetTwoFactor,
+  sendMagicLink,
+  sendPasswordReset,
   setCanCountCash,
   setCanViewFinancials,
   setCanViewReports,
   setIsAdmin,
   setIsManager,
+  setRequire2fa,
   setStaffName,
   useStaff,
   type StaffRow,
@@ -1604,6 +1608,21 @@ function StaffTab() {
   // can read what's set even if they can't change everything.
   const [permsOpen, setPermsOpen] = useState<StaffRow | null>(null);
 
+  // Account actions sheet — chunk 2's per-staff one-shot actions
+  // (password reset, magic link, reset 2FA) plus the Require 2FA
+  // policy toggle. Each action's busy/feedback state is colocated
+  // here rather than per-button so the sheet's controls stay locked
+  // while one is in flight.
+  const [actionsOpen, setActionsOpen] = useState<StaffRow | null>(null);
+  const [actionBusy, setActionBusy] = useState<null | 'password_reset' | 'magic_link' | 'reset_2fa' | 'toggle_2fa'>(null);
+  const [actionFeedback, setActionFeedback] = useState<{
+    tone: 'success' | 'error';
+    title: string;
+    description?: string;
+    manualLink?: string;
+  } | null>(null);
+  const [confirmReset2fa, setConfirmReset2fa] = useState(false);
+
   const canEditAdmin = currentAccount?.is_super_admin === true;
   const canEditFinancialPerms = currentAccount?.is_super_admin === true;
 
@@ -1721,6 +1740,132 @@ function StaffTab() {
       setAddError(e instanceof Error ? e.message : String(e));
     } finally {
       setAddBusy(false);
+    }
+  };
+
+  const openActions = (row: StaffRow) => {
+    setActionsOpen(row);
+    setActionFeedback(null);
+    setConfirmReset2fa(false);
+  };
+
+  const closeActions = () => {
+    if (actionBusy) return;
+    setActionsOpen(null);
+    setActionFeedback(null);
+    setConfirmReset2fa(false);
+  };
+
+  const handleSendPasswordReset = async () => {
+    if (!actionsOpen) return;
+    setActionBusy('password_reset');
+    setActionFeedback(null);
+    try {
+      const r = await sendPasswordReset(actionsOpen.staff_member_id);
+      if (r.emailSent) {
+        setActionFeedback({
+          tone: 'success',
+          title: 'Password reset link sent.',
+          description: `Delivered to ${actionsOpen.login_email}. The link is good for one hour.`,
+        });
+      } else {
+        setActionFeedback({
+          tone: 'error',
+          title: 'Reset link generated, but email could not be delivered.',
+          description: r.emailError ?? 'Copy the link below and send it manually.',
+          manualLink: r.manualLink,
+        });
+      }
+    } catch (e) {
+      setActionFeedback({
+        tone: 'error',
+        title: 'Could not send password reset.',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleSendMagicLink = async () => {
+    if (!actionsOpen) return;
+    setActionBusy('magic_link');
+    setActionFeedback(null);
+    try {
+      const r = await sendMagicLink(actionsOpen.staff_member_id);
+      if (r.emailSent) {
+        setActionFeedback({
+          tone: 'success',
+          title: 'Sign-in link sent.',
+          description: `Delivered to ${actionsOpen.login_email}. The link is good for ten minutes.`,
+        });
+      } else {
+        setActionFeedback({
+          tone: 'error',
+          title: 'Sign-in link generated, but email could not be delivered.',
+          description: r.emailError ?? 'Copy the link below and send it manually.',
+          manualLink: r.manualLink,
+        });
+      }
+    } catch (e) {
+      setActionFeedback({
+        tone: 'error',
+        title: 'Could not send sign-in link.',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleReset2fa = async () => {
+    if (!actionsOpen) return;
+    setActionBusy('reset_2fa');
+    setActionFeedback(null);
+    try {
+      const r = await resetTwoFactor(actionsOpen.staff_member_id);
+      setActionFeedback({
+        tone: 'success',
+        title:
+          r.factorsRemoved === 0
+            ? 'No authenticators were enrolled.'
+            : `Removed ${r.factorsRemoved} authenticator${r.factorsRemoved === 1 ? '' : 's'}.`,
+        description:
+          r.factorsRemoved === 0
+            ? 'There were no MFA factors to remove.'
+            : 'They will be prompted to enrol a new authenticator on next sign-in if 2FA is required.',
+      });
+      setConfirmReset2fa(false);
+    } catch (e) {
+      setActionFeedback({
+        tone: 'error',
+        title: 'Could not reset 2FA.',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleToggleRequire2fa = async (next: boolean) => {
+    if (!actionsOpen) return;
+    setActionBusy('toggle_2fa');
+    setActionFeedback(null);
+    // Optimistic — flip the in-sheet row immediately so the toggle
+    // doesn't fight the user's click. Refresh after the write lands.
+    setActionsOpen((cur) => (cur ? { ...cur, require_2fa: next } : cur));
+    try {
+      await setRequire2fa(actionsOpen.staff_member_id, next);
+      staff.refresh();
+    } catch (e) {
+      setActionsOpen((cur) => (cur ? { ...cur, require_2fa: !next } : cur));
+      setActionFeedback({
+        tone: 'error',
+        title: 'Could not update the 2FA requirement.',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setActionBusy(null);
     }
   };
 
@@ -1903,6 +2048,11 @@ function StaffTab() {
                         <Button variant="tertiary" size="sm" onClick={() => setPermsOpen(s)}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                             <ShieldAlert size={14} aria-hidden /> Permissions
+                          </span>
+                        </Button>
+                        <Button variant="tertiary" size="sm" onClick={() => openActions(s)}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <MoreHorizontal size={14} aria-hidden /> Account actions
                           </span>
                         </Button>
                         {isSuperAdminRow || isMe ? null : (
@@ -2160,7 +2310,250 @@ function StaffTab() {
           <div />
         )}
       </BottomSheet>
+
+      <BottomSheet
+        open={actionsOpen !== null}
+        onClose={closeActions}
+        dismissable={!actionBusy}
+        title={actionsOpen ? `${actionsOpen.display_name} — Account actions` : 'Account actions'}
+        description="Send sign-in help or remove their authenticator. Every action is delivered to their email on file."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={closeActions} disabled={!!actionBusy}>
+              Done
+            </Button>
+          </div>
+        }
+      >
+        {actionsOpen ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+            <ActionRow
+              icon={<KeyRound size={16} aria-hidden />}
+              title="Send password reset link"
+              description="Emails a one-time link they can use to set a new password. Use this when a new starter never set theirs, or for forgotten-password support."
+              cta="Send reset link"
+              loading={actionBusy === 'password_reset'}
+              disabled={!!actionBusy}
+              onClick={handleSendPasswordReset}
+            />
+            <ActionRow
+              icon={<Mail size={16} aria-hidden />}
+              title="Send sign-in link"
+              description="Emails a one-time magic link that signs them in without a password. Useful as a fallback when password reset isn't reaching their inbox."
+              cta="Send sign-in link"
+              loading={actionBusy === 'magic_link'}
+              disabled={!!actionBusy}
+              onClick={handleSendMagicLink}
+            />
+            <ActionRow
+              icon={<ShieldAlert size={16} aria-hidden />}
+              title="Reset two-factor authentication"
+              description="Removes the authenticator app linked to their account. They'll be prompted to enrol a new one on next sign-in if 2FA is required."
+              cta={confirmReset2fa ? 'Confirm reset' : 'Reset 2FA'}
+              ctaTone={confirmReset2fa ? 'alert' : 'default'}
+              loading={actionBusy === 'reset_2fa'}
+              disabled={!!actionBusy}
+              onClick={() => {
+                if (!confirmReset2fa) {
+                  setConfirmReset2fa(true);
+                  return;
+                }
+                void handleReset2fa();
+              }}
+              secondaryCta={confirmReset2fa ? 'Cancel' : undefined}
+              onSecondary={confirmReset2fa ? () => setConfirmReset2fa(false) : undefined}
+            />
+
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[3],
+                paddingTop: theme.space[4],
+                borderTop: `1px solid ${theme.color.border}`,
+              }}
+            >
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                  letterSpacing: theme.type.tracking.tight,
+                }}
+              >
+                Security
+              </h3>
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+                Require this staff member to use an authenticator app.
+              </p>
+              <ActionRow
+                icon={<ShieldCheck size={16} aria-hidden />}
+                title="Require two-factor authentication"
+                description="When enabled, this person must enrol an authenticator app on their next sign-in before they can use Lounge. If they already have 2FA set up, nothing changes for them. Enforcement at sign-in lands in the next slice."
+                toggleChecked={actionsOpen.require_2fa}
+                onToggle={handleToggleRequire2fa}
+                toggleDisabled={!!actionBusy}
+                toggleLoading={actionBusy === 'toggle_2fa'}
+              />
+            </div>
+
+            {actionFeedback ? (
+              <div
+                role={actionFeedback.tone === 'error' ? 'alert' : 'status'}
+                style={{
+                  margin: 0,
+                  padding: theme.space[4],
+                  background: actionFeedback.tone === 'error' ? 'rgba(184, 58, 42, 0.06)' : theme.color.accentBg,
+                  border: `1px solid ${actionFeedback.tone === 'error' ? 'rgba(184, 58, 42, 0.18)' : theme.color.border}`,
+                  borderRadius: theme.radius.input,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[2],
+                }}
+              >
+                <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: actionFeedback.tone === 'error' ? theme.color.alert : theme.color.ink }}>
+                  {actionFeedback.title}
+                </p>
+                {actionFeedback.description ? (
+                  <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+                    {actionFeedback.description}
+                  </p>
+                ) : null}
+                {actionFeedback.manualLink ? (
+                  <>
+                    <textarea
+                      readOnly
+                      value={actionFeedback.manualLink}
+                      onFocus={(e) => e.currentTarget.select()}
+                      style={{
+                        width: '100%',
+                        minHeight: 72,
+                        padding: theme.space[3],
+                        border: `1px solid ${theme.color.border}`,
+                        borderRadius: theme.radius.input,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        fontSize: theme.type.size.xs,
+                        background: theme.color.surface,
+                        color: theme.color.ink,
+                        resize: 'vertical',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        if (actionFeedback.manualLink) {
+                          void navigator.clipboard?.writeText(actionFeedback.manualLink).catch(() => {});
+                        }
+                      }}
+                    >
+                      Copy link
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div />
+        )}
+      </BottomSheet>
     </Card>
+  );
+}
+
+// Single row in the Account actions sheet. Renders as either a
+// "title + description + button" affordance, OR with a toggle in
+// place of the button when toggleChecked is supplied. Mirrors the
+// PermissionRow pattern but with primary actions instead of policy
+// flags so the visual rhythm in the sheet stays consistent.
+function ActionRow({
+  icon,
+  title,
+  description,
+  cta,
+  ctaTone = 'default',
+  loading = false,
+  disabled = false,
+  onClick,
+  secondaryCta,
+  onSecondary,
+  toggleChecked,
+  onToggle,
+  toggleDisabled,
+  toggleLoading,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  cta?: string;
+  ctaTone?: 'default' | 'alert';
+  loading?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+  secondaryCta?: string;
+  onSecondary?: () => void;
+  toggleChecked?: boolean;
+  onToggle?: (next: boolean) => void;
+  toggleDisabled?: boolean;
+  toggleLoading?: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 28,
+            height: 28,
+            borderRadius: theme.radius.input,
+            background: theme.color.accentBg,
+            color: theme.color.accent,
+            flex: '0 0 auto',
+          }}
+        >
+          {icon}
+        </span>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+            {title}
+          </p>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+            {description}
+          </p>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: theme.space[2], paddingLeft: 40 }}>
+        {typeof toggleChecked === 'boolean' && onToggle ? (
+          <Checkbox
+            checked={toggleChecked}
+            onChange={onToggle}
+            disabled={toggleDisabled || toggleLoading}
+            label={toggleChecked ? 'Required' : 'Not required'}
+          />
+        ) : null}
+        {cta ? (
+          <Button
+            variant={ctaTone === 'alert' ? 'primary' : 'secondary'}
+            size="sm"
+            loading={loading}
+            disabled={disabled}
+            onClick={onClick}
+          >
+            {cta}
+          </Button>
+        ) : null}
+        {secondaryCta && onSecondary ? (
+          <Button variant="tertiary" size="sm" disabled={disabled} onClick={onSecondary}>
+            {secondaryCta}
+          </Button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
