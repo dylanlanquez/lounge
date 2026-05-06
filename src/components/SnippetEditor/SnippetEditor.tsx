@@ -1162,11 +1162,10 @@ function Eyebrow({ children }: { children: ReactNode }) {
   return (
     <span
       style={{
-        fontSize: 11,
+        fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.semibold,
-        color: theme.color.inkMuted,
-        textTransform: 'uppercase',
-        letterSpacing: theme.type.tracking.wide,
+        color: theme.color.ink,
+        letterSpacing: theme.type.tracking.tight,
       }}
     >
       {children}

@@ -781,7 +781,7 @@ export function Pay() {
           />
           <div
             style={{
-              padding: theme.space[3],
+              padding: theme.space[4],
               borderRadius: theme.radius.input,
               border: `1px solid ${theme.color.border}`,
               background: theme.color.bg,
@@ -790,18 +790,22 @@ export function Pay() {
               gap: theme.space[3],
             }}
           >
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-              }}
-            >
-              Manager sign-off
-            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.md,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                  letterSpacing: theme.type.tracking.tight,
+                }}
+              >
+                Manager sign-off
+              </h3>
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                The approving manager signs in here. Both staff names land on the void's audit row.
+              </p>
+            </div>
             <Input
               label="Manager email"
               type="email"

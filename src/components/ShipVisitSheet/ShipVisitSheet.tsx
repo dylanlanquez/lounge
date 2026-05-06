@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Package } from 'lucide-react';
 import { AddressAutocompleteField } from '../AddressAutocompleteField/AddressAutocompleteField.tsx';
 import type { ParsedAddress } from '../../lib/useAddressAutocomplete.ts';
-import { BottomSheet, Button } from '../index.ts';
+import { BottomSheet, Button, Input, Section } from '../index.ts';
 import { supabase } from '../../lib/supabase.ts';
 import { theme } from '../../theme/index.ts';
 import type { CartItemRow } from '../../lib/queries/carts.ts';
@@ -181,58 +181,111 @@ export function ShipVisitSheet({
         </div>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
 
-        {/* Items summary */}
         {itemLabels.length > 0 && (
-          <div>
-            <h3 style={{ margin: `0 0 ${theme.space[2]}px`, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
-              Items being shipped
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <Section
+            title="Items being shipped"
+            sub="What's going on the DPD label. Prints in this order on the dispatch summary the patient receives by email."
+          >
+            <ul
+              style={{
+                margin: 0,
+                padding: theme.space[4],
+                listStyle: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[2],
+                background: theme.color.bg,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+              }}
+            >
               {itemLabels.map((label, i) => (
-                <p key={i} style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.ink }}>
-                  {label}
-                </p>
+                <li
+                  key={i}
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.base,
+                    fontWeight: theme.type.weight.medium,
+                    color: theme.color.ink,
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: theme.space[2],
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 4,
+                      height: 4,
+                      borderRadius: '50%',
+                      background: theme.color.inkSubtle,
+                      flexShrink: 0,
+                      marginTop: 10,
+                    }}
+                  />
+                  <span>{label}</span>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </Section>
         )}
 
-        <hr style={{ margin: 0, border: 'none', borderTop: `1px solid ${theme.color.border}` }} />
+        <Section
+          title="Delivery address"
+          sub="Pre-filled from the patient's portal profile. Each line caps at 35 characters because of the DPD label."
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            {prefillLoading ? (
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                Loading patient address…
+              </p>
+            ) : null}
 
-        {/* Address form */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-          <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
-            Delivery address
-          </h3>
+            <Input
+              label="Full name"
+              value={addr.name}
+              maxLength={MAX}
+              onChange={(e) => setAddr((a) => ({ ...a, name: e.currentTarget.value }))}
+              helper={charCounter(addr.name.length, MAX)}
+            />
 
-          {prefillLoading ? (
-            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-              Loading patient address…
-            </p>
-          ) : null}
+            <AddressAutocompleteField
+              label="Address line 1"
+              required
+              value={addr.address1}
+              onChange={(v) => setAddr((a) => ({ ...a, address1: v.substring(0, MAX) }))}
+              onSelectPlace={handlePlaceSelected}
+              helper={charCounter(addr.address1.length, MAX)}
+            />
 
-          <LabelledField label="Full name" maxLength={MAX} value={addr.name} onChange={(v) => setAddr((a) => ({ ...a, name: v }))} />
+            <Input
+              label="Address line 2"
+              value={addr.address2}
+              maxLength={MAX}
+              onChange={(e) => setAddr((a) => ({ ...a, address2: e.currentTarget.value }))}
+              helper={charCounter(addr.address2.length, MAX)}
+            />
 
-          <AddressAutocompleteField
-            label="Address line 1"
-            required
-            value={addr.address1}
-            onChange={(v) => setAddr((a) => ({ ...a, address1: v.substring(0, MAX) }))}
-            onSelectPlace={handlePlaceSelected}
-            helper={addr.address1.length >= MAX - 5 ? `${MAX - addr.address1.length} remaining` : undefined}
-          />
-
-          <LabelledField label="Address line 2" maxLength={MAX} value={addr.address2} onChange={(v) => setAddr((a) => ({ ...a, address2: v }))} />
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: theme.space[3] }}>
-            <LabelledField label="City" maxLength={MAX} value={addr.city} onChange={(v) => setAddr((a) => ({ ...a, city: v }))} />
-            <div style={{ minWidth: 120 }}>
-              <LabelledField label="Postcode" maxLength={10} value={addr.zip} onChange={(v) => setAddr((a) => ({ ...a, zip: v }))} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: theme.space[3] }}>
+              <Input
+                label="City"
+                value={addr.city}
+                maxLength={MAX}
+                onChange={(e) => setAddr((a) => ({ ...a, city: e.currentTarget.value }))}
+                helper={charCounter(addr.city.length, MAX)}
+              />
+              <Input
+                label="Postcode"
+                value={addr.zip}
+                maxLength={10}
+                required
+                onChange={(e) => setAddr((a) => ({ ...a, zip: e.currentTarget.value.toUpperCase() }))}
+              />
             </div>
           </div>
-        </div>
+        </Section>
 
         {error ? (
           <p role="alert" style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert, fontWeight: theme.type.weight.medium }}>
@@ -244,62 +297,13 @@ export function ShipVisitSheet({
   );
 }
 
-// Inline labelled field with 35-char counter
-function LabelledField({
-  label,
-  value,
-  onChange,
-  maxLength,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  maxLength: number;
-}) {
-  const remaining = maxLength - value.length;
-  const warn      = remaining <= 5;
-  return (
-    <label
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        cursor: 'text',
-      }}
-    >
-      <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span style={{ fontSize: theme.type.size.xs, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
-          {label}
-        </span>
-        {warn && (
-          <span style={{ fontSize: theme.type.size.xs, color: remaining === 0 ? theme.color.alert : theme.color.inkMuted }}>
-            {remaining}
-          </span>
-        )}
-      </span>
-      <input
-        value={value}
-        maxLength={maxLength}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        style={{
-          appearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          outline: 'none',
-          padding: 0,
-          fontFamily: 'inherit',
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
-          width: '100%',
-          minWidth: 0,
-        }}
-      />
-    </label>
-  );
+// Helper text for the 35-char DPD-label counter. Stays empty until
+// the patient is within five characters of the limit so it doesn't
+// add noise to every field; switches to the alert tone exactly at
+// the limit so the receptionist sees the cap is real.
+function charCounter(length: number, max: number): string | undefined {
+  const remaining = max - length;
+  if (remaining > 5) return undefined;
+  if (remaining === 0) return 'No characters remaining (label limit)';
+  return `${remaining} character${remaining === 1 ? '' : 's'} remaining`;
 }

@@ -276,11 +276,9 @@ function CurrentSlotSummary({
         <p
           style={{
             margin: 0,
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
+            fontSize: theme.type.size.sm,
             color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.semibold,
+            fontWeight: theme.type.weight.medium,
           }}
         >
           Booked slot
@@ -288,10 +286,11 @@ function CurrentSlotSummary({
         <p
           style={{
             margin: '2px 0 0',
-            fontSize: theme.type.size.sm,
+            fontSize: theme.type.size.base,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
             fontVariantNumeric: 'tabular-nums',
+            letterSpacing: theme.type.tracking.tight,
           }}
         >
           {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)}

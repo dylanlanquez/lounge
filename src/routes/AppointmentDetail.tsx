@@ -35,6 +35,7 @@ import {
   Card,
   EmptyState,
   RescheduleSheet,
+  Section,
   Skeleton,
   type StatusTone,
 } from '../components/index.ts';
@@ -2066,22 +2067,12 @@ function CancelDialog({
         </div>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-        <label
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[1],
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            fontFamily: 'inherit',
-          }}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        <Section
+          title="Reason"
+          required
+          sub="Surfaces on the patient timeline and on cancellation reports."
         >
-          <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
-            Reason
-            <RequiredAsterisk />
-            <span style={{ color: theme.color.inkSubtle }}> · surfaces in the timeline and reports</span>
-          </span>
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -2090,8 +2081,10 @@ function CancelDialog({
             placeholder="e.g. Patient asked to push to next week"
             autoFocus
             style={{
+              width: '100%',
               fontFamily: 'inherit',
-              fontSize: theme.type.size.sm,
+              fontSize: theme.type.size.base,
+              lineHeight: theme.type.leading.normal,
               border: `1px solid ${theme.color.border}`,
               borderRadius: theme.radius.input,
               padding: theme.space[3],
@@ -2099,17 +2092,22 @@ function CancelDialog({
               background: theme.color.surface,
               outline: 'none',
               resize: 'vertical',
+              minHeight: 96,
             }}
           />
-        </label>
+        </Section>
         <label
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: theme.space[2],
-            fontSize: theme.type.size.sm,
+            fontSize: theme.type.size.base,
             color: theme.color.ink,
-            cursor: 'pointer',
+            cursor: appt.patient.email ? 'pointer' : 'not-allowed',
+            padding: theme.space[3],
+            borderRadius: theme.radius.input,
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
           }}
         >
           <input
@@ -2117,34 +2115,22 @@ function CancelDialog({
             checked={notify}
             onChange={(e) => setNotify(e.target.checked)}
             disabled={submitting || !appt.patient.email}
+            style={{ width: 18, height: 18 }}
           />
-          <span>
-            Email the patient
-            {appt.patient.email ? (
-              <span style={{ color: theme.color.inkMuted }}> ({appt.patient.email})</span>
-            ) : (
-              <span style={{ color: theme.color.inkMuted }}> (no email on file)</span>
-            )}
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontWeight: theme.type.weight.semibold }}>Email the patient</span>
+            <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+              {appt.patient.email ? appt.patient.email : 'No email on file'}
+            </span>
           </span>
         </label>
         {error ? (
-          <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+          <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium }}>
             {error}
           </p>
         ) : null}
       </div>
     </BottomSheet>
-  );
-}
-
-// Standalone red asterisk used on form labels to mark required fields.
-// Keeps every "required" indicator visually consistent across this
-// page so the meaning is unambiguous.
-function RequiredAsterisk() {
-  return (
-    <span aria-hidden style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
-      {' *'}
-    </span>
   );
 }
 
@@ -2264,20 +2250,11 @@ function NoShowSheet({
           </div>
         }
       >
-        <label
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[1],
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            fontFamily: 'inherit',
-          }}
+        <Section
+          title="Reason"
+          required
+          sub="Surfaces on the patient timeline and on no-show reports."
         >
-          <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
-            Reason
-            <RequiredAsterisk />
-          </span>
           <textarea
             value={otherText}
             onChange={(e) => setOtherText(e.target.value)}
@@ -2286,8 +2263,9 @@ function NoShowSheet({
             placeholder="e.g. Patient called the lab to say they couldn't make it"
             autoFocus
             style={{
+              width: '100%',
               fontFamily: 'inherit',
-              fontSize: theme.type.size.sm,
+              fontSize: theme.type.size.base,
               border: `1px solid ${theme.color.border}`,
               borderRadius: theme.radius.input,
               padding: theme.space[3],
@@ -2295,13 +2273,16 @@ function NoShowSheet({
               background: theme.color.surface,
               outline: 'none',
               resize: 'vertical',
-              lineHeight: theme.type.leading.relaxed,
+              lineHeight: theme.type.leading.normal,
+              minHeight: 120,
             }}
           />
           {error ? (
-            <span style={{ color: theme.color.alert, fontSize: theme.type.size.xs }}>{error}</span>
+            <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.alert, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium }}>
+              {error}
+            </p>
           ) : null}
-        </label>
+        </Section>
       </BottomSheet>
     );
   }

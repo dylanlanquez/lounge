@@ -450,11 +450,10 @@ function RemovePoolImpactList({
       <p
         style={{
           margin: 0,
-          fontSize: 11,
+          fontSize: theme.type.size.sm,
           fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.wide,
-          textTransform: 'uppercase',
-          color: theme.color.inkMuted,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
         }}
       >
         {eyebrow}

@@ -29,7 +29,14 @@ export interface MultiSelectDropdownOption<T extends string> {
 }
 
 export interface MultiSelectDropdownProps<T extends string> {
-  label: string;
+  // Inline label rendered inside the trigger card. Omit when the
+  // field already lives under a Section heading — pass `ariaLabel`
+  // for a11y instead so the trigger gives more vertical room to the
+  // selected values.
+  label?: string;
+  // Used when `label` is omitted, so screen readers still announce
+  // the field's purpose. Ignored when `label` is provided.
+  ariaLabel?: string;
   required?: boolean;
   values: T[];
   options: ReadonlyArray<MultiSelectDropdownOption<T>>;
@@ -43,6 +50,7 @@ export interface MultiSelectDropdownProps<T extends string> {
 
 export function MultiSelectDropdown<T extends string>({
   label,
+  ariaLabel,
   required = false,
   values,
   options,
@@ -147,30 +155,33 @@ export function MultiSelectDropdown<T extends string>({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-required={required || undefined}
+        aria-label={!label && ariaLabel ? ariaLabel : undefined}
         style={trigger}
       >
-        <span
-          style={{
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.medium,
-            color: theme.color.inkMuted,
-            letterSpacing: 0,
-          }}
-        >
-          {label}
-          {required ? (
-            <span
-              aria-hidden
-              style={{
-                color: theme.color.alert,
-                marginLeft: 4,
-                fontWeight: theme.type.weight.semibold,
-              }}
-            >
-              *
-            </span>
-          ) : null}
-        </span>
+        {label ? (
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.inkMuted,
+              letterSpacing: 0,
+            }}
+          >
+            {label}
+            {required ? (
+              <span
+                aria-hidden
+                style={{
+                  color: theme.color.alert,
+                  marginLeft: 4,
+                  fontWeight: theme.type.weight.semibold,
+                }}
+              >
+                *
+              </span>
+            ) : null}
+          </span>
+        ) : null}
         <span
           style={{
             fontSize: theme.type.size.md,

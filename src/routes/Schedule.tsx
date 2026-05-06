@@ -936,11 +936,9 @@ export function Schedule() {
                       <p
                         style={{
                           margin: 0,
-                          fontSize: theme.type.size.xs,
+                          fontSize: theme.type.size.sm,
                           color: theme.color.inkMuted,
                           fontWeight: theme.type.weight.medium,
-                          textTransform: 'uppercase',
-                          letterSpacing: theme.type.tracking.wide,
                           marginBottom: theme.space[1],
                         }}
                       >
@@ -993,11 +991,9 @@ export function Schedule() {
                   <p
                     style={{
                       margin: 0,
-                      fontSize: theme.type.size.xs,
+                      fontSize: theme.type.size.sm,
                       color: theme.color.inkMuted,
                       fontWeight: theme.type.weight.medium,
-                      textTransform: 'uppercase',
-                      letterSpacing: theme.type.tracking.wide,
                       marginBottom: theme.space[1],
                     }}
                   >

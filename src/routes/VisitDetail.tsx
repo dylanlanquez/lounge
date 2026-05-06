@@ -36,6 +36,7 @@ import {
   Input,
   MarketingGallery,
   MultiSelectDropdown,
+  Section,
   ShipVisitSheet,
   Skeleton,
   Toast,
@@ -1524,69 +1525,28 @@ export function VisitDetail() {
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <span
-              style={{
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              Reason <span style={{ color: theme.color.alert }}>*</span>
-            </span>
-            {/* Three radio-style cards. Click flips the selection;
-                the chosen reason drives the sheet description and
-                whether the note textarea is required. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          <Section
+            title="Reason"
+            required
+            sub="Pick why this line is being removed. Drives whether we record an unsuitability against the product."
+          >
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {([
                 { value: 'mistake', label: 'Added by mistake', sub: 'Staff picked the wrong product. No clinical meaning.' },
                 { value: 'changed_mind', label: 'Patient changed mind', sub: 'Patient declined this product today.' },
                 { value: 'unsuitable', label: 'Patient unsuitable', sub: 'Clinical decision. Reason required, lands on timeline.' },
-              ] as const).map((opt) => {
-                const isSel = removeReason === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setRemoveReason(opt.value)}
-                    style={{
-                      appearance: 'none',
-                      width: '100%',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      padding: theme.space[3],
-                      borderRadius: theme.radius.input,
-                      border: `1.5px solid ${isSel ? theme.color.ink : theme.color.border}`,
-                      background: isSel ? 'rgba(14, 20, 20, 0.03)' : theme.color.surface,
-                      color: theme.color.ink,
-                      fontFamily: 'inherit',
-                      transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: theme.type.size.base,
-                        fontWeight: isSel ? theme.type.weight.semibold : theme.type.weight.medium,
-                      }}
-                    >
-                      {opt.label}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: theme.type.size.sm,
-                        color: theme.color.inkMuted,
-                        fontWeight: theme.type.weight.regular,
-                      }}
-                    >
-                      {opt.sub}
-                    </div>
-                  </button>
-                );
-              })}
+              ] as const).map((opt) => (
+                <ReasonCard
+                  key={opt.value}
+                  selected={removeReason === opt.value}
+                  label={opt.label}
+                  sub={opt.sub}
+                  onSelect={() => setRemoveReason(opt.value)}
+                />
+              ))}
             </div>
-          </div>
+          </Section>
 
           {removeWillEndVisit ? (
             <div
@@ -1612,25 +1572,23 @@ export function VisitDetail() {
           ) : null}
 
           {removeReason !== 'mistake' ? (
-            <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-              <span
-                style={{
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                  fontWeight: theme.type.weight.medium,
-                }}
-              >
-                {removeReason === 'unsuitable' ? 'Reason' : 'Note'}
-                {removeReason === 'unsuitable' ? <span style={{ color: theme.color.alert }}> *</span> : null}
-              </span>
+            <Section
+              title={removeReason === 'unsuitable' ? 'Reason note' : 'Note'}
+              required={removeReason === 'unsuitable'}
+              sub={
+                removeReason === 'unsuitable'
+                  ? 'Be specific. This lands on the patient timeline so the next clinician can see why.'
+                  : 'Optional. Anything worth recording about why the patient declined.'
+              }
+            >
               <textarea
                 value={removeNote}
                 onChange={(e) => setRemoveNote(e.target.value)}
                 rows={4}
                 placeholder={
                   removeReason === 'unsuitable'
-                    ? 'Why is the patient unsuitable for this product? Be specific. This lands on the patient timeline.'
-                    : 'Optional. Anything worth recording about why the patient declined.'
+                    ? 'Why is the patient unsuitable for this product?'
+                    : 'Anything worth recording.'
                 }
                 style={{
                   width: '100%',
@@ -1644,9 +1602,10 @@ export function VisitDetail() {
                   borderRadius: theme.radius.input,
                   resize: 'vertical',
                   minHeight: 100,
+                  outline: 'none',
                 }}
               />
-            </label>
+            </Section>
           ) : null}
 
           {removeError ? (
@@ -1706,20 +1665,12 @@ export function VisitDetail() {
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          {/* Five radio cards. Picking 'unsuitable' reveals the
-              product picker below; the others use only the reason
-              textarea. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <span
-              style={{
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              Reason category <span style={{ color: theme.color.alert }}>*</span>
-            </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          <Section
+            title="Reason category"
+            required
+            sub="Pick the closest fit. The choice drives whether we record an unsuitability against products or close the visit on a non-clinical reason."
+          >
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {([
                 { value: 'unsuitable', label: 'Patient unsuitable', sub: 'Clinical decision. Pick the products it applies to.' },
@@ -1730,58 +1681,33 @@ export function VisitDetail() {
               ] as const).map((opt) => {
                 const isSel = endReason === opt.value;
                 return (
-                  <button
+                  <ReasonCard
                     key={opt.value}
-                    type="button"
-                    onClick={() => setEndReason(opt.value)}
-                    style={{
-                      appearance: 'none',
-                      width: '100%',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      padding: theme.space[3],
-                      borderRadius: theme.radius.input,
-                      border: `1.5px solid ${isSel ? theme.color.ink : theme.color.border}`,
-                      background: isSel ? 'rgba(14, 20, 20, 0.03)' : theme.color.surface,
-                      color: theme.color.ink,
-                      fontFamily: 'inherit',
-                      transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: theme.type.size.base,
-                        fontWeight: isSel ? theme.type.weight.semibold : theme.type.weight.medium,
-                      }}
-                    >
-                      {opt.label}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: theme.type.size.sm,
-                        color: theme.color.inkMuted,
-                        fontWeight: theme.type.weight.regular,
-                      }}
-                    >
-                      {opt.sub}
-                    </div>
-                  </button>
+                    selected={isSel}
+                    label={opt.label}
+                    sub={opt.sub}
+                    onSelect={() => setEndReason(opt.value)}
+                  />
                 );
               })}
             </div>
-          </div>
+          </Section>
 
           {endReason === 'unsuitable' && unsuitEligibleItems.length > 0 ? (
-            <MultiSelectDropdown<string>
-              label="Products"
+            <Section
+              title="Products"
               required
-              values={unsuitItemIds}
-              options={unsuitEligibleItems.map((it) => ({ value: it.id, label: it.name }))}
-              onChange={(next) => setUnsuitItemIds(next)}
-              placeholder="Pick from the basket"
-              totalNoun="products"
-            />
+              sub="Tick every product the patient was unsuitable for today. Visit ends if you tick everything in the basket."
+            >
+              <MultiSelectDropdown<string>
+                ariaLabel="Products"
+                values={unsuitItemIds}
+                options={unsuitEligibleItems.map((it) => ({ value: it.id, label: it.name }))}
+                onChange={(next) => setUnsuitItemIds(next)}
+                placeholder="Pick from the basket"
+                totalNoun="products"
+              />
+            </Section>
           ) : null}
 
           {sheetWillEndVisit ? (
@@ -1807,24 +1733,23 @@ export function VisitDetail() {
             </div>
           ) : null}
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <span
-              style={{
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              Reason <span style={{ color: theme.color.alert }}>*</span>
-            </span>
+          <Section
+            title="Reason"
+            required
+            sub={
+              endReason === 'unsuitable'
+                ? 'Be specific. This lands on the patient timeline so the next clinician can see why.'
+                : 'Be specific. This lands on the patient timeline.'
+            }
+          >
             <textarea
               value={unsuitNote}
               onChange={(e) => setUnsuitNote(e.target.value)}
               rows={5}
               placeholder={
                 endReason === 'unsuitable'
-                  ? 'Why is the patient unsuitable for these products? Be specific. This lands on the patient timeline.'
-                  : 'Why is the visit ending early? Be specific. This lands on the patient timeline.'
+                  ? 'Why is the patient unsuitable for these products?'
+                  : 'Why is the visit ending early?'
               }
               style={{
                 width: '100%',
@@ -1838,9 +1763,10 @@ export function VisitDetail() {
                 borderRadius: theme.radius.input,
                 resize: 'vertical',
                 minHeight: 120,
+                outline: 'none',
               }}
             />
-          </label>
+          </Section>
 
           {unsuitError ? (
             <p
@@ -1896,65 +1822,27 @@ export function VisitDetail() {
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <span
-              style={{
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              How is the work being handed off? <span style={{ color: theme.color.alert }}>*</span>
-            </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          <Section
+            title="How is the work being handed off?"
+            required
+            sub="Pick how the patient is leaving with the work today. Shipping opens the dispatch form next."
+          >
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {([
                 { value: 'in_person', label: 'Passed to patient', sub: 'Patient is taking the work today.' },
                 { value: 'shipping', label: 'To be shipped', sub: 'Work is being dispatched. We move to the shipping flow next.' },
-              ] as const).map((opt) => {
-                const isSel = completeMethod === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setCompleteMethod(opt.value)}
-                    style={{
-                      appearance: 'none',
-                      width: '100%',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      padding: theme.space[3],
-                      borderRadius: theme.radius.input,
-                      border: `1.5px solid ${isSel ? theme.color.ink : theme.color.border}`,
-                      background: isSel ? 'rgba(14, 20, 20, 0.03)' : theme.color.surface,
-                      color: theme.color.ink,
-                      fontFamily: 'inherit',
-                      transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: theme.type.size.base,
-                        fontWeight: isSel ? theme.type.weight.semibold : theme.type.weight.medium,
-                      }}
-                    >
-                      {opt.label}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: theme.type.size.sm,
-                        color: theme.color.inkMuted,
-                        fontWeight: theme.type.weight.regular,
-                      }}
-                    >
-                      {opt.sub}
-                    </div>
-                  </button>
-                );
-              })}
+              ] as const).map((opt) => (
+                <ReasonCard
+                  key={opt.value}
+                  selected={completeMethod === opt.value}
+                  label={opt.label}
+                  sub={opt.sub}
+                  onSelect={() => setCompleteMethod(opt.value)}
+                />
+              ))}
             </div>
-          </div>
+          </Section>
 
           {completeError ? (
             <p
@@ -2268,6 +2156,94 @@ function PatientNameSkeleton() {
       </span>
       <Skeleton width={96} height={14} radius={4} />
     </>
+  );
+}
+
+// Tappable reason card used inside the End-visit-early, Remove-line,
+// and Finish-visit sheets. Bold label + muted sub on a flat surface;
+// selected state lifts the border to ink and tints the fill.
+function ReasonCard({
+  selected,
+  label,
+  sub,
+  onSelect,
+}: {
+  selected: boolean;
+  label: string;
+  sub: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      style={{
+        appearance: 'none',
+        width: '100%',
+        textAlign: 'left',
+        cursor: 'pointer',
+        padding: `${theme.space[4]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        border: `1.5px solid ${selected ? theme.color.ink : theme.color.border}`,
+        background: selected ? 'rgba(14, 20, 20, 0.04)' : theme.color.surface,
+        color: theme.color.ink,
+        fontFamily: 'inherit',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          width: 18,
+          height: 18,
+          marginTop: 2,
+          borderRadius: '50%',
+          border: `1.5px solid ${selected ? theme.color.ink : theme.color.border}`,
+          background: theme.color.surface,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+      >
+        {selected ? (
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: theme.color.ink,
+            }}
+          />
+        ) : null}
+      </span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.normal,
+          }}
+        >
+          {sub}
+        </span>
+      </span>
+    </button>
   );
 }
 

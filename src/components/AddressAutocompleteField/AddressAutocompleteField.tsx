@@ -28,9 +28,10 @@ export interface AddressAutocompleteFieldProps {
 }
 
 const cardLabelStyle: CSSProperties = {
-  fontSize: theme.type.size.xs,
+  fontSize: theme.type.size.sm,
   fontWeight: theme.type.weight.medium,
-  color: theme.color.inkMuted,
+  color: theme.color.ink,
+  letterSpacing: 0,
 };
 
 export function AddressAutocompleteField({

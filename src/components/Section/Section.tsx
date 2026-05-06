@@ -25,6 +25,10 @@ export interface SectionProps {
   // what the field does. Rendered with the light Tooltip variant so
   // it reads as a help card, not an inline annotation.
   info?: ReactNode;
+  // Optional sub-paragraph rendered immediately below the title in
+  // muted ink. Use for short helper sentences that must be visible
+  // by default; reserve `info` for tooltip-style "what is this" copy.
+  sub?: ReactNode;
   // Renders a small red asterisk after the title — same affordance
   // the arrival form's required fields use.
   required?: boolean;
@@ -34,6 +38,7 @@ export interface SectionProps {
 export function Section({
   title,
   info,
+  sub,
   required = false,
   children,
 }: SectionProps) {
@@ -45,52 +50,66 @@ export function Section({
         gap: theme.space[2],
       }}
     >
-      <header style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <h2
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
-            color: theme.color.ink,
-          }}
-        >
-          {title}
-          {required ? (
-            <span
-              aria-hidden
-              style={{
-                color: theme.color.alert,
-                fontWeight: theme.type.weight.semibold,
-                marginLeft: 4,
-              }}
-            >
-              *
-            </span>
+      <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+            }}
+          >
+            {title}
+            {required ? (
+              <span
+                aria-hidden
+                style={{
+                  color: theme.color.alert,
+                  fontWeight: theme.type.weight.semibold,
+                  marginLeft: 4,
+                }}
+              >
+                *
+              </span>
+            ) : null}
+          </h2>
+          {info ? (
+            <Tooltip align="start" maxWidth={300} variant="light" content={info}>
+              <button
+                type="button"
+                aria-label={`More about: ${title}`}
+                style={{
+                  appearance: 'none',
+                  border: 'none',
+                  background: 'transparent',
+                  padding: theme.space[1],
+                  margin: 0,
+                  borderRadius: theme.radius.pill,
+                  color: theme.color.inkSubtle,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Info size={14} aria-hidden />
+              </button>
+            </Tooltip>
           ) : null}
-        </h2>
-        {info ? (
-          <Tooltip align="start" maxWidth={300} variant="light" content={info}>
-            <button
-              type="button"
-              aria-label={`More about: ${title}`}
-              style={{
-                appearance: 'none',
-                border: 'none',
-                background: 'transparent',
-                padding: theme.space[1],
-                margin: 0,
-                borderRadius: theme.radius.pill,
-                color: theme.color.inkSubtle,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Info size={14} aria-hidden />
-            </button>
-          </Tooltip>
+        </div>
+        {sub ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.normal,
+            }}
+          >
+            {sub}
+          </p>
         ) : null}
       </header>
       <div>{children}</div>

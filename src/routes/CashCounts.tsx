@@ -7,6 +7,7 @@ import {
   Card,
   EmptyState,
   Input,
+  Section,
   Skeleton,
   StatusPill,
 } from '../components/index.ts';
@@ -652,44 +653,48 @@ function NewCountSheet({
         </div>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
         <div
           style={{
-            padding: theme.space[4],
+            padding: theme.space[5],
             borderRadius: theme.radius.input,
             background: theme.color.accentBg,
             border: `1px solid ${theme.color.border}`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
           }}
         >
-          <p
+          <h3
             style={{
               margin: 0,
-              fontSize: 11,
+              fontSize: theme.type.size.md,
               fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
-              textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
             }}
           >
             Expected in safe
-          </p>
+          </h3>
           <p
             style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.xl,
+              margin: 0,
+              fontSize: theme.type.size.xxl,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
               fontVariantNumeric: 'tabular-nums',
               letterSpacing: theme.type.tracking.tight,
+              lineHeight: theme.type.leading.tight,
             }}
           >
             {formatPence(position.expected_in_safe_pence)}
           </p>
           <p
             style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.xs,
+              margin: 0,
+              fontSize: theme.type.size.sm,
               color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.normal,
             }}
           >
             Cash since{' '}
@@ -755,33 +760,33 @@ function NewCountSheet({
 
         <div
           style={{
-            padding: theme.space[4],
+            padding: theme.space[5],
             borderRadius: theme.radius.input,
             border: `1px solid ${theme.color.border}`,
             background: theme.color.bg,
             display: 'flex',
             flexDirection: 'column',
-            gap: theme.space[3],
+            gap: theme.space[4],
           }}
         >
-          <div>
-            <p
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <h3
               style={{
                 margin: 0,
-                fontSize: 11,
+                fontSize: theme.type.size.md,
                 fontWeight: theme.type.weight.semibold,
-                color: theme.color.inkMuted,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
               }}
             >
               Counter-sign by another manager
-            </p>
+            </h3>
             <p
               style={{
-                margin: `${theme.space[1]}px 0 0`,
-                fontSize: theme.type.size.xs,
+                margin: 0,
+                fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
+                lineHeight: theme.type.leading.normal,
               }}
             >
               A second pair of eyes signs off. They re-enter their password to authorise.
@@ -1011,20 +1016,7 @@ function CountDetailsSheet({
               margin: 0,
             }}
           />
-          <div>
-            <p
-              style={{
-                margin: 0,
-                fontSize: 11,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.inkMuted,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
-                marginBottom: theme.space[2],
-              }}
-            >
-              Cash payments in this count ({formatNumber(data.lines.length)})
-            </p>
+          <Section title={`Cash payments in this count (${formatNumber(data.lines.length)})`}>
             {data.lines.length === 0 ? (
               <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
                 No cash payments in this period.
@@ -1087,7 +1079,7 @@ function CountDetailsSheet({
                 ))}
               </ul>
             )}
-          </div>
+          </Section>
         </div>
       )}
     </BottomSheet>
