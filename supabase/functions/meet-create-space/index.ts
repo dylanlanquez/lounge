@@ -25,16 +25,33 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: `meet-create-space crashed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+      }),
+      { status: 200, headers: { ...cors(), 'Content-Type': 'application/json' } },
+    );
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors() });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
+  // Expected failures return 200 with ok:false so callers surface the
+  // real reason in the toast (supabase-js wraps non-2xx as a generic
+  // "non-2xx status code" string and the precise message is lost).
   const userJwt = req.headers.get('authorization') ?? '';
-  if (!userJwt.startsWith('Bearer ')) return json(401, { ok: false, error: 'No bearer token' });
+  if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: userJwt } },
   });
   const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return json(401, { ok: false, error: 'Not signed in' });
+  if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
 
   let body: { appointment_id?: string; host_id?: string };
   try {
@@ -43,7 +60,7 @@ Deno.serve(async (req) => {
     body = {};
   }
   if (!body.appointment_id || !body.host_id) {
-    return json(400, { ok: false, error: 'appointment_id and host_id required' });
+    return json(200, { ok: false, error: 'appointment_id and host_id required.' });
   }
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -57,7 +74,7 @@ Deno.serve(async (req) => {
     .eq('id', body.appointment_id)
     .maybeSingle();
   if (apptErr || !apptRow) {
-    return json(404, { ok: false, error: 'Appointment not found' });
+    return json(200, { ok: false, error: 'Appointment not found.' });
   }
   const appt = apptRow as {
     id: string;
@@ -87,8 +104,8 @@ Deno.serve(async (req) => {
     .eq('id', body.host_id)
     .maybeSingle();
   const host = hostRow as MeetHostRow | null;
-  if (!host) return json(404, { ok: false, error: 'Host not found' });
-  if (!host.is_active) return json(400, { ok: false, error: 'Host is inactive' });
+  if (!host) return json(200, { ok: false, error: 'Host not found.' });
+  if (!host.is_active) return json(200, { ok: false, error: 'Host is inactive. Reactivate it in Admin, Services first.' });
 
   const tokenResult = await getValidAccessToken(admin, host);
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
@@ -140,7 +157,7 @@ Deno.serve(async (req) => {
     })
     .eq('id', appt.id);
   if (updErr) {
-    return json(500, { ok: false, error: `Appointment update failed: ${updErr.message}` });
+    return json(200, { ok: false, error: `Appointment update failed: ${updErr.message}` });
   }
 
   return json(200, {
@@ -150,7 +167,7 @@ Deno.serve(async (req) => {
     meet_meeting_code: space.meetingCode,
     join_url: space.meetingUri,
   });
-});
+}
 
 function cors(): Record<string, string> {
   return {

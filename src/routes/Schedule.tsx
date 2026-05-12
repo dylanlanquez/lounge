@@ -1189,6 +1189,18 @@ export function Schedule() {
             setNewBookingSlot(null);
             day.refresh();
             weekCounts.refresh();
+            // Meet creation failure takes priority over the email
+            // outcome — without a join_url the appointment surfaces
+            // as a regular in-person booking, which is more urgent
+            // for the receptionist to know about than a missed email.
+            if (info.meetCreateError) {
+              setConfirmationToast({
+                tone: 'error',
+                title: 'Booking added, meeting link missing',
+                description: `${info.meetCreateError} Open the appointment and tap Generate Meet link to retry.`,
+              });
+              return;
+            }
             // Single confirmation toast that captures both "booking
             // saved" and the email outcome — keeps the operator from
             // having to read two separate toasts in sequence.

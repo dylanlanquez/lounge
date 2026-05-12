@@ -34,6 +34,7 @@ import {
   Breadcrumb,
   Button,
   Card,
+  DropdownSelect,
   EmptyState,
   RescheduleSheet,
   Section,
@@ -59,6 +60,7 @@ import {
   relativeDay,
 } from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
+import { createMeetSpaceForAppointment, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
@@ -429,7 +431,11 @@ function Loaded({
           marginTop: theme.space[5],
         }}
       >
-        {appt.join_url ? <MeetingLinkCard joinUrl={appt.join_url} /> : null}
+        {appt.join_url ? (
+          <MeetingLinkCard joinUrl={appt.join_url} />
+        ) : appt.service_type === 'virtual_impression_appointment' ? (
+          <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
+        ) : null}
         <BookingFactsCard appt={appt} />
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
@@ -1021,6 +1027,184 @@ function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
       }}>
         Click the link to copy it and share with the patient.
       </p>
+    </div>
+  );
+}
+
+// Recovery surface for virtual appointments where the Meet link
+// creation failed at booking time (most commonly: OAuth secrets
+// weren't in place yet, or the chosen host's token had been revoked).
+// Visual language matches MeetingLinkCard (teal left edge, Google
+// Meet icon, "Virtual meeting" eyebrow) so the receptionist reads
+// these as two states of the same surface: link missing → tap to
+// generate → link present.
+function GenerateMeetLinkCard({
+  appointmentId,
+  currentHostId,
+  onCreated,
+}: {
+  appointmentId: string;
+  currentHostId: string | null;
+  onCreated: () => void;
+}) {
+  const { hosts, loading: hostsLoading } = useMeetHosts({ activeOnly: true });
+  const [hostId, setHostId] = useState<string | null>(currentHostId);
+  const [busy, setBusy] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const teal = theme.category.virtualImpression;
+
+  // Auto-pick the appointment's existing host if any, otherwise the
+  // top-priority active host. Keeps the common case down to one tap.
+  useEffect(() => {
+    if (hostId) return;
+    if (currentHostId) {
+      setHostId(currentHostId);
+      return;
+    }
+    if (hosts.length > 0) setHostId(hosts[0]!.id);
+  }, [currentHostId, hostId, hosts]);
+
+  const onGenerate = async () => {
+    if (!hostId) return;
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const result = await createMeetSpaceForAppointment({
+        appointment_id: appointmentId,
+        host_id: hostId,
+      });
+      if (!result.ok) {
+        setErrorMsg(result.error ?? 'Could not create the Meet link.');
+        return;
+      }
+      onCreated();
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'Could not create the Meet link.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        boxShadow: theme.shadow.card,
+        border: `1px solid ${theme.color.border}`,
+        borderLeft: `3px solid ${teal}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[3] }}>
+        <img
+          src={googleMeetIcon}
+          height={18}
+          aria-hidden
+          style={{ display: 'block', width: 'auto', flexShrink: 0 }}
+        />
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          Virtual meeting link
+        </span>
+      </div>
+      <p
+        style={{
+          margin: `0 0 ${theme.space[3]}px`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: 1.5,
+        }}
+      >
+        This virtual appointment has no Meet link yet. Pick the host whose Google account should own the room and tap Generate. The link appears here once Google returns the space.
+      </p>
+      {hostsLoading ? (
+        <Skeleton height={48} radius={12} />
+      ) : hosts.length === 0 ? (
+        <div
+          style={{
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            background: theme.color.bg,
+            border: `1px dashed ${theme.color.border}`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.ink,
+              fontWeight: theme.type.weight.semibold,
+            }}
+          >
+            No Meet hosts connected yet.
+          </p>
+          <a
+            href="/admin?tab=services"
+            style={{
+              alignSelf: 'flex-start',
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.pill,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.accent,
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              textDecoration: 'none',
+            }}
+          >
+            Open Admin, Services
+          </a>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <DropdownSelect<string>
+            label="Meeting host"
+            value={hostId ?? ''}
+            onChange={(v) => setHostId(v || null)}
+            options={hosts.map((h) => ({
+              value: h.id,
+              label: `${h.display_name} (${h.google_email})`,
+            }))}
+            placeholder="Pick a host"
+          />
+          {errorMsg ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.sm,
+                color: theme.color.alert,
+                lineHeight: 1.5,
+              }}
+            >
+              {errorMsg}
+            </p>
+          ) : null}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onGenerate}
+            loading={busy}
+            disabled={!hostId || busy}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Video size={14} aria-hidden />
+              Generate Meet link
+            </span>
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

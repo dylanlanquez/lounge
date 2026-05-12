@@ -81,7 +81,10 @@ export interface NewBookingSheetProps {
   // Fired with the new appointment id after a successful insert.
   // Caller is responsible for closing the sheet (via onClose) and
   // refreshing the schedule.
-  onCreated: (newAppointmentId: string, info: { emailSent: boolean; emailReason: string | null }) => void;
+  onCreated: (
+    newAppointmentId: string,
+    info: { emailSent: boolean; emailReason: string | null; meetCreateError?: string | null },
+  ) => void;
 }
 
 export function NewBookingSheet({
@@ -436,6 +439,7 @@ export function NewBookingSheet({
       onCreated(result.appointmentId, {
         emailSent: result.emailSent,
         emailReason: result.emailReason,
+        meetCreateError: result.meetCreateError ?? null,
       });
     } catch (e) {
       if (e instanceof RescheduleConflictError) {

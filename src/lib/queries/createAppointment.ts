@@ -36,6 +36,12 @@ export interface CreateAppointmentResult {
   appointmentId: string;
   emailSent: boolean;
   emailReason: string | null;
+  // Non-null when this was a virtual_impression_appointment and the
+  // Meet link creation call failed. The booking row still saved, but
+  // join_url is empty so the appointment surfaces will not show the
+  // Join button until the receptionist retries from the appointment
+  // detail page's Generate Meet link action.
+  meetCreateError?: string | null;
 }
 
 export async function createAppointment(input: {
@@ -166,10 +172,6 @@ export async function createAppointment(input: {
   });
 
   // ── 6. Google Meet link (virtual impression only) ──────────────
-  // Best-effort: a Meet creation failure is logged server-side but
-  // doesn't unwind the booking. The staff can see the appointment in
-  // the schedule and add the link manually if needed.
-  //
   // Two-path routing:
   //   • meetHostId set     → meet-create-space (per-host OAuth, lets
   //                          us pull Meet attendance later).
@@ -177,19 +179,48 @@ export async function createAppointment(input: {
   //                          flow, still used by Calendly imports and
   //                          any caller that hasn't wired the host
   //                          dropdown yet). No attendance available.
+  //
+  // The appointment ROW is already committed at this point, so a Meet
+  // creation failure can't unwind it. Instead we surface the reason
+  // back to the caller via meetCreateError so the NewBookingSheet
+  // can render a soft warning ("Booking saved, Meet link needs a
+  // retry from the appointment page") and the user can hit the
+  // Generate Meet link button on AppointmentDetail. Previously this
+  // path swallowed every error to console.warn, leaving the booking
+  // looking non-virtual to the page (no join_url → no Join button)
+  // with no signal to the receptionist that anything went wrong.
+  let meetCreateError: string | null = null;
   if (input.serviceType === 'virtual_impression_appointment') {
     try {
       if (input.meetHostId) {
-        await supabase.functions.invoke('meet-create-space', {
-          body: { appointment_id: appointmentId, host_id: input.meetHostId },
-        });
+        const { data, error } = await supabase.functions.invoke<unknown>(
+          'meet-create-space',
+          { body: { appointment_id: appointmentId, host_id: input.meetHostId } },
+        );
+        if (error) {
+          meetCreateError = error.message;
+        } else {
+          const payload = (data ?? {}) as { ok?: boolean; error?: string };
+          if (!payload.ok) {
+            meetCreateError = payload.error ?? 'Meet space could not be created.';
+          }
+        }
       } else {
-        await supabase.functions.invoke('google-meet-create', {
-          body: { appointmentId },
-        });
+        const { data, error } = await supabase.functions.invoke<unknown>(
+          'google-meet-create',
+          { body: { appointmentId } },
+        );
+        if (error) {
+          meetCreateError = error.message;
+        } else {
+          const payload = (data ?? {}) as { ok?: boolean; error?: string };
+          if (payload.ok === false) {
+            meetCreateError = payload.error ?? 'Meet link could not be created.';
+          }
+        }
       }
     } catch (e) {
-      console.warn('[createAppointment] meet creation invoke failed:', e);
+      meetCreateError = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -211,7 +242,7 @@ export async function createAppointment(input: {
     }
   }
 
-  return { appointmentId, emailSent, emailReason };
+  return { appointmentId, emailSent, emailReason, meetCreateError };
 }
 
 // Human-readable label for a service. The schedule card + email

@@ -42,6 +42,10 @@ export interface AppointmentDetailRow {
   staff_account_id: string | null;
   location_id: string;
   patient_id: string;
+  // Catalogue key driving every behaviour decision (virtual vs in-
+  // person, fulfilment, etc.). Surfaced here so the Generate Meet
+  // link retry knows when to offer itself.
+  service_type: string | null;
   join_url: string | null;
   meeting_platform: string | null;
   // Per-host Meet integration fields. Populated when the appointment
@@ -116,6 +120,7 @@ interface RawAppointment {
   staff_account_id: string | null;
   location_id: string;
   patient_id: string;
+  service_type: string | null;
   join_url: string | null;
   meeting_platform: string | null;
   meet_host_id: string | null;
@@ -154,7 +159,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -295,6 +300,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           staff_account_id: appt.staff_account_id,
           location_id: appt.location_id,
           patient_id: appt.patient_id,
+          service_type: (appt as RawAppointment & { service_type?: string | null }).service_type ?? null,
           join_url: appt.join_url,
           meeting_platform: appt.meeting_platform,
           meet_host_id: (appt as RawAppointment & { meet_host_id?: string | null }).meet_host_id ?? null,
