@@ -24,7 +24,14 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM = Deno.env.get('RESEND_FROM_EMAIL') ?? 'receipts@venneir.com';
+// Use the same verified sender as every other Lounge email (booking
+// confirmations, reminders, dispatch). The previous receipts@venneir.com
+// alias wasn't on a verified domain so Resend rejected every send with
+// 403 validation_error. RESEND_FROM_BOOKING is the canonical env var
+// across this project; receipts now ride on the same DNS-verified
+// lounge@venneir.com sender so deliveries land instead of bouncing.
+const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@notifications.venneir.com>';
+const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@notifications.venneir.com';
 
 const TWILIO_SID = Deno.env.get('TWILIO_ACCOUNT_SID') ?? '';
 const TWILIO_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN') ?? '';
@@ -201,6 +208,7 @@ Deno.serve(async (req) => {
         body_text: text,
         to_email: recipient,
         from_email: RESEND_FROM,
+        reply_to: RESEND_REPLY_TO,
         send_status: 'failed',
         send_error: deliveryResult.error,
       });
@@ -241,6 +249,7 @@ Deno.serve(async (req) => {
       body_text: text,
       to_email: recipient,
       from_email: RESEND_FROM,
+      reply_to: RESEND_REPLY_TO,
       provider: deliveryResult.provider,
       provider_message_id: deliveryResult.messageId ?? null,
       send_status: 'sent',
@@ -323,7 +332,14 @@ async function sendEmail(
       Authorization: `Bearer ${RESEND_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: RESEND_FROM, to: [to], subject, html, text }),
+    body: JSON.stringify({
+      from: RESEND_FROM,
+      to: [to],
+      reply_to: RESEND_REPLY_TO,
+      subject,
+      html,
+      text,
+    }),
   });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) return { ok: false, error: `Resend ${r.status}: ${JSON.stringify(body)}` };

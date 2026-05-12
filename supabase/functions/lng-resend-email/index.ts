@@ -130,14 +130,26 @@ async function handle(req: Request): Promise<Response> {
   //    that landed on the patient last time — the persisted blob is
   //    treated as the canonical record. The only thing that shifts
   //    is the recipient.
+  //
+  // From/reply-to always come from the env var (the canonical
+  // DNS-verified sender), never the stored from_email. A row that
+  // was originally written before the sender was unified (e.g. the
+  // legacy receipts@venneir.com alias) would otherwise replay to an
+  // unverified domain and bounce with the same Resend 403 the
+  // original send failed on. The persisted from is informational
+  // audit, not a routing instruction.
+  const envFrom = Deno.env.get('RESEND_FROM_BOOKING')
+    ?? 'Venneir Lounge <lounge@notifications.venneir.com>';
+  const envReplyTo = Deno.env.get('RESEND_REPLY_TO_BOOKING')
+    ?? 'lounge@notifications.venneir.com';
   const resendBody: Record<string, unknown> = {
-    from: msg.from_email ?? Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>',
+    from: envFrom,
     to: [recipient],
+    reply_to: envReplyTo,
     subject: msg.subject,
     html: msg.html,
   };
   if (msg.body_text) resendBody.text = msg.body_text;
-  if (msg.reply_to) resendBody.reply_to = msg.reply_to;
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -162,8 +174,8 @@ async function handle(req: Request): Promise<Response> {
       html: msg.html,
       body_text: msg.body_text,
       to_email: recipient,
-      from_email: msg.from_email,
-      reply_to: msg.reply_to,
+      from_email: envFrom,
+      reply_to: envReplyTo,
       send_status: 'failed',
       send_error: errorMsg,
     });
