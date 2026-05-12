@@ -7,9 +7,9 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { properCase } from '../lib/queries/appointments.ts';
 import {
   PATIENT_LIST_PAGE_SIZE,
+  patientFullName,
   usePatientList,
   type PatientListRow,
 } from '../lib/queries/patients.ts';
@@ -420,7 +420,5 @@ function pageButton(disabled: boolean): CSSProperties {
 }
 
 function displayName(p: PatientListRow): string {
-  const first = properCase(p.first_name);
-  const last = properCase(p.last_name);
-  return `${first} ${last}`.trim() || 'Unnamed patient';
+  return patientFullName(p) || 'Unnamed patient';
 }

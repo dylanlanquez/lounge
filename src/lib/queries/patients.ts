@@ -333,6 +333,15 @@ function applyPatientSearch<Q extends { ilike: any; or: any }>(
   return query.or(filters.join(','));
 }
 
+// Filter expression that hides Shopify-imported patients with zero orders.
+// Meridian's customers/create webhook creates a `patients` row for every
+// Shopify signup, but most never buy — they drown the directory in
+// "Customer" placeholders. patients.shopify_order_count is maintained by
+// the trigger added in Meridian migration 20260512_17; we filter on it so
+// only Shopify customers with at least one order remain visible. Manually
+// created (non-Shopify) patients always pass.
+const SHOPIFY_ACTIVE_FILTER = 'shopify_customer_id.is.null,shopify_order_count.gt.0';
+
 // Phone-first search per `06-patient-identity.md §4.1`. Term can be a phone
 // number, name, or LWO ref. ILIKE matches each, LIMIT 10.
 
@@ -360,7 +369,7 @@ export function usePatientSearch(term: string): SearchResult {
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
           );
-        const query = applyPatientSearch(baseQuery, cleaned);
+        const query = applyPatientSearch(baseQuery, cleaned).or(SHOPIFY_ACTIVE_FILTER);
 
         const { data: rows, error: err } = await query
           .order('last_name', { ascending: true })
@@ -412,8 +421,22 @@ function escape(s: string): string {
 // shout in ALL CAPS, etc.) so every UI surface that shows a patient
 // name should go through this helper rather than concatenating raw
 // columns. properCase handles honorifics and apostrophes.
-export function patientFullName(p: Pick<PatientRow, 'first_name' | 'last_name'>): string {
-  return `${properCase(p.first_name)} ${properCase(p.last_name)}`.trim();
+//
+// Shopify customers without a first_name are seeded as the literal
+// "Customer" placeholder by Meridian's webhook (shopify-orders-webhook
+// upsertPatient). For those rows the name is non-identifying, so we
+// fall back to the email when one is present — the search page is
+// otherwise full of indistinguishable "Customer" entries.
+export function patientFullName(
+  p: Pick<PatientRow, 'first_name' | 'last_name'> & { email?: string | null },
+): string {
+  const first = properCase(p.first_name);
+  const last = properCase(p.last_name);
+  const isPlaceholder =
+    first.toLowerCase() === 'customer' && last.length === 0;
+  const email = p.email?.trim();
+  if (isPlaceholder && email) return email;
+  return `${first} ${last}`.trim();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,8 +501,9 @@ export function usePatientList(
         // patient text searches behave (multi-word AND-of-ORs, phone
         // detection, single-token OR). Sub-2-character terms produce
         // an unfiltered list — same posture as before this refactor.
-        const filtered =
-          cleaned.length >= 2 ? applyPatientSearch(baseQuery, cleaned) : baseQuery;
+        const filtered = (
+          cleaned.length >= 2 ? applyPatientSearch(baseQuery, cleaned) : baseQuery
+        ).or(SHOPIFY_ACTIVE_FILTER);
         // lng_patient_name_tier is a Postgres computed column (function
         // of patients) that returns 0 for letter-starting first names,
         // 1 for digit/symbol starts, 2 for empty/null. Ordering by it
