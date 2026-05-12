@@ -1,4 +1,63 @@
+import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
+
+// ── File label catalogue ────────────────────────────────────────────────
+// Meridian's file_labels table is the source of truth for which slots
+// appear on the patient files grid. Lounge used to hardcode an 8-slot
+// list — fine until Meridian added "Bite Scan First" / "Bite Scan
+// Second" and they were invisible here. The hook below reads the
+// catalogue dynamically so any new label landing in Meridian shows up
+// on the next render. Tip: keep the Lounge-side hardcoded extras (the
+// four photo slots are uploadable from the kiosk; the rest are
+// view-only) keyed off the SAME label key the catalogue exposes.
+
+export interface PatientFileLabelRow {
+  id: string;
+  key: string;
+  label: string;
+  scope: string;
+  active: boolean;
+  sort_order: number;
+}
+
+interface PatientFileLabelsResult {
+  data: PatientFileLabelRow[];
+  loading: boolean;
+  error: string | null;
+}
+
+export function usePatientFileLabels(): PatientFileLabelsResult {
+  const [data, setData] = useState<PatientFileLabelRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const { loading, settle } = useStaleQueryLoading('patient-file-labels');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('file_labels')
+        .select('id, key, label, scope, active, sort_order')
+        .eq('scope', 'patient_file')
+        .eq('active', true)
+        .order('sort_order', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        settle();
+        return;
+      }
+      setData((rows ?? []) as PatientFileLabelRow[]);
+      setError(null);
+      settle();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settle]);
+
+  return { data, loading, error };
+}
 
 export interface PatientFileRow {
   id: string;

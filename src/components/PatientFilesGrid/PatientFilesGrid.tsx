@@ -10,7 +10,12 @@ import {
 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useCaptureFlow } from '../CapturePopup/CapturePopup.tsx';
-import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
+import {
+  signedUrlFor,
+  uploadPatientFile,
+  usePatientFileLabels,
+  type PatientFileLabelRow,
+} from '../../lib/queries/patientFiles.ts';
 import { supabase } from '../../lib/supabase.ts';
 import type { PatientFileEntry, PatientProfileRow } from '../../lib/queries/patientProfile.ts';
 import { Preview3DModal } from './Preview3DModal.tsx';
@@ -46,31 +51,95 @@ interface SlotDef {
   primaryKey: string;
 }
 
-const SLOT_DEFS: SlotDef[] = [
-  // Photo slots first — these are the ones receptionists can capture
-  // at the desk, so they're the ones a receptionist is most likely to
-  // act on, and putting them at the front of the row matches the
-  // tap-to-add order Dylan wants.
-  { group: 'full_face_photo', label: 'Full Face Photo', subLabelKeys: ['full_face_photo'], primaryKey: 'full_face_photo', uploadable: true },
-  { group: 'smile_photo_front', label: 'Smile Photo — Front', subLabelKeys: ['smile_photo_front'], primaryKey: 'smile_photo_front', uploadable: true },
-  { group: 'smile_photo_left', label: 'Smile Photo — Left', subLabelKeys: ['smile_photo_left'], primaryKey: 'smile_photo_left', uploadable: true },
-  { group: 'smile_photo_right', label: 'Smile Photo — Right', subLabelKeys: ['smile_photo_right'], primaryKey: 'smile_photo_right', uploadable: true },
-  // Lab-derived slots after.
-  { group: 'upper_arch', label: 'Upper Arch', subLabelKeys: ['upper_arch', 'upper_arch_opposing'], primaryKey: 'upper_arch' },
-  { group: 'lower_arch', label: 'Lower Arch', subLabelKeys: ['lower_arch', 'lower_arch_opposing'], primaryKey: 'lower_arch' },
-  { group: 'bite_registration', label: 'Bite Registration', subLabelKeys: ['bite_registration', 'both_arches'], primaryKey: 'bite_registration' },
-  { group: 'xray', label: 'X-Ray', subLabelKeys: ['xray_panoramic', 'xray_periapical', 'reference_previous_work', 'patient_reference_image'], primaryKey: 'xray_panoramic' },
-];
+// Label keys that belong on the kiosk's capture-from-camera path. Every
+// other label is lab-derived (Meridian uploads it via scanners). When
+// Meridian adds a brand-new photo slot, drop the key here too so the
+// kiosk's CapturePopup can fill it.
+const UPLOADABLE_KEYS = new Set([
+  'full_face_photo',
+  'smile_photo_front',
+  'smile_photo_left',
+  'smile_photo_right',
+]);
 
-// SLOT_DEF subLabelKeys → group lookup, used by buildCards to bucket a
-// file into the right fixed slot.
-const LABEL_TO_GROUP: Record<string, string> = (() => {
-  const m: Record<string, string> = {};
-  for (const def of SLOT_DEFS) {
-    for (const k of def.subLabelKeys) m[k] = def.group;
+// Label keys handled by other components on the patient profile —
+// before/after photos go through BeforeAfterGallery, marketing assets
+// through MarketingGallery, "other" is the catch-all bucket the
+// dynamic fall-through in buildCards already manages. None of them
+// should render as a fixed slot in the grid.
+const LABELS_RENDERED_ELSEWHERE = new Set(['before_photo', 'marketing_content', 'other']);
+
+// Existing slot groupings that historically bundled multiple file_label
+// keys under a single card (e.g. "Upper Arch" shows both upper_arch
+// scans AND upper_arch_opposing reference files). The key in this map
+// is a file_label.key, the value is the group the slot lives under.
+// Anything not in the map gets its own dedicated slot, which means
+// when Meridian adds a fresh label (Bite Scan Second, etc) it shows
+// up automatically as its own card without code changes here.
+const GROUP_ALIASES: Record<string, string> = {
+  upper_arch_opposing: 'upper_arch',
+  lower_arch_opposing: 'lower_arch',
+  both_arches: 'bite_registration',
+  xray_periapical: 'xray_panoramic',
+  reference_previous_work: 'xray_panoramic',
+  patient_reference_image: 'xray_panoramic',
+};
+
+// Build the slot list from Meridian's file_labels catalogue. Order
+// follows file_labels.sort_order, with photo / uploadable slots pulled
+// to the front so the receptionist's tap-to-add targets are the first
+// cards in the horizontal row. Labels grouped via GROUP_ALIASES
+// collapse into their canonical slot rather than rendering separately.
+function deriveSlotDefs(labels: ReadonlyArray<PatientFileLabelRow>): SlotDef[] {
+  const byGroup = new Map<string, SlotDef>();
+  // First pass: every canonical (non-aliased) label gets a slot.
+  for (const lbl of labels) {
+    if (LABELS_RENDERED_ELSEWHERE.has(lbl.key)) continue;
+    if (GROUP_ALIASES[lbl.key]) continue;
+    byGroup.set(lbl.key, {
+      group: lbl.key,
+      label: lbl.label,
+      subLabelKeys: [lbl.key],
+      primaryKey: lbl.key,
+      uploadable: UPLOADABLE_KEYS.has(lbl.key),
+    });
   }
-  return m;
-})();
+  // Second pass: alias labels attach to their canonical slot. If the
+  // canonical slot isn't in the catalogue yet (e.g. only the alias is
+  // active), the alias is promoted to its own slot so the file still
+  // surfaces.
+  for (const lbl of labels) {
+    if (LABELS_RENDERED_ELSEWHERE.has(lbl.key)) continue;
+    const alias = GROUP_ALIASES[lbl.key];
+    if (!alias) continue;
+    const canonical = byGroup.get(alias);
+    if (canonical) {
+      canonical.subLabelKeys.push(lbl.key);
+    } else {
+      byGroup.set(lbl.key, {
+        group: lbl.key,
+        label: lbl.label,
+        subLabelKeys: [lbl.key],
+        primaryKey: lbl.key,
+        uploadable: UPLOADABLE_KEYS.has(lbl.key),
+      });
+    }
+  }
+  const out = Array.from(byGroup.values());
+  // Sort: uploadable photo slots first (receptionist-actionable),
+  // then everything else by the catalogue's sort_order. Falls back
+  // to alphabetical when sort_order is missing.
+  const sortOrderByKey = new Map<string, number>();
+  for (const lbl of labels) sortOrderByKey.set(lbl.key, lbl.sort_order ?? 9999);
+  out.sort((a, b) => {
+    if (!!a.uploadable !== !!b.uploadable) return a.uploadable ? -1 : 1;
+    const ao = sortOrderByKey.get(a.primaryKey) ?? 9999;
+    const bo = sortOrderByKey.get(b.primaryKey) ?? 9999;
+    if (ao !== bo) return ao - bo;
+    return a.label.localeCompare(b.label);
+  });
+  return out;
+}
 
 interface FileCardModel {
   group: string;
@@ -89,7 +158,18 @@ interface FileCardModel {
   uploadable?: { primaryKey: string };
 }
 
-function buildCards(files: PatientFileEntry[]): FileCardModel[] {
+function buildCards(
+  files: PatientFileEntry[],
+  slotDefs: ReadonlyArray<SlotDef>,
+): FileCardModel[] {
+  // Rebuild the label-key → group lookup each render against the live
+  // slot list. The map collapses every sub-label key (upper_arch_opposing
+  // → upper_arch) onto the slot that owns it so files bucket correctly.
+  const labelToGroup: Record<string, string> = {};
+  for (const def of slotDefs) {
+    for (const k of def.subLabelKeys) labelToGroup[k] = def.group;
+  }
+
   // Group every file by slot group via its label_key. Files whose label
   // doesn't map to a fixed slot end up in dynamic 'other_*' groups.
   const byGroup = new Map<string, PatientFileEntry[]>();
@@ -97,7 +177,7 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
 
   for (const f of files) {
     const labelKey = f.label_key ?? '';
-    let group = LABEL_TO_GROUP[labelKey];
+    let group = labelToGroup[labelKey];
     let label = f.label_display ?? f.custom_label ?? 'Other';
 
     if (!group) {
@@ -105,7 +185,7 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
       group = `other_${labelKey || 'unlabelled'}_${customSlug}`;
       label = (f.custom_label && f.custom_label.trim()) || f.label_display || 'Other';
     } else {
-      const def = SLOT_DEFS.find((d) => d.group === group)!;
+      const def = slotDefs.find((d) => d.group === group)!;
       label = def.label;
     }
     labelDisplayByGroup.set(group, label);
@@ -130,7 +210,7 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
   const filled: FileCardModel[] = [];
   const empty: FileCardModel[] = [];
 
-  for (const def of SLOT_DEFS) {
+  for (const def of slotDefs) {
     const versions = byGroup.get(def.group) ?? [];
     const card: FileCardModel = {
       group: def.group,
@@ -145,7 +225,7 @@ function buildCards(files: PatientFileEntry[]): FileCardModel[] {
   }
 
   for (const [group, versions] of byGroup.entries()) {
-    if (SLOT_DEFS.some((d) => d.group === group)) continue;
+    if (slotDefs.some((d) => d.group === group)) continue;
     if (versions.length === 0) continue;
     filled.push({
       group,
@@ -957,7 +1037,13 @@ export function PatientFilesGrid({
   patient?: PatientProfileRow | null;
   onUploaded: () => void;
 }) {
-  const cards = useMemo(() => buildCards(files), [files]);
+  // Pull the slot catalogue from Meridian's file_labels table so any
+  // newly-added label (e.g. "Bite Scan Second") flows through without
+  // a Lounge code change. The slots list re-derives whenever the
+  // catalogue or the Lounge-side groupings change.
+  const { data: labelCatalogue } = usePatientFileLabels();
+  const slotDefs = useMemo(() => deriveSlotDefs(labelCatalogue), [labelCatalogue]);
+  const cards = useMemo(() => buildCards(files, slotDefs), [files, slotDefs]);
   const [previewFile, setPreviewFile] = useState<PatientFileEntry | null>(null);
   const [historyCard, setHistoryCard] = useState<FileCardModel | null>(null);
   const [uploading, setUploading] = useState<Set<string>>(() => new Set());
