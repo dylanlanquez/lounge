@@ -342,21 +342,13 @@ function FiltersRow({
           alignItems: 'center',
         }}
       >
-        <FilterPill<LedgerStatus>
-          label="Status"
-          placeholder="All statuses"
-          values={statuses}
-          options={STATUS_OPTIONS}
-          onChange={onStatusesChange}
-          totalNoun="statuses"
-        />
-        <FilterPill<LedgerPaymentState>
-          label="Payment"
-          placeholder="Any payment"
-          values={paymentStates}
-          options={PAYMENT_OPTIONS}
-          onChange={onPaymentStatesChange}
-          totalNoun="payment states"
+        <CombinedStatusFilter
+          statuses={statuses}
+          onStatusesChange={onStatusesChange}
+          paymentStates={paymentStates}
+          onPaymentStatesChange={onPaymentStatesChange}
+          fulfilmentMethods={fulfilmentMethods}
+          onFulfilmentMethodsChange={onFulfilmentMethodsChange}
         />
         <FilterPill<LedgerServiceType>
           label="Type"
@@ -365,14 +357,6 @@ function FiltersRow({
           options={SERVICE_TYPE_OPTIONS}
           onChange={onServiceTypesChange}
           totalNoun="types"
-        />
-        <FilterPill<LedgerFulfilmentMethod>
-          label="Fulfilment"
-          placeholder="Any fulfilment"
-          values={fulfilmentMethods}
-          options={FULFILMENT_OPTIONS}
-          onChange={onFulfilmentMethodsChange}
-          totalNoun="fulfilments"
         />
         <DateRangePicker
           value={dateRange}
@@ -871,6 +855,335 @@ function pageButton(disabled: boolean): CSSProperties {
 // (see LEDGER_EXTRA_PRESETS in lib/dateRange.ts and the extraPresets
 // prop passed to <DateRangePicker> above) so the receptionist picks a
 // date frame in one place instead of two competing widgets.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CombinedStatusFilter — workflow status + payment state + fulfilment
+// method in a single grouped dropdown. The three axes used to ship as
+// three parallel pills; in practice receptionists were never reaching
+// for them in isolation ("show me cancelled bookings that were also
+// paid in full"), and three pills + a date filter consumed almost the
+// whole row on tablet. Folding them together keeps the filters
+// surface compact and lets the user shop across the axes in one
+// panel.
+//
+// State stays separate underneath (each axis maps to its own LedgerRow
+// column with its own SQL filter); only the UI is unified.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CombinedStatusFilter({
+  statuses,
+  onStatusesChange,
+  paymentStates,
+  onPaymentStatesChange,
+  fulfilmentMethods,
+  onFulfilmentMethodsChange,
+}: {
+  statuses: LedgerStatus[];
+  onStatusesChange: (next: LedgerStatus[]) => void;
+  paymentStates: LedgerPaymentState[];
+  onPaymentStatesChange: (next: LedgerPaymentState[]) => void;
+  fulfilmentMethods: LedgerFulfilmentMethod[];
+  onFulfilmentMethodsChange: (next: LedgerFulfilmentMethod[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  );
+
+  const statusSet = new Set(statuses);
+  const paymentSet = new Set(paymentStates);
+  const fulfilmentSet = new Set(fulfilmentMethods);
+
+  const totalSelected = statuses.length + paymentStates.length + fulfilmentMethods.length;
+  const hasValue = totalSelected > 0;
+
+  // Display: single selection shows the label so a one-axis filter
+  // still reads at a glance. Multi-selection collapses to a count to
+  // keep the trigger short.
+  const display = (() => {
+    if (totalSelected === 0) return 'All statuses';
+    if (totalSelected === 1) {
+      if (statuses[0]) return STATUS_OPTIONS.find((o) => o.value === statuses[0])?.label ?? '';
+      if (paymentStates[0]) return PAYMENT_OPTIONS.find((o) => o.value === paymentStates[0])?.label ?? '';
+      if (fulfilmentMethods[0]) return FULFILMENT_OPTIONS.find((o) => o.value === fulfilmentMethods[0])?.label ?? '';
+    }
+    return `${totalSelected} selected`;
+  })();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const update = () => {
+      if (!triggerRef.current) return;
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPanelPos({
+        top: rect.bottom + 6,
+        left: rect.left,
+        width: Math.max(rect.width, 240),
+      });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
+
+  const toggleStatus = (v: LedgerStatus) => {
+    if (statusSet.has(v)) onStatusesChange(statuses.filter((x) => x !== v));
+    else onStatusesChange([...statuses, v]);
+  };
+  const togglePayment = (v: LedgerPaymentState) => {
+    if (paymentSet.has(v)) onPaymentStatesChange(paymentStates.filter((x) => x !== v));
+    else onPaymentStatesChange([...paymentStates, v]);
+  };
+  const toggleFulfilment = (v: LedgerFulfilmentMethod) => {
+    if (fulfilmentSet.has(v)) onFulfilmentMethodsChange(fulfilmentMethods.filter((x) => x !== v));
+    else onFulfilmentMethodsChange([...fulfilmentMethods, v]);
+  };
+  const clearAll = () => {
+    onStatusesChange([]);
+    onPaymentStatesChange([]);
+    onFulfilmentMethodsChange([]);
+  };
+
+  return (
+    <span
+      ref={wrapperRef}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          appearance: 'none',
+          height: 36,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          padding: `0 ${theme.space[3]}px`,
+          borderRadius: theme.radius.input,
+          border: `1px solid ${hasValue ? theme.color.ink : theme.color.border}`,
+          background: theme.color.surface,
+          color: hasValue ? theme.color.ink : theme.color.inkMuted,
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          cursor: 'pointer',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+      >
+        <span style={{ color: theme.color.inkMuted }}>Status</span>
+        <span
+          style={{
+            color: hasValue ? theme.color.ink : theme.color.inkSubtle,
+            fontWeight: theme.type.weight.semibold,
+            maxWidth: 200,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {display}
+        </span>
+        <ChevronDown size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
+      </button>
+      {hasValue ? (
+        <button
+          type="button"
+          aria-label="Clear status filter"
+          onClick={(e) => {
+            e.stopPropagation();
+            clearAll();
+          }}
+          style={{
+            appearance: 'none',
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
+            color: theme.color.inkSubtle,
+            cursor: 'pointer',
+            padding: 0,
+            width: 26,
+            height: 26,
+            borderRadius: theme.radius.pill,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'inherit',
+          }}
+        >
+          <X size={12} aria-hidden />
+        </button>
+      ) : null}
+      {open && panelPos
+        ? (() => {
+            const panelStyle: CSSProperties = {
+              position: 'fixed',
+              top: panelPos.top,
+              left: panelPos.left,
+              width: panelPos.width,
+              maxHeight: 460,
+              overflowY: 'auto',
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              boxShadow: theme.shadow.overlay,
+              zIndex: 1200,
+              padding: theme.space[1],
+              display: 'flex',
+              flexDirection: 'column',
+            };
+            return (
+              <div role="listbox" aria-multiselectable="true" style={panelStyle}>
+                <SectionLabel>Workflow</SectionLabel>
+                {STATUS_OPTIONS.map((opt) => (
+                  <OptionRow
+                    key={opt.value}
+                    label={opt.label}
+                    checked={statusSet.has(opt.value)}
+                    onClick={() => toggleStatus(opt.value)}
+                  />
+                ))}
+                <SectionDivider />
+                <SectionLabel>Payment</SectionLabel>
+                {PAYMENT_OPTIONS.map((opt) => (
+                  <OptionRow
+                    key={opt.value}
+                    label={opt.label}
+                    checked={paymentSet.has(opt.value)}
+                    onClick={() => togglePayment(opt.value)}
+                  />
+                ))}
+                <SectionDivider />
+                <SectionLabel>Fulfilment</SectionLabel>
+                {FULFILMENT_OPTIONS.map((opt) => (
+                  <OptionRow
+                    key={opt.value}
+                    label={opt.label}
+                    checked={fulfilmentSet.has(opt.value)}
+                    onClick={() => toggleFulfilment(opt.value)}
+                  />
+                ))}
+              </div>
+            );
+          })()
+        : null}
+    </span>
+  );
+}
+
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <p
+      style={{
+        margin: 0,
+        padding: `${theme.space[2]}px ${theme.space[3]}px ${theme.space[1]}px`,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        color: theme.color.inkSubtle,
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function SectionDivider() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        height: 1,
+        background: theme.color.border,
+        margin: `${theme.space[1]}px ${theme.space[2]}px`,
+      }}
+    />
+  );
+}
+
+function OptionRow({
+  label,
+  checked,
+  onClick,
+}: {
+  label: string;
+  checked: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={checked}
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        background: 'transparent',
+        border: 'none',
+        borderRadius: theme.radius.input,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        color: theme.color.ink,
+        textAlign: 'left',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = theme.color.bg;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+      }}
+    >
+      <span>{label}</span>
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 18,
+          height: 18,
+          borderRadius: 4,
+          border: `1px solid ${checked ? theme.color.ink : theme.color.border}`,
+          background: checked ? theme.color.ink : theme.color.surface,
+          color: theme.color.surface,
+          flexShrink: 0,
+        }}
+      >
+        {checked ? <Check size={12} aria-hidden /> : null}
+      </span>
+    </button>
+  );
+}
 
 function FilterPill<T extends string>({
   label,
