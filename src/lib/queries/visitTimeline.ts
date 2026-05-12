@@ -113,6 +113,11 @@ interface VisitRow {
   opened_at: string;
   closed_at: string | null;
   jb_ref: string | null;
+  // Surfaced on the "Visit complete" event so staff can see the
+  // fulfilment decision + headline total without scrolling back up
+  // to the hero. Both null until completion.
+  fulfilment_method: 'in_person' | 'shipping' | null;
+  status: 'arrived' | 'complete' | 'unsuitable' | 'ended_early' | string;
 }
 
 interface WaiverSignatureRow {
@@ -437,7 +442,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
         const { data: visitRaw, error: visitErr } = await supabase
           .from('lng_visits')
           .select(
-            'id, patient_id, appointment_id, walk_in_id, arrival_type, receptionist_id, opened_at, closed_at, jb_ref'
+            'id, patient_id, appointment_id, walk_in_id, arrival_type, receptionist_id, opened_at, closed_at, jb_ref, fulfilment_method, status'
           )
           .eq('id', visitId)
           .maybeSingle();
@@ -458,7 +463,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           waiverEvents,
           cartItemEvents,
           paymentEvents,
-          patientEvents,
+          patientEventsBundle,
         ] = await Promise.all([
           fetchAppointmentEvents(visit),
           fetchWaiverEvents(visit),
@@ -466,10 +471,26 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           fetchPaymentEvents(visit.id),
           fetchPatientEvents(visit),
         ]);
+        const patientEvents = patientEventsBundle.events;
 
         if (cancelled) return;
 
+        // The actual staff who closed the visit isn't on lng_visits
+        // (only the opening receptionist is) — it lives on the
+        // patient_events 'visit_closed' row's actor_account_id +
+        // payload.total_pence. Pull both out so the synth Visit
+        // complete + JB-freed events read with the closing staff's
+        // name, not the receptionist's. Falls back to receptionist
+        // when no patient_events row was written (older visits that
+        // predate the explicit completeVisit call).
+        const closeAudit = pickVisitCloseAudit(patientEventsBundle.rawRows, visit.id);
+        const closingActor = closeAudit?.actor ?? visit.receptionist_id;
+        const closeTotalPence = closeAudit?.totalPence ?? null;
+
         // Step 3: visit-level events (open / close + JB lifecycle).
+        const arrivalDetail = visit.arrival_type === 'walk_in'
+          ? 'Walked in off the street'
+          : 'Arrived for a scheduled appointment';
         const visitOwnEvents: RawTimelineEvent[] = [
           {
             id: `visit-${visit.id}-opened`,
@@ -479,6 +500,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
               visit.arrival_type === 'walk_in'
                 ? 'Walk-in arrived'
                 : 'Patient checked in',
+            detail: arrivalDetail,
             actorAccountId: visit.receptionist_id,
             hint: 'check',
           },
@@ -495,7 +517,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             type: 'jb_assigned',
             timestamp: visit.opened_at,
             title: 'Job box assigned',
-            detail: `JB${visit.jb_ref}`,
+            detail: `JB${visit.jb_ref} taken for this visit`,
             // Same staff who checked the patient in — JB lives on the
             // appointment and gets captured into the visit at insert,
             // and arrival is the moment both happen together.
@@ -508,8 +530,16 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
               type: 'jb_freed',
               timestamp: visit.closed_at,
               title: 'Job box freed',
-              detail: `JB${visit.jb_ref} is available again`,
-              actorAccountId: visit.receptionist_id,
+              // Tie the JB freeing to the visit closure so an
+              // onlooker reads "the box went back into the pool
+              // because the visit was finished" rather than a bare
+              // "JB63 is available again". Adds the headline that
+              // matters operationally (the JB ref) and the cause.
+              detail: `JB${visit.jb_ref} released back to the pool when the visit was finished`,
+              // The freeing happens at completeVisit time, so the
+              // closer's actor is the right attribution — not the
+              // receptionist who originally opened the visit.
+              actorAccountId: closingActor,
               hint: 'box',
             });
           }
@@ -520,7 +550,12 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             type: 'visit_closed',
             timestamp: visit.closed_at,
             title: 'Visit complete',
-            actorAccountId: visit.receptionist_id,
+            detail: buildVisitCompleteDetail({
+              visitStatus: visit.status,
+              fulfilment: visit.fulfilment_method,
+              totalPence: closeTotalPence,
+            }),
+            actorAccountId: closingActor,
             hint: 'flag',
           });
         }
@@ -849,7 +884,62 @@ async function fetchPaymentEvents(visitId: string): Promise<RawTimelineEvent[]> 
   return out;
 }
 
-async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> {
+// Mines the patient_events rowset for the visit_closed audit row that
+// completeVisit() writes. Returns the actual closing staff (so the
+// synth "Visit complete" event attributes to them, not the receptionist
+// who originally opened the visit) and the closing cart total (so the
+// detail line reads "Visit complete · Passed to patient · £198.00"
+// instead of a bare "Visit complete").
+function pickVisitCloseAudit(
+  rows: PatientEventRow[],
+  visitId: string,
+): { actor: string | null; totalPence: number | null } | null {
+  for (const r of rows) {
+    if (r.event_type !== 'visit_closed') continue;
+    const payloadVisitId = typeof r.payload?.visit_id === 'string' ? r.payload.visit_id : null;
+    if (payloadVisitId !== visitId) continue;
+    const total = typeof r.payload?.total_pence === 'number' ? r.payload.total_pence : null;
+    return { actor: r.actor_account_id, totalPence: total };
+  }
+  return null;
+}
+
+// Detail line for the synth "Visit complete" event. Reads in plain
+// English so an onlooker who didn't run the visit understands what
+// finished and how:
+//
+//   • status = 'complete' → "Visit complete · Passed to patient · £198.00 paid"
+//   • status = 'complete', no method (older visits) → "Visit complete · £198.00 paid"
+//   • status = 'unsuitable' → "Case marked unsuitable" (no fulfilment)
+//   • status = 'ended_early' → "Visit ended early" (no fulfilment)
+function buildVisitCompleteDetail(args: {
+  visitStatus: VisitRow['status'];
+  fulfilment: VisitRow['fulfilment_method'];
+  totalPence: number | null;
+}): string {
+  if (args.visitStatus === 'unsuitable') return 'Case marked unsuitable; cart was closed without a charge';
+  if (args.visitStatus === 'ended_early') return 'Visit ended early; cart was closed without a charge';
+  const parts: string[] = [];
+  if (args.fulfilment === 'in_person') parts.push('Passed to patient on the day');
+  else if (args.fulfilment === 'shipping') parts.push('Marked for dispatch by post');
+  if (args.totalPence != null && args.totalPence > 0) {
+    parts.push(`${formatPence(args.totalPence)} paid in full`);
+  }
+  if (parts.length === 0) return 'Visit closed';
+  return parts.join(' · ');
+}
+
+// Bundle the raw patient_events rows alongside the timeline events so
+// the caller can mine them for context (e.g. who actually closed the
+// visit, what the closing total was). The synthetic Visit-complete
+// event needs the closer's actor + payload.total_pence; the timeline
+// list itself doesn't surface those rows directly.
+interface PatientEventsResult {
+  events: RawTimelineEvent[];
+  rawRows: PatientEventRow[];
+}
+
+async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult> {
   // Visit-scoped slice of patient_events. Every Lounge writer that
   // emits a visit-level event puts the visit's id into payload.visit_id
   // (cart_line_removed, visit_ended_early, patient_unsuitable_reversed,
@@ -876,7 +966,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> 
   // other off-app consumers depend on them); we just don't surface
   // them in the timeline twice.
   const skip = new Set(['walk_in_arrived', 'visit_arrived', 'visit_closed']);
-  return rows
+  const events: RawTimelineEvent[] = rows
     .filter((r) => !skip.has(r.event_type))
     .map((r) => {
       const emailMessageId =
@@ -898,6 +988,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> 
         emailMessageId,
       };
     });
+  return { events, rawRows: rows };
 }
 
 // Title for a generic patient_events row. For cart_line_removed the

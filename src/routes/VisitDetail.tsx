@@ -1024,7 +1024,15 @@ export function VisitDetail() {
                 the visit timeline at the bottom. */}
             <div style={{ marginBottom: theme.space[6] }}>
               <AppointmentHero
-                {...buildVisitHeroProps(visit, appointment, patient, cart, latestUnsuitable, items.length > 0)}
+                {...buildVisitHeroProps(
+                  visit,
+                  appointment,
+                  patient,
+                  cart,
+                  latestUnsuitable,
+                  items.length > 0,
+                  openChangeFulfilment,
+                )}
                 trailing={
                   patient ? (
                     <Button
@@ -1279,19 +1287,6 @@ export function VisitDetail() {
                     </span>
                   </Button>
                 </span>
-              ) : null}
-              {visit.status === 'complete' && visit.fulfilment_method ? (
-                // Fulfilment chip — surfaces the current handoff method
-                // and exposes a Change affordance so staff can flip
-                // in_person ↔ shipping when a customer changes their
-                // mind. Hidden once a DPD label is issued because that
-                // path requires cancelling the shipment first, not a
-                // quick toggle.
-                <FulfilmentChip
-                  method={visit.fulfilment_method}
-                  locked={!!visit.dispatch_ref}
-                  onChange={openChangeFulfilment}
-                />
               ) : null}
               {visit.status === 'complete' && visit.fulfilment_method === 'shipping' && !visit.dispatch_ref ? (
                 // Visit completed with shipping method but dispatch not yet
@@ -2320,88 +2315,6 @@ function PatientNameSkeleton() {
   );
 }
 
-// Fulfilment chip — shown on completed visits so staff can see how the
-// work was handed off AND switch the method if the customer changes
-// their mind. Renders as a pill alongside the action buttons; clicking
-// it opens the change-fulfilment sheet. When a DPD label has already
-// been issued (visit.dispatch_ref set) we lock the chip — switching at
-// that point would orphan a live shipment, so the operator has to
-// cancel the shipment first.
-function FulfilmentChip({
-  method,
-  locked,
-  onChange,
-}: {
-  method: VisitFulfilmentMethod;
-  locked: boolean;
-  onChange: () => void;
-}) {
-  const label = method === 'in_person' ? 'Passed to patient' : 'To be shipped';
-  const Icon = method === 'in_person' ? UserCheck : Package;
-  const palette =
-    method === 'in_person'
-      ? { bg: theme.color.accentBg, fg: theme.color.accent }
-      : { bg: 'rgba(14, 20, 20, 0.05)', fg: theme.color.ink };
-  if (locked) {
-    return (
-      <span
-        title="Shipment dispatched. Cancel it first to change fulfilment."
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '8px 14px',
-          borderRadius: theme.radius.pill,
-          border: `1px solid ${theme.color.border}`,
-          background: palette.bg,
-          color: palette.fg,
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
-        }}
-      >
-        <Icon size={14} aria-hidden />
-        {label}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={onChange}
-      style={{
-        appearance: 'none',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '8px 14px',
-        borderRadius: theme.radius.pill,
-        border: `1px solid ${theme.color.border}`,
-        background: palette.bg,
-        color: palette.fg,
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-      }}
-    >
-      <Icon size={14} aria-hidden />
-      {label}
-      <span
-        aria-hidden
-        style={{
-          marginLeft: 6,
-          paddingLeft: theme.space[2],
-          borderLeft: `1px solid rgba(14, 20, 20, 0.15)`,
-          color: theme.color.inkMuted,
-          fontWeight: theme.type.weight.medium,
-        }}
-      >
-        Change
-      </span>
-    </button>
-  );
-}
-
 // Tappable reason card used inside the End-visit-early, Remove-line,
 // and Finish-visit sheets. Bold label + muted sub on a flat surface;
 // selected state lifts the border to ink and tints the fill.
@@ -2738,6 +2651,7 @@ function buildVisitHeroProps(
   cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null; total_pence: number } | null,
   latestUnsuitable: { recorded_at: string | null } | null,
   hasItems: boolean,
+  onChangeFulfilment: () => void,
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
@@ -2754,7 +2668,11 @@ function buildVisitHeroProps(
 
   // Pills row — visit status always; cart status when one exists and
   // the visit isn't terminated (a "Cart open" pill on an unsuitable
-  // visit is misleading because the cart's locked anyway).
+  // visit is misleading because the cart's locked anyway). On
+  // completed visits we ALSO surface a fulfilment-method pill that
+  // doubles as the Change-method button — staff scan the hero for
+  // current state AND can tap the chip to flip in_person ↔ shipping
+  // without leaving the hero.
   const pills: AppointmentHeroPill[] = [
     { tone: visitStatusTone(visit.status), label: visitStatusLabel(visit.status) },
   ];
@@ -2763,6 +2681,20 @@ function buildVisitHeroProps(
     pills.push({
       tone: cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show',
       label: cartStatusLabel(cart.status),
+    });
+  }
+  if (visit.status === 'complete' && visit.fulfilment_method) {
+    const isShipping = visit.fulfilment_method === 'shipping';
+    const dispatched = !!visit.dispatch_ref;
+    pills.push({
+      tone: dispatched ? 'arrived' : isShipping ? 'pending' : 'arrived',
+      label: isShipping ? 'To be shipped' : 'Passed to patient',
+      icon: isShipping ? <Package size={12} aria-hidden /> : <UserCheck size={12} aria-hidden />,
+      // Once a DPD label is issued, the change action locks — staff
+      // must cancel the shipment first. Pill stays visible as a
+      // status indicator without the onClick affordance.
+      onClick: dispatched ? undefined : onChangeFulfilment,
+      trailingHint: dispatched ? undefined : 'Change',
     });
   }
 

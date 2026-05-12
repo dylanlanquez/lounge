@@ -30,6 +30,18 @@ export type AppointmentHeroTone = 'accent' | 'neutral' | 'warn' | 'alert';
 export interface AppointmentHeroPill {
   tone: StatusTone;
   label: string;
+  // Optional leading icon (16px). Used by the fulfilment status pill
+  // on completed visits — staff scan for the package vs handover
+  // glyph before reading the label.
+  icon?: ReactNode;
+  // When set, the pill becomes a button. Used for affordances that
+  // sit alongside read-only state pills — e.g. the fulfilment chip
+  // on a completed visit, which both reports the current method AND
+  // opens a change-method sheet. trailingHint surfaces a small
+  // muted suffix ("Change") so the click affordance reads as obvious
+  // without breaking the pill's status-first design.
+  onClick?: () => void;
+  trailingHint?: string;
 }
 
 export interface AppointmentHeroWhen {
@@ -120,9 +132,7 @@ export function AppointmentHero({
               {patient.name}
             </p>
             {pills.map((p, i) => (
-              <StatusPill key={`${p.tone}|${p.label}|${i}`} tone={p.tone} size="sm">
-                {p.label}
-              </StatusPill>
+              <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
             ))}
           </div>
           {subtitle ? (
@@ -228,6 +238,57 @@ export function AppointmentHero({
         ) : null}
       </div>
     </Card>
+  );
+}
+
+// Render a hero pill. Read-only pills go through StatusPill so the
+// visit's "Complete" / "Paid in full" pills share one shape. Pills
+// with an onClick handler become inline buttons wrapping the same
+// StatusPill body, with a trailing "· Change" hint baked into the
+// children so the click affordance reads as obvious without breaking
+// the pill's status-first appearance.
+function HeroPill({ pill }: { pill: AppointmentHeroPill }) {
+  const body = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      {pill.icon ? <span style={{ display: 'inline-flex' }}>{pill.icon}</span> : null}
+      {pill.label}
+      {pill.onClick && pill.trailingHint ? (
+        <span
+          aria-hidden
+          style={{
+            opacity: 0.55,
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          · {pill.trailingHint}
+        </span>
+      ) : null}
+    </span>
+  );
+  if (!pill.onClick) {
+    return (
+      <StatusPill tone={pill.tone} size="sm">
+        {body}
+      </StatusPill>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={pill.onClick}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        padding: 0,
+        background: 'transparent',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+      }}
+    >
+      <StatusPill tone={pill.tone} size="sm">
+        {body}
+      </StatusPill>
+    </button>
   );
 }
 
