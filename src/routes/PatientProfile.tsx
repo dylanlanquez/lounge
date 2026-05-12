@@ -31,17 +31,17 @@ import {
   humaniseEventTypeLabel,
   usePatientCases,
   usePatientDeliveryFiles,
-  usePatientOutstandingShopifyOrders,
   usePatientProfile,
   usePatientProfileFiles,
   usePatientScheduledAppointments,
+  usePatientShopifyOrders,
   usePatientVisits,
-  type OutstandingOrderItem,
-  type OutstandingOrderRow,
   type PatientCaseRow,
   type PatientFileEntry,
   type PatientProfileRow,
   type PatientScheduledAppointmentRow,
+  type PatientShopifyOrderItem,
+  type PatientShopifyOrderRow,
   type PatientVisitRow,
   type ScheduledApptStatus,
 } from '../lib/queries/patientProfile.ts';
@@ -80,11 +80,9 @@ export function PatientProfile() {
   const { data: scheduledAppointments, loading: apptsLoading } =
     usePatientScheduledAppointments(id);
   const { data: cases, loading: casesLoading } = usePatientCases(id);
-  // Shopify orders the patient still owes us a fulfilment on. Reads
-  // the lng_patient_outstanding_shopify_orders RPC; ships zero rows
-  // and no card when the patient has nothing outstanding.
-  const { data: outstandingOrders, loading: ordersLoading } =
-    usePatientOutstandingShopifyOrders(id);
+  // Full Shopify order history for this patient — paid, fulfilled,
+  // cancelled, refunded. Reads the lng_patient_shopify_orders RPC.
+  const { data: shopifyOrders, loading: ordersLoading } = usePatientShopifyOrders(id);
   // Signed-waiver history lives at the route level so the WaiverStatus
   // card (top of the page) and the SignedWaiversHistory card (further
   // down) can refresh in lockstep when the receptionist signs a section
@@ -162,8 +160,8 @@ export function PatientProfile() {
               refresh={refreshFiles}
             />
             <FinalDeliveries patientId={patient.id} patient={patient} />
-            <OutstandingOrders
-              orders={outstandingOrders}
+            <ShopifyOrders
+              orders={shopifyOrders}
               loading={ordersLoading}
               shopifyLinked={!!patient.shopify_customer_id}
             />
@@ -1863,28 +1861,27 @@ function formatDateTime(iso: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Outstanding Shopify orders.
+// Shopify orders.
 //
-// A second list-card alongside Appointments, sharing the same row visual
-// (DateTile on the left, summary in the middle, status pill on the right)
-// so the page reads as one rhythm. Surfaces only orders the patient still
-// owes us a fulfilment on — paid + awaiting dispatch, partially fulfilled,
-// awaiting payment. Cancelled / fully refunded / fully fulfilled orders
-// are filtered out at the RPC level so they never reach this list.
+// Full Shopify order history alongside Appointments, sharing the same row
+// visual (DateTile on the left, summary in the middle, status pill on the
+// right) so the page reads as one rhythm. Status pill maps the Shopify
+// (financial_status, fulfillment_status, cancelled_at) triple onto a
+// single staff-friendly phrase — "Paid · awaiting dispatch", "Delivered",
+// "Cancelled", "Refunded", etc. — so a receptionist scans the list at
+// once instead of decoding Shopify jargon.
 //
-// Hidden completely when the patient has nothing outstanding AND no
-// Shopify link — staff don't want a "0 orders" empty state cluttering a
-// patient who is purely a walk-in. Patients linked to Shopify but with
-// zero outstanding orders get a positive "all caught up" empty state so
-// staff don't wonder if the data is missing.
+// Hidden completely for patients with no Shopify identity. Linked
+// patients with zero orders get a positive empty state so staff don't
+// wonder whether the data is missing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function OutstandingOrders({
+function ShopifyOrders({
   orders,
   loading,
   shopifyLinked,
 }: {
-  orders: OutstandingOrderRow[];
+  orders: PatientShopifyOrderRow[];
   loading: boolean;
   shopifyLinked: boolean;
 }) {
@@ -1893,82 +1890,123 @@ function OutstandingOrders({
   // valid state for walk-in-only patients.
   if (!shopifyLinked && !loading) return null;
 
-  const pager = usePagedRows(orders, PROFILE_PAGE_SIZE);
-  const totalOutstandingPence = useMemo(
-    () =>
-      orders.reduce((acc, o) => {
-        const owed = totalOwedForOrder(o);
-        return acc + owed;
-      }, 0),
-    [orders],
+  // Partition orders into "open" (still owe the patient a fulfilment)
+  // and "settled" (delivered, cancelled, refunded). Open goes first so
+  // the most actionable rows sit at the top of the card, then settled
+  // history below — newest-first within each bucket. Drops the
+  // overlap with Appointments' visual rhythm by keeping section
+  // headers identical (title + muted sub + count).
+  const open = useMemo(() => orders.filter((o) => orderIsOpen(o)), [orders]);
+  const settled = useMemo(() => orders.filter((o) => !orderIsOpen(o)), [orders]);
+
+  const openOwedPence = useMemo(
+    () => open.reduce((acc, o) => acc + totalOwedForOrder(o), 0),
+    [open],
   );
 
   return (
     <CollapsibleCard
       icon={<Package size={18} color={theme.color.ink} aria-hidden />}
-      title="Outstanding orders"
+      title="Shopify orders"
       meta={
         loading
           ? 'Loading'
           : orders.length === 0
-            ? 'All caught up'
-            : `${orders.length} ${orders.length === 1 ? 'order' : 'orders'} · ${formatGbpFromPence(totalOutstandingPence)}`
+            ? 'No orders yet'
+            : open.length > 0
+              ? `${open.length} open · ${formatGbpFromPence(openOwedPence)}`
+              : `${orders.length} ${orders.length === 1 ? 'order' : 'orders'}`
       }
     >
       {loading ? (
         <Skeleton height={120} radius={14} />
       ) : orders.length === 0 ? (
         <EmptyState
-          icon={<CheckCircle2 size={22} aria-hidden />}
-          title="All caught up"
-          description="No outstanding Shopify orders. New orders that need a dispatch will appear here."
+          icon={<Package size={22} aria-hidden />}
+          title="No Shopify orders"
+          description="Orders the patient places on venneir.com will appear here."
         />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-          <ListSectionHeader
-            title="Awaiting fulfilment"
-            sub="Paid or part-paid orders the lab still owes the patient."
-            count={orders.length}
-          />
-          <ul
-            style={{
-              listStyle: 'none',
-              margin: 0,
-              padding: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: theme.space[2],
-            }}
-          >
-            {pager.visible.map((o) => (
-              <li key={o.id}>
-                <OrderCardRow row={o} />
-              </li>
-            ))}
-          </ul>
-          <ListPager
-            page={pager.page}
-            totalPages={pager.totalPages}
-            onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
-            onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          {open.length > 0 ? (
+            <OrderGroup
+              title="Open"
+              sub="Paid, part-paid or part-shipped — the lab still owes the patient."
+              orders={open}
+            />
+          ) : null}
+          {settled.length > 0 ? (
+            <OrderGroup
+              title="History"
+              sub="Delivered, cancelled and refunded orders."
+              orders={settled}
+            />
+          ) : null}
         </div>
       )}
     </CollapsibleCard>
   );
 }
 
-// Single outstanding-order row. Same DateTile-left, content-middle,
-// status-right pattern as the appointment row so the two lists feel
-// like one design system applied to different sources. The body
-// summarises the line items in plain English — quantity × title for
-// up to two items, then "+ N more" — so the staff member knows what
-// the patient is waiting on without expanding anything.
-function OrderCardRow({ row }: { row: OutstandingOrderRow }) {
+function OrderGroup({
+  title,
+  sub,
+  orders,
+}: {
+  title: string;
+  sub: string;
+  orders: PatientShopifyOrderRow[];
+}) {
+  const pager = usePagedRows(orders, PROFILE_PAGE_SIZE);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <ListSectionHeader title={title} sub={sub} count={orders.length} />
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+        }}
+      >
+        {pager.visible.map((o) => (
+          <li key={o.id}>
+            <OrderCardRow row={o} />
+          </li>
+        ))}
+      </ul>
+      <ListPager
+        page={pager.page}
+        totalPages={pager.totalPages}
+        onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
+        onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
+      />
+    </div>
+  );
+}
+
+function orderIsOpen(o: PatientShopifyOrderRow): boolean {
+  if (o.cancelled_at) return false;
+  const fin = (o.financial_status ?? '').toLowerCase();
+  const ful = (o.fulfillment_status ?? '').toLowerCase();
+  if (fin === 'refunded') return false;
+  if (ful === 'fulfilled') return false;
+  return true;
+}
+
+// Single order row. Same DateTile-left, content-middle, status-right
+// pattern as the appointment row so the two lists feel like one design
+// system applied to different sources. The body summarises the line
+// items in plain English — quantity × title for up to two items, then
+// "+ N more" — so the staff member knows what the patient is waiting
+// on without expanding anything.
+function OrderCardRow({ row }: { row: PatientShopifyOrderRow }) {
   const tone = orderTone(row);
   const summary = summariseItems(row.items);
-  const owedPence = totalOwedForOrder(row);
-  const owedLabel = formatGbpFromPence(owedPence);
+  const totalPence = Math.round((row.total_price ?? 0) * 100);
+  const totalLabel = formatGbpFromPence(totalPence);
   return (
     <div
       style={{
@@ -1981,9 +2019,10 @@ function OrderCardRow({ row }: { row: OutstandingOrderRow }) {
         display: 'flex',
         alignItems: 'center',
         gap: theme.space[4],
+        opacity: tone.faded ? 0.78 : 1,
       }}
     >
-      <DateTile iso={row.created_at} />
+      <DateTile iso={row.created_at} tone={tone.faded ? 'past' : 'neutral'} />
       <div
         style={{
           flex: 1,
@@ -2036,7 +2075,7 @@ function OrderCardRow({ row }: { row: OutstandingOrderRow }) {
           ) : null}
           <span aria-hidden style={{ color: theme.color.inkSubtle }}>·</span>
           <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
-            {owedLabel}
+            {totalLabel}
           </span>
         </p>
       </div>
@@ -2055,33 +2094,44 @@ function OrderCardRow({ row }: { row: OutstandingOrderRow }) {
 }
 
 interface OrderTone {
-  tone: 'accent' | 'warn' | 'neutral';
+  tone: 'accent' | 'warn' | 'alert' | 'neutral';
   label: string;
-  icon: 'truck' | 'package' | 'info';
+  icon: 'truck' | 'package' | 'check' | 'info' | 'x';
+  // When true, the row chrome dials down — used for settled / inactive
+  // orders so they read as historical without disappearing.
+  faded: boolean;
 }
 
-// Maps the Shopify status pair to a single staff-friendly phrase. The
-// goal is the room-temperature read: a receptionist scanning the
-// patient profile should know what's pending without parsing Shopify
-// jargon. "Pending dispatch" is the most common case for a paid lab
-// order; "Awaiting payment" calls out anything that hasn't been paid
-// for; "Partially shipped" surfaces orders mid-fulfilment.
-function orderTone(row: OutstandingOrderRow): OrderTone {
+// Maps the Shopify (financial_status, fulfillment_status, cancelled_at)
+// triple onto one staff-friendly phrase. The goal is the room-
+// temperature read: a receptionist scanning the patient profile knows
+// the order's state without parsing Shopify jargon.
+function orderTone(row: PatientShopifyOrderRow): OrderTone {
+  if (row.cancelled_at) {
+    return { tone: 'alert', label: 'Cancelled', icon: 'x', faded: true };
+  }
   const fin = (row.financial_status ?? '').toLowerCase();
   const ful = (row.fulfillment_status ?? '').toLowerCase();
+
+  if (fin === 'refunded') {
+    return { tone: 'neutral', label: 'Refunded', icon: 'info', faded: true };
+  }
+  if (ful === 'fulfilled') {
+    return { tone: 'accent', label: 'Delivered', icon: 'check', faded: true };
+  }
   if (ful === 'partial') {
-    return { tone: 'warn', label: 'Partially shipped', icon: 'truck' };
+    return { tone: 'warn', label: 'Partially shipped', icon: 'truck', faded: false };
   }
   if (fin === 'paid' || fin === 'partially_refunded') {
-    return { tone: 'accent', label: 'Paid · awaiting dispatch', icon: 'package' };
+    return { tone: 'accent', label: 'Paid · awaiting dispatch', icon: 'package', faded: false };
   }
   if (fin === 'partially_paid') {
-    return { tone: 'warn', label: 'Partially paid', icon: 'info' };
+    return { tone: 'warn', label: 'Partially paid', icon: 'info', faded: false };
   }
   if (fin === 'pending') {
-    return { tone: 'warn', label: 'Awaiting payment', icon: 'info' };
+    return { tone: 'warn', label: 'Awaiting payment', icon: 'info', faded: false };
   }
-  return { tone: 'neutral', label: 'Outstanding', icon: 'info' };
+  return { tone: 'neutral', label: 'Open', icon: 'info', faded: false };
 }
 
 function OrderStatusPill({
@@ -2089,17 +2139,28 @@ function OrderStatusPill({
   label,
   icon,
 }: {
-  tone: 'accent' | 'warn' | 'neutral';
+  tone: 'accent' | 'warn' | 'alert' | 'neutral';
   label: string;
-  icon: 'truck' | 'package' | 'info';
+  icon: 'truck' | 'package' | 'check' | 'info' | 'x';
 }) {
   const palette =
     tone === 'accent'
       ? { bg: theme.color.accentBg, fg: theme.color.accent }
       : tone === 'warn'
         ? { bg: 'rgba(179, 104, 21, 0.10)', fg: theme.color.warn }
-        : { bg: 'rgba(14, 20, 20, 0.06)', fg: theme.color.inkMuted };
-  const Icon = icon === 'truck' ? Truck : icon === 'package' ? Package : Info;
+        : tone === 'alert'
+          ? { bg: 'rgba(184, 58, 42, 0.10)', fg: theme.color.alert }
+          : { bg: 'rgba(14, 20, 20, 0.06)', fg: theme.color.inkMuted };
+  const Icon =
+    icon === 'truck'
+      ? Truck
+      : icon === 'package'
+        ? Package
+        : icon === 'check'
+          ? CheckCircle2
+          : icon === 'x'
+            ? X
+            : Info;
   return (
     <span
       style={{
@@ -2122,7 +2183,7 @@ function OrderStatusPill({
   );
 }
 
-function summariseItems(items: OutstandingOrderItem[]): string {
+function summariseItems(items: PatientShopifyOrderItem[]): string {
   const meaningful = items.filter((i) => (i.title ?? '').trim().length > 0);
   if (meaningful.length === 0) return 'Shopify order';
   const first = meaningful.slice(0, 2).map((i) => {
@@ -2133,7 +2194,7 @@ function summariseItems(items: OutstandingOrderItem[]): string {
   return remainder > 0 ? `${first.join(', ')} + ${remainder} more` : first.join(', ');
 }
 
-function totalOwedForOrder(o: OutstandingOrderRow): number {
+function totalOwedForOrder(o: PatientShopifyOrderRow): number {
   // shopify_orders.current_total_price is already net of cancellations
   // but NOT refunds — subtract refund_amount manually so the staff
   // member sees what the customer actually still expects to receive.
@@ -2612,6 +2673,31 @@ const iconButtonStyle: CSSProperties = {
 };
 
 function CaseRow({ row }: { row: PatientCaseRow }) {
+  // Production case rows pick up their cancelled/archived terminal
+  // state via bucketCase + the explicit fields below; the renderer
+  // matches the visual to the bucket so a cancelled production case
+  // reads as a quiet completed row rather than the live in_progress
+  // tone the submitter cases use.
+  const isProduction = row.kind === 'production_case';
+  const cancelled = !!row.cancelled_at;
+  const archived = !!row.archived_at && !cancelled;
+  const tone = cancelled
+    ? 'cancelled'
+    : row.is_terminal
+      ? 'complete'
+      : row.paused_at
+        ? 'no_show'
+        : 'in_progress';
+  // Meta line: surface job-box number + linked Shopify order on
+  // production rows so staff can connect the row to the rest of the
+  // patient profile (Outstanding orders / Visit JB) without opening
+  // each case. Stays empty on submitter rows.
+  const metaParts: string[] = [];
+  if (isProduction) {
+    if (row.shopify_order_name) metaParts.push(row.shopify_order_name);
+    if (row.job_box_number) metaParts.push(`JB${row.job_box_number}`);
+  }
+
   return (
     <div
       style={{
@@ -2622,6 +2708,7 @@ function CaseRow({ row }: { row: PatientCaseRow }) {
         display: 'flex',
         alignItems: 'center',
         gap: theme.space[3],
+        opacity: cancelled || archived ? 0.78 : 1,
       }}
     >
       <span
@@ -2634,11 +2721,35 @@ function CaseRow({ row }: { row: PatientCaseRow }) {
       >
         {row.case_reference}
       </span>
-      <span style={{ flex: 1, minWidth: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {row.type_label ?? '—'}
-      </span>
-      <StatusPill tone={row.is_terminal ? 'complete' : row.paused_at ? 'no_show' : 'in_progress'} size="sm">
-        {row.stage_label ?? row.stage_key ?? 'Unknown'}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span
+          style={{
+            color: theme.color.inkMuted,
+            fontSize: theme.type.size.sm,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {row.type_label ?? '—'}
+        </span>
+        {metaParts.length > 0 ? (
+          <span
+            style={{
+              color: theme.color.inkSubtle,
+              fontSize: theme.type.size.xs,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {metaParts.join(' · ')}
+          </span>
+        ) : null}
+      </div>
+      <StatusPill tone={tone} size="sm">
+        {cancelled ? 'Cancelled' : row.stage_label ?? row.stage_key ?? 'Unknown'}
       </StatusPill>
       <span
         style={{
@@ -2648,7 +2759,9 @@ function CaseRow({ row }: { row: PatientCaseRow }) {
           whiteSpace: 'nowrap',
         }}
       >
-        {formatDateTime(row.completed_at ?? row.paused_at ?? row.created_at)}
+        {formatDateTime(
+          row.cancelled_at ?? row.archived_at ?? row.completed_at ?? row.paused_at ?? row.created_at,
+        )}
       </span>
     </div>
   );

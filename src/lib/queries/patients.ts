@@ -298,39 +298,77 @@ export async function findPatientByEmailAtLocation(args: {
 function applyPatientSearch<Q extends { ilike: any; or: any }>(
   query: Q,
   term: string,
+  // Extra patient ids to OR into the matching set, regardless of the
+  // text predicates. Used by the Shopify order-number search path —
+  // when the term resolves to a list of patient ids via the orders
+  // RPC, we want those patients to appear even if their name / email
+  // doesn't ILIKE the raw term.
+  extraPatientIds: ReadonlyArray<string> = [],
 ): Q {
   const cleaned = term.trim();
-  if (!cleaned) return query;
+  if (!cleaned && extraPatientIds.length === 0) return query;
   const phoneDigits = cleaned.replace(/\D/g, '');
   const isPhoneSearch =
     phoneDigits.length >= 7 &&
     phoneDigits.length <= 15 &&
     /^[\d\s+()\-]+$/.test(cleaned);
+  // Pure-phone searches don't benefit from the OR-merge: a phone term
+  // can't possibly be an order number too. Keep the original .ilike
+  // path so the index on phone is used cleanly.
   if (isPhoneSearch) {
     return query.ilike('phone', `%${phoneDigits}%`);
   }
   const words = cleaned.split(/\s+/).filter(Boolean);
+  const idClause = formatIdInClause(extraPatientIds);
   if (words.length > 1) {
     let q = query;
-    for (const word of words) {
+    // First .or() carries the order-id match alongside word 1; further
+    // words tighten the result set (AND-of-ORs). Empty extraIds means
+    // the id clause is omitted and behaviour is identical to before.
+    const firstW = escape(words[0]!);
+    const firstFilters: string[] = [
+      `first_name.ilike.%${firstW}%`,
+      `last_name.ilike.%${firstW}%`,
+      `email.ilike.%${firstW}%`,
+      `internal_ref.ilike.%${firstW}%`,
+    ];
+    if (idClause) firstFilters.push(idClause);
+    q = q.or(firstFilters.join(','));
+    for (const word of words.slice(1)) {
       const w = escape(word);
-      q = q.or(
-        `first_name.ilike.%${w}%,last_name.ilike.%${w}%,email.ilike.%${w}%,internal_ref.ilike.%${w}%`,
-      );
+      const partFilters = [
+        `first_name.ilike.%${w}%`,
+        `last_name.ilike.%${w}%`,
+        `email.ilike.%${w}%`,
+        `internal_ref.ilike.%${w}%`,
+      ];
+      if (idClause) partFilters.push(idClause);
+      q = q.or(partFilters.join(','));
     }
     return q;
   }
-  const w = escape(words[0]!);
-  const filters: string[] = [
-    `last_name.ilike.%${w}%`,
-    `first_name.ilike.%${w}%`,
-    `email.ilike.%${w}%`,
-    `internal_ref.ilike.%${w}%`,
-  ];
-  if (phoneDigits.length >= 4) {
-    filters.push(`phone.ilike.%${phoneDigits}%`);
+  const w = cleaned ? escape(words[0]!) : '';
+  const filters: string[] = [];
+  if (cleaned) {
+    filters.push(`last_name.ilike.%${w}%`);
+    filters.push(`first_name.ilike.%${w}%`);
+    filters.push(`email.ilike.%${w}%`);
+    filters.push(`internal_ref.ilike.%${w}%`);
+    if (phoneDigits.length >= 4) {
+      filters.push(`phone.ilike.%${phoneDigits}%`);
+    }
   }
-  return query.or(filters.join(','));
+  if (idClause) filters.push(idClause);
+  return filters.length > 0 ? query.or(filters.join(',')) : query;
+}
+
+function formatIdInClause(ids: ReadonlyArray<string>): string | null {
+  if (ids.length === 0) return null;
+  // PostgREST's in.() filter takes a parenthesised, comma-separated
+  // list. Uuids are safe characters so no escaping is needed beyond
+  // joining; cap at a sensible upper bound to keep the URL short.
+  const capped = ids.slice(0, 50);
+  return `id.in.(${capped.join(',')})`;
 }
 
 // Filter expression that hides Shopify-imported patients with zero orders.
@@ -341,6 +379,41 @@ function applyPatientSearch<Q extends { ilike: any; or: any }>(
 // only Shopify customers with at least one order remain visible. Manually
 // created (non-Shopify) patients always pass.
 const SHOPIFY_ACTIVE_FILTER = 'shopify_customer_id.is.null,shopify_order_count.gt.0';
+
+// Pattern that flags an input as a likely Shopify order-number fragment.
+// Venneir orders are formatted as "VEN" + digits (VEN73520); Piranha as
+// "PSG-" + digits (PSG-991630). Both fit the same prefix shape: two-to-six
+// letters, optional dash, then at least one digit. When the cleaned term
+// matches, the patient hooks also call the SECURITY DEFINER RPC
+// lng_find_patient_ids_by_shopify_order so staff can paste an order
+// number into the patient search box and land on the patient who placed
+// it. The pattern is intentionally narrow — it stops a regular name
+// query like "James" from firing the orders RPC every keystroke.
+const ORDER_NUMBER_PATTERN = /^[A-Za-z]{2,6}-?\d+$/;
+
+interface OrderMatch {
+  patientId: string;
+  orderName: string | null;
+}
+
+// Hits the search RPC and returns a list of (patient, order) pairs. Caller
+// merges the patient ids into the regular search results. Silently
+// returns an empty list when the RPC isn't deployed yet (older shadow)
+// or when nothing matches.
+async function findPatientIdsByShopifyOrder(query: string): Promise<OrderMatch[]> {
+  const { data, error } = await supabase.rpc('lng_find_patient_ids_by_shopify_order', {
+    p_query: query,
+  });
+  if (error) return [];
+  const rows = (data ?? []) as Array<{ patient_id?: string; order_name?: string | null }>;
+  const out: OrderMatch[] = [];
+  for (const r of rows) {
+    if (typeof r.patient_id === 'string' && r.patient_id.length > 0) {
+      out.push({ patientId: r.patient_id, orderName: r.order_name ?? null });
+    }
+  }
+  return out;
+}
 
 // Phone-first search per `06-patient-identity.md §4.1`. Term can be a phone
 // number, name, or LWO ref. ILIKE matches each, LIMIT 10.
@@ -364,12 +437,27 @@ export function usePatientSearch(term: string): SearchResult {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
+        // Shopify order-number search runs in parallel with the regular
+        // text search — when the term looks like an order id (VEN73520,
+        // PSG-991630), we resolve it to the patient ids that placed
+        // those orders via lng_find_patient_ids_by_shopify_order, then
+        // OR the ids into the patient query. Falls back to empty when
+        // the term isn't an order number, so the search keeps working
+        // unchanged for everything else.
+        const orderMatches = ORDER_NUMBER_PATTERN.test(cleaned)
+          ? await findPatientIdsByShopifyOrder(cleaned)
+          : [];
+        if (cancelled) return;
+        const orderPatientIds = Array.from(new Set(orderMatches.map((m) => m.patientId)));
+
         const baseQuery = supabase
           .from('patients')
           .select(
             'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
           );
-        const query = applyPatientSearch(baseQuery, cleaned).or(SHOPIFY_ACTIVE_FILTER);
+        const query = applyPatientSearch(baseQuery, cleaned, orderPatientIds).or(
+          SHOPIFY_ACTIVE_FILTER,
+        );
 
         const { data: rows, error: err } = await query
           .order('last_name', { ascending: true })
@@ -501,8 +589,21 @@ export function usePatientList(
         // patient text searches behave (multi-word AND-of-ORs, phone
         // detection, single-token OR). Sub-2-character terms produce
         // an unfiltered list — same posture as before this refactor.
+        // Order-number search runs in parallel with the regular text
+        // search. When the term looks like a Shopify order id (VEN73520,
+        // PSG-991630), the RPC resolves it to patient ids that the OR
+        // builder merges in below.
+        const orderMatches =
+          cleaned.length >= 3 && ORDER_NUMBER_PATTERN.test(cleaned)
+            ? await findPatientIdsByShopifyOrder(cleaned)
+            : [];
+        if (cancelled) return;
+        const orderPatientIds = Array.from(new Set(orderMatches.map((m) => m.patientId)));
+
         const filtered = (
-          cleaned.length >= 2 ? applyPatientSearch(baseQuery, cleaned) : baseQuery
+          cleaned.length >= 2
+            ? applyPatientSearch(baseQuery, cleaned, orderPatientIds)
+            : baseQuery
         ).or(SHOPIFY_ACTIVE_FILTER);
         // lng_patient_name_tier is a Postgres computed column (function
         // of patients) that returns 0 for letter-starting first names,

@@ -767,21 +767,21 @@ export function humaniseEventTypeLabel(label: string | null): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Outstanding Shopify orders — wraps the lng_patient_outstanding_shopify_orders
-// RPC (security definer, gates on patients RLS). Returns orders the patient
-// still owes us a fulfilment on: not cancelled, not fully refunded, not fully
-// fulfilled. Items come pre-aggregated so the profile renders the summary
-// line in one round trip.
+// Shopify orders for a patient — wraps the lng_patient_shopify_orders RPC
+// (security definer, gates on patients RLS). Returns every order linked to
+// the patient in reverse-chrono order, regardless of fulfilment state.
+// Items come pre-aggregated so the profile renders the summary line in
+// one round trip.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface OutstandingOrderItem {
+export interface PatientShopifyOrderItem {
   title: string | null;
   sku: string | null;
   quantity: number | null;
   price: number | null;
 }
 
-export interface OutstandingOrderRow {
+export interface PatientShopifyOrderRow {
   id: string;
   name: string | null;
   created_at: string;
@@ -789,20 +789,21 @@ export interface OutstandingOrderRow {
   currency: string | null;
   financial_status: string | null;
   fulfillment_status: string | null;
+  cancelled_at: string | null;
   refund_amount: number | null;
-  items: OutstandingOrderItem[];
+  items: PatientShopifyOrderItem[];
 }
 
-interface OutstandingOrdersResult {
-  data: OutstandingOrderRow[];
+interface PatientShopifyOrdersResult {
+  data: PatientShopifyOrderRow[];
   loading: boolean;
   error: string | null;
 }
 
-export function usePatientOutstandingShopifyOrders(
+export function usePatientShopifyOrders(
   patientId: string | null | undefined,
-): OutstandingOrdersResult {
-  const [data, setData] = useState<OutstandingOrderRow[]>([]);
+): PatientShopifyOrdersResult {
+  const [data, setData] = useState<PatientShopifyOrderRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
@@ -818,7 +819,7 @@ export function usePatientOutstandingShopifyOrders(
     let cancelled = false;
     (async () => {
       const { data: rows, error: err } = await supabase.rpc(
-        'lng_patient_outstanding_shopify_orders',
+        'lng_patient_shopify_orders',
         { p_patient_id: patientId },
       );
       if (cancelled) return;
@@ -835,7 +836,7 @@ export function usePatientOutstandingShopifyOrders(
         settle();
         return;
       }
-      const mapped: OutstandingOrderRow[] = ((rows ?? []) as Array<Record<string, unknown>>).map(
+      const mapped: PatientShopifyOrderRow[] = ((rows ?? []) as Array<Record<string, unknown>>).map(
         (r) => ({
           id: String(r.id ?? ''),
           name: (r.name as string | null) ?? null,
@@ -844,6 +845,7 @@ export function usePatientOutstandingShopifyOrders(
           currency: (r.currency as string | null) ?? null,
           financial_status: (r.financial_status as string | null) ?? null,
           fulfillment_status: (r.fulfillment_status as string | null) ?? null,
+          cancelled_at: (r.cancelled_at as string | null) ?? null,
           refund_amount: toNumberOrNull(r.refund_amount),
           items: parseItems(r.items),
         }),
@@ -879,7 +881,7 @@ function toNumberOrNull(v: unknown): number | null {
   return null;
 }
 
-function parseItems(v: unknown): OutstandingOrderItem[] {
+function parseItems(v: unknown): PatientShopifyOrderItem[] {
   if (!Array.isArray(v)) return [];
   return v.map((it) => {
     const obj = (it ?? {}) as Record<string, unknown>;
@@ -898,6 +900,10 @@ function parseItems(v: unknown): OutstandingOrderItem[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PatientCaseRow {
+  // Discriminates between Meridian's submitter-side `cases` and the
+  // production-side `production_cases` table. The Case history card
+  // renders both kinds in one list so staff see the full picture.
+  kind: 'case' | 'production_case';
   id: string;
   case_reference: string;
   type_label: string | null;
@@ -907,6 +913,12 @@ export interface PatientCaseRow {
   paused_at: string | null;
   created_at: string;
   completed_at: string | null;
+  // production_cases-only columns surfaced for the renderer. Null on
+  // regular cases.
+  cancelled_at?: string | null;
+  archived_at?: string | null;
+  shopify_order_name?: string | null;
+  job_box_number?: string | null;
 }
 
 interface CasesResult {
@@ -927,40 +939,114 @@ export function usePatientCases(patientId: string | null | undefined): CasesResu
     }
     let cancelled = false;
     (async () => {
-      const { data: rows, error: err } = await supabase
-        .from('cases')
-        .select(
-          'id, case_reference, paused_at, created_at, completed_at, case_type:case_type_id(label), stage:stage_key(key, label, is_terminal)'
-        )
-        .eq('patient_id', patientId)
-        .order('created_at', { ascending: false });
+      // Fetch both submitter cases and production cases in parallel so
+      // the dropdown reads one merged history. Either query can fail
+      // independently (e.g. mid-migration deploys missing the table or
+      // an RLS path the Lounge role isn't in); a failed branch resolves
+      // to an empty list rather than blocking the other.
+      const [casesRes, prodRes] = await Promise.all([
+        supabase
+          .from('cases')
+          .select(
+            'id, case_reference, paused_at, created_at, completed_at, case_type:case_type_id(label), stage:stage_key(key, label, is_terminal)',
+          )
+          .eq('patient_id', patientId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('production_cases')
+          .select(
+            'id, reference, stage_key, created_at, completed_at, cancelled_at, archived_at, shopify_order_name, job_box_number, deleted_at',
+          )
+          .eq('patient_id', patientId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false }),
+      ]);
       if (cancelled) return;
-      if (err) {
-        if (err.code === 'PGRST200' || err.code === '42P01') {
-          setData([]);
-          setError(null);
-        } else {
-          setError(err.message);
+
+      const submitterRows: PatientCaseRow[] = [];
+      if (casesRes.error) {
+        if (casesRes.error.code !== 'PGRST200' && casesRes.error.code !== '42P01') {
+          setError(casesRes.error.message);
         }
-        settle();
-        return;
+      } else {
+        for (const r of (casesRes.data ?? []) as Array<Record<string, unknown>>) {
+          const type = (r.case_type as { label?: string } | null) ?? null;
+          const stage = (r.stage as { key?: string; label?: string; is_terminal?: boolean } | null) ?? null;
+          submitterRows.push({
+            kind: 'case',
+            id: r.id as string,
+            case_reference: r.case_reference as string,
+            type_label: type?.label ?? null,
+            stage_key: stage?.key ?? null,
+            stage_label: stage?.label ?? null,
+            is_terminal: !!stage?.is_terminal,
+            paused_at: (r.paused_at as string | null) ?? null,
+            created_at: r.created_at as string,
+            completed_at: (r.completed_at as string | null) ?? null,
+          });
+        }
       }
-      const mapped: PatientCaseRow[] = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => {
-        const type = (r.case_type as { label?: string } | null) ?? null;
-        const stage = (r.stage as { key?: string; label?: string; is_terminal?: boolean } | null) ?? null;
-        return {
-          id: r.id as string,
-          case_reference: r.case_reference as string,
-          type_label: type?.label ?? null,
-          stage_key: stage?.key ?? null,
-          stage_label: stage?.label ?? null,
-          is_terminal: !!stage?.is_terminal,
-          paused_at: (r.paused_at as string | null) ?? null,
-          created_at: r.created_at as string,
-          completed_at: (r.completed_at as string | null) ?? null,
-        };
-      });
-      setData(mapped);
+
+      const productionRows: PatientCaseRow[] = [];
+      if (prodRes.error) {
+        // Same defensive list of "table/relation missing" codes — never
+        // hard-fail the card on a Meridian schema gap. Other errors
+        // bubble to the UI's red banner.
+        if (
+          prodRes.error.code !== 'PGRST200' &&
+          prodRes.error.code !== '42P01' &&
+          prodRes.error.code !== '42501'
+        ) {
+          setError(prodRes.error.message);
+        }
+      } else {
+        for (const r of (prodRes.data ?? []) as Array<Record<string, unknown>>) {
+          const stageKey = (r.stage_key as string | null) ?? null;
+          const cancelledAt = (r.cancelled_at as string | null) ?? null;
+          const archivedAt = (r.archived_at as string | null) ?? null;
+          const completedAt = (r.completed_at as string | null) ?? null;
+          // production_cases' stage vocabulary is a free-text column,
+          // so map known keys to human labels here. New stages added
+          // upstream will pass through as the humanised slug.
+          const stageLabel = humaniseProductionStage(stageKey);
+          productionRows.push({
+            kind: 'production_case',
+            id: r.id as string,
+            case_reference: (r.reference as string | null) ?? '—',
+            // Production cases are the lab's downstream view of a case;
+            // a fixed type label keeps the row's intent visible at a
+            // glance without inventing a synthetic case_type table.
+            type_label: 'Production',
+            stage_key: stageKey,
+            stage_label: stageLabel,
+            is_terminal: !!(cancelledAt || archivedAt || stageKey === 'complete'),
+            paused_at: null,
+            created_at: r.created_at as string,
+            completed_at: completedAt,
+            cancelled_at: cancelledAt,
+            archived_at: archivedAt,
+            shopify_order_name: (r.shopify_order_name as string | null) ?? null,
+            job_box_number: (r.job_box_number as string | null) ?? null,
+          });
+        }
+      }
+
+      const merged = [...submitterRows, ...productionRows].sort((a, b) =>
+        b.created_at.localeCompare(a.created_at),
+      );
+      setData(merged);
+      // Surface a non-fatal error only when neither branch returned;
+      // otherwise prefer showing what we have over a red banner.
+      if (
+        submitterRows.length === 0 &&
+        productionRows.length === 0 &&
+        casesRes.error &&
+        prodRes.error
+      ) {
+        setError(casesRes.error.message);
+      } else {
+        setError(null);
+      }
       settle();
     })();
     return () => {
@@ -971,9 +1057,41 @@ export function usePatientCases(patientId: string | null | undefined): CasesResu
   return { data, loading, error };
 }
 
+// production_cases.stage_key vocabulary — kept close to the type for
+// easy maintenance. Unknown keys fall through as their humanised slug
+// so a new upstream stage doesn't render as a blank label.
+function humaniseProductionStage(key: string | null): string | null {
+  if (!key) return null;
+  switch (key) {
+    case 'pending_claim':
+      return 'Pending claim';
+    case 'in_production':
+      return 'In production';
+    case 'pending_review':
+      return 'Pending review';
+    case 'pending_dispatch':
+      return 'Pending dispatch';
+    case 'complete':
+      return 'Complete';
+    case 'archived':
+      return 'Archived';
+    default:
+      return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
 export type CaseBucket = 'paused' | 'active' | 'completed';
 
 export function bucketCase(c: PatientCaseRow): CaseBucket {
+  // Production cases use their own terminal signals — cancelled,
+  // archived, or stage='complete'. Map onto the same three-bucket
+  // language the submitter cases use so the dropdown's Active /
+  // Paused / Completed badges stay accurate.
+  if (c.kind === 'production_case') {
+    if (c.cancelled_at || c.archived_at) return 'completed';
+    if (c.stage_key === 'complete') return 'completed';
+    return 'active';
+  }
   if (c.is_terminal) return 'completed';
   if (c.paused_at) return 'paused';
   return 'active';
