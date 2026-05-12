@@ -666,9 +666,16 @@ export interface CreateCashCountInput {
   location_id: string;
   period_start: string; // ISO timestamptz
   period_end: string;   // ISO timestamptz
+  // 'regular' (the default) chains onto the previous signed count.
+  // 'legacy_baseline' is the explicit "start the chain fresh" path
+  // triggered from Admin → Financials when launching the app. Both
+  // kinds compute expected_pence the same way; the column exists so
+  // admins (and the history list) can tell baselines apart from
+  // routine reconciliation counts.
+  kind?: 'regular' | 'legacy_baseline';
 }
 
-export async function createCashCount(input: CreateCashCountInput): Promise<{ count_id: string; expected_pence: number; lines_count: number }> {
+export async function createCashCount(input: CreateCashCountInput): Promise<{ count_id: string; expected_pence: number; lines_count: number; kind: 'regular' | 'legacy_baseline' }> {
   if (input.period_end <= input.period_start) {
     throw new Error('Period end must be after period start.');
   }
@@ -740,6 +747,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   const expected_pence = raw.reduce((s, r) => s + r.amount_pence, 0);
 
   // Insert the count row. lines come next.
+  const kind = input.kind ?? 'regular';
   const { data: insertedCount, error: countErr } = await supabase
     .from('lng_cash_counts')
     .insert({
@@ -748,10 +756,35 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       period_end: input.period_end,
       expected_pence,
       counted_by: counterId,
+      kind,
     })
     .select('id')
     .single();
-  if (countErr) throw new Error(`Could not create count: ${countErr.message}`);
+  if (countErr) {
+    // 42703 = column does not exist on this Meridian deploy (migration
+    // 20260512000009 not yet applied). Retry without the kind column
+    // rather than block the cash count entirely — staff at a venue
+    // that hasn't shipped the migration yet still need to count cash.
+    if (countErr.code === '42703' && kind === 'regular') {
+      const retry = await supabase
+        .from('lng_cash_counts')
+        .insert({
+          location_id: input.location_id,
+          period_start: input.period_start,
+          period_end: input.period_end,
+          expected_pence,
+          counted_by: counterId,
+        })
+        .select('id')
+        .single();
+      if (retry.error || !retry.data) {
+        throw new Error(`Could not create count: ${retry.error?.message ?? 'no row returned'}`);
+      }
+      const count_id_fallback = (retry.data as { id: string }).id;
+      return { count_id: count_id_fallback, expected_pence, lines_count: 0, kind };
+    }
+    throw new Error(`Could not create count: ${countErr.message}`);
+  }
   const count_id = (insertedCount as { id: string }).id;
 
   if (raw.length > 0) {
@@ -776,7 +809,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       throw new Error(`Lines insert failed (count ${count_id}): ${linesErr.message}`);
     }
   }
-  return { count_id, expected_pence, lines_count: raw.length };
+  return { count_id, expected_pence, lines_count: raw.length, kind };
 }
 
 export async function updateCashCountActual(

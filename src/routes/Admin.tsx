@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -773,9 +773,21 @@ function ReceiptsTab() {
 
 function TestingTab() {
   const dirty = useDirtyAppointments();
+  const navigate = useNavigate();
   const [resetting, setResetting] = useState<string | null>(null);
   const [resettingAll, setResettingAll] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+  const [legacyConfirm, setLegacyConfirm] = useState(false);
+
+  // Send the admin to the Cash counts page with state.kind so the
+  // sheet opens in legacy-baseline mode (different copy + the new
+  // count row is tagged kind='legacy_baseline'). The actual count
+  // flow lives in /cash-counts so the manager-sign-off, threshold
+  // notes and PDF download all reuse one path.
+  const startLegacyCashCount = () => {
+    setLegacyConfirm(false);
+    navigate('/cash-counts', { state: { kind: 'legacy_baseline' } });
+  };
 
   const onReset = async (id: string, label: string) => {
     if (!confirm(`Reset ${label}? This deletes any visit/cart/payments created and flips the appointment back to booked.`)) return;
@@ -816,6 +828,42 @@ function TestingTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      {/* Legacy cash count — admin entry point for resetting the cash
+          chain at launch / re-launch. Card sits at the top of the
+          Testing tab because it's a launch-prep tool (everything below
+          is for cleaning up test data). Repeatable on purpose: Dylan
+          asked for the option to run this multiple times during
+          pre-launch / re-launch cycles. */}
+      <Card padding="lg">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <Wallet size={20} /> Legacy cash count
+              </span>
+            </h2>
+            <p
+              style={{
+                margin: `${theme.space[2]}px 0 0`,
+                color: theme.color.inkMuted,
+                fontSize: theme.type.size.sm,
+                lineHeight: theme.type.leading.normal,
+              }}
+            >
+              Used when launching, or relaunching, the app at a venue. Counts the cash that is physically in the safe right now and signs that amount off as the new baseline. Every routine cash count after this one starts from that moment. You can run this more than once, each new run replaces the previous baseline.
+            </p>
+          </div>
+          <Button
+            variant="primary"
+            onClick={() => setLegacyConfirm(true)}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Wallet size={14} /> Start legacy cash count
+            </span>
+          </Button>
+        </div>
+      </Card>
+
       <Card padding="lg">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
           <div>
@@ -895,6 +943,33 @@ function TestingTab() {
           <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={5000} onDismiss={() => setToast(null)} />
         </div>
       ) : null}
+
+      <BottomSheet
+        open={legacyConfirm}
+        onClose={() => setLegacyConfirm(false)}
+        title="Start a legacy cash count?"
+        description="The next page asks you to count what is physically in the safe right now. A manager signs it off and that amount becomes the new baseline. Every routine cash count after this starts counting from that point."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setLegacyConfirm(false)}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Not now
+              </span>
+            </Button>
+            <Button variant="primary" onClick={startLegacyCashCount}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Wallet size={16} aria-hidden /> Open the count sheet
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
+            Safe to run more than once. Each new legacy count replaces the prior baseline; the older counts stay in the history list, tagged so they read as launch-time resets rather than routine reconciliations.
+          </p>
+        </div>
+      </BottomSheet>
     </div>
   );
 }

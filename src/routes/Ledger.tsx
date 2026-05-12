@@ -33,6 +33,7 @@ import {
   humaniseLedgerStatus,
   useLedger,
   type LedgerFilters,
+  type LedgerFulfilmentMethod,
   type LedgerPaymentState,
   type LedgerRow,
   type LedgerServiceType,
@@ -94,6 +95,14 @@ const PAYMENT_OPTIONS: ReadonlyArray<{ value: LedgerPaymentState; label: string 
   { value: 'refunded', label: 'Refunded' },
 ];
 
+// Fulfilment axis — only present once a visit reaches completion.
+// Labels mirror humaniseLedgerFulfilmentMethod so the pill shows the
+// same wording as the visit hero chip ("Handed to patient" / "Shipped").
+const FULFILMENT_OPTIONS: ReadonlyArray<{ value: LedgerFulfilmentMethod; label: string }> = [
+  { value: 'in_person', label: 'Handed to patient' },
+  { value: 'shipping', label: 'Shipped' },
+];
+
 // Status pill tone mapping. Every status surfaces explicitly — no
 // fallback — so a future status added on either origin table forces
 // the developer to choose a tone here rather than silently rendering
@@ -118,6 +127,7 @@ export function Ledger() {
   const [statuses, setStatuses] = useState<LedgerStatus[]>([]);
   const [serviceTypes, setServiceTypes] = useState<LedgerServiceType[]>([]);
   const [paymentStates, setPaymentStates] = useState<LedgerPaymentState[]>([]);
+  const [fulfilmentMethods, setFulfilmentMethods] = useState<LedgerFulfilmentMethod[]>([]);
   const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
 
@@ -126,11 +136,12 @@ export function Ledger() {
       statuses,
       serviceTypes,
       paymentStates,
+      fulfilmentMethods,
       fromDate: dateRange?.start ?? null,
       toDate: dateRange?.end ?? null,
       search,
     }),
-    [statuses, serviceTypes, paymentStates, dateRange, search],
+    [statuses, serviceTypes, paymentStates, fulfilmentMethods, dateRange, search],
   );
 
   const { data, loading, error, hasMore } = useLedger(filters, page);
@@ -139,7 +150,7 @@ export function Ledger() {
   // new search, not flicking through the previous result set.
   useEffect(() => {
     setPage(0);
-  }, [statuses, serviceTypes, paymentStates, dateRange, search]);
+  }, [statuses, serviceTypes, paymentStates, fulfilmentMethods, dateRange, search]);
 
   useEffect(() => {
     document.getElementById('root')?.scrollTo(0, 0);
@@ -155,12 +166,14 @@ export function Ledger() {
     statuses.length > 0 ||
     serviceTypes.length > 0 ||
     paymentStates.length > 0 ||
+    fulfilmentMethods.length > 0 ||
     dateRange !== null ||
     trimmed.length > 0;
   const clearAll = () => {
     setStatuses([]);
     setServiceTypes([]);
     setPaymentStates([]);
+    setFulfilmentMethods([]);
     setDateRange(null);
     setSearch('');
   };
@@ -197,6 +210,8 @@ export function Ledger() {
               onServiceTypesChange={setServiceTypes}
               paymentStates={paymentStates}
               onPaymentStatesChange={setPaymentStates}
+              fulfilmentMethods={fulfilmentMethods}
+              onFulfilmentMethodsChange={setFulfilmentMethods}
               dateRange={dateRange}
               onDateRangeChange={setDateRange}
               filtersActive={filtersActive}
@@ -294,6 +309,8 @@ function FiltersRow({
   onServiceTypesChange,
   paymentStates,
   onPaymentStatesChange,
+  fulfilmentMethods,
+  onFulfilmentMethodsChange,
   dateRange,
   onDateRangeChange,
   filtersActive,
@@ -307,6 +324,8 @@ function FiltersRow({
   onServiceTypesChange: (next: LedgerServiceType[]) => void;
   paymentStates: LedgerPaymentState[];
   onPaymentStatesChange: (next: LedgerPaymentState[]) => void;
+  fulfilmentMethods: LedgerFulfilmentMethod[];
+  onFulfilmentMethodsChange: (next: LedgerFulfilmentMethod[]) => void;
   dateRange: DateRange | null;
   onDateRangeChange: (next: DateRange | null) => void;
   filtersActive: boolean;
@@ -347,6 +366,14 @@ function FiltersRow({
           options={SERVICE_TYPE_OPTIONS}
           onChange={onServiceTypesChange}
           totalNoun="types"
+        />
+        <FilterPill<LedgerFulfilmentMethod>
+          label="Fulfilment"
+          placeholder="Any fulfilment"
+          values={fulfilmentMethods}
+          options={FULFILMENT_OPTIONS}
+          onChange={onFulfilmentMethodsChange}
+          totalNoun="fulfilments"
         />
         <DateRangePicker
           value={dateRange}

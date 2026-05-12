@@ -67,8 +67,10 @@ import {
   formatVisitCrumb,
   removeCartLineWithReason,
   reverseUnsuitability,
+  updateVisitFulfilmentMethod,
   useLatestUnsuitability,
   useVisitDetail,
+  type VisitFulfilmentMethod,
 } from '../lib/queries/visits.ts';
 import type {
   VisitAppointmentContext,
@@ -232,6 +234,18 @@ export function VisitDetail() {
   // button if the visit was completed earlier but dispatch wasn't done.
   const [shipOpen, setShipOpen] = useState(false);
   const [shipToast, setShipToast] = useState<{ dispatch_ref: string; tracking_number: string | null } | null>(null);
+
+  // Change-fulfilment sheet — opens post-completion when staff need
+  // to flip in_person ↔ shipping (customer changes their mind about
+  // collecting vs delivery). The choice is reversible while the visit
+  // has no dispatch_ref; once a DPD label has been issued the change
+  // path locks (the sheet shows the locked-state copy instead of the
+  // picker). See updateVisitFulfilmentMethod in lib/queries/visits.ts.
+  const [changeFulfilmentOpen, setChangeFulfilmentOpen] = useState(false);
+  const [changeFulfilmentNext, setChangeFulfilmentNext] =
+    useState<VisitFulfilmentMethod>('in_person');
+  const [changeFulfilmentBusy, setChangeFulfilmentBusy] = useState(false);
+  const [changeFulfilmentError, setChangeFulfilmentError] = useState<string | null>(null);
 
   // Cart-level discount state. Apply / Remove share the same sheet
   // shape — picker for the manager, password for the manager,
@@ -583,6 +597,60 @@ export function VisitDetail() {
       setCompleteError(e instanceof Error ? e.message : 'Could not complete');
     } finally {
       setCompleteBusy(false);
+    }
+  };
+
+  // Open the change-method sheet pre-selecting the OPPOSITE of the
+  // current fulfilment_method so the toggle reads as a "flip this"
+  // action rather than a no-op confirmation. Disallowed when a DPD
+  // label has been generated — the UI hides the change affordance in
+  // that state, but we still guard here as belt-and-braces.
+  const openChangeFulfilment = () => {
+    if (!visit || !visit.fulfilment_method) return;
+    if (visit.dispatch_ref) return;
+    setChangeFulfilmentNext(visit.fulfilment_method === 'in_person' ? 'shipping' : 'in_person');
+    setChangeFulfilmentError(null);
+    setChangeFulfilmentOpen(true);
+  };
+
+  const submitChangeFulfilment = async () => {
+    if (!visit || !patient || !visit.fulfilment_method) return;
+    setChangeFulfilmentBusy(true);
+    setChangeFulfilmentError(null);
+    try {
+      const result = await updateVisitFulfilmentMethod({
+        visit_id: visit.id,
+        patient_id: patient.id,
+        expected_current_method: visit.fulfilment_method,
+        next_method: changeFulfilmentNext,
+      });
+      if (!result.ok) {
+        const msg =
+          result.reason === 'shipment_dispatched'
+            ? `Shipment already dispatched (${result.detail ?? 'see Shipment card'}). Cancel the shipment in DPD before changing the fulfilment method.`
+            : result.reason === 'stale_method'
+              ? result.detail ?? 'Method changed elsewhere. Refresh and try again.'
+              : result.reason === 'not_found'
+                ? 'Visit could not be found.'
+                : result.reason === 'no_change'
+                  ? 'Already set to that method.'
+                  : (result.detail ?? 'Could not update fulfilment method.');
+        setChangeFulfilmentError(msg);
+        return;
+      }
+      setChangeFulfilmentOpen(false);
+      refresh();
+      // Switching FROM in_person TO shipping → drop straight into the
+      // shipping sheet so the receptionist can create the DPD label
+      // without an extra click. The same hop that happens on the
+      // original Finish-visit flow.
+      if (changeFulfilmentNext === 'shipping') {
+        setShipOpen(true);
+      }
+    } catch (e) {
+      setChangeFulfilmentError(e instanceof Error ? e.message : 'Could not update fulfilment method');
+    } finally {
+      setChangeFulfilmentBusy(false);
     }
   };
 
@@ -1211,6 +1279,19 @@ export function VisitDetail() {
                     </span>
                   </Button>
                 </span>
+              ) : null}
+              {visit.status === 'complete' && visit.fulfilment_method ? (
+                // Fulfilment chip — surfaces the current handoff method
+                // and exposes a Change affordance so staff can flip
+                // in_person ↔ shipping when a customer changes their
+                // mind. Hidden once a DPD label is issued because that
+                // path requires cancelling the shipment first, not a
+                // quick toggle.
+                <FulfilmentChip
+                  method={visit.fulfilment_method}
+                  locked={!!visit.dispatch_ref}
+                  onChange={openChangeFulfilment}
+                />
               ) : null}
               {visit.status === 'complete' && visit.fulfilment_method === 'shipping' && !visit.dispatch_ref ? (
                 // Visit completed with shipping method but dispatch not yet
@@ -1860,6 +1941,86 @@ export function VisitDetail() {
         </div>
       </BottomSheet>
 
+      {/* Change-fulfilment sheet — opens after completion when staff need
+          to flip in_person ↔ shipping. Picker mirrors the Finish-visit
+          sheet, but the submit calls updateVisitFulfilmentMethod and
+          the copy explicitly says "Change" so staff don't think they're
+          re-finishing. */}
+      <BottomSheet
+        open={changeFulfilmentOpen}
+        onClose={() => !changeFulfilmentBusy && setChangeFulfilmentOpen(false)}
+        dismissable={!changeFulfilmentBusy}
+        title="Change fulfilment"
+        description={
+          changeFulfilmentNext === 'shipping'
+            ? 'Switch to shipping. The visit stays complete; the dispatch form opens next so you can create the DPD label.'
+            : 'Switch to passing the work to the patient. The visit stays complete; no shipment is created.'
+        }
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button
+              variant="secondary"
+              onClick={() => setChangeFulfilmentOpen(false)}
+              disabled={changeFulfilmentBusy}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Cancel
+              </span>
+            </Button>
+            <Button variant="primary" onClick={submitChangeFulfilment} loading={changeFulfilmentBusy}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <RotateCcw size={16} aria-hidden /> Save change
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          <Section
+            title="How is the work being handed off?"
+            required
+            sub="The customer changed how they want the work delivered. Pick the new method below."
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {([
+                { value: 'in_person', label: 'Passed to patient', sub: 'Patient is collecting / has collected the work.' },
+                { value: 'shipping', label: 'To be shipped', sub: 'Work is being dispatched. The shipping form opens next.' },
+              ] as const).map((opt) => (
+                <ReasonCard
+                  key={opt.value}
+                  selected={changeFulfilmentNext === opt.value}
+                  label={opt.label}
+                  sub={opt.sub}
+                  onSelect={() => setChangeFulfilmentNext(opt.value)}
+                />
+              ))}
+            </div>
+          </Section>
+
+          {changeFulfilmentError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {changeFulfilmentError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
       {/* Apply / Amend / Remove discount sheet. All three modes share
           the same chrome — manager dropdown + manager password
           (re-auth) + reason + (apply / amend only) amount. Submitting
@@ -2156,6 +2317,88 @@ function PatientNameSkeleton() {
       </span>
       <Skeleton width={96} height={14} radius={4} />
     </>
+  );
+}
+
+// Fulfilment chip — shown on completed visits so staff can see how the
+// work was handed off AND switch the method if the customer changes
+// their mind. Renders as a pill alongside the action buttons; clicking
+// it opens the change-fulfilment sheet. When a DPD label has already
+// been issued (visit.dispatch_ref set) we lock the chip — switching at
+// that point would orphan a live shipment, so the operator has to
+// cancel the shipment first.
+function FulfilmentChip({
+  method,
+  locked,
+  onChange,
+}: {
+  method: VisitFulfilmentMethod;
+  locked: boolean;
+  onChange: () => void;
+}) {
+  const label = method === 'in_person' ? 'Passed to patient' : 'To be shipped';
+  const Icon = method === 'in_person' ? UserCheck : Package;
+  const palette =
+    method === 'in_person'
+      ? { bg: theme.color.accentBg, fg: theme.color.accent }
+      : { bg: 'rgba(14, 20, 20, 0.05)', fg: theme.color.ink };
+  if (locked) {
+    return (
+      <span
+        title="Shipment dispatched. Cancel it first to change fulfilment."
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '8px 14px',
+          borderRadius: theme.radius.pill,
+          border: `1px solid ${theme.color.border}`,
+          background: palette.bg,
+          color: palette.fg,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+        }}
+      >
+        <Icon size={14} aria-hidden />
+        {label}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      style={{
+        appearance: 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '8px 14px',
+        borderRadius: theme.radius.pill,
+        border: `1px solid ${theme.color.border}`,
+        background: palette.bg,
+        color: palette.fg,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+      }}
+    >
+      <Icon size={14} aria-hidden />
+      {label}
+      <span
+        aria-hidden
+        style={{
+          marginLeft: 6,
+          paddingLeft: theme.space[2],
+          borderLeft: `1px solid rgba(14, 20, 20, 0.15)`,
+          color: theme.color.inkMuted,
+          fontWeight: theme.type.weight.medium,
+        }}
+      >
+        Change
+      </span>
+    </button>
   );
 }
 

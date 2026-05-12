@@ -264,7 +264,7 @@ export function Pay() {
     setBusy(true);
     try {
       // 1. Insert as queued (no sent_at). The edge function flips it to sent
-      //    after Resend/Twilio confirms delivery — or sets failure_reason.
+      //    after Resend confirms delivery — or sets failure_reason.
       const { data: receipt, error: insErr } = await supabase
         .from('lng_receipts')
         .insert({
@@ -277,21 +277,31 @@ export function Pay() {
         .single();
       if (insErr || !receipt) throw new Error(insErr?.message ?? 'Could not queue receipt');
 
-      // 2. Invoke the send-receipt edge function. Surface but don't block on
-      //    a delivery failure — the row is recoverable from /admin later.
-      const url = new URL(import.meta.env.VITE_SUPABASE_URL);
-      const projectRef = url.hostname.split('.')[0];
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      const r = await fetch(`https://${projectRef}.functions.supabase.co/send-receipt`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token ?? ''}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receiptId: (receipt as { id: string }).id }),
+      // 2. Invoke the send-receipt edge function via supabase-js. The SDK
+      //    handles token refresh, base-URL resolution and CORS preflight
+      //    transparently — the same path the manual-booking confirmation
+      //    uses, which made it the most reliable email send-site in the
+      //    app. The previous raw-fetch path bypassed the SDK and dropped
+      //    delivery whenever the session token rotated mid-checkout.
+      const { data: invokeData, error: invokeErr } = await supabase.functions.invoke<{
+        ok?: boolean;
+        error?: string;
+        provider?: string;
+      }>('send-receipt', {
+        body: { receiptId: (receipt as { id: string }).id },
       });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok || !body?.ok) {
-        const reason = body?.error ?? `HTTP ${r.status}`;
-        setError(`Receipt queued but not delivered: ${reason}. You can resend from the appointment later.`);
+      if (invokeErr) {
+        // Transport failure (network, auth, function 5xx). The receipt row
+        // stays queued so /admin can retry — staff are told explicitly
+        // that the receipt didn't ship yet.
+        setError(
+          `Receipt queued but not delivered: ${invokeErr.message}. You can resend from /admin → Pending receipts.`,
+        );
+      } else if (invokeData && invokeData.ok !== true) {
+        const reason = invokeData.error ?? 'unknown';
+        setError(
+          `Receipt queued but not delivered: ${reason}. You can resend from /admin → Pending receipts.`,
+        );
       }
 
       // Visit completion is now an explicit step on VisitDetail

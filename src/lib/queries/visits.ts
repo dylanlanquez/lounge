@@ -887,6 +887,97 @@ export async function completeVisit(input: CompleteVisitInput): Promise<void> {
   });
 }
 
+// Switch a completed visit's fulfilment method after the fact. Customers
+// sometimes change their mind between the visit and dispatch — we need
+// to support flipping in_person → shipping and back without forcing the
+// receptionist to "uncomplete" and redo the whole closing flow.
+//
+// Guard rails:
+//   • Caller must pass the currently-stored method so a stale-page
+//     submission can't silently overwrite a more recent change.
+//   • Once a DPD label is issued (visit.dispatch_ref set), we refuse
+//     to switch — orphaning a live shipment is worse than the customer
+//     waiting for a manual cancel. The UI surfaces this state with a
+//     "cancel the shipment first" note instead of the change button.
+//   • Switching FROM shipping to in_person clears the
+//     shipping_email_sent_at lock so a future shipping decision isn't
+//     blocked by the atomic-claim that prevented duplicate emails.
+//
+// Audit:
+//   patient_events 'visit_fulfilment_method_changed' with the old + new
+//   methods, the visit id, and the actor. The timeline reads it via the
+//   existing patient-events fetcher.
+export interface UpdateVisitFulfilmentMethodInput {
+  visit_id: string;
+  patient_id: string;
+  expected_current_method: VisitFulfilmentMethod;
+  next_method: VisitFulfilmentMethod;
+}
+
+export type UpdateVisitFulfilmentMethodResult =
+  | { ok: true; method: VisitFulfilmentMethod }
+  | { ok: false; reason: 'no_change' | 'shipment_dispatched' | 'stale_method' | 'not_found' | 'update_failed'; detail?: string };
+
+export async function updateVisitFulfilmentMethod(
+  input: UpdateVisitFulfilmentMethodInput,
+): Promise<UpdateVisitFulfilmentMethodResult> {
+  if (input.expected_current_method === input.next_method) {
+    return { ok: false, reason: 'no_change' };
+  }
+
+  // Re-read the row inside the same call so we catch a concurrent
+  // change between the staff member opening the sheet and pressing
+  // Confirm. The dispatch_ref check has to run against fresh data,
+  // not the page's stale visit prop.
+  const { data: fresh, error: readErr } = await supabase
+    .from('lng_visits')
+    .select('id, fulfilment_method, dispatch_ref')
+    .eq('id', input.visit_id)
+    .maybeSingle();
+  if (readErr || !fresh) {
+    return { ok: false, reason: 'not_found', detail: readErr?.message };
+  }
+  const current = (fresh as { fulfilment_method: VisitFulfilmentMethod | null }).fulfilment_method;
+  if (current !== input.expected_current_method) {
+    return { ok: false, reason: 'stale_method', detail: `Server has '${current}' (you saw '${input.expected_current_method}'). Refresh and try again.` };
+  }
+  const dispatchRef = (fresh as { dispatch_ref: string | null }).dispatch_ref;
+  if (dispatchRef) {
+    return { ok: false, reason: 'shipment_dispatched', detail: dispatchRef };
+  }
+
+  const patch: Record<string, unknown> = { fulfilment_method: input.next_method };
+  // Free the dispatch-email lock when leaving shipping so the next
+  // shipping attempt (if the customer flips again, or this same staff
+  // member changes their mind) can re-send.
+  if (input.expected_current_method === 'shipping' && input.next_method === 'in_person') {
+    patch.shipping_email_sent_at = null;
+  }
+
+  const { error: updateErr } = await supabase
+    .from('lng_visits')
+    .update(patch)
+    .eq('id', input.visit_id);
+  if (updateErr) {
+    return { ok: false, reason: 'update_failed', detail: updateErr.message };
+  }
+
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+  await supabase.from('patient_events').insert({
+    patient_id: input.patient_id,
+    event_type: 'visit_fulfilment_method_changed',
+    actor_account_id: (accountId as string | null) ?? null,
+    payload: {
+      visit_id: input.visit_id,
+      from_method: input.expected_current_method,
+      to_method: input.next_method,
+      staff_account_id: (accountId as string | null) ?? null,
+    },
+  });
+
+  return { ok: true, method: input.next_method };
+}
+
 // Single entry point for the cart-line Remove sheet. Handles all
 // three reason categories in one call: soft-deletes the line,
 // writes the right audit row(s), and decides whether the visit

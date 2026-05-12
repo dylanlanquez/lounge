@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Download, FileSignature, Plus, Wallet } from 'lucide-react';
 import {
   BottomSheet,
@@ -67,7 +67,24 @@ export function CashCounts() {
   const thresholds = useAnomalyThresholds();
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetKind, setSheetKind] = useState<'regular' | 'legacy_baseline'>('regular');
   const [statementCountId, setStatementCountId] = useState<string | null>(null);
+
+  // Admin → Testing → "Start legacy cash count" navigates here with
+  // location.state.kind = 'legacy_baseline'. Pick that up exactly
+  // once, set the sheet to legacy mode, and consume the state so a
+  // back-nav + forward-nav doesn't reopen the legacy sheet.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const incoming = (location.state as { kind?: 'regular' | 'legacy_baseline' } | null)?.kind;
+    if (incoming === 'legacy_baseline') {
+      setSheetKind('legacy_baseline');
+      setSheetOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -141,7 +158,10 @@ export function CashCounts() {
             <RightNowCard
               position={position.data}
               canCountCash={!!account.can_count_cash}
-              onStart={() => setSheetOpen(true)}
+              onStart={() => {
+                setSheetKind('regular');
+                setSheetOpen(true);
+              }}
             />
             <HistoryCard
               counts={counts.data}
@@ -154,14 +174,19 @@ export function CashCounts() {
       {position.data ? (
         <NewCountSheet
           open={sheetOpen}
-          onClose={() => setSheetOpen(false)}
+          onClose={() => {
+            setSheetOpen(false);
+            setSheetKind('regular');
+          }}
           position={position.data}
           thresholds={thresholds.data}
           currentAccountId={account.account_id ?? null}
+          kind={sheetKind}
           onSigned={() => {
             counts.refresh?.();
             position.refresh();
             setSheetOpen(false);
+            setSheetKind('regular');
           }}
         />
       ) : null}
@@ -518,6 +543,7 @@ function NewCountSheet({
   thresholds,
   currentAccountId,
   onSigned,
+  kind = 'regular',
 }: {
   open: boolean;
   onClose: () => void;
@@ -530,6 +556,12 @@ function NewCountSheet({
   } | null;
   currentAccountId: string | null;
   onSigned: () => void;
+  // 'legacy_baseline' is the explicit launch / re-launch reset path
+  // triggered from Admin → Testing → Legacy cash count. Functionally
+  // identical to a regular count, but the sheet copy reads "Start fresh"
+  // and the row's `kind` column lets the history list label the row as
+  // a baseline reset rather than a routine reconciliation.
+  kind?: 'regular' | 'legacy_baseline';
 }) {
   const [actualText, setActualText] = useState('');
   const [notes, setNotes] = useState('');
@@ -606,6 +638,7 @@ function NewCountSheet({
         location_id: locationId,
         period_start: periodStart,
         period_end: periodEnd,
+        kind,
       });
       await updateCashCountActual(created.count_id, actualPence, notes);
       await signCashCount({
@@ -633,8 +666,12 @@ function NewCountSheet({
       open={open}
       onClose={() => !busy && onClose()}
       dismissable={!busy}
-      title="Count cash"
-      description="Count the cash in the safe and have a different manager sign off. Differences get flagged automatically."
+      title={kind === 'legacy_baseline' ? 'Legacy cash count — start fresh' : 'Count cash'}
+      description={
+        kind === 'legacy_baseline'
+          ? 'Count what is physically in the safe right now and have a manager sign off. This becomes the baseline — every count after this starts from this point.'
+          : 'Count the cash in the safe and have a different manager sign off. Differences get flagged automatically.'
+      }
       footer={
         <div
           style={{

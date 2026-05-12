@@ -252,6 +252,21 @@ export function archToAnatomy(raw: string | null | undefined): string | undefine
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+// Natural-English arch phrase for sentence-form labels — used by
+// formatBookingSummary for impression appointments so the hero banner
+// reads "Impression appointment for upper arch" instead of the bare
+// "for upper" that confused staff. Single arch becomes "upper arch" /
+// "lower arch"; both arches becomes "both arches" (not the literal
+// "upper and lower"). Unknown variants pass through lowercased.
+export function archPhrase(raw: string | null | undefined): string | undefined {
+  const anatomy = archToAnatomy(raw);
+  if (!anatomy) return undefined;
+  if (anatomy === 'Upper and Lower') return 'both arches';
+  if (anatomy === 'Upper') return 'upper arch';
+  if (anatomy === 'Lower') return 'lower arch';
+  return anatomy.toLowerCase();
+}
+
 // Maps a Calendly event-type label to one of the muted category colors.
 // Match by inclusion (case-insensitive) so minor wording variations still
 // land in the right bucket. Virtual is checked before impression so a
@@ -322,7 +337,14 @@ export function formatBookingSummary(row: {
   const embedded = splitParts.slice(1);
 
   // Impression appointments: keep the service name as the primary descriptor
-  // and append arch + item as natural English ("for lower whitening tray").
+  // and append arch + item as natural English. The arch token uses the
+  // archPhrase() helper so the hero reads "for upper arch" / "for lower
+  // arch" / "for both arches" — staff complained the previous "for upper"
+  // / "for lower" was missing the word arch and "upper and lower" felt
+  // clunky in sentence form. When both arch and item are present we
+  // separate with a comma so "Impression appointment for upper arch,
+  // whitening trays" reads cleanly instead of running the two tokens
+  // together.
   if (/impression/i.test(event)) {
     // Arch comes from intake first; fall back to any embedded token that
     // looks like an arch indicator (Upper / Lower / Both).
@@ -338,11 +360,12 @@ export function formatBookingSummary(row: {
       (nonArchAnswer ? joinMultiSelect(nonArchAnswer.answer) : undefined) ??
       (embeddedItems.length > 0 ? embeddedItems.join(', ') : undefined);
 
-    const parts: string[] = [];
-    if (effectiveArch) parts.push(effectiveArch.toLowerCase());
-    if (effectiveItem) parts.push(effectiveItem.toLowerCase());
+    const phraseArch = effectiveArch ? archPhrase(effectiveArch) : undefined;
+    const itemLower = effectiveItem ? effectiveItem.toLowerCase() : undefined;
 
-    if (parts.length > 0) return `${event} for ${parts.join(' ')}`;
+    if (phraseArch && itemLower) return `${event} for ${phraseArch}, ${itemLower}`;
+    if (phraseArch) return `${event} for ${phraseArch}`;
+    if (itemLower) return `${event} for ${itemLower}`;
     return event;
   }
 

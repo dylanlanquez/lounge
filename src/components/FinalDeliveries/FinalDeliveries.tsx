@@ -274,7 +274,7 @@ function DeliveryCard({
             </span>
           ) : null}
         </div>
-        {entry.caseRef || entry.reviewerName ? (
+        {entry.caseRef ? (
           <div
             style={{
               fontSize: 10,
@@ -284,9 +284,29 @@ function DeliveryCard({
               textOverflow: 'ellipsis',
             }}
           >
-            {entry.caseRef ?? ''}
-            {entry.caseRef && entry.reviewerName ? ' · ' : ''}
-            {entry.reviewerName ? `By ${entry.reviewerName}` : ''}
+            {entry.caseRef}
+          </div>
+        ) : null}
+        {entry.file.uploaded_by_name ? (
+          // Uploader of the delivery file — the CAD designer who
+          // produced and uploaded the .stl / .ply / preview. We
+          // intentionally show the UPLOADER here (not the reviewer);
+          // Dylan flagged that the previous "By Beth" was naming the
+          // reviewer, which staff read as "Beth made this" — wrong
+          // attribution for the file's actual author. The reviewer's
+          // accept/reject decision still surfaces via the rejected-row
+          // path below and inside the delivery preview modal.
+          <div
+            style={{
+              fontSize: 10,
+              color: theme.color.inkSubtle,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              marginTop: 2,
+            }}
+          >
+            By {entry.file.uploaded_by_name}
           </div>
         ) : null}
       </div>
@@ -362,8 +382,18 @@ function RejectedRow({
         </span>
         <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
           Rejected{entry.reviewedAt ? ` ${formatShort(entry.reviewedAt)}` : ''}
-          {entry.reviewerName ? ` · ${entry.reviewerName}` : ''}
+          {entry.reviewerName ? ` by ${entry.reviewerName}` : ''}
         </span>
+        {entry.file.uploaded_by_name ? (
+          // Uploader (CAD designer) on its own line so the rejected row
+          // shows both authorship (who made the file) AND the review
+          // outcome (who rejected it and when). Previously only the
+          // reviewer was visible, which made it look like the reviewer
+          // had created the file.
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+            Uploaded by {entry.file.uploaded_by_name}
+          </span>
+        ) : null}
         {entry.rejectionNote ? (
           <p
             style={{

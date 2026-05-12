@@ -128,24 +128,24 @@ describe('formatBookingSummary', () => {
     );
   });
 
-  it('Virtual Impression + product → "Virtual Impression Appointment for Whitening Trays"', () => {
+  it('Virtual Impression + product → "Virtual Impression Appointment for whitening trays"', () => {
     expect(
       formatBookingSummary(
         makeRow('Virtual Impression Appointment', [
           { question: 'What product is the impression for?', answer: 'Whitening Trays' },
         ])
       )
-    ).toBe('Virtual Impression Appointment for Whitening Trays');
+    ).toBe('Virtual Impression Appointment for whitening trays');
   });
 
-  it('In-person Impression + product → "In-person Impression Appointment for Retainers"', () => {
+  it('In-person Impression + product → "In-person Impression Appointment for retainers"', () => {
     expect(
       formatBookingSummary(
         makeRow('In-person Impression Appointment', [
           { question: 'What product is the impression for?', answer: 'Retainers' },
         ])
       )
-    ).toBe('In-person Impression Appointment for Retainers');
+    ).toBe('In-person Impression Appointment for retainers');
   });
 
   it('Impression event keeps the impression label even when product question is generic', () => {
@@ -155,7 +155,57 @@ describe('formatBookingSummary', () => {
           { question: 'Service', answer: 'Bleaching trays' },
         ])
       )
-    ).toBe('Virtual Impression Appointment for Bleaching trays');
+    ).toBe('Virtual Impression Appointment for bleaching trays');
+  });
+
+  // Arch phrasing on impression appointments — Dylan flagged the bare
+  // "for upper" / "for lower" / "for upper and lower" the previous
+  // formatter produced. The natural-English forms are "for upper arch"
+  // / "for lower arch" / "for both arches".
+  it('In-person Impression + Upper arch (no item) → "...for upper arch"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('In-person Impression Appointment', [{ question: 'Arch', answer: 'Top' }]),
+      ),
+    ).toBe('In-person Impression Appointment for upper arch');
+  });
+
+  it('In-person Impression + Lower arch (no item) → "...for lower arch"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('In-person Impression Appointment', [{ question: 'Arch', answer: 'Bottom' }]),
+      ),
+    ).toBe('In-person Impression Appointment for lower arch');
+  });
+
+  it('In-person Impression + Both arches (no item) → "...for both arches"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('In-person Impression Appointment', [{ question: 'Arch', answer: 'Both' }]),
+      ),
+    ).toBe('In-person Impression Appointment for both arches');
+  });
+
+  it('In-person Impression + Upper + product → "...for upper arch, whitening trays"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('In-person Impression Appointment', [
+          { question: 'Arch', answer: 'Top' },
+          { question: 'What product is the impression for?', answer: 'Whitening Trays' },
+        ]),
+      ),
+    ).toBe('In-person Impression Appointment for upper arch, whitening trays');
+  });
+
+  it('Virtual Impression + Both + product → "...for both arches, retainers"', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Virtual Impression Appointment', [
+          { question: 'Arch', answer: 'Both' },
+          { question: 'What product is the impression for?', answer: 'Retainers' },
+        ]),
+      ),
+    ).toBe('Virtual Impression Appointment for both arches, retainers');
   });
 
   it('ignores contact-only intake fields', () => {

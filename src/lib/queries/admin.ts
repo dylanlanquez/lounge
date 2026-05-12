@@ -108,19 +108,17 @@ export function usePendingReceipts() {
 }
 
 export async function retrySendReceipt(receiptId: string): Promise<{ ok: boolean; error?: string }> {
+  // Use the supabase-js invoke pathway so token refresh, project ref and
+  // CORS preflight are handled by the SDK — matches the manual-booking
+  // confirmation flow, which is the canonical "this is how email-send
+  // calls behave in the app" pattern.
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) return { ok: false, error: 'Not signed in' };
-    const url = new URL(import.meta.env.VITE_SUPABASE_URL);
-    const projectRef = url.hostname.split('.')[0];
-    const r = await fetch(`https://${projectRef}.functions.supabase.co/send-receipt`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receiptId }),
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok || !body?.ok) return { ok: false, error: body?.error ?? `HTTP ${r.status}` };
+    const { data, error } = await supabase.functions.invoke<{ ok?: boolean; error?: string }>(
+      'send-receipt',
+      { body: { receiptId } },
+    );
+    if (error) return { ok: false, error: error.message };
+    if (!data?.ok) return { ok: false, error: data?.error ?? 'unknown' };
     return { ok: true };
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' };
