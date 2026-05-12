@@ -123,26 +123,71 @@ async function handle(req: Request): Promise<Response> {
   }
   const virtualTemplate = (vrtResult.data ?? null) as { subject: string; body_syntax: string; enabled: boolean } | null;
 
-  // ── Compute sweep window ───────────────────────────────────────
-  const now = new Date();
-  const windowStart = new Date(now.getTime() + REMINDER_WINDOW_START_HOURS * 3600 * 1000);
-  const windowEnd = new Date(now.getTime() + REMINDER_WINDOW_END_HOURS * 3600 * 1000);
-
-  // ── Sweep ─────────────────────────────────────────────────────
-  const { data: rowsRaw, error: sweepErr } = await admin
-    .from('lng_appointments')
-    .select(
-      'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url, manage_token',
-    )
-    .eq('status', 'booked')
-    .neq('source', 'calendly')
-    .is('reminder_sent_at', null)
-    .gte('start_at', windowStart.toISOString())
-    .lt('start_at', windowEnd.toISOString());
-  if (sweepErr) {
-    return jsonResponse(200, { ok: false, error: `Sweep failed: ${sweepErr.message}` });
+  // ── Optional single-shot path ─────────────────────────────────
+  // Body { appointmentId } bypasses the sweep entirely so the
+  // Timeline's "Resend reminder" button can fire one reminder on
+  // demand. The patient.email is re-read inside processOne, so the
+  // resend lands in the current address even if the address has
+  // moved since the original sweep wrote the row.
+  let body: { appointmentId?: string } = {};
+  try {
+    body = (await req.json()) ?? {};
+  } catch {
+    body = {};
   }
-  const rows = (rowsRaw ?? []) as AppointmentRow[];
+  const singleId = typeof body.appointmentId === 'string' ? body.appointmentId : null;
+
+  let rows: AppointmentRow[];
+  let sweepWindow: { start: string; end: string } | null = null;
+
+  if (singleId) {
+    // Single-row force send. We deliberately skip the window /
+    // reminder_sent_at / source filters — the operator clicked
+    // "Resend reminder", they want it to go out now.
+    const { data: oneRaw, error: oneErr } = await admin
+      .from('lng_appointments')
+      .select(
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url, manage_token',
+      )
+      .eq('id', singleId)
+      .maybeSingle();
+    if (oneErr) {
+      return jsonResponse(200, { ok: false, error: `Lookup failed: ${oneErr.message}` });
+    }
+    if (!oneRaw) {
+      return jsonResponse(404, { ok: false, error: 'Appointment not found' });
+    }
+    rows = [oneRaw as AppointmentRow];
+    // Clear reminder_sent_at so processOne's downstream stamp path
+    // doesn't no-op. We're explicitly resending; the audit trail
+    // (the new patient_events row) carries the truth that another
+    // reminder went out.
+    await admin
+      .from('lng_appointments')
+      .update({ reminder_sent_at: null })
+      .eq('id', singleId);
+  } else {
+    // ── Compute sweep window ───────────────────────────────────
+    const now = new Date();
+    const windowStart = new Date(now.getTime() + REMINDER_WINDOW_START_HOURS * 3600 * 1000);
+    const windowEnd = new Date(now.getTime() + REMINDER_WINDOW_END_HOURS * 3600 * 1000);
+    sweepWindow = { start: windowStart.toISOString(), end: windowEnd.toISOString() };
+
+    const { data: rowsRaw, error: sweepErr } = await admin
+      .from('lng_appointments')
+      .select(
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url, manage_token',
+      )
+      .eq('status', 'booked')
+      .neq('source', 'calendly')
+      .is('reminder_sent_at', null)
+      .gte('start_at', windowStart.toISOString())
+      .lt('start_at', windowEnd.toISOString());
+    if (sweepErr) {
+      return jsonResponse(200, { ok: false, error: `Sweep failed: ${sweepErr.message}` });
+    }
+    rows = (rowsRaw ?? []) as AppointmentRow[];
+  }
 
   let sent = 0;
   let skipped = 0;
@@ -172,20 +217,23 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // Operational summary so the cron's response logs tell ops what
-  // actually happened in plain English.
-  await admin.from('lng_event_log').insert({
-    source: 'send-appointment-reminders',
-    event_type: 'sweep_complete',
-    payload: {
-      window_start: windowStart.toISOString(),
-      window_end: windowEnd.toISOString(),
-      eligible: rows.length,
-      sent,
-      skipped,
-      failed,
-      errors: errors.slice(0, 10), // cap so we don't bloat the log on a runaway
-    },
-  });
+  // actually happened in plain English. Skipped for single-row
+  // force sends — those don't represent a sweep tick.
+  if (sweepWindow) {
+    await admin.from('lng_event_log').insert({
+      source: 'send-appointment-reminders',
+      event_type: 'sweep_complete',
+      payload: {
+        window_start: sweepWindow.start,
+        window_end: sweepWindow.end,
+        eligible: rows.length,
+        sent,
+        skipped,
+        failed,
+        errors: errors.slice(0, 10), // cap so we don't bloat the log on a runaway
+      },
+    });
+  }
 
   return jsonResponse(200, {
     ok: true,

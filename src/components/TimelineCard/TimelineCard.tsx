@@ -6,15 +6,19 @@ import {
   Eye,
   FileSignature,
   Flag,
+  Loader2,
   Mail,
+  Send,
   ShoppingBag,
   UserCheck,
 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
+import { Toast } from '../Toast/Toast.tsx';
 import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
 import { theme } from '../../theme/index.ts';
 import type { TimelineEvent } from '../../lib/queries/visitTimeline.ts';
+import { resendAppointmentEmail } from '../../lib/queries/resendAppointmentEmail.ts';
 
 // Pure presentation for an audit-trail timeline. Takes a fully
 // hydrated event list (each event already carries its title /
@@ -50,6 +54,48 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
   // every "View email" trigger in the list — opening one row never tears
   // down another, and the modal mounts above the Card's stacking context.
   const [previewId, setPreviewId] = useState<string | null>(null);
+  // Track which event id is mid-resend so its pill renders a spinner,
+  // and stash the toast state for the post-send confirmation. The
+  // resend dispatcher uses the row's resendKind + resendAppointmentId
+  // to invoke the right edge function, which re-renders against
+  // current data and reads patient.email fresh.
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<
+    | { tone: 'success' | 'error'; title: string; description?: string }
+    | null
+  >(null);
+
+  const handleResend = async (event: TimelineEvent) => {
+    if (!event.resendKind || !event.resendAppointmentId) return;
+    setResendingId(event.id);
+    try {
+      const result = await resendAppointmentEmail({
+        kind: event.resendKind,
+        appointmentId: event.resendAppointmentId,
+      });
+      if (result.ok) {
+        setToast({
+          tone: 'success',
+          title: 'Email resent',
+          description: result.recipient ? `Sent to ${result.recipient}` : undefined,
+        });
+      } else {
+        setToast({
+          tone: 'error',
+          title: 'Could not resend',
+          description: result.error ?? undefined,
+        });
+      }
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not resend',
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setResendingId(null);
+    }
+  };
 
   return (
     <>
@@ -84,6 +130,8 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
                 event={ev}
                 isLast={i === events.length - 1}
                 onPreviewEmail={setPreviewId}
+                onResend={handleResend}
+                resending={resendingId === ev.id}
               />
             ))}
           </ol>
@@ -94,7 +142,31 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
         emailMessageId={previewId}
         onClose={() => setPreviewId(null)}
       />
+      {toast ? (
+        <Toast
+          tone={toast.tone}
+          title={toast.title}
+          description={toast.description}
+          onDismiss={() => setToast(null)}
+        />
+      ) : null}
+      <SpinKeyframe />
     </>
+  );
+}
+
+// One-shot keyframe injection for the Resend button's spinner. Lucide
+// icons don't carry their own animation, and there's no global spinner
+// stylesheet to piggyback on — declaring it here keeps the rotation
+// self-contained to the surface that needs it.
+function SpinKeyframe() {
+  return (
+    <style>{`
+      @keyframes lng-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    `}</style>
   );
 }
 
@@ -140,10 +212,14 @@ function Row({
   event,
   isLast,
   onPreviewEmail,
+  onResend,
+  resending,
 }: {
   event: TimelineEvent;
   isLast: boolean;
   onPreviewEmail: (id: string) => void;
+  onResend: (event: TimelineEvent) => void;
+  resending: boolean;
 }) {
   const icon = iconFor(event);
   const tone = toneFor(event);
@@ -240,11 +316,40 @@ function Row({
         {event.facts && event.facts.length > 0 ? (
           <FactsLine facts={event.facts} />
         ) : null}
-        {event.emailMessageId ? (
-          <ViewEmailButton onClick={() => onPreviewEmail(event.emailMessageId!)} />
+        {event.emailMessageId || (event.resendKind && event.resendAppointmentId) ? (
+          <EmailActionRow>
+            {event.emailMessageId ? (
+              <ViewEmailButton onClick={() => onPreviewEmail(event.emailMessageId!)} />
+            ) : null}
+            {event.resendKind && event.resendAppointmentId ? (
+              <ResendEmailButton
+                busy={resending}
+                onClick={() => onResend(event)}
+              />
+            ) : null}
+          </EmailActionRow>
         ) : null}
       </div>
     </li>
+  );
+}
+
+// Two-pill action row glued to the bottom of an email-bearing event
+// card. Keeps the buttons grouped together so they read as a single
+// affordance set, with a small gap that mirrors the FactsLine spacing
+// above.
+function EmailActionRow({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        marginTop: theme.space[2],
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: theme.space[2],
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -261,29 +366,77 @@ function ViewEmailButton({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{
-        appearance: 'none',
-        marginTop: theme.space[2],
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '6px 12px',
-        borderRadius: theme.radius.pill,
-        border: `1px solid ${hover ? theme.color.accent : theme.color.border}`,
-        background: hover ? theme.color.accentBg : theme.color.surface,
-        color: theme.color.accent,
-        fontSize: theme.type.size.xs,
-        fontWeight: theme.type.weight.semibold,
-        letterSpacing: theme.type.tracking.tight,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-      }}
+      style={emailPillStyle({ hover, busy: false, primary: true })}
     >
       <Eye size={12} aria-hidden />
       View email
     </button>
   );
+}
+
+// Pairs with ViewEmailButton. Secondary visual weight — outline-only
+// when idle, hover lifts to the accent like its sibling, and the
+// spinner replaces the send icon during the re-invoke so the
+// receptionist sees something is happening without having to wait
+// for the toast.
+function ResendEmailButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      aria-label={busy ? 'Resending email' : 'Resend email'}
+      style={emailPillStyle({ hover, busy, primary: false })}
+    >
+      {busy ? (
+        <Loader2
+          size={12}
+          aria-hidden
+          style={{ animation: 'lng-spin 600ms linear infinite' }}
+        />
+      ) : (
+        <Send size={12} aria-hidden />
+      )}
+      {busy ? 'Sending' : 'Resend'}
+    </button>
+  );
+}
+
+function emailPillStyle({
+  hover,
+  busy,
+  primary,
+}: {
+  hover: boolean;
+  busy: boolean;
+  primary: boolean;
+}): React.CSSProperties {
+  const borderActive = hover && !busy;
+  return {
+    appearance: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    borderRadius: theme.radius.pill,
+    border: `1px solid ${borderActive ? theme.color.accent : theme.color.border}`,
+    background: primary
+      ? hover && !busy
+        ? theme.color.accentBg
+        : theme.color.surface
+      : theme.color.surface,
+    color: busy ? theme.color.inkMuted : theme.color.accent,
+    fontSize: theme.type.size.xs,
+    fontWeight: theme.type.weight.semibold,
+    letterSpacing: theme.type.tracking.tight,
+    cursor: busy ? 'wait' : 'pointer',
+    fontFamily: 'inherit',
+    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+    opacity: busy ? 0.7 : 1,
+  };
 }
 
 // Per-event tone for the icon dot. Explicit tone on the event wins;

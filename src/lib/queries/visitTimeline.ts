@@ -73,6 +73,14 @@ export interface TimelineEvent {
   // present that opens EmailPreviewModal against this id — staff see
   // the exact bytes the patient received.
   emailMessageId?: string | null;
+  // When set, TimelineCard renders a "Resend" pill alongside View
+  // email. The kind tells the resend dispatcher which sender to
+  // invoke; appointmentId narrows the send to the right booking. The
+  // sender re-renders against current data and reads patient.email
+  // fresh, so the resend lands in the patient's latest address even
+  // if the original to_email stored on lng_email_messages is stale.
+  resendKind?: 'confirmation' | 'cancellation' | 'reminder' | null;
+  resendAppointmentId?: string | null;
 }
 
 // Internal shape used by the fetchers — same as TimelineEvent but

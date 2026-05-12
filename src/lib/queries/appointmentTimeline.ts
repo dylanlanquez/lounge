@@ -600,6 +600,8 @@ function mapEvent(
         hint: 'mail',
         tone: 'neutral',
         emailMessageId,
+        resendKind: isCancellation ? 'cancellation' : 'confirmation',
+        resendAppointmentId: appt.id,
       };
     }
 
@@ -619,6 +621,8 @@ function mapEvent(
         hint: 'mail',
         tone: 'neutral',
         emailMessageId,
+        resendKind: 'reminder',
+        resendAppointmentId: appt.id,
       };
     }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -298,29 +298,87 @@ function FailureBanner({ error }: { error: string }) {
 
 function EmailFrame({ html, subject }: { html: string; subject: string }) {
   const ref = useRef<HTMLIFrameElement | null>(null);
-  // Inline a base style nudge — emails are designed for a 600px max
-  // width, so we centre the frame in our own bounded container and
-  // keep the cream brand background flush around the white card. The
-  // patched HTML is the same as the patient saw plus a single inline
-  // override forcing body fill to the brand cream so a transparent
-  // iframe background doesn't show through.
+  // The persisted HTML is the patient-facing document; we splice in a
+  // <base target="_blank"> so any in-frame link click escapes the
+  // sandbox cleanly, and otherwise render the bytes verbatim.
   const srcDoc = useMemo(() => patchHtml(html), [html]);
-  const [height, setHeight] = useState<number>(600);
+  // Start tall enough to render the metadata-strip + body without a
+  // visible jump on first paint, then shrink/grow to fit content.
+  const [height, setHeight] = useState<number>(800);
 
-  useEffect(() => {
-    // Resize the iframe to fit its content once loaded so the modal
-    // body scrolls as one continuous surface — staff don't get a
-    // double scrollbar.
-    const onLoad = () => {
-      const doc = ref.current?.contentDocument;
-      if (!doc) return;
-      const h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
-      setHeight(h + 24);
-    };
+  // Single resize routine: ask the iframe's documentElement + body for
+  // the largest layout extent and pin the iframe to it (plus a small
+  // bottom buffer for the inner card's drop shadow). With the iframe
+  // height == content height, the iframe itself never scrolls, so the
+  // only scroll surface is the outer BottomSheet body — staff get a
+  // single continuous scroll context, with native scroll-chaining
+  // handling top/bottom edges in the obvious way.
+  const measure = useCallback(() => {
+    const doc = ref.current?.contentDocument;
+    if (!doc) return;
+    const html = doc.documentElement;
+    const body = doc.body;
+    const next = Math.max(
+      html?.scrollHeight ?? 0,
+      html?.offsetHeight ?? 0,
+      body?.scrollHeight ?? 0,
+      body?.offsetHeight ?? 0,
+    );
+    if (next > 0) setHeight(next + 24);
+  }, []);
+
+  const onLoad = useCallback(() => {
+    measure();
+    const doc = ref.current?.contentDocument;
+    if (!doc) return;
+
+    // Disable the iframe's own scrollbars in addition to sizing it
+    // to fit. Belt and braces: even if a measurement lags a frame,
+    // overflow:hidden on the inner document means the iframe will
+    // never present a scrollbar of its own.
+    if (doc.documentElement) doc.documentElement.style.overflow = 'hidden';
+    if (doc.body) doc.body.style.overflow = 'hidden';
+
+    // Re-measure as images / fonts / inline assets finish loading —
+    // their height contribution lands after the load event fires, so
+    // a single measurement on load undercounts when an inline image
+    // is still streaming. ResizeObserver catches that, plus any
+    // viewport-driven reflow (window resize, sheet width changes).
+    const ro = new ResizeObserver(() => measure());
+    if (doc.documentElement) ro.observe(doc.documentElement);
+    if (doc.body) ro.observe(doc.body);
+
+    // Image-load tickling for browsers that don't surface inline
+    // image growth via ResizeObserver on the body (older Safari).
+    const images = Array.from(doc.images);
+    const imageListeners: Array<{ img: HTMLImageElement; handler: () => void }> = [];
+    for (const img of images) {
+      if (img.complete) continue;
+      const handler = () => measure();
+      img.addEventListener('load', handler);
+      img.addEventListener('error', handler);
+      imageListeners.push({ img, handler });
+    }
+
+    // Stash teardown so the load-handler closure can clean up on the
+    // next unload (e.g. srcDoc change → second load fires).
     const node = ref.current;
-    if (node) node.addEventListener('load', onLoad);
+    (node as unknown as { __cleanup?: () => void }).__cleanup = () => {
+      ro.disconnect();
+      for (const { img, handler } of imageListeners) {
+        img.removeEventListener('load', handler);
+        img.removeEventListener('error', handler);
+      }
+    };
+  }, [measure]);
+
+  // Clean up observers on unmount or when the iframe is about to
+  // re-render with a different srcDoc.
+  useEffect(() => {
+    const node = ref.current;
     return () => {
-      if (node) node.removeEventListener('load', onLoad);
+      const cleanup = (node as unknown as { __cleanup?: () => void } | null)?.__cleanup;
+      if (cleanup) cleanup();
     };
   }, [srcDoc]);
 
@@ -335,12 +393,14 @@ function EmailFrame({ html, subject }: { html: string; subject: string }) {
         ref={ref}
         title={`Email preview · ${subject}`}
         srcDoc={srcDoc}
+        onLoad={onLoad}
         // Sandbox without allow-scripts — outgoing emails never need
         // JS, and disabling it eliminates the entire vector category.
         // allow-popups lets link clicks open in a new tab so staff
         // can verify CTA destinations without leaving the preview.
         sandbox="allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
+        scrolling="no"
         style={{
           width: '100%',
           height,
