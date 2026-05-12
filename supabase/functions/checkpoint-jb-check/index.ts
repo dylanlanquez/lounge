@@ -59,6 +59,28 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Cross-system queries can fail with a "table doesn't exist or isn't
+// reachable" shape in two distinct ways:
+//   • 42P01      — Postgres "relation does not exist" (table dropped).
+//   • PGRST205   — PostgREST "Could not find the table in the schema
+//                  cache" (table present but PostgREST hasn't picked it
+//                  up yet, or schema isn't exposed via the API).
+// Both mean "we can't see this table right now"; the caller should
+// degrade gracefully rather than failing the JB check. Anything else
+// (auth, syntax, permission) still surfaces as a 502.
+function isTableUnreachable(err: { code?: string | null; message?: string | null } | null): boolean {
+  if (!err) return false;
+  if (err.code === '42P01') return true;
+  if (err.code === 'PGRST205') return true;
+  // Belt-and-braces: PostgREST has rolled the schema-cache error code
+  // before (PGRST106 in older builds). Match the canonical message too
+  // so a future code change still degrades gracefully.
+  if (typeof err.message === 'string' && /schema cache|does not exist/i.test(err.message)) {
+    return true;
+  }
+  return false;
+}
+
 // JB refs are digits-only on Lounge's side (lng_appointments.jb_ref).
 // Checkpoint stores them prefixed with "JB" (e.g. JB33). Normalise here
 // so the receptionist can paste either form and we always query a
@@ -179,6 +201,15 @@ Deno.serve(async (req) => {
 
   // 2. Walk-in impressions — walk_ins. Active = status not in
   //    ('complete', 'cancelled'). Mirrors Meridian's checkpoint-lookup.
+  //
+  // Schema-availability tolerance: when Checkpoint's PostgREST hasn't
+  // exposed the table (PGRST205, e.g. a stale schema cache after a
+  // migration) OR the table genuinely doesn't exist on this project
+  // (42P01), we skip the walk-in lookup and fall through to the
+  // production-cases / appointments / walk-ins checks on the Lounge
+  // side. Treating either as fatal would block JB validation for
+  // every Lounge booking on every clinic at every appointment, which
+  // is too broad a blast radius for a defensive cross-system check.
   if (!conflict) {
     const { data: walkInRows, error: walkInErr } = await sbCheckpoint
       .from('walk_ins')
@@ -187,7 +218,7 @@ Deno.serve(async (req) => {
       .not('status', 'in', '("complete","cancelled")')
       .order('created_at', { ascending: false })
       .limit(1);
-    if (walkInErr && walkInErr.code !== '42P01') {
+    if (walkInErr && !isTableUnreachable(walkInErr)) {
       return json(
         { error: 'checkpoint_query_failed', source: 'walk_ins', detail: walkInErr.message },
         502
