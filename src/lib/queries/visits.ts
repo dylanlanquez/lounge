@@ -848,15 +848,35 @@ export interface CompleteVisitInput {
 export async function completeVisit(input: CompleteVisitInput): Promise<void> {
   const { data: accountId } = await supabase.rpc('auth_account_id');
 
+  const closedAt = new Date().toISOString();
+
   const { error: visitErr } = await supabase
     .from('lng_visits')
     .update({
       status: 'complete',
-      closed_at: new Date().toISOString(),
+      closed_at: closedAt,
       fulfilment_method: input.fulfilment_method,
     })
     .eq('id', input.visit_id);
   if (visitErr) throw new Error(visitErr.message);
+
+  // Seal the cart at the same moment as the visit. Without this a
+  // free-visit (£0 balance) cart stays status='open' after Complete
+  // because maybeFlipCartPaid only flips carts whose succeeded
+  // payments meet a positive total — a £0 cart never trips that
+  // condition. The open-after-complete state was both visually
+  // confusing ("Cart open" pill on a Complete visit) and editable
+  // (staff or an automated path could still add lines / discounts
+  // against a visit that's already been physically handed off).
+  // We close the cart unconditionally on completion; the UI gates
+  // Complete visit on the cart already being settled (paid in full
+  // or £0), so flipping to status='paid' here is consistent with
+  // what the receptionist already saw before clicking Complete.
+  await supabase
+    .from('lng_carts')
+    .update({ status: 'paid', closed_at: closedAt })
+    .eq('visit_id', input.visit_id)
+    .eq('status', 'open');
 
   // Free the JB on the source row. The visit's own captured jb_ref
   // is immutable and survives this clearing, so the timeline +

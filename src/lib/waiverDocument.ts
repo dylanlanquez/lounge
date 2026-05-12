@@ -487,16 +487,26 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
 
     // Status row beneath the totals: pill + method · date. When the
     // till hasn't taken payment yet, the row reads as a friendly
-    // "settle at the till before leaving".
+    // "settle at the till before leaving". A £0 balance skips the
+    // "Awaiting payment" pill entirely — there's nothing to settle,
+    // so the prompt would be misleading. Shows a "No payment due"
+    // marker instead so the line still anchors visually but reads
+    // correctly.
+    const nothingToPay = !input.payment && tillPence === 0;
     paymentStatusHtml = input.payment
       ? `<div class="pay-row">
            <span class="pill ${input.payment.status === 'paid' ? 'pill-paid' : 'pill-failed'}">${input.payment.status === 'paid' ? 'Paid in full' : 'Payment failed'}</span>
            <span class="meta"><strong>${escapeHtml(properCase(input.payment.method))}</strong> · ${fmtDate(input.payment.takenAt)}</span>
          </div>`
-      : `<div class="pay-row">
-           <span class="pill pill-pending">Awaiting payment</span>
-           <span class="meta">Settle the balance at the till before leaving the clinic.</span>
-         </div>`;
+      : nothingToPay
+        ? `<div class="pay-row">
+             <span class="pill pill-paid">No payment due</span>
+             <span class="meta">Nothing to settle for this visit.</span>
+           </div>`
+        : `<div class="pay-row">
+             <span class="pill pill-pending">Awaiting payment</span>
+             <span class="meta">Settle the balance at the till before leaving the clinic.</span>
+           </div>`;
   }
 
   // visit.notes is the lab-facing tech note (printed on the LWO).

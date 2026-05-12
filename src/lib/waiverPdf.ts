@@ -528,6 +528,22 @@ function renderPaymentRow(c: Cursor, input: WaiverDocInput): void {
   let pillTextColor: RGB;
   let metaLeft: string;
   let metaStrong: string;
+  // Recompute the till total (same formula renderTotals uses) so we
+  // can replace the "Awaiting payment" pill with a "No payment due"
+  // marker when the visit has nothing left to settle — otherwise a
+  // £0 free visit (e.g. virtual impression appt) reads as though
+  // staff still owe a step at the till.
+  const subtotalPence = input.items.reduce(
+    (sum, i) => sum + i.unitPricePence * Math.max(1, i.qty),
+    0,
+  );
+  const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
+  const depositPence = input.payment?.depositPence ?? 0;
+  const tillPence =
+    input.payment?.amountPence
+    ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence);
+  const nothingToPay = !input.payment && tillPence === 0;
+
   if (input.payment) {
     if (input.payment.status === 'paid') {
       pillLabel = 'Paid in full';
@@ -540,6 +556,12 @@ function renderPaymentRow(c: Cursor, input: WaiverDocInput): void {
     }
     metaStrong = properCase(input.payment.method);
     metaLeft = ` · ${fmtDate(input.payment.takenAt)}`;
+  } else if (nothingToPay) {
+    pillLabel = 'No payment due';
+    pillFill = c.accent;
+    pillTextColor = WHITE;
+    metaStrong = '';
+    metaLeft = 'Nothing to settle for this visit.';
   } else {
     pillLabel = 'Awaiting payment';
     pillFill = [240, 224, 196]; // warm sand
