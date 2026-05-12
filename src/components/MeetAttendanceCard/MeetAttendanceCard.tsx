@@ -296,7 +296,7 @@ function EmptyMessage({ meetingHasEnded }: { meetingHasEnded: boolean }) {
   return (
     <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
       {meetingHasEnded
-        ? 'No attendance recorded yet. Hit Refresh to pull the latest from Google.'
+        ? 'No attendance recorded yet. Tap Refresh to pull the latest from Google.'
         : 'Attendance lands here once the meeting has ended. Google only publishes conference records after the room closes.'}
     </p>
   );

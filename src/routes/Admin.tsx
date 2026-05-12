@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Unplug, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -3060,6 +3060,12 @@ function MeetHostsCard() {
   const { hosts, loading, error, refresh } = useMeetHosts({ activeOnly: false });
   const [busyConnect, setBusyConnect] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+  // BottomSheet-driven removal flow. window.confirm would have
+  // launched the OS-native modal which violates the no-system-UI rule
+  // and breaks the May 2026 visual language. State holds the host
+  // we're about to remove so the sheet can render its label.
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
   const navigate = useNavigate();
 
   // Surface a success toast after the /auth/google/callback page
@@ -3111,19 +3117,22 @@ function MeetHostsCard() {
     }
   };
 
-  const onDelete = async (id: string, label: string) => {
-    if (!window.confirm(`Remove ${label}? Their stored OAuth tokens will be deleted and any future appointment that lists them as host will need a fresh selection.`)) {
-      return;
-    }
+  const confirmRemove = async () => {
+    if (!removeTarget) return;
+    setRemoveBusy(true);
     try {
-      await deleteMeetHost(id);
+      await deleteMeetHost(removeTarget.id);
+      setRemoveTarget(null);
       refresh();
+      setToast({ tone: 'success', title: `${removeTarget.name} removed` });
     } catch (e) {
       setToast({
         tone: 'error',
         title: 'Could not remove host',
         description: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      setRemoveBusy(false);
     }
   };
 
@@ -3263,7 +3272,7 @@ function MeetHostsCard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDelete(host.id, host.display_name)}
+                  onClick={() => setRemoveTarget({ id: host.id, name: host.display_name, email: host.google_email })}
                   aria-label={`Remove ${host.display_name}`}
                   style={{
                     appearance: 'none',
@@ -3281,7 +3290,7 @@ function MeetHostsCard() {
                     fontFamily: 'inherit',
                   }}
                 >
-                  <Unplug size={14} aria-hidden />
+                  <Trash2 size={14} aria-hidden />
                 </button>
               </div>
             </li>
@@ -3293,6 +3302,53 @@ function MeetHostsCard() {
           <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
         </div>
       ) : null}
+      <BottomSheet
+        open={!!removeTarget}
+        onClose={() => (removeBusy ? undefined : setRemoveTarget(null))}
+        title="Remove Meet host"
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+            <Button variant="tertiary" onClick={() => setRemoveTarget(null)} disabled={removeBusy}>
+              Keep host
+            </Button>
+            <button
+              type="button"
+              onClick={confirmRemove}
+              disabled={removeBusy}
+              style={{
+                appearance: 'none',
+                padding: `${theme.space[3]}px ${theme.space[5]}px`,
+                borderRadius: theme.radius.pill,
+                border: 'none',
+                background: theme.color.alert,
+                color: '#fff',
+                cursor: removeBusy ? 'wait' : 'pointer',
+                fontFamily: 'inherit',
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                opacity: removeBusy ? 0.7 : 1,
+              }}
+            >
+              {removeBusy ? 'Removing…' : 'Remove host'}
+            </button>
+          </div>
+        }
+      >
+        {removeTarget ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+            <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink, lineHeight: 1.5 }}>
+              You are about to remove{' '}
+              <strong>{removeTarget.name}</strong> ({removeTarget.email}) as a Meet host.
+            </p>
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
+              Their stored Google credentials will be deleted. Any future appointment that lists them as the meeting host will need a fresh selection on the booking form. Existing past appointments keep their recorded host name for the audit trail.
+            </p>
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
+              If you only want to stop using this host without losing the connection, tap Deactivate instead.
+            </p>
+          </div>
+        ) : null}
+      </BottomSheet>
     </Card>
   );
 }

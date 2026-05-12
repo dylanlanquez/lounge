@@ -608,16 +608,54 @@ export function NewBookingSheet({
               info="Whose Google account owns the Meet room for this appointment. The host's calendar reflects the booking and attendance data is pulled from the same Google account after the meeting ends."
             >
               {meetHosts.length === 0 ? (
-                <p
+                <div
                   style={{
-                    margin: 0,
-                    fontSize: theme.type.size.sm,
-                    color: theme.color.alert,
-                    lineHeight: 1.5,
+                    padding: `${theme.space[4]}px ${theme.space[4]}px`,
+                    borderRadius: theme.radius.input,
+                    background: theme.color.bg,
+                    border: `1px dashed ${theme.color.border}`,
                   }}
                 >
-                  No Meet hosts connected yet. Open Admin, Services and connect a Google account before booking a virtual appointment through this flow.
-                </p>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.ink,
+                      lineHeight: 1.5,
+                      fontWeight: theme.type.weight.semibold,
+                    }}
+                  >
+                    No Meet hosts connected yet.
+                  </p>
+                  <p
+                    style={{
+                      margin: `${theme.space[1]}px 0 ${theme.space[3]}px`,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Connect a Google account in Admin so this booking has a host whose calendar owns the Meet room and whose attendance you can read back.
+                  </p>
+                  <a
+                    href="/admin?tab=services"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                      borderRadius: theme.radius.pill,
+                      border: `1px solid ${theme.color.border}`,
+                      background: theme.color.surface,
+                      color: theme.color.accent,
+                      fontSize: theme.type.size.xs,
+                      fontWeight: theme.type.weight.semibold,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    Open Admin, Services
+                  </a>
+                </div>
               ) : (
                 <DropdownSelect<string>
                   ariaLabel="Meeting host"
@@ -627,7 +665,7 @@ export function NewBookingSheet({
                     value: h.id,
                     label: `${h.display_name} (${h.google_email})`,
                   }))}
-                  placeholder={meetHostsLoading ? 'Loading hosts…' : 'Pick a host'}
+                  placeholder={meetHostsLoading ? 'Loading hosts' : 'Pick a host'}
                   disabled={meetHostsLoading}
                 />
               )}
