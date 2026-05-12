@@ -21,13 +21,16 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors() });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
+  // Same posture as meet-auth-init: expected failures return 200 with
+  // { ok:false, error } so the callback page renders a clear message
+  // instead of a generic "non-2xx" wrapper from supabase-js.
   const userJwt = req.headers.get('authorization') ?? '';
-  if (!userJwt.startsWith('Bearer ')) return json(401, { ok: false, error: 'No bearer token' });
+  if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: userJwt } },
   });
   const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return json(401, { ok: false, error: 'Not signed in' });
+  if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
 
   const { data: account } = await userClient
     .from('accounts')
@@ -37,7 +40,7 @@ Deno.serve(async (req) => {
   const accountRow = account as { id: string; account_types: string[] | null } | null;
   const types = accountRow?.account_types ?? [];
   if (!types.some((t) => t === 'admin' || t === 'lng_admin' || t === 'super_admin')) {
-    return json(403, { ok: false, error: 'Admin access required' });
+    return json(200, { ok: false, error: 'Admin access required to finish connecting a Meet host.' });
   }
 
   let body: { code?: string; state?: string };
@@ -47,7 +50,7 @@ Deno.serve(async (req) => {
     body = {};
   }
   const code = body.code;
-  if (!code) return json(400, { ok: false, error: 'code required' });
+  if (!code) return json(200, { ok: false, error: 'Google did not return an authorisation code. Retry from Admin, Services.' });
 
   // Decode + verify the state we issued in meet-auth-init. If the
   // admin who clicked Connect isn't the same person Google redirected
@@ -56,10 +59,10 @@ Deno.serve(async (req) => {
     try {
       const decoded = JSON.parse(atob(body.state)) as { adminAuthUserId?: string };
       if (decoded.adminAuthUserId && decoded.adminAuthUserId !== who.user.id) {
-        return json(400, { ok: false, error: 'OAuth state user mismatch' });
+        return json(200, { ok: false, error: 'OAuth round-trip was started by a different signed-in user. Retry from Admin, Services.' });
       }
     } catch {
-      return json(400, { ok: false, error: 'OAuth state malformed' });
+      return json(200, { ok: false, error: 'OAuth state could not be read. Retry from Admin, Services.' });
     }
   }
 
@@ -67,7 +70,10 @@ Deno.serve(async (req) => {
   const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? '';
   const redirectUri = Deno.env.get('GOOGLE_REDIRECT_URI') ?? '';
   if (!clientId || !clientSecret || !redirectUri) {
-    return json(500, { ok: false, error: 'GOOGLE_CLIENT_ID / SECRET / REDIRECT_URI not set' });
+    return json(200, {
+      ok: false,
+      error: 'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET or GOOGLE_REDIRECT_URI is not set in Supabase secrets.',
+    });
   }
 
   // 1. Exchange the code for tokens.
@@ -141,9 +147,9 @@ Deno.serve(async (req) => {
     .select('id, display_name, google_email, is_active, created_at')
     .single();
   if (upsertErr || !saved) {
-    return json(500, {
+    return json(200, {
       ok: false,
-      error: `Could not save host: ${upsertErr?.message ?? 'unknown'}`,
+      error: `Could not save host: ${upsertErr?.message ?? 'unknown error'}`,
     });
   }
 

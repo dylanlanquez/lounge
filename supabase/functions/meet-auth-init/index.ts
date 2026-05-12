@@ -31,16 +31,36 @@ const SCOPES = [
 ].join(' ');
 
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    // Unhandled exception — return 200 with ok:false so the client
+    // toast surfaces the real reason instead of a generic non-2xx.
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: `meet-auth-init crashed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+      }),
+      { status: 200, headers: { ...cors(), 'Content-Type': 'application/json' } },
+    );
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors() });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
+  // Every "expected failure" branch below returns 200 with { ok: false,
+  // error: '<reason>' } so the supabase-js client receives the real
+  // message in payload.error instead of a generic "non-2xx" wrapper.
+  // Only unhandled exceptions land as non-2xx via the try/catch.
   const userJwt = req.headers.get('authorization') ?? '';
-  if (!userJwt.startsWith('Bearer ')) return json(401, { ok: false, error: 'No bearer token' });
+  if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: userJwt } },
   });
   const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return json(401, { ok: false, error: 'Not signed in' });
+  if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
 
   const { data: account } = await userClient
     .from('accounts')
@@ -49,13 +69,16 @@ Deno.serve(async (req) => {
     .maybeSingle();
   const types = ((account as { account_types: string[] | null } | null)?.account_types) ?? [];
   if (!types.some((t) => t === 'admin' || t === 'lng_admin' || t === 'super_admin')) {
-    return json(403, { ok: false, error: 'Admin access required' });
+    return json(200, { ok: false, error: 'Admin access required to connect a Meet host.' });
   }
 
   const clientId = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
   const redirectUri = Deno.env.get('GOOGLE_REDIRECT_URI') ?? '';
   if (!clientId || !redirectUri) {
-    return json(500, { ok: false, error: 'GOOGLE_CLIENT_ID / GOOGLE_REDIRECT_URI not set' });
+    return json(200, {
+      ok: false,
+      error: 'GOOGLE_CLIENT_ID or GOOGLE_REDIRECT_URI is not set in Supabase secrets. Add both in Dashboard, Edge Functions, Secrets and try again.',
+    });
   }
 
   // Pass the admin's account id through OAuth state so the callback
@@ -87,7 +110,7 @@ Deno.serve(async (req) => {
     }).toString();
 
   return json(200, { ok: true, url });
-});
+}
 
 function encodeState(payload: Record<string, unknown>): string {
   return btoa(JSON.stringify(payload));
