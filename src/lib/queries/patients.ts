@@ -294,6 +294,17 @@ export async function findPatientByEmailAtLocation(args: {
 // ordering / range / limit. Doing nothing when the term is empty
 // keeps the no-search path (full list) intact.
 //
+// Pattern that flags a query as a structured identifier — a patient ref
+// (MP-99110), an LWO ref (LWO-12345), a Shopify order id (VEN73520,
+// PSG-991630), a job-box label (JB123), etc. When the cleaned term
+// matches, the search is narrowed to the ref columns and the order-id
+// RPC path; the generic name/email/phone fuzzy match is skipped. Without
+// this guard, the phone fuzz path drags in unrelated patients whose
+// phone happens to contain the same digit sequence as the ref (e.g.
+// searching "MP-10932" used to surface anyone with "10932" anywhere in
+// their phone column).
+const STRUCTURED_REF_PATTERN = /^([A-Za-z]{2,6})-?(\d{2,})$/;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyPatientSearch<Q extends { ilike: any; or: any }>(
   query: Q,
@@ -318,8 +329,26 @@ function applyPatientSearch<Q extends { ilike: any; or: any }>(
   if (isPhoneSearch) {
     return query.ilike('phone', `%${phoneDigits}%`);
   }
-  const words = cleaned.split(/\s+/).filter(Boolean);
+
   const idClause = formatIdInClause(extraPatientIds);
+
+  // Structured-identifier path. When the query reads like a ref/order
+  // number we narrow strictly to the ref columns + the optional order
+  // patient-id set. Prefix matching (e.g. internal_ref.ilike.MP-99110%)
+  // pins precision — typing "MP-99110" returns only that patient, not
+  // every patient whose phone happens to contain the digits 99110.
+  const refMatch = cleaned.match(STRUCTURED_REF_PATTERN);
+  if (refMatch) {
+    const escaped = escape(cleaned);
+    const filters: string[] = [
+      `internal_ref.ilike.${escaped}%`,
+      `lwo_ref.ilike.${escaped}%`,
+    ];
+    if (idClause) filters.push(idClause);
+    return query.or(filters.join(','));
+  }
+
+  const words = cleaned.split(/\s+/).filter(Boolean);
   if (words.length > 1) {
     let q = query;
     // First .or() carries the order-id match alongside word 1; further
@@ -354,7 +383,11 @@ function applyPatientSearch<Q extends { ilike: any; or: any }>(
     filters.push(`first_name.ilike.%${w}%`);
     filters.push(`email.ilike.%${w}%`);
     filters.push(`internal_ref.ilike.%${w}%`);
-    if (phoneDigits.length >= 4) {
+    // Phone fuzz only fires when the input is plausibly numeric —
+    // letters + digits (like "MP-10932") are caught by the structured-
+    // ref path above and never reach here. Keep the 4-digit floor so a
+    // staff member typing "0770" still finds the patient.
+    if (phoneDigits.length >= 4 && !/[A-Za-z]/.test(cleaned)) {
       filters.push(`phone.ilike.%${phoneDigits}%`);
     }
   }
