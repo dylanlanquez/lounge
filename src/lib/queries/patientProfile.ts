@@ -767,6 +767,132 @@ export function humaniseEventTypeLabel(label: string | null): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Outstanding Shopify orders — wraps the lng_patient_outstanding_shopify_orders
+// RPC (security definer, gates on patients RLS). Returns orders the patient
+// still owes us a fulfilment on: not cancelled, not fully refunded, not fully
+// fulfilled. Items come pre-aggregated so the profile renders the summary
+// line in one round trip.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OutstandingOrderItem {
+  title: string | null;
+  sku: string | null;
+  quantity: number | null;
+  price: number | null;
+}
+
+export interface OutstandingOrderRow {
+  id: string;
+  name: string | null;
+  created_at: string;
+  total_price: number | null;
+  currency: string | null;
+  financial_status: string | null;
+  fulfillment_status: string | null;
+  refund_amount: number | null;
+  items: OutstandingOrderItem[];
+}
+
+interface OutstandingOrdersResult {
+  data: OutstandingOrderRow[];
+  loading: boolean;
+  error: string | null;
+}
+
+export function usePatientOutstandingShopifyOrders(
+  patientId: string | null | undefined,
+): OutstandingOrdersResult {
+  const [data, setData] = useState<OutstandingOrderRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const { loading, settle } = useStaleQueryLoading(patientId);
+
+  useEffect(() => {
+    if (!patientId) {
+      setData([]);
+      setError(null);
+      settle();
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase.rpc(
+        'lng_patient_outstanding_shopify_orders',
+        { p_patient_id: patientId },
+      );
+      if (cancelled) return;
+      if (err) {
+        // PGRST202 = function not found (older deploys / shadow without
+        // shopify_orders). Degrade silently — the card simply won't
+        // render when data is empty + loading is false.
+        if (err.code === 'PGRST202' || err.code === '42883' || err.code === '42P01') {
+          setData([]);
+          setError(null);
+        } else {
+          setError(err.message);
+        }
+        settle();
+        return;
+      }
+      const mapped: OutstandingOrderRow[] = ((rows ?? []) as Array<Record<string, unknown>>).map(
+        (r) => ({
+          id: String(r.id ?? ''),
+          name: (r.name as string | null) ?? null,
+          created_at: r.created_at as string,
+          total_price: toNumberOrNull(r.total_price),
+          currency: (r.currency as string | null) ?? null,
+          financial_status: (r.financial_status as string | null) ?? null,
+          fulfillment_status: (r.fulfillment_status as string | null) ?? null,
+          refund_amount: toNumberOrNull(r.refund_amount),
+          items: parseItems(r.items),
+        }),
+      );
+      setData(mapped);
+      setError(null);
+      settle();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId, tick, settle]);
+
+  // Webhook-driven refresh — orders/paid and orders/updated webhooks
+  // upsert into shopify_orders, so when a fulfilment lands on the
+  // patient currently being viewed, the card refreshes without a
+  // manual reload. Filter omitted because shopify_orders has no
+  // patient_id column; we accept the slightly wider firing in exchange
+  // for not adding a filter dependent on shopify_customer_id, which
+  // would require a useState dance to read.
+  useRealtimeRefresh(patientId ? [{ table: 'shopify_orders' }] : [], refresh);
+
+  return { data, loading, error };
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function parseItems(v: unknown): OutstandingOrderItem[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((it) => {
+    const obj = (it ?? {}) as Record<string, unknown>;
+    return {
+      title: (obj.title as string | null) ?? null,
+      sku: (obj.sku as string | null) ?? null,
+      quantity: typeof obj.quantity === 'number' ? obj.quantity : null,
+      price: toNumberOrNull(obj.price),
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Case history — Meridian's `cases` table joined to case_types and
 // case_stages. Buckets are derived from is_terminal / paused_at / open.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Eye, FileSignature, Files, Info, Layers, Pencil, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react';
+import { CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon, Eye, FileSignature, Files, Info, Layers, Package, Pencil, Shield, ShieldAlert, ShieldCheck, Truck, X } from 'lucide-react';
 import {
   Avatar,
   BeforeAfterGallery,
@@ -31,10 +31,13 @@ import {
   humaniseEventTypeLabel,
   usePatientCases,
   usePatientDeliveryFiles,
+  usePatientOutstandingShopifyOrders,
   usePatientProfile,
   usePatientProfileFiles,
   usePatientScheduledAppointments,
   usePatientVisits,
+  type OutstandingOrderItem,
+  type OutstandingOrderRow,
   type PatientCaseRow,
   type PatientFileEntry,
   type PatientProfileRow,
@@ -77,6 +80,11 @@ export function PatientProfile() {
   const { data: scheduledAppointments, loading: apptsLoading } =
     usePatientScheduledAppointments(id);
   const { data: cases, loading: casesLoading } = usePatientCases(id);
+  // Shopify orders the patient still owes us a fulfilment on. Reads
+  // the lng_patient_outstanding_shopify_orders RPC; ships zero rows
+  // and no card when the patient has nothing outstanding.
+  const { data: outstandingOrders, loading: ordersLoading } =
+    usePatientOutstandingShopifyOrders(id);
   // Signed-waiver history lives at the route level so the WaiverStatus
   // card (top of the page) and the SignedWaiversHistory card (further
   // down) can refresh in lockstep when the receptionist signs a section
@@ -154,6 +162,11 @@ export function PatientProfile() {
               refresh={refreshFiles}
             />
             <FinalDeliveries patientId={patient.id} patient={patient} />
+            <OutstandingOrders
+              orders={outstandingOrders}
+              loading={ordersLoading}
+              shopifyLinked={!!patient.shopify_customer_id}
+            />
             <Appointments
               visits={visits}
               scheduledAppointments={scheduledAppointments}
@@ -1386,11 +1399,15 @@ function Appointments({
   visits: PatientVisitRow[];
   scheduledAppointments: PatientScheduledAppointmentRow[];
   loading: boolean;
+  // Mobile no longer drives a parallel layout — the modern row card
+  // works at every width. Kept on the props so existing callers stay
+  // unchanged; mark as unused with a leading underscore in the body.
   isMobile: boolean;
   patientId: string;
   patientName: string;
 }) {
   const navigate = useNavigate();
+  void isMobile; // single layout now, prop preserved for caller compat
   // Tell the visit page where the user came from. VisitDetail's
   // breadcrumb uses this to render "Patients › Name › Visit" instead
   // of "Schedule › Visit", so back-navigation lands on this profile.
@@ -1450,18 +1467,18 @@ function Appointments({
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
           {upcoming.length > 0 ? (
             <ApptGroup
-              eyebrow="Upcoming"
+              title="Upcoming"
+              sub="Next on the calendar."
               rows={upcoming}
-              isMobile={isMobile}
               onOpenVisit={openVisit}
               onOpenAppointment={openAppointment}
             />
           ) : null}
           {past.length > 0 ? (
             <ApptGroup
-              eyebrow="Past"
+              title="Past"
+              sub="Earlier visits, no-shows and cancellations."
               rows={past}
-              isMobile={isMobile}
               onOpenVisit={openVisit}
               onOpenAppointment={openAppointment}
             />
@@ -1473,53 +1490,42 @@ function Appointments({
 }
 
 function ApptGroup({
-  eyebrow,
+  title,
+  sub,
   rows,
-  isMobile,
   onOpenVisit,
   onOpenAppointment,
 }: {
-  eyebrow: string;
+  title: string;
+  sub: string;
   rows: UnifiedApptRow[];
-  isMobile: boolean;
   onOpenVisit: (visit: { id: string; opened_at: string }) => void;
   onOpenAppointment: (id: string) => void;
 }) {
   const pager = usePagedRows(rows, PROFILE_PAGE_SIZE);
   return (
-    <div>
-      <div
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <ListSectionHeader title={title} sub={sub} count={rows.length} />
+      <ul
         style={{
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          marginBottom: theme.space[2],
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
         }}
       >
-        {eyebrow} <span style={{ color: theme.color.inkSubtle }}>· {rows.length}</span>
-      </div>
-      {isMobile ? (
-        <ul
-          style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[2],
-          }}
-        >
-          {pager.visible.map((r) => (
-            <li key={r.key}>
-              <ApptRowMobile row={r} onOpenVisit={onOpenVisit} onOpenAppointment={onOpenAppointment} />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <ApptTable rows={pager.visible} onOpenVisit={onOpenVisit} onOpenAppointment={onOpenAppointment} />
-      )}
+        {pager.visible.map((r) => (
+          <li key={r.key}>
+            <ApptCardRow
+              row={r}
+              onOpenVisit={onOpenVisit}
+              onOpenAppointment={onOpenAppointment}
+            />
+          </li>
+        ))}
+      </ul>
       <ListPager
         page={pager.page}
         totalPages={pager.totalPages}
@@ -1530,119 +1536,125 @@ function ApptGroup({
   );
 }
 
-function ApptTable({
-  rows,
-  onOpenVisit,
-  onOpenAppointment,
+// Section header used by every list-card on this profile. Drops the
+// uppercase eyebrow in favour of the bold-title + muted-sub pattern
+// that the rest of the modernised Lounge surfaces follow (Arrival
+// sheet, NewBookingSheet, the post-Section-helper popup modals).
+function ListSectionHeader({
+  title,
+  sub,
+  count,
 }: {
-  rows: UnifiedApptRow[];
-  onOpenVisit: (visit: { id: string; opened_at: string }) => void;
-  onOpenAppointment: (id: string) => void;
+  title: string;
+  sub?: string;
+  count: number;
 }) {
-  const headerStyle: CSSProperties = {
-    fontSize: theme.type.size.xs,
-    fontWeight: theme.type.weight.semibold,
-    color: theme.color.inkMuted,
-    textTransform: 'uppercase',
-    letterSpacing: theme.type.tracking.tight,
-    textAlign: 'left',
-    padding: `${theme.space[3]}px ${theme.space[3]}px`,
-    background: theme.color.bg,
-    borderTop: `1px solid ${theme.color.border}`,
-    borderBottom: `1px solid ${theme.color.border}`,
-  };
-  const cellStyle: CSSProperties = {
-    padding: `${theme.space[3]}px ${theme.space[3]}px`,
-    fontSize: theme.type.size.sm,
-    color: theme.color.ink,
-    borderBottom: `1px solid ${theme.color.border}`,
-    verticalAlign: 'middle',
-  };
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table
-        style={{ width: '100%', borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums' }}
-      >
-        <thead>
-          <tr>
-            <th style={headerStyle}>Date</th>
-            <th style={headerStyle}>LAP ref</th>
-            <th style={headerStyle}>Service</th>
-            <th style={headerStyle}>Status</th>
-            <th style={{ ...headerStyle, textAlign: 'right' }}>Payment</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const isVisit = r.kind === 'visit';
-            // Visit rows open VisitDetail; appointment-only rows
-            // (booked future, cancelled, no-show, rescheduled) open
-            // AppointmentDetail. Both pop the same patient-context
-            // state forward so the destination's breadcrumb chains
-            // back through this profile.
-            const handleClick =
-              isVisit && r.visit
-                ? () => onOpenVisit({ id: r.visit!.id, opened_at: r.visit!.opened_at })
-                : !isVisit && r.appointment
-                  ? () => onOpenAppointment(r.appointment!.id)
-                  : undefined;
-            return (
-              <tr
-                key={r.key}
-                onClick={handleClick}
-                style={{ cursor: handleClick ? 'pointer' : 'default' }}
-                onMouseEnter={(e) => {
-                  if (!handleClick) return;
-                  (e.currentTarget as HTMLTableRowElement).style.background = theme.color.bg;
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLTableRowElement).style.background = 'transparent';
-                }}
-              >
-                <td style={cellStyle}>{formatDateTime(r.sortDate)}</td>
-                <td
-                  style={{
-                    ...cellStyle,
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    color: theme.color.inkMuted,
-                  }}
-                >
-                  {isVisit ? r.visit?.lap_ref ?? '—' : r.appointment?.appointment_ref ?? '—'}
-                </td>
-                <td style={cellStyle}>
-                  {isVisit
-                    ? r.visit?.service_label ?? '—'
-                    : humaniseEventTypeLabel(r.appointment?.event_type_label ?? null) ?? '—'}
-                </td>
-                <td style={cellStyle}>
-                  {isVisit ? (
-                    <VisitStatusPill visit={r.visit!} />
-                  ) : (
-                    <ApptStatusPill status={r.appointment!.status} />
-                  )}
-                </td>
-                <td
-                  style={{
-                    ...cellStyle,
-                    textAlign: 'right',
-                    color:
-                      isVisit && r.visit?.cart_status === 'paid'
-                        ? theme.color.ink
-                        : theme.color.inkMuted,
-                  }}
-                >
-                  {isVisit ? paymentLabel(r.visit!) : '—'}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2] }}>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+          }}
+        >
+          {title}
+        </h3>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkSubtle,
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          {count}
+        </span>
+      </div>
+      {sub ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.normal,
+          }}
+        >
+          {sub}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function ApptRowMobile({
+// Calendar tile on the left of each row — month label over the day
+// number, framed in the soft cream brand surface. Reads at a glance
+// even when the rest of the row is scanned quickly; the same shape
+// is used by the order card so both lists share the visual rhythm.
+function DateTile({ iso, tone = 'neutral' }: { iso: string; tone?: 'neutral' | 'past' }) {
+  const d = new Date(iso);
+  const monthLabel = Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+  const dayLabel = Number.isNaN(d.getTime()) ? '—' : String(d.getDate());
+  const muted = tone === 'past';
+  return (
+    <div
+      aria-hidden
+      style={{
+        flexShrink: 0,
+        width: 52,
+        height: 52,
+        borderRadius: 12,
+        background: muted ? 'rgba(14, 20, 20, 0.04)' : theme.color.accentBg,
+        border: `1px solid ${theme.color.border}`,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: muted ? theme.color.inkMuted : theme.color.accent,
+        lineHeight: 1,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        {monthLabel}
+      </span>
+      <span
+        style={{
+          fontSize: 22,
+          fontWeight: theme.type.weight.semibold,
+          fontVariantNumeric: 'tabular-nums',
+          marginTop: 2,
+          color: muted ? theme.color.inkMuted : theme.color.ink,
+        }}
+      >
+        {dayLabel}
+      </span>
+    </div>
+  );
+}
+
+// One row in the Appointments list. Combines past-visit and upcoming-
+// appointment rows behind a single visual so the staff member reads
+// one rhythm. Layout:
+//
+//   ┌──────┐                                          ┌────────┐
+//   │ MAY  │  Impression appointment                  │ Booked │
+//   │  12  │  Tue at 14:30  ·  LAP-00123      £45.00  │        │
+//   └──────┘                                          └────────┘
+//
+// On narrow widths the payment label drops below the title so the
+// row never wraps the pill onto its own line.
+function ApptCardRow({
   row,
   onOpenVisit,
   onOpenAppointment,
@@ -1651,6 +1663,7 @@ function ApptRowMobile({
   onOpenVisit: (visit: { id: string; opened_at: string }) => void;
   onOpenAppointment: (id: string) => void;
 }) {
+  const [hover, setHover] = useState(false);
   const isVisit = row.kind === 'visit';
   const handleClick =
     isVisit && row.visit
@@ -1663,66 +1676,100 @@ function ApptRowMobile({
     ? row.visit?.service_label ?? 'Appointment'
     : humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ?? 'Appointment';
   const ref = isVisit
-    ? row.visit?.lap_ref ?? 'no LAP ref'
-    : row.appointment?.appointment_ref ?? 'no LAP ref';
+    ? row.visit?.lap_ref ?? null
+    : row.appointment?.appointment_ref ?? null;
+  const payment = isVisit ? paymentLabel(row.visit!) : null;
+  const paid = isVisit && row.visit?.cart_status === 'paid';
   return (
     <button
       type="button"
       onClick={handleClick}
       disabled={!clickable}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         appearance: 'none',
         width: '100%',
         textAlign: 'left',
-        padding: theme.space[3],
+        padding: theme.space[4],
         borderRadius: theme.radius.card,
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.surface,
+        border: `1px solid ${hover && clickable ? theme.color.ink : theme.color.border}`,
+        background: hover && clickable ? theme.color.bg : theme.color.surface,
         cursor: clickable ? 'pointer' : 'default',
         fontFamily: 'inherit',
         display: 'flex',
         alignItems: 'center',
-        gap: theme.space[3],
+        gap: theme.space[4],
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <DateTile iso={row.sortDate} tone={row.bucket === 'past' ? 'past' : 'neutral'} />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
         <p
           style={{
             margin: 0,
-            fontSize: theme.type.size.sm,
+            fontSize: theme.type.size.base,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
           {service}
         </p>
         <p
           style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.xs,
+            margin: 0,
+            fontSize: theme.type.size.sm,
             color: theme.color.inkMuted,
             fontVariantNumeric: 'tabular-nums',
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            flexWrap: 'wrap',
           }}
         >
-          {formatDateTime(row.sortDate)} · {ref}
+          <span>{formatDateTime(row.sortDate)}</span>
+          {ref ? (
+            <>
+              <span aria-hidden style={{ color: theme.color.inkSubtle }}>·</span>
+              <code
+                style={{
+                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkSubtle,
+                }}
+              >
+                {ref}
+              </code>
+            </>
+          ) : null}
+          {payment ? (
+            <>
+              <span aria-hidden style={{ color: theme.color.inkSubtle }}>·</span>
+              <span style={{ color: paid ? theme.color.accent : theme.color.inkMuted, fontWeight: paid ? theme.type.weight.semibold : theme.type.weight.medium }}>
+                {payment}
+              </span>
+            </>
+          ) : null}
         </p>
       </div>
-      {isVisit ? (
-        <VisitStatusPill visit={row.visit!} />
-      ) : (
-        <ApptStatusPill status={row.appointment!.status} />
-      )}
-      {isVisit ? (
-        <span
-          style={{
-            fontVariantNumeric: 'tabular-nums',
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
-          }}
-        >
-          {paymentLabel(row.visit!)}
-        </span>
-      ) : null}
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
+        {isVisit ? (
+          <VisitStatusPill visit={row.visit!} />
+        ) : (
+          <ApptStatusPill status={row.appointment!.status} />
+        )}
+        {clickable ? (
+          <ChevronRightIcon
+            size={16}
+            aria-hidden
+            color={hover ? theme.color.ink : theme.color.inkSubtle}
+            style={{ transition: `color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}` }}
+          />
+        ) : null}
+      </div>
     </button>
   );
 }
@@ -1813,6 +1860,294 @@ function formatDateTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Outstanding Shopify orders.
+//
+// A second list-card alongside Appointments, sharing the same row visual
+// (DateTile on the left, summary in the middle, status pill on the right)
+// so the page reads as one rhythm. Surfaces only orders the patient still
+// owes us a fulfilment on — paid + awaiting dispatch, partially fulfilled,
+// awaiting payment. Cancelled / fully refunded / fully fulfilled orders
+// are filtered out at the RPC level so they never reach this list.
+//
+// Hidden completely when the patient has nothing outstanding AND no
+// Shopify link — staff don't want a "0 orders" empty state cluttering a
+// patient who is purely a walk-in. Patients linked to Shopify but with
+// zero outstanding orders get a positive "all caught up" empty state so
+// staff don't wonder if the data is missing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function OutstandingOrders({
+  orders,
+  loading,
+  shopifyLinked,
+}: {
+  orders: OutstandingOrderRow[];
+  loading: boolean;
+  shopifyLinked: boolean;
+}) {
+  // Hide entirely for patients with no Shopify identity. Loud-failure
+  // rule doesn't apply — the absence of a Shopify customer link is a
+  // valid state for walk-in-only patients.
+  if (!shopifyLinked && !loading) return null;
+
+  const pager = usePagedRows(orders, PROFILE_PAGE_SIZE);
+  const totalOutstandingPence = useMemo(
+    () =>
+      orders.reduce((acc, o) => {
+        const owed = totalOwedForOrder(o);
+        return acc + owed;
+      }, 0),
+    [orders],
+  );
+
+  return (
+    <CollapsibleCard
+      icon={<Package size={18} color={theme.color.ink} aria-hidden />}
+      title="Outstanding orders"
+      meta={
+        loading
+          ? 'Loading'
+          : orders.length === 0
+            ? 'All caught up'
+            : `${orders.length} ${orders.length === 1 ? 'order' : 'orders'} · ${formatGbpFromPence(totalOutstandingPence)}`
+      }
+    >
+      {loading ? (
+        <Skeleton height={120} radius={14} />
+      ) : orders.length === 0 ? (
+        <EmptyState
+          icon={<CheckCircle2 size={22} aria-hidden />}
+          title="All caught up"
+          description="No outstanding Shopify orders. New orders that need a dispatch will appear here."
+        />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <ListSectionHeader
+            title="Awaiting fulfilment"
+            sub="Paid or part-paid orders the lab still owes the patient."
+            count={orders.length}
+          />
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
+            {pager.visible.map((o) => (
+              <li key={o.id}>
+                <OrderCardRow row={o} />
+              </li>
+            ))}
+          </ul>
+          <ListPager
+            page={pager.page}
+            totalPages={pager.totalPages}
+            onPrev={() => pager.setPage((p) => Math.max(0, p - 1))}
+            onNext={() => pager.setPage((p) => Math.min(pager.totalPages - 1, p + 1))}
+          />
+        </div>
+      )}
+    </CollapsibleCard>
+  );
+}
+
+// Single outstanding-order row. Same DateTile-left, content-middle,
+// status-right pattern as the appointment row so the two lists feel
+// like one design system applied to different sources. The body
+// summarises the line items in plain English — quantity × title for
+// up to two items, then "+ N more" — so the staff member knows what
+// the patient is waiting on without expanding anything.
+function OrderCardRow({ row }: { row: OutstandingOrderRow }) {
+  const tone = orderTone(row);
+  const summary = summariseItems(row.items);
+  const owedPence = totalOwedForOrder(row);
+  const owedLabel = formatGbpFromPence(owedPence);
+  return (
+    <div
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        padding: theme.space[4],
+        borderRadius: theme.radius.card,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[4],
+      }}
+    >
+      <DateTile iso={row.created_at} />
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[1],
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={summary}
+        >
+          {summary}
+        </p>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            flexWrap: 'wrap',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          <span>Placed {formatShortDate(row.created_at)}</span>
+          {row.name ? (
+            <>
+              <span aria-hidden style={{ color: theme.color.inkSubtle }}>·</span>
+              <code
+                style={{
+                  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkSubtle,
+                }}
+              >
+                {row.name}
+              </code>
+            </>
+          ) : null}
+          <span aria-hidden style={{ color: theme.color.inkSubtle }}>·</span>
+          <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
+            {owedLabel}
+          </span>
+        </p>
+      </div>
+      <div
+        style={{
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+        }}
+      >
+        <OrderStatusPill tone={tone.tone} label={tone.label} icon={tone.icon} />
+      </div>
+    </div>
+  );
+}
+
+interface OrderTone {
+  tone: 'accent' | 'warn' | 'neutral';
+  label: string;
+  icon: 'truck' | 'package' | 'info';
+}
+
+// Maps the Shopify status pair to a single staff-friendly phrase. The
+// goal is the room-temperature read: a receptionist scanning the
+// patient profile should know what's pending without parsing Shopify
+// jargon. "Pending dispatch" is the most common case for a paid lab
+// order; "Awaiting payment" calls out anything that hasn't been paid
+// for; "Partially shipped" surfaces orders mid-fulfilment.
+function orderTone(row: OutstandingOrderRow): OrderTone {
+  const fin = (row.financial_status ?? '').toLowerCase();
+  const ful = (row.fulfillment_status ?? '').toLowerCase();
+  if (ful === 'partial') {
+    return { tone: 'warn', label: 'Partially shipped', icon: 'truck' };
+  }
+  if (fin === 'paid' || fin === 'partially_refunded') {
+    return { tone: 'accent', label: 'Paid · awaiting dispatch', icon: 'package' };
+  }
+  if (fin === 'partially_paid') {
+    return { tone: 'warn', label: 'Partially paid', icon: 'info' };
+  }
+  if (fin === 'pending') {
+    return { tone: 'warn', label: 'Awaiting payment', icon: 'info' };
+  }
+  return { tone: 'neutral', label: 'Outstanding', icon: 'info' };
+}
+
+function OrderStatusPill({
+  tone,
+  label,
+  icon,
+}: {
+  tone: 'accent' | 'warn' | 'neutral';
+  label: string;
+  icon: 'truck' | 'package' | 'info';
+}) {
+  const palette =
+    tone === 'accent'
+      ? { bg: theme.color.accentBg, fg: theme.color.accent }
+      : tone === 'warn'
+        ? { bg: 'rgba(179, 104, 21, 0.10)', fg: theme.color.warn }
+        : { bg: 'rgba(14, 20, 20, 0.06)', fg: theme.color.inkMuted };
+  const Icon = icon === 'truck' ? Truck : icon === 'package' ? Package : Info;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 10px',
+        borderRadius: theme.radius.pill,
+        background: palette.bg,
+        color: palette.fg,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: theme.type.tracking.tight,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Icon size={12} aria-hidden />
+      {label}
+    </span>
+  );
+}
+
+function summariseItems(items: OutstandingOrderItem[]): string {
+  const meaningful = items.filter((i) => (i.title ?? '').trim().length > 0);
+  if (meaningful.length === 0) return 'Shopify order';
+  const first = meaningful.slice(0, 2).map((i) => {
+    const qty = i.quantity && i.quantity > 1 ? `${i.quantity}× ` : '';
+    return `${qty}${i.title ?? 'Item'}`;
+  });
+  const remainder = meaningful.length - 2;
+  return remainder > 0 ? `${first.join(', ')} + ${remainder} more` : first.join(', ');
+}
+
+function totalOwedForOrder(o: OutstandingOrderRow): number {
+  // shopify_orders.current_total_price is already net of cancellations
+  // but NOT refunds — subtract refund_amount manually so the staff
+  // member sees what the customer actually still expects to receive.
+  const total = (o.total_price ?? 0) * 100;
+  const refunded = (o.refund_amount ?? 0) * 100;
+  return Math.max(0, Math.round(total - refunded));
+}
+
+function formatGbpFromPence(pence: number): string {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 2,
+  }).format(pence / 100);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
