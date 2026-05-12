@@ -70,6 +70,7 @@ import {
   updateVisitFulfilmentMethod,
   useLatestUnsuitability,
   useVisitDetail,
+  visitRequiresFulfilment,
   type VisitFulfilmentMethod,
 } from '../lib/queries/visits.ts';
 import type {
@@ -569,9 +570,42 @@ export function VisitDetail() {
     }
   };
 
-  const openCompleteVisit = () => {
+  const openCompleteVisit = async () => {
+    if (!visit || !patient) return;
     setCompleteError(null);
     setCompleteMethod('in_person');
+    // Skip the in-person / shipping sheet entirely when the cart's
+    // catalogue lines all have fulfilment_required=false (virtual
+    // sessions, in-person impression appointments). The decision is
+    // moot — nothing's handed over, nothing's shipped — so we just
+    // finish the visit directly. Falls back to opening the sheet on
+    // any error reading the catalogue.
+    try {
+      const needsSheet = await visitRequiresFulfilment(visit.id);
+      if (!needsSheet) {
+        setCompleteBusy(true);
+        try {
+          await completeVisit({
+            patient_id: patient.id,
+            visit_id: visit.id,
+            appointment_id: visit.appointment_id,
+            walk_in_id: visit.walk_in_id,
+            fulfilment_method: null,
+            total_pence: total,
+          });
+          refresh();
+        } catch (e) {
+          setCompleteError(e instanceof Error ? e.message : 'Could not complete');
+          setCompleteOpen(true);
+        } finally {
+          setCompleteBusy(false);
+        }
+        return;
+      }
+    } catch {
+      // Fall through and show the sheet — safer than silently
+      // auto-completing on a transient query error.
+    }
     setCompleteOpen(true);
   };
 

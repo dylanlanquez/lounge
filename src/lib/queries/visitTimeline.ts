@@ -930,6 +930,14 @@ function buildVisitCompleteDetail(args: {
   const parts: string[] = [];
   if (args.fulfilment === 'in_person') parts.push('Passed to patient on the day');
   else if (args.fulfilment === 'shipping') parts.push('Marked for dispatch by post');
+  else if (args.visitStatus === 'complete') {
+    // Null fulfilment on a completed visit means every cart line
+    // came from a catalogue row marked "nothing to hand over"
+    // (virtual sessions, in-person impression appointments). Reading
+    // as "Visit closed" alone is too terse — surface what actually
+    // happened so the timeline doesn't look like data is missing.
+    parts.push('Nothing to hand over');
+  }
   if (args.totalPence != null && args.totalPence > 0) {
     parts.push(`${formatPence(args.totalPence)} paid in full`);
   }

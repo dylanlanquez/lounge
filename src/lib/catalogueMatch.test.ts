@@ -25,6 +25,7 @@ const baseRow = (over: Partial<CatalogueRow> = {}): CatalogueRow => ({
   allocate_job_box: true,
   is_virtual: false,
   meeting_platform: null,
+  fulfilment_required: true,
   sort_order: 0,
   active: true,
   created_at: '2026-04-28T00:00:00Z',

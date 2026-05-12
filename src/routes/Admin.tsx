@@ -2890,6 +2890,7 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         allocate_job_box: draft.allocate_job_box,
         is_virtual: draft.is_virtual,
         meeting_platform: draft.is_virtual && draft.meeting_platform ? draft.meeting_platform : null,
+        fulfilment_required: draft.fulfilment_required,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
@@ -3070,6 +3071,7 @@ interface CatalogueDraft {
   allocate_job_box: boolean;
   is_virtual: boolean;
   meeting_platform: string;
+  fulfilment_required: boolean;
   sort_order: string;
   active: boolean;
 }
@@ -3105,6 +3107,7 @@ function emptyDraft(mode: CatalogueMode): CatalogueDraft {
     allocate_job_box: isService,
     is_virtual: false,
     meeting_platform: '',
+    fulfilment_required: true,
     sort_order: '0',
     active: true,
   };
@@ -3135,6 +3138,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     allocate_job_box: row.allocate_job_box,
     is_virtual: row.is_virtual,
     meeting_platform: row.meeting_platform ?? '',
+    fulfilment_required: row.fulfilment_required,
     sort_order: String(row.sort_order),
     active: row.active,
   };
@@ -3785,6 +3789,13 @@ function ServiceForm({
               onChange={(v) => {
                 set('is_virtual', v);
                 if (!v) set('meeting_platform', '');
+                // Virtual sessions hand nothing over, so flipping
+                // virtual on disables the fulfilment question too —
+                // keeps the two flags in sync without forcing the
+                // admin to tick both. Admin can still tick it back on
+                // if they ever want a virtual service to surface the
+                // shipping option.
+                if (v) set('fulfilment_required', false);
               }}
               label="Virtual service (remote session). Replaces the arrival wizard with Join meeting, Rejoin, and No-show actions."
             />
@@ -3803,6 +3814,11 @@ function ServiceForm({
                 placeholder="Select a platform"
               />
             ) : null}
+            <Checkbox
+              checked={!draft.fulfilment_required}
+              onChange={(v) => set('fulfilment_required', !v)}
+              label="Nothing to hand over or ship. Complete visit finishes straight away with no in-person / shipping question."
+            />
           </div>
         </ServiceSection>
 

@@ -818,12 +818,71 @@ export interface ReverseUnsuitabilityInput {
 // How the work was handed off at completion.
 export type VisitFulfilmentMethod = 'in_person' | 'shipping';
 
+// Looks at the active cart for the visit and decides whether the
+// Complete visit flow needs to ask the in-person / shipping
+// question. Returns false when every active line came from a
+// catalogue row with fulfilment_required=false (virtual sessions,
+// in-person impression appointments). Returns true when at least
+// one line still needs a fulfilment decision — that's the safe
+// default whenever we can't read the catalogue or the cart contains
+// a free-form (no catalogue_id) line, since asking is preferable to
+// silently auto-completing a real handover.
+export async function visitRequiresFulfilment(visitId: string): Promise<boolean> {
+  const { data: cart } = await supabase
+    .from('lng_carts')
+    .select('id')
+    .eq('visit_id', visitId)
+    .maybeSingle();
+  const cartId = (cart as { id: string } | null)?.id;
+  if (!cartId) return true;
+
+  const { data: rows, error } = await supabase
+    .from('lng_cart_items')
+    .select('catalogue_id')
+    .eq('cart_id', cartId)
+    .is('removed_at', null);
+  if (error) return true;
+
+  const items = (rows ?? []) as Array<{ catalogue_id: string | null }>;
+  if (items.length === 0) return false;
+
+  // Any ad-hoc line (no catalogue_id) forces the question — we can't
+  // know what it represents physically.
+  if (items.some((i) => !i.catalogue_id)) return true;
+
+  const catalogueIds = Array.from(
+    new Set(items.map((i) => i.catalogue_id).filter((id): id is string => !!id)),
+  );
+  if (catalogueIds.length === 0) return true;
+
+  const { data: cat, error: catErr } = await supabase
+    .from('lwo_catalogue')
+    .select('id, fulfilment_required')
+    .in('id', catalogueIds);
+  if (catErr) return true;
+
+  const flagById = new Map<string, boolean>();
+  for (const row of (cat ?? []) as Array<{ id: string; fulfilment_required: boolean }>) {
+    flagById.set(row.id, row.fulfilment_required);
+  }
+
+  // Default to requiring fulfilment when a catalogue row is missing
+  // (renamed / deleted) so we never silently auto-complete a real
+  // physical handover.
+  return items.some((i) => flagById.get(i.catalogue_id!) !== false);
+}
+
 export interface CompleteVisitInput {
   patient_id: string;
   visit_id: string;
   appointment_id: string | null;
   walk_in_id: string | null;
-  fulfilment_method: VisitFulfilmentMethod;
+  // Null means "no fulfilment needed for this visit" — every active
+  // cart line came from a catalogue row with fulfilment_required=false
+  // (virtual sessions, in-person impression appointments). The Complete
+  // visit flow skips the fulfilment sheet in this case and finishes
+  // directly. Non-null records the staff's in-person/shipping choice.
+  fulfilment_method: VisitFulfilmentMethod | null;
   // Total in pence — used purely for the timeline event payload so
   // the closed event reads "£298.00" without a join back to the
   // cart roll-up.

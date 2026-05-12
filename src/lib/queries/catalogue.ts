@@ -60,6 +60,14 @@ export interface CatalogueRow {
   // with Join/Rejoin/No-show actions. Applies to any remote service,
   // not just virtual impressions.
   is_virtual: boolean;
+  // When false, Complete visit skips the in-person / shipping
+  // fulfilment sheet for any cart containing only items from this
+  // catalogue row. Used by virtual sessions and impression
+  // appointments — the patient takes nothing physical away on the
+  // day and nothing gets shipped out later, so the choice is moot.
+  // Default true so newly-created services keep the current
+  // behaviour until an admin opts them out.
+  fulfilment_required: boolean;
   // Which video platform this service uses. Only meaningful when
   // is_virtual is true. Values: 'google_meet' | 'zoom' | 'microsoft_teams' | 'whereby'.
   meeting_platform: string | null;
@@ -99,7 +107,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, fulfilment_required, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -158,6 +166,7 @@ export async function upsertCatalogueRow(
     allocate_job_box: draft.allocate_job_box,
     is_virtual: draft.is_virtual,
     meeting_platform: draft.meeting_platform ?? null,
+    fulfilment_required: draft.fulfilment_required,
     sort_order: draft.sort_order,
     active: draft.active,
   };
