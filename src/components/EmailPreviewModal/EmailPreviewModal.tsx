@@ -114,7 +114,7 @@ function MetaHeader({ row }: { row: EmailMessageRow }) {
         {row.provider_message_id ? (
           <>
             <MetaLabel icon={<Copy size={14} />} label="ID" />
-            <MessageIdValue id={row.provider_message_id} provider={row.provider} />
+            <MessageIdValue id={row.provider_message_id} />
           </>
         ) : null}
       </div>
@@ -160,7 +160,7 @@ function MetaValue({ children }: { children: React.ReactNode }) {
   );
 }
 
-function MessageIdValue({ id, provider }: { id: string; provider: string }) {
+function MessageIdValue({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
   const onCopy = () => {
     navigator.clipboard?.writeText(id).then(() => {
@@ -216,9 +216,6 @@ function MessageIdValue({ id, provider }: { id: string; provider: string }) {
         {copied ? <Check size={12} /> : <Copy size={12} />}
         {copied ? 'Copied' : 'Copy'}
       </button>
-      <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.xs }}>
-        via {humaniseProvider(provider)}
-      </span>
     </span>
   );
 }
@@ -515,12 +512,6 @@ function humaniseKind(kind: string): string {
     default:
       return kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
-}
-
-function humaniseProvider(provider: string): string {
-  if (provider === 'resend') return 'Resend';
-  if (provider === 'twilio') return 'Twilio';
-  return provider;
 }
 
 function formatSentAt(iso: string): string {

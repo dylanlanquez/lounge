@@ -392,12 +392,26 @@ export function useAppointmentTimeline(
     };
   }, [appointmentId, tick, settle]);
 
-  // Re-fetch whenever a patient_events row lands so a freshly-sent
-  // confirmation / reminder / cancellation pops in immediately. The
-  // realtime stream also covers system_failures so any failure that
-  // arrives after page-open shows up without a manual refresh.
-  useRealtimeRefresh([{ table: 'patient_events' }, { table: 'lng_system_failures' }], () =>
-    setTick((t) => t + 1),
+  // Re-fetch whenever a row that contributes to the timeline lands.
+  // patient_events covers every audit event the timeline reads;
+  // lng_system_failures covers post-send failure rows; lng_appointments
+  // covers status flips that don't always write a patient_events row
+  // (e.g. the reschedule pointer flip). lng_walk_ins covers walk-in
+  // intake edits that change the booking-row facts. Each table is in
+  // the supabase_realtime publication (see migration
+  // 20260512000003_lng_realtime_failures.sql for the additions); the
+  // hook's RLS-aware subscription only delivers events the caller is
+  // already permitted to read.
+  useRealtimeRefresh(
+    appointmentId
+      ? [
+          { table: 'patient_events' },
+          { table: 'lng_system_failures' },
+          { table: 'lng_appointments', filter: `id=eq.${appointmentId}` },
+          { table: 'lng_walk_ins' },
+        ]
+      : [],
+    () => setTick((t) => t + 1),
   );
 
   return { events, loading, error };
@@ -579,17 +593,14 @@ function mapEvent(
     case 'appointment_confirmation_sent':
     case 'appointment_cancellation_sent': {
       const recipient = readString(row.payload, 'recipient');
-      const provider = readString(row.payload, 'provider');
       const oldCancelled = readString(row.payload, 'old_appointment_id_cancelled');
       const emailMessageId = readString(row.payload, 'email_message_id');
       const isCancellation = row.event_type === 'appointment_cancellation_sent';
-      // With the "View email" affordance the bulky id/provider chips
-      // become redundant — opening the preview surfaces all of that
-      // metadata in one place. Keep the detail line lean: recipient
-      // plus the reschedule note when it applies.
+      // Detail line carries only customer-visible context — recipient
+      // plus the reschedule note. The delivery provider's name is an
+      // internal implementation detail and stays off-screen.
       const detail = joinDetail(
         recipient ? `to ${recipient}` : null,
-        provider && !emailMessageId ? `via ${humaniseProvider(provider)}` : null,
         oldCancelled ? 'replaces a cancelled booking' : null,
       );
       return {
@@ -607,12 +618,8 @@ function mapEvent(
 
     case 'appointment_reminder_sent': {
       const recipient = readString(row.payload, 'recipient');
-      const provider = readString(row.payload, 'provider');
       const emailMessageId = readString(row.payload, 'email_message_id');
-      const detail = joinDetail(
-        recipient ? `to ${recipient}` : null,
-        provider && !emailMessageId ? `via ${humaniseProvider(provider)}` : null,
-      );
+      const detail = joinDetail(recipient ? `to ${recipient}` : null);
       return {
         ...base,
         type: 'patient_event',
@@ -1037,10 +1044,12 @@ function humaniseReminderSkipReason(reason: string): string {
   }
 }
 
+// Payment-provider labels for customer-facing brands (Stripe / PayPal).
+// Email/SMS provider names are intentionally not surfaced — staff
+// shouldn't see the underlying email service in the audit trail.
 function humaniseProvider(provider: string): string {
   if (provider === 'paypal') return 'PayPal';
   if (provider === 'stripe') return 'Stripe';
-  if (provider === 'resend') return 'Resend';
   return provider;
 }
 

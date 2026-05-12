@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import {
@@ -700,7 +700,7 @@ function ReceiptsTab() {
               Pending receipts
             </h2>
             <p style={{ margin: `${theme.space[2]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-              Receipts that haven't been delivered yet, or where Resend / Twilio reported a failure. Tap Retry to re-attempt.
+              Receipts that haven't been delivered yet, or where delivery reported a failure. Tap Retry to re-attempt.
             </p>
           </div>
           <Button variant="tertiary" size="sm" onClick={r.refresh}>
@@ -3297,6 +3297,14 @@ function ServiceForm({
   const [imgBusy, setImgBusy] = useState(false);
   const [imgError, setImgError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Ref-driven file input. The previous label / visually-hidden-input
+  // pattern relied on `position: absolute` without a positioning
+  // ancestor, which iPad Safari mishandles after the file picker
+  // closes — the visualViewport calculation skews and the dvh-sized
+  // page chrome below the editor collapses. Rendering the input with
+  // display:none and triggering it via .click() avoids the absolute-
+  // positioning escape hatch entirely.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(initial);
 
@@ -3448,37 +3456,42 @@ function ServiceForm({
           <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4] }}>
             <CatalogueThumbnail src={draft.image_url} alt={draft.name || 'Service'} size={72} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-              <label style={{ cursor: imgBusy ? 'not-allowed' : 'pointer' }}>
-                <input
-                  type="file"
-                  accept="image/*"
-                  disabled={imgBusy}
-                  onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
-                  style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-                />
-                <span
-                  role="button"
-                  tabIndex={0}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: `0 ${theme.space[3]}px`,
-                    height: 36,
-                    borderRadius: theme.radius.pill,
-                    border: `1px solid ${theme.color.border}`,
-                    background: theme.color.surface,
-                    color: theme.color.ink,
-                    fontSize: theme.type.size.sm,
-                    fontWeight: theme.type.weight.medium,
-                    cursor: imgBusy ? 'not-allowed' : 'pointer',
-                    opacity: imgBusy ? 0.5 : 1,
-                  }}
-                >
-                  <ImageIcon size={14} />
-                  {draft.image_url ? 'Replace image' : 'Upload image'}
-                </span>
-              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                disabled={imgBusy}
+                onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
+                // Reset value on click so picking the same file twice
+                // still fires onChange (browsers de-dup identical values).
+                onClick={(e) => { (e.currentTarget as HTMLInputElement).value = ''; }}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={imgBusy}
+                style={{
+                  appearance: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: `0 ${theme.space[3]}px`,
+                  height: 36,
+                  borderRadius: theme.radius.pill,
+                  border: `1px solid ${theme.color.border}`,
+                  background: theme.color.surface,
+                  color: theme.color.ink,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  cursor: imgBusy ? 'not-allowed' : 'pointer',
+                  opacity: imgBusy ? 0.5 : 1,
+                  fontFamily: 'inherit',
+                }}
+              >
+                <ImageIcon size={14} />
+                {draft.image_url ? 'Replace image' : 'Upload image'}
+              </button>
               {draft.image_url ? (
                 <button
                   type="button"
@@ -3797,6 +3810,7 @@ function CatalogueRowEditor({
   const [busy, setBusy] = useState(false);
   const [imgBusy, setImgBusy] = useState(false);
   const [imgError, setImgError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const set = <K extends keyof CatalogueDraft>(k: K, v: CatalogueDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
@@ -3895,36 +3909,39 @@ function CatalogueRowEditor({
             Image
           </p>
           <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-            <label>
-              <input
-                type="file"
-                accept="image/*"
-                disabled={imgBusy}
-                onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
-                style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-              />
-              <span
-                role="button"
-                tabIndex={0}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: `0 ${theme.space[3]}px`,
-                  height: 36,
-                  borderRadius: theme.radius.pill,
-                  border: `1px solid ${theme.color.ink}`,
-                  background: theme.color.surface,
-                  color: theme.color.ink,
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                  cursor: imgBusy ? 'not-allowed' : 'pointer',
-                  opacity: imgBusy ? 0.5 : 1,
-                }}
-              >
-                <Plus size={14} /> {draft.image_url ? 'Replace image' : 'Upload image'}
-              </span>
-            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              disabled={imgBusy}
+              onChange={(e) => onImageFile(e.target.files?.[0] ?? null)}
+              onClick={(e) => { (e.currentTarget as HTMLInputElement).value = ''; }}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={imgBusy}
+              style={{
+                appearance: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: `0 ${theme.space[3]}px`,
+                height: 36,
+                borderRadius: theme.radius.pill,
+                border: `1px solid ${theme.color.ink}`,
+                background: theme.color.surface,
+                color: theme.color.ink,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+                cursor: imgBusy ? 'not-allowed' : 'pointer',
+                opacity: imgBusy ? 0.5 : 1,
+                fontFamily: 'inherit',
+              }}
+            >
+              <Plus size={14} /> {draft.image_url ? 'Replace image' : 'Upload image'}
+            </button>
             {draft.image_url ? (
               <Button variant="tertiary" size="sm" onClick={onRemoveImage} disabled={imgBusy}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
