@@ -1100,11 +1100,9 @@ function SectionLabel({ children }: { children: string }) {
       style={{
         margin: 0,
         padding: `${theme.space[2]}px ${theme.space[3]}px ${theme.space[1]}px`,
-        fontSize: theme.type.size.xs,
+        fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.semibold,
-        textTransform: 'uppercase',
-        letterSpacing: '0.06em',
-        color: theme.color.inkSubtle,
+        color: theme.color.ink,
       }}
     >
       {children}
