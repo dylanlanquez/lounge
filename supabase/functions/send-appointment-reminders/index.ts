@@ -28,6 +28,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
+import { recordEmailMessage } from '../_shared/emailRecord.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -291,6 +292,21 @@ async function processOne(
   // Send.
   const sendResult = await sendEmail({ to: patient.email, subject, html, text });
   if (!sendResult.ok) {
+    await recordEmailMessage(admin, {
+      patient_id: apt.patient_id,
+      appointment_id: apt.id,
+      location_id: apt.location_id,
+      kind: 'appointment_reminder',
+      template_key: 'appointment_reminder',
+      subject,
+      html,
+      body_text: text,
+      to_email: patient.email,
+      from_email: RESEND_FROM,
+      reply_to: RESEND_REPLY_TO,
+      send_status: 'failed',
+      send_error: sendResult.error,
+    });
     await logFailure(admin, {
       message: `Resend send failed for reminder: ${sendResult.error}`,
       context: { appointmentId: apt.id, recipient: patient.email },
@@ -304,6 +320,24 @@ async function processOne(
     .update({ reminder_sent_at: new Date().toISOString() })
     .eq('id', apt.id);
 
+  // Persist the rendered email so the Timeline's "View email" button can
+  // pop the exact reminder the patient received.
+  const emailMessageId = await recordEmailMessage(admin, {
+    patient_id: apt.patient_id,
+    appointment_id: apt.id,
+    location_id: apt.location_id,
+    kind: 'appointment_reminder',
+    template_key: 'appointment_reminder',
+    subject,
+    html,
+    body_text: text,
+    to_email: patient.email,
+    from_email: RESEND_FROM,
+    reply_to: RESEND_REPLY_TO,
+    provider_message_id: sendResult.messageId ?? null,
+    send_status: 'sent',
+  });
+
   await admin.from('patient_events').insert({
     patient_id: apt.patient_id,
     event_type: 'appointment_reminder_sent',
@@ -312,6 +346,7 @@ async function processOne(
       recipient: patient.email,
       provider: 'resend',
       message_id: sendResult.messageId ?? null,
+      email_message_id: emailMessageId,
     },
   });
 

@@ -264,19 +264,6 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: false, error: `Failed to save dispatch: ${updateErr.message}` }, 500);
   }
 
-  // ── Patient event ────────────────────────────────────────────────────────
-  await admin.from('patient_events').insert({
-    patient_id: visit.patient_id,
-    event_type:  'visit_shipped',
-    payload: {
-      visit_id,
-      dispatch_ref,
-      tracking_number: trackingNumber,
-      dispatched_by:   staff_name,
-      items:           itemLabels,
-    },
-  });
-
   // ── Checkpoint shipping_queue insert ─────────────────────────────────────
   if (CHECKPOINT_SUPABASE_URL && CHECKPOINT_SERVICE_ROLE_KEY) {
     const cpSb = {
@@ -355,6 +342,7 @@ async function handle(req: Request): Promise<Response> {
   // Sending with just tracking_number builds a broken DPD URL. If
   // parcel_code is still null here, fill-lng-parcel-code will send the
   // email atomically once it resolves the code.
+  let dispatchEmailMessageId: string | null = null;
   if (parcelCode && patient?.email && RESEND_API_KEY) {
     // Atomic claim: only send if shipping_email_sent_at is still null.
     const { data: claimed } = await admin
@@ -365,22 +353,47 @@ async function handle(req: Request): Promise<Response> {
       .select('id');
 
     if (claimed && claimed.length > 0) {
-      await sendShippingEmail(admin, {
-        visitId:          visit_id,
-        patientEmail:     patient.email,
-        patientFirstName: patient.first_name,
-        trackingNumber,
-        parcelCode,
-        shippingAddress:  addrSnapshot,
-        items:            itemLabels,
-        dispatchRef:      dispatch_ref,
-        resendApiKey:     RESEND_API_KEY,
-        resendFrom:       RESEND_FROM,
-      }).catch((e) => console.error('Resend dispatch email failed:', e));
+      try {
+        const result = await sendShippingEmail(admin, {
+          visitId:          visit_id,
+          patientId:        visit.patient_id,
+          locationId:       (visit as { location_id?: string | null }).location_id ?? null,
+          patientEmail:     patient.email,
+          patientFirstName: patient.first_name,
+          trackingNumber,
+          parcelCode,
+          shippingAddress:  addrSnapshot,
+          items:            itemLabels,
+          dispatchRef:      dispatch_ref,
+          resendApiKey:     RESEND_API_KEY,
+          resendFrom:       RESEND_FROM,
+        });
+        dispatchEmailMessageId = result.emailMessageId;
+      } catch (e) {
+        console.error('Resend dispatch email failed:', e);
+      }
     }
   } else if (!parcelCode) {
     console.log(`book-lng-shipment: parcel_code not yet available for ${dispatch_ref}; email deferred to fill-lng-parcel-code`);
   }
+
+  // ── Patient event ────────────────────────────────────────────────────────
+  // Written AFTER the email attempt so the visit_shipped row can carry
+  // email_message_id when the dispatch confirmation actually went out in
+  // this same call. When the email is deferred to fill-lng-parcel-code,
+  // that function updates this row's payload once the email lands.
+  await admin.from('patient_events').insert({
+    patient_id: visit.patient_id,
+    event_type:  'visit_shipped',
+    payload: {
+      visit_id,
+      dispatch_ref,
+      tracking_number: trackingNumber,
+      dispatched_by:   staff_name,
+      items:           itemLabels,
+      email_message_id: dispatchEmailMessageId,
+    },
+  });
 
   return json({
     ok: true,

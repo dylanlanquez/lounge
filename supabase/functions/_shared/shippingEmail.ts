@@ -8,11 +8,14 @@
 // lng_visits.shipping_email_sent_at to prevent duplicate sends.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { recordEmailMessage } from './emailRecord.ts';
 
 type SupabaseAdmin = ReturnType<typeof createClient>;
 
 export interface ShippingEmailCtx {
   visitId:           string;
+  patientId?:        string | null;
+  locationId?:       string | null;
   patientEmail:      string;
   patientFirstName:  string | null;
   trackingNumber:    string | null;
@@ -30,10 +33,16 @@ export interface ShippingEmailCtx {
   resendFrom:        string;
 }
 
+export interface ShippingEmailResult {
+  sent:            boolean;
+  emailMessageId:  string | null;
+  providerMessageId: string | null;
+}
+
 export async function sendShippingEmail(
   admin: SupabaseAdmin,
   ctx: ShippingEmailCtx,
-): Promise<boolean> {
+): Promise<ShippingEmailResult> {
   const { data: tplRow } = await admin
     .from('lng_email_templates')
     .select('subject, body_syntax, enabled')
@@ -41,7 +50,7 @@ export async function sendShippingEmail(
     .maybeSingle();
 
   const tpl = tplRow as { subject: string; body_syntax: string; enabled: boolean } | null;
-  if (!tpl?.enabled) return false;
+  if (!tpl?.enabled) return { sent: false, emailMessageId: null, providerMessageId: null };
 
   const patientFirstName = ctx.patientFirstName ?? 'there';
   const trackingUrl      = `https://track.dpdlocal.co.uk/parcels/${ctx.parcelCode}#results`;
@@ -82,9 +91,42 @@ export async function sendShippingEmail(
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     console.error(`Resend shipping email failed (${res.status}):`, body.slice(0, 200));
-    return false;
+    await recordEmailMessage(admin, {
+      patient_id: ctx.patientId ?? null,
+      visit_id:   ctx.visitId,
+      location_id: ctx.locationId ?? null,
+      kind:        'dispatch_confirmation',
+      template_key: 'visit_shipped',
+      subject,
+      html,
+      body_text:   bodyText,
+      to_email:    ctx.patientEmail,
+      from_email:  ctx.resendFrom,
+      send_status: 'failed',
+      send_error:  `Resend ${res.status}: ${body.slice(0, 500)}`,
+    });
+    return { sent: false, emailMessageId: null, providerMessageId: null };
   }
-  return true;
+
+  const respBody = await res.json().catch(() => ({}));
+  const providerMessageId = (respBody as { id?: string }).id ?? null;
+
+  const emailMessageId = await recordEmailMessage(admin, {
+    patient_id: ctx.patientId ?? null,
+    visit_id:   ctx.visitId,
+    location_id: ctx.locationId ?? null,
+    kind:        'dispatch_confirmation',
+    template_key: 'visit_shipped',
+    subject,
+    html,
+    body_text:   bodyText,
+    to_email:    ctx.patientEmail,
+    from_email:  ctx.resendFrom,
+    provider_message_id: providerMessageId,
+    send_status: 'sent',
+  });
+
+  return { sent: true, emailMessageId, providerMessageId };
 }
 
 function substituteVariables(template: string, vars: Record<string, string>): string {

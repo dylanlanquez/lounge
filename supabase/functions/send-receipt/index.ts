@@ -17,6 +17,7 @@
 // Per brief §5.9 (slice 13b).
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { recordEmailMessage } from '../_shared/emailRecord.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -181,6 +182,23 @@ Deno.serve(async (req) => {
       .from('lng_receipts')
       .update({ failure_reason: deliveryResult.error, content: { ...receipt.content, html, text } })
       .eq('id', receipt.id);
+    // Email channel: also drop a failed-send row into lng_email_messages so
+    // the Timeline can surface what was attempted.
+    if (receipt.channel === 'email') {
+      await recordEmailMessage(supabase, {
+        patient_id: patientId,
+        visit_id: cart?.visit_id ?? null,
+        kind: 'receipt',
+        template_key: 'payment_receipt',
+        subject,
+        html,
+        body_text: text,
+        to_email: recipient,
+        from_email: RESEND_FROM,
+        send_status: 'failed',
+        send_error: deliveryResult.error,
+      });
+    }
     return jsonResponse(200, { ok: false, error: deliveryResult.error });
   }
 
@@ -194,11 +212,38 @@ Deno.serve(async (req) => {
     })
     .eq('id', receipt.id);
 
+  // Persist email-channel receipt so the Visit Timeline's receipt event
+  // exposes a "View email" preview. SMS receipts have no HTML to record.
+  let emailMessageId: string | null = null;
+  if (receipt.channel === 'email') {
+    emailMessageId = await recordEmailMessage(supabase, {
+      patient_id: patientId,
+      visit_id: cart?.visit_id ?? null,
+      kind: 'receipt',
+      template_key: 'payment_receipt',
+      subject,
+      html,
+      body_text: text,
+      to_email: recipient,
+      from_email: RESEND_FROM,
+      provider: deliveryResult.provider,
+      provider_message_id: deliveryResult.messageId ?? null,
+      send_status: 'sent',
+    });
+  }
+
   if (patientId) {
     await supabase.from('patient_events').insert({
       patient_id: patientId,
       event_type: 'receipt_sent',
-      payload: { receipt_id: receipt.id, channel: receipt.channel, recipient, payment_id: payment.id },
+      payload: {
+        receipt_id: receipt.id,
+        channel: receipt.channel,
+        recipient,
+        payment_id: payment.id,
+        visit_id: cart?.visit_id ?? null,
+        email_message_id: emailMessageId,
+      },
     });
   }
 

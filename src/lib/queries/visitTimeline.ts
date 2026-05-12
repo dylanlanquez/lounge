@@ -67,6 +67,12 @@ export interface TimelineEvent {
   // (e.g. AppointmentTimeline) opt out of the visit-centric heuristics
   // and label the semantic weight of each event explicitly.
   tone?: TimelineTone;
+  // lng_email_messages row id when this event represents an email
+  // dispatch (confirmation, reminder, cancellation, receipt, dispatch
+  // notification). TimelineCard renders a "View email" trigger when
+  // present that opens EmailPreviewModal against this id — staff see
+  // the exact bytes the patient received.
+  emailMessageId?: string | null;
 }
 
 // Internal shape used by the fetchers — same as TimelineEvent but
@@ -214,6 +220,8 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Visit ended early';
     case 'visit_shipped':
       return 'Items dispatched';
+    case 'receipt_sent':
+      return 'Receipt sent';
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -862,15 +870,26 @@ async function fetchPatientEvents(visit: VisitRow): Promise<RawTimelineEvent[]> 
   const skip = new Set(['walk_in_arrived', 'visit_arrived', 'visit_closed']);
   return rows
     .filter((r) => !skip.has(r.event_type))
-    .map((r) => ({
-      id: `patient-event-${r.id}`,
-      type: 'patient_event' as const,
-      timestamp: r.created_at,
-      title: composePatientEventTitle(r),
-      detail: composePatientEventDetail(r),
-      actorAccountId: r.actor_account_id,
-      hint: 'flag' as const,
-    }));
+    .map((r) => {
+      const emailMessageId =
+        typeof r.payload?.email_message_id === 'string' && r.payload.email_message_id.length > 0
+          ? r.payload.email_message_id
+          : null;
+      // Email-bearing event_types lift their hint + tone so the
+      // Timeline icon matches the "View email" affordance.
+      const isEmailEvent =
+        r.event_type === 'receipt_sent' || (r.event_type === 'visit_shipped' && !!emailMessageId);
+      return {
+        id: `patient-event-${r.id}`,
+        type: 'patient_event' as const,
+        timestamp: r.created_at,
+        title: composePatientEventTitle(r),
+        detail: composePatientEventDetail(r),
+        actorAccountId: r.actor_account_id,
+        hint: isEmailEvent ? ('mail' as const) : ('flag' as const),
+        emailMessageId,
+      };
+    });
 }
 
 // Title for a generic patient_events row. For cart_line_removed the
@@ -916,6 +935,15 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     const parts = [
       dispatchRef ? `Ref ${dispatchRef}` : null,
       tracking ? `Tracking ${tracking}` : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+  }
+  if (row.event_type === 'receipt_sent') {
+    const channel = typeof payload.channel === 'string' ? payload.channel : null;
+    const recipient = typeof payload.recipient === 'string' ? payload.recipient : null;
+    const parts = [
+      recipient ? `to ${recipient}` : null,
+      channel === 'sms' ? 'via SMS' : null,
     ].filter(Boolean);
     return parts.length > 0 ? parts.join(' · ') : undefined;
   }

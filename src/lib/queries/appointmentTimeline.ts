@@ -579,17 +579,18 @@ function mapEvent(
     case 'appointment_confirmation_sent':
     case 'appointment_cancellation_sent': {
       const recipient = readString(row.payload, 'recipient');
-      const messageId = readString(row.payload, 'message_id');
       const provider = readString(row.payload, 'provider');
       const oldCancelled = readString(row.payload, 'old_appointment_id_cancelled');
+      const emailMessageId = readString(row.payload, 'email_message_id');
       const isCancellation = row.event_type === 'appointment_cancellation_sent';
+      // With the "View email" affordance the bulky id/provider chips
+      // become redundant — opening the preview surfaces all of that
+      // metadata in one place. Keep the detail line lean: recipient
+      // plus the reschedule note when it applies.
       const detail = joinDetail(
         recipient ? `to ${recipient}` : null,
-        provider ? `via ${humaniseProvider(provider)}` : null,
-        oldCancelled
-          ? 'replaces a cancelled booking'
-          : null,
-        messageId ? `id ${shortMessageId(messageId)}` : null,
+        provider && !emailMessageId ? `via ${humaniseProvider(provider)}` : null,
+        oldCancelled ? 'replaces a cancelled booking' : null,
       );
       return {
         ...base,
@@ -598,17 +599,17 @@ function mapEvent(
         detail,
         hint: 'mail',
         tone: 'neutral',
+        emailMessageId,
       };
     }
 
     case 'appointment_reminder_sent': {
       const recipient = readString(row.payload, 'recipient');
-      const messageId = readString(row.payload, 'message_id');
       const provider = readString(row.payload, 'provider');
+      const emailMessageId = readString(row.payload, 'email_message_id');
       const detail = joinDetail(
         recipient ? `to ${recipient}` : null,
-        provider ? `via ${humaniseProvider(provider)}` : null,
-        messageId ? `id ${shortMessageId(messageId)}` : null,
+        provider && !emailMessageId ? `via ${humaniseProvider(provider)}` : null,
       );
       return {
         ...base,
@@ -617,6 +618,7 @@ function mapEvent(
         detail,
         hint: 'mail',
         tone: 'neutral',
+        emailMessageId,
       };
     }
 
@@ -1057,13 +1059,6 @@ function humaniseFailureSource(source: string): string {
   }
 }
 
-function shortMessageId(id: string): string {
-  // Resend ids look like "re_AbCd1234..." — keep the prefix and a
-  // small tail so a triage-er can grep the dashboard without seeing
-  // the full hash on screen.
-  if (id.length <= 14) return id;
-  return `${id.slice(0, 6)}…${id.slice(-4)}`;
-}
 
 function escapeOr(s: string): string {
   // PostgREST OR-string escapes — commas and parens are syntactic

@@ -32,6 +32,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
+import { recordEmailMessage } from '../_shared/emailRecord.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -361,6 +362,24 @@ async function handle(req: Request): Promise<Response> {
   });
 
   if (!sendResult.ok) {
+    // Persist the failed dispatch so the Timeline can still surface what
+    // we tried to send. send_status='failed' separates this row from a
+    // delivered send in the admin email log.
+    await recordEmailMessage(admin, {
+      patient_id: apt.patient_id,
+      appointment_id: apt.id,
+      location_id: apt.location_id,
+      kind: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
+      template_key: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
+      subject,
+      html,
+      body_text: text,
+      to_email: patient.email,
+      from_email: RESEND_FROM,
+      reply_to: RESEND_REPLY_TO,
+      send_status: 'failed',
+      send_error: sendResult.error,
+    });
     await logFailure(admin, {
       severity: 'error',
       message: `Resend delivery failed: ${sendResult.error}`,
@@ -375,6 +394,26 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // ── Persist success ────────────────────────────────────────────
+  // Capture the exact bytes the patient received first so the Timeline's
+  // "View email" button can render a faithful preview; the id is then
+  // threaded onto the patient_events payload so the front-end maps the
+  // event row → rendered email row without an extra round trip.
+  const emailMessageId = await recordEmailMessage(admin, {
+    patient_id: apt.patient_id,
+    appointment_id: apt.id,
+    location_id: apt.location_id,
+    kind: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
+    template_key: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
+    subject,
+    html,
+    body_text: text,
+    to_email: patient.email,
+    from_email: RESEND_FROM,
+    reply_to: RESEND_REPLY_TO,
+    provider_message_id: sendResult.messageId ?? null,
+    send_status: 'sent',
+  });
+
   await admin.from('patient_events').insert({
     patient_id: apt.patient_id,
     event_type:
@@ -388,6 +427,7 @@ async function handle(req: Request): Promise<Response> {
       recipient: patient.email,
       provider: 'resend',
       message_id: sendResult.messageId ?? null,
+      email_message_id: emailMessageId,
     },
   });
 

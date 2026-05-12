@@ -144,6 +144,9 @@ export type { VisitTimelineProps } from './VisitTimeline/VisitTimeline.tsx';
 export { TimelineCard } from './TimelineCard/TimelineCard.tsx';
 export type { TimelineCardProps } from './TimelineCard/TimelineCard.tsx';
 
+export { EmailPreviewModal } from './EmailPreviewModal/EmailPreviewModal.tsx';
+export type { EmailPreviewModalProps } from './EmailPreviewModal/EmailPreviewModal.tsx';
+
 export { AppointmentTimeline } from './AppointmentTimeline/AppointmentTimeline.tsx';
 export type { AppointmentTimelineProps } from './AppointmentTimeline/AppointmentTimeline.tsx';
 

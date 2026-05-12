@@ -168,8 +168,9 @@ async function maybeEmail(
 
   if (!claimed || claimed.length === 0) return false; // another call already sent it
 
-  const sent = await sendShippingEmail(admin, {
+  const result = await sendShippingEmail(admin, {
     visitId:          visit.id,
+    patientId:        visit.patient_id,
     patientEmail:     patient.email,
     patientFirstName: patient.first_name,
     trackingNumber:   visit.tracking_number,
@@ -181,13 +182,39 @@ async function maybeEmail(
     resendFrom:       RESEND_FROM,
   });
 
-  if (!sent) {
+  if (!result.sent) {
     // Roll back the claim so another attempt can retry
     await admin
       .from('lng_visits')
       .update({ shipping_email_sent_at: null })
       .eq('id', visit.id);
+    return false;
   }
 
-  return sent;
+  // Email landed in a deferred call — book-lng-shipment already wrote a
+  // visit_shipped patient_events row with email_message_id=null. Patch
+  // that row so the Timeline's "View email" button works once the
+  // dispatch email actually goes out.
+  if (result.emailMessageId) {
+    const { data: existingEvents } = await admin
+      .from('patient_events')
+      .select('id, payload')
+      .eq('patient_id', visit.patient_id)
+      .eq('event_type', 'visit_shipped')
+      .eq('payload->>visit_id', visit.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const existing = Array.isArray(existingEvents) && existingEvents.length > 0
+      ? (existingEvents[0] as { id: string; payload: Record<string, unknown> | null })
+      : null;
+    if (existing?.id) {
+      const merged = { ...(existing.payload ?? {}), email_message_id: result.emailMessageId };
+      await admin
+        .from('patient_events')
+        .update({ payload: merged })
+        .eq('id', existing.id);
+    }
+  }
+
+  return true;
 }

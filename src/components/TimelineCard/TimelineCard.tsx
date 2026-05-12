@@ -1,8 +1,9 @@
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import {
   Box,
   CalendarCheck,
   CreditCard,
+  Eye,
   FileSignature,
   Flag,
   Mail,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
+import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
 import { theme } from '../../theme/index.ts';
 import type { TimelineEvent } from '../../lib/queries/visitTimeline.ts';
 
@@ -44,38 +46,55 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
     return `${events.length} ${events.length === 1 ? 'event' : 'events'}`;
   }, [loading, error, events.length]);
 
+  // The Timeline owns the email-preview modal so a single instance handles
+  // every "View email" trigger in the list — opening one row never tears
+  // down another, and the modal mounts above the Card's stacking context.
+  const [previewId, setPreviewId] = useState<string | null>(null);
+
   return (
-    <Card padding="lg">
-      <Header meta={meta} />
-      <div
-        style={{
-          height: 1,
-          background: theme.color.border,
-          margin: `${theme.space[4]}px 0 ${theme.space[5]}px`,
-        }}
+    <>
+      <Card padding="lg">
+        <Header meta={meta} />
+        <div
+          style={{
+            height: 1,
+            background: theme.color.border,
+            margin: `${theme.space[4]}px 0 ${theme.space[5]}px`,
+          }}
+        />
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <Skeleton height={48} radius={12} />
+            <Skeleton height={48} radius={12} />
+            <Skeleton height={48} radius={12} />
+          </div>
+        ) : error ? (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
+            Could not load the timeline: {error}
+          </p>
+        ) : events.length === 0 ? (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            {emptyMessage ?? 'No events yet.'}
+          </p>
+        ) : (
+          <ol style={{ listStyle: 'none', margin: 0, padding: 0, position: 'relative' }}>
+            {events.map((ev, i) => (
+              <Row
+                key={ev.id}
+                event={ev}
+                isLast={i === events.length - 1}
+                onPreviewEmail={setPreviewId}
+              />
+            ))}
+          </ol>
+        )}
+      </Card>
+      <EmailPreviewModal
+        open={previewId !== null}
+        emailMessageId={previewId}
+        onClose={() => setPreviewId(null)}
       />
-      {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-          <Skeleton height={48} radius={12} />
-          <Skeleton height={48} radius={12} />
-          <Skeleton height={48} radius={12} />
-        </div>
-      ) : error ? (
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
-          Could not load the timeline: {error}
-        </p>
-      ) : events.length === 0 ? (
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-          {emptyMessage ?? 'No events yet.'}
-        </p>
-      ) : (
-        <ol style={{ listStyle: 'none', margin: 0, padding: 0, position: 'relative' }}>
-          {events.map((ev, i) => (
-            <Row key={ev.id} event={ev} isLast={i === events.length - 1} />
-          ))}
-        </ol>
-      )}
-    </Card>
+    </>
   );
 }
 
@@ -117,7 +136,15 @@ function Header({ meta }: { meta: string }) {
   );
 }
 
-function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
+function Row({
+  event,
+  isLast,
+  onPreviewEmail,
+}: {
+  event: TimelineEvent;
+  isLast: boolean;
+  onPreviewEmail: (id: string) => void;
+}) {
   const icon = iconFor(event);
   const tone = toneFor(event);
   return (
@@ -213,8 +240,49 @@ function Row({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
         {event.facts && event.facts.length > 0 ? (
           <FactsLine facts={event.facts} />
         ) : null}
+        {event.emailMessageId ? (
+          <ViewEmailButton onClick={() => onPreviewEmail(event.emailMessageId!)} />
+        ) : null}
       </div>
     </li>
+  );
+}
+
+// Anchored to the bottom of the row, right under the detail line and any
+// facts chips. Reads as part of the event card rather than an external
+// action — same typographic weight as the actor suffix, with a subtle
+// accent treatment to invite the click. Pill border keeps it visually
+// adjacent to the facts chips without competing for attention.
+function ViewEmailButton({ onClick }: { onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        appearance: 'none',
+        marginTop: theme.space[2],
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '6px 12px',
+        borderRadius: theme.radius.pill,
+        border: `1px solid ${hover ? theme.color.accent : theme.color.border}`,
+        background: hover ? theme.color.accentBg : theme.color.surface,
+        color: theme.color.accent,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: theme.type.tracking.tight,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <Eye size={12} aria-hidden />
+      View email
+    </button>
   );
 }
 
