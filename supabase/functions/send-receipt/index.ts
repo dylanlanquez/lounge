@@ -177,15 +177,21 @@ Deno.serve(async (req) => {
   }
 
   // 3. Persist outcome
+  //
+  // The patient_events row is written in BOTH branches so the visit
+  // timeline always reflects what was attempted — a failed send still
+  // leaves a tappable trail with the persisted HTML + the failure
+  // reason. Without this the only signal staff would have that a
+  // receipt attempt happened at all is the payment_succeeded row
+  // above it, which doesn't tell them whether to retry from /admin.
+  let emailMessageId: string | null = null;
   if (!deliveryResult.ok) {
     await supabase
       .from('lng_receipts')
       .update({ failure_reason: deliveryResult.error, content: { ...receipt.content, html, text } })
       .eq('id', receipt.id);
-    // Email channel: also drop a failed-send row into lng_email_messages so
-    // the Timeline can surface what was attempted.
     if (receipt.channel === 'email') {
-      await recordEmailMessage(supabase, {
+      emailMessageId = await recordEmailMessage(supabase, {
         patient_id: patientId,
         visit_id: cart?.visit_id ?? null,
         kind: 'receipt',
@@ -199,6 +205,16 @@ Deno.serve(async (req) => {
         send_error: deliveryResult.error,
       });
     }
+    await writeReceiptTimelineEvent({
+      supabase,
+      patientId,
+      visitId: cart?.visit_id ?? null,
+      receipt,
+      payment,
+      recipient,
+      emailMessageId,
+      deliveryError: deliveryResult.error,
+    });
     return jsonResponse(200, { ok: false, error: deliveryResult.error });
   }
 
@@ -214,7 +230,6 @@ Deno.serve(async (req) => {
 
   // Persist email-channel receipt so the Visit Timeline's receipt event
   // exposes a "View email" preview. SMS receipts have no HTML to record.
-  let emailMessageId: string | null = null;
   if (receipt.channel === 'email') {
     emailMessageId = await recordEmailMessage(supabase, {
       patient_id: patientId,
@@ -232,23 +247,66 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (patientId) {
-    await supabase.from('patient_events').insert({
-      patient_id: patientId,
-      event_type: 'receipt_sent',
-      payload: {
-        receipt_id: receipt.id,
-        channel: receipt.channel,
-        recipient,
-        payment_id: payment.id,
-        visit_id: cart?.visit_id ?? null,
-        email_message_id: emailMessageId,
-      },
-    });
-  }
+  await writeReceiptTimelineEvent({
+    supabase,
+    patientId,
+    visitId: cart?.visit_id ?? null,
+    receipt,
+    payment,
+    recipient,
+    emailMessageId,
+    deliveryError: null,
+  });
 
   return jsonResponse(200, { ok: true, channel: receipt.channel, recipient, provider: deliveryResult.provider });
 });
+
+// Insert the visit-timeline-bearing patient_events row for this
+// receipt attempt. Skipped when patientId or visitId is missing
+// because the timeline filter (payload->>visit_id = visit.id with
+// patient_id = visit.patient_id) requires both — writing with nulls
+// would leave an orphan row that no surface ever displays. A null
+// here is loud-logged so a future audit can spot the regression.
+async function writeReceiptTimelineEvent(args: {
+  supabase: SupabaseClient;
+  patientId: string | null;
+  visitId: string | null;
+  receipt: ReceiptRow;
+  payment: PaymentRow;
+  recipient: string;
+  emailMessageId: string | null;
+  deliveryError: string | null;
+}): Promise<void> {
+  if (!args.patientId || !args.visitId) {
+    console.error('send-receipt: missing patient/visit context, timeline event skipped', {
+      receiptId: args.receipt.id,
+      patientId: args.patientId,
+      visitId: args.visitId,
+    });
+    return;
+  }
+  const { error } = await args.supabase.from('patient_events').insert({
+    patient_id: args.patientId,
+    event_type: 'receipt_sent',
+    notes: args.deliveryError,
+    payload: {
+      receipt_id: args.receipt.id,
+      channel: args.receipt.channel,
+      recipient: args.recipient,
+      payment_id: args.payment.id,
+      visit_id: args.visitId,
+      email_message_id: args.emailMessageId,
+      delivery_status: args.deliveryError ? 'failed' : 'sent',
+      delivery_error: args.deliveryError,
+    },
+  });
+  if (error) {
+    console.error('send-receipt: patient_events insert failed', {
+      receiptId: args.receipt.id,
+      message: error.message,
+    });
+  }
+}
 
 // ---------- Senders ----------
 

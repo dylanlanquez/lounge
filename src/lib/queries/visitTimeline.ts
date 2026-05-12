@@ -977,6 +977,13 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // Timeline icon matches the "View email" affordance.
       const isEmailEvent =
         r.event_type === 'receipt_sent' || (r.event_type === 'visit_shipped' && !!emailMessageId);
+      // Receipt rows now also fire on delivery failure (with the
+      // failed-status lng_email_messages id) so the timeline reflects
+      // every attempt. Lift the tone to alert when the payload carries
+      // a failure marker so staff spot a "Receipt failed" row at a
+      // glance.
+      const deliveryFailed =
+        r.event_type === 'receipt_sent' && r.payload?.delivery_status === 'failed';
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,
@@ -985,6 +992,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         detail: composePatientEventDetail(r),
         actorAccountId: r.actor_account_id,
         hint: isEmailEvent ? ('mail' as const) : ('flag' as const),
+        tone: deliveryFailed ? ('alert' as const) : undefined,
         emailMessageId,
       };
     });
@@ -1003,6 +1011,9 @@ function composePatientEventTitle(row: PatientEventRow): string {
     const payload = row.payload ?? {};
     const items = Array.isArray(payload.items) ? (payload.items as string[]).join(', ') : null;
     if (items) return `Dispatched: ${items}`;
+  }
+  if (row.event_type === 'receipt_sent' && row.payload?.delivery_status === 'failed') {
+    return 'Receipt failed to send';
   }
   return HUMAN_PATIENT_EVENT(row.event_type);
 }
@@ -1040,9 +1051,12 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
   if (row.event_type === 'receipt_sent') {
     const channel = typeof payload.channel === 'string' ? payload.channel : null;
     const recipient = typeof payload.recipient === 'string' ? payload.recipient : null;
+    const failed = payload.delivery_status === 'failed';
+    const error = typeof payload.delivery_error === 'string' ? payload.delivery_error : null;
     const parts = [
       recipient ? `to ${recipient}` : null,
       channel === 'sms' ? 'via SMS' : null,
+      failed && error ? error : null,
     ].filter(Boolean);
     return parts.length > 0 ? parts.join(' · ') : undefined;
   }

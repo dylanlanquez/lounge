@@ -227,10 +227,14 @@ export function dateRangeToUtcBounds(range: DateRange): { fromIso: string; toIso
 
 // Human label for the picker trigger. Shows the preset name when the
 // range matches a preset; falls back to "12 Apr → 25 Apr" / "12 Apr 2026"
-// for custom or single-day ranges.
+// for custom or single-day ranges. Looks across both DATE_RANGE_PRESETS
+// and LEDGER_EXTRA_PRESETS so any caller carrying an 'upcoming' / 'past'
+// range still resolves to a human label.
 export function dateRangeLabel(range: DateRange): string {
   if (range.preset !== 'custom') {
-    const preset = DATE_RANGE_PRESETS.find((p) => p.id === range.preset);
+    const preset =
+      DATE_RANGE_PRESETS.find((p) => p.id === range.preset) ??
+      LEDGER_EXTRA_PRESETS.find((p) => p.id === range.preset);
     if (!preset) {
       throw new Error(`Unknown preset on DateRange: ${range.preset}`);
     }

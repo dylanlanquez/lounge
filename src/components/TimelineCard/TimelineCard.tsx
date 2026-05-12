@@ -18,7 +18,10 @@ import { Toast } from '../Toast/Toast.tsx';
 import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
 import { theme } from '../../theme/index.ts';
 import type { TimelineEvent } from '../../lib/queries/visitTimeline.ts';
-import { resendAppointmentEmail } from '../../lib/queries/resendAppointmentEmail.ts';
+import {
+  resendAppointmentEmail,
+  resendEmailByMessageId,
+} from '../../lib/queries/resendAppointmentEmail.ts';
 
 // Pure presentation for an audit-trail timeline. Takes a fully
 // hydrated event list (each event already carries its title /
@@ -66,13 +69,23 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
   >(null);
 
   const handleResend = async (event: TimelineEvent) => {
-    if (!event.resendKind || !event.resendAppointmentId) return;
+    // Prefer the per-kind resender when the event carries one — it
+    // re-renders the email against current appointment data, which
+    // matters for confirmations (in case the booking was rescheduled
+    // between sends). Fall back to the generic emailMessageId replay
+    // for receipts / dispatch notifications / anything else whose
+    // content is immutable after the original send.
+    const useKindSender = event.resendKind && event.resendAppointmentId;
+    const useGenericSender = !useKindSender && event.emailMessageId;
+    if (!useKindSender && !useGenericSender) return;
     setResendingId(event.id);
     try {
-      const result = await resendAppointmentEmail({
-        kind: event.resendKind,
-        appointmentId: event.resendAppointmentId,
-      });
+      const result = useKindSender
+        ? await resendAppointmentEmail({
+            kind: event.resendKind!,
+            appointmentId: event.resendAppointmentId!,
+          })
+        : await resendEmailByMessageId(event.emailMessageId!);
       if (result.ok) {
         setToast({
           tone: 'success',
@@ -316,19 +329,25 @@ function Row({
         {event.facts && event.facts.length > 0 ? (
           <FactsLine facts={event.facts} />
         ) : null}
-        {event.emailMessageId || (event.resendKind && event.resendAppointmentId) ? (
-          <EmailActionRow>
-            {event.emailMessageId ? (
-              <ViewEmailButton onClick={() => onPreviewEmail(event.emailMessageId!)} />
-            ) : null}
-            {event.resendKind && event.resendAppointmentId ? (
-              <ResendEmailButton
-                busy={resending}
-                onClick={() => onResend(event)}
-              />
-            ) : null}
-          </EmailActionRow>
-        ) : null}
+        {(() => {
+          const hasView = !!event.emailMessageId;
+          const hasKindResend = !!(event.resendKind && event.resendAppointmentId);
+          // Every email-bearing row gets a Resend button — bespoke kind
+          // when one's wired (re-renders against current data), generic
+          // emailMessageId replay otherwise.
+          const hasResend = hasKindResend || hasView;
+          if (!hasView && !hasResend) return null;
+          return (
+            <EmailActionRow>
+              {hasView ? (
+                <ViewEmailButton onClick={() => onPreviewEmail(event.emailMessageId!)} />
+              ) : null}
+              {hasResend ? (
+                <ResendEmailButton busy={resending} onClick={() => onResend(event)} />
+              ) : null}
+            </EmailActionRow>
+          );
+        })()}
       </div>
     </li>
   );
