@@ -63,6 +63,10 @@ export interface DateRangePickerProps {
    * range back to null. Without it, the trigger has no clear affordance
    * — the caller is signalling that the range is always required. */
   onClear?: () => void;
+  /** Additional presets injected ABOVE the standard list. Used by the
+   * Ledger to surface "Upcoming" / "Past" without polluting the
+   * default preset list shared with Reports / Financials. */
+  extraPresets?: ReadonlyArray<import('../../lib/dateRange.ts').DateRangePreset>;
 }
 
 const PILL_PADDING_DESKTOP = 8;
@@ -80,6 +84,7 @@ export function DateRangePicker({
   disabled = false,
   placeholder = 'Choose dates',
   onClear,
+  extraPresets,
 }: DateRangePickerProps) {
   // The two-month popover stays the default on tablet portrait —
   // staff want to see both months side-by-side to pick from / to
@@ -348,6 +353,7 @@ export function DateRangePicker({
           canApply={canApply}
           onCancel={closePicker}
           onApply={handleApply}
+          extraPresets={extraPresets}
         />
       ) : null}
 
@@ -366,6 +372,7 @@ export function DateRangePicker({
           canApply={canApply}
           onClose={closePicker}
           onApply={handleApply}
+          extraPresets={extraPresets}
         />
       ) : null}
     </>
@@ -393,6 +400,7 @@ function DesktopPopover({
   canApply,
   onCancel,
   onApply,
+  extraPresets,
 }: {
   pos: { top: number; left?: number; right?: number } | null;
   activePreset: DateRangePresetId;
@@ -412,6 +420,7 @@ function DesktopPopover({
   canApply: boolean;
   onCancel: () => void;
   onApply: () => void;
+  extraPresets?: ReadonlyArray<import('../../lib/dateRange.ts').DateRangePreset>;
 }) {
   // Esc to close. Spec uses an invisible backdrop for outside-click
   // (sturdier than a document mousedown listener under re-renders).
@@ -459,6 +468,7 @@ function DesktopPopover({
           activePreset={activePreset}
           onPresetClick={onPresetClick}
           variant="desktop"
+          extraPresets={extraPresets}
         />
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <div
@@ -541,6 +551,7 @@ function MobileSheet({
   canApply,
   onClose,
   onApply,
+  extraPresets,
 }: {
   activePreset: DateRangePresetId;
   selFrom: string | null;
@@ -555,6 +566,7 @@ function MobileSheet({
   canApply: boolean;
   onClose: () => void;
   onApply: () => void;
+  extraPresets?: ReadonlyArray<import('../../lib/dateRange.ts').DateRangePreset>;
 }) {
   // Body scroll lock while the sheet is open (spec §5).
   useEffect(() => {
@@ -651,6 +663,7 @@ function MobileSheet({
             activePreset={activePreset}
             onPresetClick={onPresetClick}
             variant="mobile"
+            extraPresets={extraPresets}
           />
           <div
             aria-hidden
@@ -710,11 +723,20 @@ function PresetSidebar({
   activePreset,
   onPresetClick,
   variant,
+  extraPresets,
 }: {
   activePreset: DateRangePresetId;
   onPresetClick: (id: DateRangePresetId) => void;
   variant: 'desktop' | 'mobile';
+  extraPresets?: ReadonlyArray<import('../../lib/dateRange.ts').DateRangePreset>;
 }) {
+  // Extras render ABOVE the default list — they're the caller's
+  // most-relevant shortcuts (e.g. the Ledger's Upcoming / Past), so
+  // putting them at the top matches the user's mental order: "the one
+  // I want, then a calendar". A divider keeps the two groups visually
+  // distinct on desktop; on mobile they flow into the same grid since
+  // the chip layout is already comfortably scannable.
+  const extras = extraPresets ?? [];
   if (variant === 'mobile') {
     return (
       <div
@@ -726,6 +748,15 @@ function PresetSidebar({
           gap: theme.space[2],
         }}
       >
+        {extras.map((preset) => (
+          <PresetButton
+            key={preset.id}
+            label={preset.label}
+            active={preset.id === activePreset}
+            onClick={() => onPresetClick(preset.id)}
+            variant="mobile"
+          />
+        ))}
         {DATE_RANGE_PRESETS.map((preset) => (
           <PresetButton
             key={preset.id}
@@ -752,6 +783,25 @@ function PresetSidebar({
         gap: 2,
       }}
     >
+      {extras.map((preset) => (
+        <PresetButton
+          key={preset.id}
+          label={preset.label}
+          active={preset.id === activePreset}
+          onClick={() => onPresetClick(preset.id)}
+          variant="desktop"
+        />
+      ))}
+      {extras.length > 0 ? (
+        <div
+          aria-hidden
+          style={{
+            height: 1,
+            background: theme.color.border,
+            margin: `${theme.space[2]}px ${theme.space[1]}px`,
+          }}
+        />
+      ) : null}
       {DATE_RANGE_PRESETS.map((preset) => (
         <PresetButton
           key={preset.id}

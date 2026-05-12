@@ -147,7 +147,17 @@ function simpleHtml(bodyText: string, _name: string): string {
         .split('\n')
         .map((l) => {
           const esc = escapeHtml(l);
-          return esc.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+          // **bold** → <strong>. Runs first so the link parser sees
+          // the post-bold string.
+          const withBold = esc.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+          // [label](url) → tappable link. Lets the dispatch template
+          // wrap the tracking number in the DPD URL so the customer
+          // taps a single phrase instead of seeing a bare URL printed
+          // on a separate line. URLs survive escapeHtml's & → &amp;
+          // replacement (browsers tolerate &amp; inside href).
+          return withBold.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, url: string) => {
+            return `<a href="${url}" style="color:#0E1414;text-decoration:underline;font-family:monospace">${label}</a>`;
+          });
         })
         .join('<br>');
       return `<p style="margin:0 0 16px;color:#0E1414;line-height:1.6;">${inner}</p>`;

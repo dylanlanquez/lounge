@@ -2686,9 +2686,22 @@ function buildVisitHeroProps(
   if (visit.status === 'complete' && visit.fulfilment_method) {
     const isShipping = visit.fulfilment_method === 'shipping';
     const dispatched = !!visit.dispatch_ref;
+    // Label distinguishes three states so the hero reads correctly
+    // through the whole lifecycle:
+    //   • Passed to patient  → patient walked out with the work
+    //   • To be shipped       → fulfilment chosen, DPD label not yet created
+    //   • Shipped to patient → DPD label exists; work is on its way
+    // The previous code kept "To be shipped" forever even after the
+    // shipment had gone out, which read as "still pending dispatch"
+    // long after the parcel had been collected.
+    const label = !isShipping
+      ? 'Passed to patient'
+      : dispatched
+        ? 'Shipped to patient'
+        : 'To be shipped';
     pills.push({
       tone: dispatched ? 'arrived' : isShipping ? 'pending' : 'arrived',
-      label: isShipping ? 'To be shipped' : 'Passed to patient',
+      label,
       icon: isShipping ? <Package size={12} aria-hidden /> : <UserCheck size={12} aria-hidden />,
       // Once a DPD label is issued, the change action locks — staff
       // must cancel the shipment first. Pill stays visible as a

@@ -29,6 +29,14 @@ export type DateRangePresetId =
   | 'last_month'
   | 'this_quarter'
   | 'this_year'
+  // Forward-looking shortcuts used by the Ledger ("Upcoming" =
+  // today + 1 year, "Past" = 1 year up to yesterday). Not present
+  // in the default DATE_RANGE_PRESETS list because Reports /
+  // Financials are retrospective — the Ledger passes them in via
+  // DateRangePicker's extraPresets prop so they only appear on
+  // surfaces that actually use them.
+  | 'upcoming'
+  | 'past'
   | 'custom';
 
 export interface DateRange {
@@ -127,16 +135,52 @@ export const DATE_RANGE_PRESETS: DateRangePreset[] = [
   },
 ];
 
+// Forward-looking presets used by the Ledger (and any future schedule-
+// oriented surface). Kept SEPARATE from DATE_RANGE_PRESETS so the
+// Reports / Financials pickers — which exclusively look backwards —
+// don't surface "Upcoming" as a confusing option.
+//
+// Bounds are wide (1 year each direction) so a normal clinic horizon
+// fits without the receptionist needing to reach for the calendar.
+// Bounded, not open-ended, because the LedgerFilters / view query
+// treats null as "no filter" — picking a preset has to send real
+// values.
+export const LEDGER_EXTRA_PRESETS: DateRangePreset[] = [
+  {
+    id: 'upcoming',
+    label: 'Upcoming',
+    resolve: (now) => {
+      const start = formatDateIso(now);
+      const oneYearAhead = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate());
+      return { start, end: formatDateIso(oneYearAhead) };
+    },
+  },
+  {
+    id: 'past',
+    label: 'Past',
+    resolve: (now) => {
+      const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+      return { start: formatDateIso(oneYearAgo), end: formatDateIso(yesterday) };
+    },
+  },
+];
+
 // Resolve a preset to a concrete range using the supplied "now" (defaults
 // to the current time but parameterised so tests are deterministic). The
 // returned range carries the preset id so the picker label stays human.
+// Looks across both the standard list and the Ledger-extra presets so
+// any caller carrying an 'upcoming' / 'past' range can still re-resolve
+// it from its id without knowing where the preset originated.
 export function resolvePreset(id: DateRangePresetId, now: Date = new Date()): DateRange {
   if (id === 'custom') {
     // Custom has no resolver — caller must pass dates explicitly via
     // makeCustomRange() or by editing an existing range's dates.
     throw new Error("resolvePreset cannot expand 'custom' — use makeCustomRange()");
   }
-  const preset = DATE_RANGE_PRESETS.find((p) => p.id === id);
+  const preset =
+    DATE_RANGE_PRESETS.find((p) => p.id === id) ??
+    LEDGER_EXTRA_PRESETS.find((p) => p.id === id);
   if (!preset) {
     throw new Error(`Unknown DateRange preset: ${id}`);
   }
