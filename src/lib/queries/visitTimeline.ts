@@ -235,6 +235,14 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Items dispatched';
     case 'receipt_sent':
       return 'Receipt sent';
+    case 'appointment_confirmation_sent':
+      return 'Confirmation email sent';
+    case 'appointment_cancellation_sent':
+      return 'Cancellation email sent';
+    case 'appointment_reminder_sent':
+      return 'Reminder email sent';
+    case 'appointment_reminder_skipped':
+      return 'Reminder skipped';
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -943,29 +951,47 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
   // Visit-scoped slice of patient_events. Every Lounge writer that
   // emits a visit-level event puts the visit's id into payload.visit_id
   // (cart_line_removed, visit_ended_early, patient_unsuitable_reversed,
-  // walk_in_arrived, visit_arrived). Filter to that exact visit so a
-  // patient with multiple visits doesn't see another visit's events
-  // bleed in here — that's a confidentiality breach as well as a
-  // visual bug.
+  // walk_in_arrived, visit_arrived). We also pull appointment-scoped
+  // rows keyed by payload.appointment_id when the visit has one —
+  // confirmation / cancellation / reminder emails record themselves
+  // against the appointment, not the visit (the visit doesn't exist
+  // yet when the booking confirmation fires). The receptionist looking
+  // at the visit timeline should see EVERY email that touched this
+  // patient's journey through this booking, so OR both axes.
   //
-  // Patient-level events with no visit context (registration, no_show,
-  // virtual meeting, deposit failures) intentionally do NOT appear on
-  // a visit timeline; they belong on the patient profile instead.
+  // Patient-level events with no visit context AND no appointment
+  // context (registration, no_show, deposit failures) intentionally do
+  // NOT appear on a visit timeline; they belong on the patient profile
+  // instead.
+  const orClauses = [`payload->>visit_id.eq.${visit.id}`];
+  if (visit.appointment_id) {
+    orClauses.push(`payload->>appointment_id.eq.${visit.appointment_id}`);
+  }
   const { data, error: err } = await supabase
     .from('patient_events')
     .select('id, event_type, notes, payload, actor_account_id, created_at')
     .eq('patient_id', visit.patient_id)
-    .eq('payload->>visit_id', visit.id)
+    .or(orClauses.join(','))
     .order('created_at', { ascending: true });
   if (err) throw new Error(err.message);
   const rows = (data ?? []) as PatientEventRow[];
   // De-dup against the dedicated event types we already emit:
   //   • walk_in_arrived / visit_arrived -> via lng_visits.opened_at
   //   • visit_closed                    -> via lng_visits.closed_at
+  //   • appointment_booked              -> via fetchAppointmentEvents
+  //                                        synthesising "Booking placed"
+  //                                        directly off lng_appointments
+  //                                        (richer because it carries
+  //                                        the intake facts).
   // The patient_events writes for these still happen (Meridian and
   // other off-app consumers depend on them); we just don't surface
   // them in the timeline twice.
-  const skip = new Set(['walk_in_arrived', 'visit_arrived', 'visit_closed']);
+  const skip = new Set([
+    'walk_in_arrived',
+    'visit_arrived',
+    'visit_closed',
+    'appointment_booked',
+  ]);
   const events: RawTimelineEvent[] = rows
     .filter((r) => !skip.has(r.event_type))
     .map((r) => {
@@ -974,9 +1000,11 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
           ? r.payload.email_message_id
           : null;
       // Email-bearing event_types lift their hint + tone so the
-      // Timeline icon matches the "View email" affordance.
-      const isEmailEvent =
-        r.event_type === 'receipt_sent' || (r.event_type === 'visit_shipped' && !!emailMessageId);
+      // Timeline icon matches the "View email" affordance. Appointment
+      // emails fold in here too once useVisitTimeline OR-fetches them
+      // alongside visit-scoped rows; their email_message_id flows
+      // through unchanged so View email + Resend pills work the same.
+      const isEmailEvent = EMAIL_EVENT_TYPES.has(r.event_type) && !!emailMessageId;
       // Receipt rows now also fire on delivery failure (with the
       // failed-status lng_email_messages id) so the timeline reflects
       // every attempt. Lift the tone to alert when the payload carries
@@ -984,6 +1012,12 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // glance.
       const deliveryFailed =
         r.event_type === 'receipt_sent' && r.payload?.delivery_status === 'failed';
+      const skipped = r.event_type === 'appointment_reminder_skipped';
+      // Appointment-email rows carry resend metadata so the Timeline's
+      // generic Resend pill routes through the bespoke sender that
+      // re-renders against current appointment data — a reschedule
+      // between original send and resend produces the right new time.
+      const resendInfo = appointmentResendInfoFor(r);
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,
@@ -991,12 +1025,48 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         title: composePatientEventTitle(r),
         detail: composePatientEventDetail(r),
         actorAccountId: r.actor_account_id,
-        hint: isEmailEvent ? ('mail' as const) : ('flag' as const),
-        tone: deliveryFailed ? ('alert' as const) : undefined,
+        hint: isEmailEvent || skipped ? ('mail' as const) : ('flag' as const),
+        tone: deliveryFailed ? ('alert' as const) : skipped ? ('warn' as const) : undefined,
         emailMessageId,
+        resendKind: resendInfo?.kind ?? null,
+        resendAppointmentId: resendInfo?.appointmentId ?? null,
       };
     });
   return { events, rawRows: rows };
+}
+
+// patient_events event_types that represent an outgoing email. Used
+// to lift hint + check for the email_message_id payload so the
+// Timeline renders the View + Resend pills.
+const EMAIL_EVENT_TYPES = new Set<string>([
+  'receipt_sent',
+  'visit_shipped',
+  'appointment_confirmation_sent',
+  'appointment_cancellation_sent',
+  'appointment_reminder_sent',
+]);
+
+// Maps an appointment-email patient_events row to the per-kind resend
+// dispatcher's args so the Timeline's Resend pill routes through the
+// right sender (re-rendering against current appointment data) rather
+// than the generic emailMessageId replay (which would resend the
+// stale snapshot). Returns null for any non-appointment-email row;
+// those fall through to the generic resend.
+function appointmentResendInfoFor(
+  row: PatientEventRow,
+): { kind: 'confirmation' | 'cancellation' | 'reminder'; appointmentId: string } | null {
+  const appointmentId = typeof row.payload?.appointment_id === 'string' ? row.payload.appointment_id : null;
+  if (!appointmentId) return null;
+  if (row.event_type === 'appointment_confirmation_sent') {
+    return { kind: 'confirmation', appointmentId };
+  }
+  if (row.event_type === 'appointment_cancellation_sent') {
+    return { kind: 'cancellation', appointmentId };
+  }
+  if (row.event_type === 'appointment_reminder_sent') {
+    return { kind: 'reminder', appointmentId };
+  }
+  return null;
 }
 
 // Title for a generic patient_events row. For cart_line_removed the
@@ -1059,6 +1129,36 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
       failed && error ? error : null,
     ].filter(Boolean);
     return parts.length > 0 ? parts.join(' · ') : undefined;
+  }
+  if (
+    row.event_type === 'appointment_confirmation_sent' ||
+    row.event_type === 'appointment_cancellation_sent' ||
+    row.event_type === 'appointment_reminder_sent'
+  ) {
+    const recipient = typeof payload.recipient === 'string' ? payload.recipient : null;
+    const oldCancelled = typeof payload.old_appointment_id_cancelled === 'string'
+      ? payload.old_appointment_id_cancelled
+      : null;
+    const parts = [
+      recipient ? `to ${recipient}` : null,
+      oldCancelled ? 'replaces a cancelled booking' : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+  }
+  if (row.event_type === 'appointment_reminder_skipped') {
+    const reason = typeof payload.reason === 'string' ? payload.reason : null;
+    if (!reason) return undefined;
+    switch (reason) {
+      case 'no_email_on_patient':
+      case 'no_email_on_file':
+        return 'No email on file for the patient';
+      case 'too_late':
+        return 'Sweep ran too late for this slot';
+      case 'opted_out':
+        return 'Patient opted out of reminders';
+      default:
+        return reason.replace(/_/g, ' ');
+    }
   }
   if (row.event_type === 'visit_ended_early') {
     // Surface the reason category as the headline detail. Note text
