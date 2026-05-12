@@ -362,10 +362,18 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
       'Book-in & Imps at 09:00 (30 min). Please return at approximately 13:30 for Try In (10 min).',
   },
   {
-    name: 'googleCalendarUrl',
-    label: 'Add-to-calendar URL',
+    name: 'addToCalendarUrl',
+    label: 'Add to calendar (universal)',
     description:
-      'Pre-built Google Calendar link with the appointment details. Drop it inside [button:Label](url) for a tappable CTA.',
+      'Tappable calendar invite for the patient’s phone. On iOS Mail / Safari and Android Gmail / Chrome the link opens the native Calendar app with the event ready to add. Desktop browsers download the .ics file. Use inside [button:Add to calendar](url) for a CTA in the email body.',
+    sample:
+      'https://npuvhxakffxqoszytkxw.supabase.co/functions/v1/lng-appointment-ics?id=abc&token=xyz',
+  },
+  {
+    name: 'googleCalendarUrl',
+    label: 'Add to Google Calendar (web)',
+    description:
+      'Pre-built Google Calendar link for users who specifically want to add the event to Google Calendar in their browser. The universal {{addToCalendarUrl}} above is preferred for the primary CTA; use this only when you also want a Google-specific shortcut.',
     sample:
       'https://www.google.com/calendar/render?action=TEMPLATE&text=Click-in+veneers&dates=20260509T100000Z/20260509T110000Z',
   },

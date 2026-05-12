@@ -469,6 +469,13 @@ function buildVariables(
     manageUrl: apt.manage_token
       ? `${WIDGET_PUBLIC_URL}/manage?token=${apt.manage_token}`
       : '',
+    // Universal add-to-calendar URL — see the parallel block in
+    // send-appointment-confirmation for the rationale. Empty when the
+    // row predates the manage_token column so {{addToCalendarUrl}}
+    // renders as nothing rather than a broken link.
+    addToCalendarUrl: apt.manage_token
+      ? `${SUPABASE_URL}/functions/v1/lng-appointment-ics?id=${apt.id}&token=${apt.manage_token}`
+      : '',
   };
 }
 
