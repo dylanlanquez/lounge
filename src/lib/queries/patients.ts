@@ -480,7 +480,13 @@ export function usePatientList(
         // an unfiltered list — same posture as before this refactor.
         const filtered =
           cleaned.length >= 2 ? applyPatientSearch(baseQuery, cleaned) : baseQuery;
+        // lng_patient_name_tier is a Postgres computed column (function
+        // of patients) that returns 0 for letter-starting first names,
+        // 1 for digit/symbol starts, 2 for empty/null. Ordering by it
+        // first puts A-Z patients ahead of the "1Test"-style imports
+        // that glibc collation otherwise floats to the top.
         const q = filtered
+          .order('lng_patient_name_tier', { ascending: true })
           .order('first_name', { ascending: true })
           .order('last_name', { ascending: true })
           .range(startIdx, endIdx);
