@@ -45,6 +45,7 @@ import {
   checkBookingConflict,
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
+import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { type PatientRow, patientFullName } from '../../lib/queries/patients.ts';
 import { supabase } from '../../lib/supabase.ts';
 
@@ -119,6 +120,14 @@ export function NewBookingSheet({
   const [axisOptions, setAxisOptions] = useState<Partial<Record<AxisKey, AxisValueOption[]>>>({});
   const [axisOptionsLoading, setAxisOptionsLoading] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>('');
+  // Per-host Google Meet integration. Only relevant when the picked
+  // service is virtual_impression_appointment — for everything else
+  // we leave this null and skip the dropdown entirely. createAppointment
+  // routes virtual bookings through the new per-host edge function
+  // when meetHostId is set; otherwise it falls back to the legacy
+  // service-account flow (used by Calendly imports).
+  const [meetHostId, setMeetHostId] = useState<string | null>(null);
+  const { hosts: meetHosts, loading: meetHostsLoading } = useMeetHosts({ activeOnly: true });
   // Default sendEmail to true, then re-derive once a patient is
   // picked (it stays on if they have an email, off if not). The
   // operator can flip it manually either way.
@@ -159,6 +168,7 @@ export function NewBookingSheet({
     setAxisOptions({});
     setAxisOptionsLoading(false);
     setNotes('');
+    setMeetHostId(null);
     setSendEmail(true);
     setSendEmailUserOverride(false);
     setConfig(null);
@@ -182,6 +192,21 @@ export function NewBookingSheet({
     setAxisValues({ repair_variant: null, product_key: null, arch: null });
     setAxisOptions({});
   }, [serviceType]);
+
+  // Auto-pick the top-priority host as soon as a virtual service is
+  // chosen so the receptionist sees the most common selection
+  // pre-filled. Wipe back to null whenever the service flips away
+  // from virtual — we never want a stale host id leaking into a
+  // non-virtual booking row.
+  const isVirtualService = serviceType === 'virtual_impression_appointment';
+  useEffect(() => {
+    if (!isVirtualService) {
+      setMeetHostId(null);
+      return;
+    }
+    if (meetHostId) return;
+    if (meetHosts.length > 0) setMeetHostId(meetHosts[0]!.id);
+  }, [isVirtualService, meetHosts, meetHostId]);
 
   // ── Load axis option lists for the picked service ──────────────
   useEffect(() => {
@@ -352,6 +377,11 @@ export function NewBookingSheet({
   }, [hoursForDate, time]);
 
   const slotIsValid = !!config && !!date && !!time && inWorkingHours;
+  // Virtual services require a Meet host. The dropdown auto-picks
+  // the first one when hosts exist, so this guard mostly trips when
+  // no host has been connected yet — Save stays disabled until
+  // someone runs the OAuth flow in Admin > Services.
+  const meetHostPicked = !isVirtualService || !!meetHostId;
   const canSave =
     !!patient &&
     !!serviceType &&
@@ -361,7 +391,8 @@ export function NewBookingSheet({
     !checkingConflicts &&
     !saving &&
     !configError &&
-    !conflictError;
+    !conflictError &&
+    meetHostPicked;
 
   // Build the human-readable event_type_label that goes onto the row.
   // Receptionists see this on schedule cards, patients see it on
@@ -400,6 +431,7 @@ export function NewBookingSheet({
         repairVariant: axisValues.repair_variant,
         productKey: axisValues.product_key,
         arch: axisValues.arch,
+        meetHostId: isVirtualService ? meetHostId : null,
       });
       onCreated(result.appointmentId, {
         emailSent: result.emailSent,
@@ -568,6 +600,39 @@ export function NewBookingSheet({
               </Section>
             );
           })}
+
+          {isVirtualService ? (
+            <Section
+              title="Meeting host"
+              required
+              info="Whose Google account owns the Meet room for this appointment. The host's calendar reflects the booking and attendance data is pulled from the same Google account after the meeting ends."
+            >
+              {meetHosts.length === 0 ? (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.sm,
+                    color: theme.color.alert,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  No Meet hosts connected yet. Open Admin, Services and connect a Google account before booking a virtual appointment through this flow.
+                </p>
+              ) : (
+                <DropdownSelect<string>
+                  ariaLabel="Meeting host"
+                  value={meetHostId ?? ''}
+                  onChange={(v) => setMeetHostId(v || null)}
+                  options={meetHosts.map((h) => ({
+                    value: h.id,
+                    label: `${h.display_name} (${h.google_email})`,
+                  }))}
+                  placeholder={meetHostsLoading ? 'Loading hosts…' : 'Pick a host'}
+                  disabled={meetHostsLoading}
+                />
+              )}
+            </Section>
+          ) : null}
 
           <Section
             title="When"

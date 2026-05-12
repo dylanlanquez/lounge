@@ -62,6 +62,13 @@ export async function createAppointment(input: {
   repairVariant?: string | null;
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
+  // Per-host Meet integration. Set on virtual appointments so the
+  // Meet space gets created under THIS host's OAuth grant (and so
+  // attendance can be fetched later via the Meet REST API). Omitting
+  // it for a virtual appointment falls back to the legacy service-
+  // account google-meet-create — used today by Calendly imports
+  // and any service that hasn't been wired through the new flow yet.
+  meetHostId?: string | null;
 }): Promise<CreateAppointmentResult> {
   // ── 1. Input validation ────────────────────────────────────────
   if (!input.patientId) throw new Error('Pick a patient first.');
@@ -162,13 +169,27 @@ export async function createAppointment(input: {
   // Best-effort: a Meet creation failure is logged server-side but
   // doesn't unwind the booking. The staff can see the appointment in
   // the schedule and add the link manually if needed.
+  //
+  // Two-path routing:
+  //   • meetHostId set     → meet-create-space (per-host OAuth, lets
+  //                          us pull Meet attendance later).
+  //   • no meetHostId      → legacy google-meet-create (service-account
+  //                          flow, still used by Calendly imports and
+  //                          any caller that hasn't wired the host
+  //                          dropdown yet). No attendance available.
   if (input.serviceType === 'virtual_impression_appointment') {
     try {
-      await supabase.functions.invoke('google-meet-create', {
-        body: { appointmentId },
-      });
+      if (input.meetHostId) {
+        await supabase.functions.invoke('meet-create-space', {
+          body: { appointment_id: appointmentId, host_id: input.meetHostId },
+        });
+      } else {
+        await supabase.functions.invoke('google-meet-create', {
+          body: { appointmentId },
+        });
+      }
     } catch (e) {
-      console.warn('[createAppointment] google-meet-create invoke failed:', e);
+      console.warn('[createAppointment] meet creation invoke failed:', e);
     }
   }
 

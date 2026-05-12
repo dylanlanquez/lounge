@@ -150,6 +150,9 @@ export type { EmailPreviewModalProps } from './EmailPreviewModal/EmailPreviewMod
 export { AppointmentTimeline } from './AppointmentTimeline/AppointmentTimeline.tsx';
 export type { AppointmentTimelineProps } from './AppointmentTimeline/AppointmentTimeline.tsx';
 
+export { MeetAttendanceCard } from './MeetAttendanceCard/MeetAttendanceCard.tsx';
+export type { MeetAttendanceCardProps } from './MeetAttendanceCard/MeetAttendanceCard.tsx';
+
 export { AppointmentHero } from './AppointmentHero/AppointmentHero.tsx';
 export type {
   AppointmentHeroProps,

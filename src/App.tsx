@@ -29,6 +29,7 @@ const CashCounts = lazy(() => import('./routes/CashCounts.tsx').then((m) => ({ d
 // layer to book.venneir.com (see vercel.json), so the staff
 // bundle no longer needs the customer widget code at all.
 const Arrival = lazy(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })));
+const GoogleMeetCallback = lazy(() => import('./routes/GoogleMeetCallback.tsx').then((m) => ({ default: m.GoogleMeetCallback })));
 const NotFound = lazy(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })));
 
 function RouteFallback() {
@@ -181,6 +182,7 @@ function RoutedErrorBoundary() {
           {/* /financials merged into /reports — keep the alias so old
               bookmarks and existing TopBar shortcuts still land. */}
           <Route path="/financials" element={<Navigate to="/reports" replace />} />
+          <Route path="/auth/google/callback" element={<GoogleMeetCallback />} />
           <Route path="/arrival/appointment/:id" element={<RequireStaff><Arrival /></RequireStaff>} />
           <Route path="/arrival/walk-in/:id" element={<RequireStaff><Arrival /></RequireStaff>} />
           {/* old aliases */}

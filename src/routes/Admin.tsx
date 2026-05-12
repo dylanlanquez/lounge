@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Unplug, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -91,6 +91,12 @@ import {
   useCatalogueAll,
   type ArchMatch,
 } from '../lib/queries/catalogue.ts';
+import {
+  deleteMeetHost,
+  setMeetHostActive,
+  startMeetHostOAuth,
+  useMeetHosts,
+} from '../lib/queries/meetHosts.ts';
 import {
   setCatalogueWaiverRequirements,
   suggestNextVersion,
@@ -2928,6 +2934,7 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
   const displayRows = localRows.length > 0 ? localRows : filteredRows;
 
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
     <Card padding="md">
       <div
         style={{
@@ -3030,6 +3037,257 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         </ul>
       )}
 
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </Card>
+    {isServices ? <MeetHostsCard /> : null}
+    </div>
+  );
+}
+
+// ── Meet hosts ──────────────────────────────────────────────────────────────
+// Manages the per-host Google Meet integration. Admin connects one or
+// more Google accounts; native Lounge virtual appointments create their
+// Meet space under the chosen host's OAuth grant so attendance can be
+// pulled back via the Meet REST API (which a shared service account
+// can't read). The Calendly-imported flow continues to use the legacy
+// service-account google-meet-create function until Calendly is fully
+// retired.
+function MeetHostsCard() {
+  const { hosts, loading, error, refresh } = useMeetHosts({ activeOnly: false });
+  const [busyConnect, setBusyConnect] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+  const navigate = useNavigate();
+
+  // Surface a success toast after the /auth/google/callback page
+  // routes back with ?meet_connected=1. Pull the flag once and strip
+  // it so a page refresh doesn't replay the toast.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('meet_connected') === '1') {
+      setToast({ tone: 'success', title: 'Meet host connected' });
+      url.searchParams.delete('meet_connected');
+      navigate(`${url.pathname}?${url.searchParams.toString()}`, { replace: true });
+    }
+  }, [navigate]);
+
+  const onConnect = async () => {
+    setBusyConnect(true);
+    try {
+      const result = await startMeetHostOAuth(window.location.pathname + window.location.search);
+      if (!result.ok || !result.url) {
+        setToast({
+          tone: 'error',
+          title: 'Could not start Google sign-in',
+          description: result.error ?? undefined,
+        });
+        setBusyConnect(false);
+        return;
+      }
+      window.location.assign(result.url);
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not start Google sign-in',
+        description: e instanceof Error ? e.message : String(e),
+      });
+      setBusyConnect(false);
+    }
+  };
+
+  const onToggleActive = async (id: string, nextActive: boolean) => {
+    try {
+      await setMeetHostActive(id, nextActive);
+      refresh();
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: nextActive ? 'Could not reactivate host' : 'Could not deactivate host',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const onDelete = async (id: string, label: string) => {
+    if (!window.confirm(`Remove ${label}? Their stored OAuth tokens will be deleted and any future appointment that lists them as host will need a fresh selection.`)) {
+      return;
+    }
+    try {
+      await deleteMeetHost(id);
+      refresh();
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not remove host',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  return (
+    <Card padding="md">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          marginBottom: theme.space[4],
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+            Meet hosts
+          </h2>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+              maxWidth: 620,
+            }}
+          >
+            Google accounts authorised to host virtual appointments. The booking form lets the receptionist pick which host owns each Meet, and attendance is pulled back to the appointment detail page after the meeting ends.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onConnect} disabled={busyConnect}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Video size={16} /> {busyConnect ? 'Opening Google…' : 'Connect Google account'}
+          </span>
+        </Button>
+      </div>
+
+      {error ? (
+        <p style={{ color: theme.color.alert, margin: 0 }}>Could not load Meet hosts: {error}</p>
+      ) : loading ? (
+        <Skeleton height={64} radius={12} />
+      ) : hosts.length === 0 ? (
+        <EmptyState
+          icon={<Video size={24} />}
+          title="No Meet hosts connected"
+          description="Connect a Google account to enable virtual impression appointments through the per-host flow."
+        />
+      ) : (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+          }}
+        >
+          {hosts.map((host) => (
+            <li
+              key={host.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: theme.space[3],
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                borderRadius: theme.radius.input,
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0 }}>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 36,
+                    height: 36,
+                    borderRadius: theme.radius.pill,
+                    background: host.is_active ? theme.color.accentBg : theme.color.bg,
+                    color: host.is_active ? theme.color.accent : theme.color.inkMuted,
+                    flexShrink: 0,
+                  }}
+                  aria-hidden
+                >
+                  <Video size={16} />
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.base,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.ink,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {host.display_name}
+                  </p>
+                  <p
+                    style={{
+                      margin: `${theme.space[1]}px 0 0`,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {host.google_email}
+                    {host.is_active ? null : <span style={{ marginLeft: 8 }}>· Inactive</span>}
+                  </p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <button
+                  type="button"
+                  onClick={() => onToggleActive(host.id, !host.is_active)}
+                  style={{
+                    appearance: 'none',
+                    border: `1px solid ${theme.color.border}`,
+                    background: theme.color.surface,
+                    color: theme.color.ink,
+                    cursor: 'pointer',
+                    padding: `6px 12px`,
+                    borderRadius: theme.radius.pill,
+                    fontSize: theme.type.size.xs,
+                    fontWeight: theme.type.weight.semibold,
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  {host.is_active ? 'Deactivate' : 'Reactivate'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(host.id, host.display_name)}
+                  aria-label={`Remove ${host.display_name}`}
+                  style={{
+                    appearance: 'none',
+                    border: `1px solid ${theme.color.border}`,
+                    background: theme.color.surface,
+                    color: theme.color.alert,
+                    cursor: 'pointer',
+                    padding: 0,
+                    width: 30,
+                    height: 30,
+                    borderRadius: theme.radius.pill,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <Unplug size={14} aria-hidden />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {toast ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
           <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />

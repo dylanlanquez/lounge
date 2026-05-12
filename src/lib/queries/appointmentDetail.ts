@@ -44,6 +44,14 @@ export interface AppointmentDetailRow {
   patient_id: string;
   join_url: string | null;
   meeting_platform: string | null;
+  // Per-host Meet integration fields. Populated when the appointment
+  // was booked through the manual booking flow with a Meet host
+  // selected; null for Calendly-imported rows that still go through
+  // the legacy service-account google-meet-create (no attendance
+  // available for those — they have join_url but no host).
+  meet_host_id: string | null;
+  meet_space_id: string | null;
+  meet_meeting_code: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   // Deposit captured at booking time. Null when no deposit was taken
   // (Calendly event without one, or native booking pre-deposit
@@ -110,6 +118,9 @@ interface RawAppointment {
   patient_id: string;
   join_url: string | null;
   meeting_platform: string | null;
+  meet_host_id: string | null;
+  meet_space_id: string | null;
+  meet_meeting_code: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   deposit_pence: number | null;
   deposit_currency: string | null;
@@ -143,7 +154,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, meeting_platform, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -286,6 +297,9 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           patient_id: appt.patient_id,
           join_url: appt.join_url,
           meeting_platform: appt.meeting_platform,
+          meet_host_id: (appt as RawAppointment & { meet_host_id?: string | null }).meet_host_id ?? null,
+          meet_space_id: (appt as RawAppointment & { meet_space_id?: string | null }).meet_space_id ?? null,
+          meet_meeting_code: (appt as RawAppointment & { meet_meeting_code?: string | null }).meet_meeting_code ?? null,
           intake: appt.intake,
           deposit_pence: appt.deposit_pence,
           deposit_currency: appt.deposit_currency,

@@ -29,6 +29,7 @@ import {
   type AppointmentHeroPill,
   type AppointmentHeroTone,
   AppointmentTimeline,
+  MeetAttendanceCard,
   BottomSheet,
   Breadcrumb,
   Button,
@@ -506,6 +507,16 @@ function Loaded({
           appt.reschedule_to_id ? navigate(`/appointment/${appt.reschedule_to_id}`) : undefined
         }
       />
+
+      {appt.meet_space_id ? (
+        <section style={{ marginTop: theme.space[5] }}>
+          <MeetAttendanceCard
+            appointmentId={appt.id}
+            meetMeetingCode={appt.meet_meeting_code}
+            meetingHasEnded={new Date(appt.end_at).getTime() < Date.now()}
+          />
+        </section>
+      ) : null}
 
       <section style={{ marginTop: theme.space[5] }}>
         <AppointmentTimeline appointmentId={appt.id} />
