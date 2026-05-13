@@ -133,6 +133,15 @@ function bundleConfig(brand: 'venneir' | 'denture'): UserConfig {
     // the host page, so favicons / PWA manifest / service worker are
     // not relevant. Suppresses ~100 KB of accidental copies.
     publicDir: false,
+    // Library mode (build.lib) doesn't auto-define process.env.NODE_ENV
+    // the way an app build does. Without this React's dev/prod branch
+    // hits a bare `process` reference at runtime and throws
+    // "process is not defined" the moment the bundle loads in the
+    // host Shopify page. Pin to production so the dev-only code is
+    // dead-code-eliminated and no runtime `process` access remains.
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('production'),
+    },
     build: {
       target: 'es2022',
       sourcemap: true,
