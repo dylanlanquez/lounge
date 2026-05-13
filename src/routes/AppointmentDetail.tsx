@@ -580,6 +580,8 @@ function Loaded({
             patientRsvpStatus={appt.patient_rsvp_status}
             patientRsvpUpdatedAt={appt.patient_rsvp_updated_at}
             patientEmail={appt.patient.email}
+            patientFirstName={appt.patient.first_name}
+            patientLastName={appt.patient.last_name}
           />
         </section>
       ) : null}

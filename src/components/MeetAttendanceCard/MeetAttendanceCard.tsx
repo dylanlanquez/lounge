@@ -59,6 +59,12 @@ export interface MeetAttendanceCardProps {
   // a different Google account than the one we have, the only visible
   // signal is the display name in the participants list.
   patientEmail: string | null;
+  // The patient's name on file. Used to flag non-host participants
+  // whose Meet display name doesn't roughly match (different Google
+  // account, anonymous join, or some other identity-confusion case).
+  // Both fields may be null — the matcher tolerates either.
+  patientFirstName: string | null;
+  patientLastName: string | null;
 }
 
 export function MeetAttendanceCard({
@@ -73,6 +79,8 @@ export function MeetAttendanceCard({
   patientRsvpStatus,
   patientRsvpUpdatedAt: _patientRsvpUpdatedAt,
   patientEmail,
+  patientFirstName,
+  patientLastName,
 }: MeetAttendanceCardProps) {
   const { rows, loading, error, refresh } = useMeetAttendance(appointmentId);
   const [pulling, setPulling] = useState(false);
@@ -166,7 +174,11 @@ export function MeetAttendanceCard({
         ) : grouped.length === 0 ? null : (
           <>
             <SectionLabel>Participants</SectionLabel>
-            <ParticipantList grouped={grouped} />
+            <ParticipantList
+              grouped={grouped}
+              patientFirstName={patientFirstName}
+              patientLastName={patientLastName}
+            />
           </>
         )}
         <FooterHint />
@@ -440,14 +452,14 @@ function MetadataList({
   if (patientEmail) {
     const status = patientRsvpStatus
       ? ({
-          accepted: { label: 'Patient accepted the invite', tone: 'success' as const },
-          declined: { label: 'Patient declined the invite', tone: 'warn' as const },
-          tentative: { label: 'Patient marked as maybe', tone: 'muted' as const },
-          needsAction: { label: 'Patient has not clicked Yes / No / Maybe yet', tone: 'muted' as const },
+          accepted: { label: 'Patient accepted in Google Calendar', tone: 'success' as const },
+          declined: { label: 'Patient declined in Google Calendar', tone: 'warn' as const },
+          tentative: { label: 'Patient marked as maybe in Google Calendar', tone: 'muted' as const },
+          needsAction: { label: "Patient has not responded in Google Calendar (often left untouched by Apple Mail or Outlook recipients)", tone: 'muted' as const },
         } satisfies Record<'accepted' | 'declined' | 'tentative' | 'needsAction', { label: string; tone: 'success' | 'warn' | 'muted' }>)[patientRsvpStatus]
-      : { label: 'Patient has not clicked Yes / No / Maybe yet', tone: 'muted' as const };
+      : { label: "Patient has not responded in Google Calendar (often left untouched by Apple Mail or Outlook recipients)", tone: 'muted' as const };
     rows.push({
-      label: 'Calendar invite',
+      label: 'Google Calendar invite',
       value: (
         <span>
           <span style={{ color: theme.color.ink }}>Sent to {patientEmail}.</span>{' '}
@@ -582,87 +594,171 @@ function groupByPerson(rows: MeetAttendanceRow[]): GroupedParticipant[] {
   });
 }
 
-function ParticipantList({ grouped }: { grouped: GroupedParticipant[] }) {
+function ParticipantList({
+  grouped,
+  patientFirstName,
+  patientLastName,
+}: {
+  grouped: GroupedParticipant[];
+  patientFirstName: string | null;
+  patientLastName: string | null;
+}) {
+  // Display-name occurrence index. When two distinct Google accounts
+  // share the same display name (genuine case: receptionist on work +
+  // personal account during a test, or two staff with the same name),
+  // the participant list shows two rows with identical labels. We
+  // count duplicates here so each gets a small "account 1 / account 2"
+  // disambiguator — otherwise operators can't tell the rows apart.
+  const sameNameTally = new Map<string, number>();
+  for (const p of grouped) sameNameTally.set(p.displayName, (sameNameTally.get(p.displayName) ?? 0) + 1);
+  const sameNameSeen = new Map<string, number>();
+
   return (
     <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      {grouped.map((person) => (
-        <li
-          key={person.key}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: theme.space[3],
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
-            borderRadius: theme.radius.input,
-            background: theme.color.surface,
-            border: `1px solid ${theme.color.border}`,
-          }}
-        >
-          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.base,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {person.displayName}
-              </p>
-              <HostChip isHost={person.isHost} />
-            </div>
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {person.sessionCount === 1
-                ? formatSingleSessionWindow(person)
-                : `${person.sessionCount} sessions · ${formatSingleSessionWindow(person)}`}
-            </p>
-          </div>
-          <div
+      {grouped.map((person) => {
+        const dupTotal = sameNameTally.get(person.displayName) ?? 1;
+        const dupIndex = (sameNameSeen.get(person.displayName) ?? 0) + 1;
+        sameNameSeen.set(person.displayName, dupIndex);
+        const accountSuffix = dupTotal > 1 ? ` (account ${dupIndex}/${dupTotal})` : '';
+        // Identity match is only meaningful for non-host participants —
+        // it's specifically the "is this actually the patient on file?"
+        // question. Skip hosts entirely; they have their own Host chip.
+        const identityMatch = person.isHost
+          ? null
+          : matchesPatientName(person.displayName, patientFirstName, patientLastName);
+        return (
+          <li
+            key={person.key}
             style={{
               display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-end',
-              gap: 2,
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: theme.space[3],
+              padding: `${theme.space[3]}px ${theme.space[4]}px`,
+              borderRadius: theme.radius.input,
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
             }}
           >
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.sm,
-                color: theme.color.ink,
-                fontVariantNumeric: 'tabular-nums',
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              {formatDuration(person.totalSeconds)}
-            </p>
-            {person.stillIn ? (
+            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0, flexWrap: 'wrap' }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.base,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.ink,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {person.displayName}
+                  {accountSuffix ? (
+                    <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+                      {accountSuffix}
+                    </span>
+                  ) : null}
+                </p>
+                <HostChip isHost={person.isHost} />
+                {identityMatch === 'mismatch' ? <IdentityMismatchChip /> : null}
+              </div>
               <p
                 style={{
                   margin: 0,
                   fontSize: theme.type.size.xs,
                   color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
                 }}
               >
-                still in meeting
+                {person.sessionCount === 1
+                  ? formatSingleSessionWindow(person)
+                  : `${person.sessionCount} sessions · ${formatSingleSessionWindow(person)}`}
               </p>
-            ) : null}
-          </div>
-        </li>
-      ))}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                gap: 2,
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.ink,
+                  fontVariantNumeric: 'tabular-nums',
+                  fontWeight: theme.type.weight.medium,
+                }}
+              >
+                {formatDuration(person.totalSeconds)}
+              </p>
+              {person.stillIn ? (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkMuted,
+                  }}
+                >
+                  still in meeting
+                </p>
+              ) : null}
+            </div>
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+// Returns 'match' when the participant's display name shares at least
+// one name token with the patient's first or last name, 'mismatch'
+// otherwise. Loose by design: "John S." matches "John Smith" (first
+// name shared), "Smith Family" matches "John Smith" (last name shared),
+// but "Cooks family iPad" matches neither and gets flagged. We never
+// flag when we have no name on file to compare against — uncertainty
+// isn't a mismatch.
+function matchesPatientName(
+  displayName: string,
+  firstName: string | null,
+  lastName: string | null,
+): 'match' | 'mismatch' {
+  const tokens = displayName
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-z0-9]/g, ''))
+    .filter(Boolean);
+  const first = (firstName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const last = (lastName ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!first && !last) return 'match'; // nothing to compare; don't flag
+  const firstHit = first.length >= 2 && tokens.some((t) => t === first || t.startsWith(first) || first.startsWith(t));
+  const lastHit = last.length >= 2 && tokens.some((t) => t === last);
+  return firstHit || lastHit ? 'match' : 'mismatch';
+}
+
+function IdentityMismatchChip() {
+  return (
+    <span
+      title="This participant's Meet display name doesn't match the patient's name on file. They may have joined from a different Google account, or this is someone else."
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 8px',
+        borderRadius: theme.radius.pill,
+        background: '#FFF6E5',
+        border: '1px solid #F0D7A6',
+        color: '#7A5410',
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: '0.02em',
+      }}
+    >
+      Different name on file
+    </span>
   );
 }
 
@@ -852,7 +948,7 @@ function FooterHint() {
         lineHeight: 1.55,
       }}
     >
-      Sessions appear once the Meet room closes — host ends the call for everyone, or the room sits empty for ~5 minutes. Google does not publish the email a participant used to join (only their display name), and does not publish lobby knocks. The Calendar invite row above tracks whether the patient has clicked Yes / No / Maybe on the Google Calendar invite Google sends them; many iCloud users never interact with that invite even when they join the meeting, so &ldquo;no response&rdquo; is not a &ldquo;won&rsquo;t attend&rdquo; signal. The participants list above is the source of truth for who actually joined.
+      Sessions appear once the Meet room closes — host ends the call for everyone, or the room sits empty for ~5 minutes. Google does not publish the email a participant used to join (only their display name), and does not publish lobby knocks. The Google Calendar invite row above tracks the invite Google emails the patient at booking — separate from our Lounge confirmation email. Patients reading it in Apple Mail, Outlook, iCloud, or any non-Gmail client often never click Yes / No / Maybe even when they join the meeting fine, so &ldquo;no response&rdquo; is not a &ldquo;won&rsquo;t attend&rdquo; signal. The participants list above is the source of truth for who actually joined.
     </p>
   );
 }
