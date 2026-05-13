@@ -41,7 +41,7 @@ export async function cancelAppointment(input: {
 }): Promise<CancelAppointmentResult> {
   const { data: existingRaw, error: readErr } = await supabase
     .from('lng_appointments')
-    .select('id, patient_id, location_id, source, status')
+    .select('id, patient_id, location_id, source, status, meet_host_id')
     .eq('id', input.appointmentId)
     .maybeSingle();
   if (readErr) throw new Error(`Couldn't read appointment: ${readErr.message}`);
@@ -52,11 +52,12 @@ export async function cancelAppointment(input: {
     location_id: string;
     source: 'calendly' | 'manual' | 'native';
     status: string;
+    // Per-host bookings need meet-delete-event so the cancellation
+    // hits the host's calendar; legacy / service-account bookings use
+    // google-meet-delete instead. Both edge functions no-op on rows
+    // that have no Calendar event to clean up.
+    meet_host_id: string | null;
   };
-
-  // Note: google_calendar_event_id is checked inside google-meet-delete
-  // so we don't need to read it here — the edge function no-ops on rows
-  // that have no calendar event.
 
   if (existing.source === 'calendly') {
     throw new Error(
@@ -88,13 +89,25 @@ export async function cancelAppointment(input: {
     .eq('id', existing.id);
   if (updateErr) throw new Error(`Couldn't cancel appointment: ${updateErr.message}`);
 
-  // Google Meet cleanup — best-effort. The edge function is a no-op
-  // on non-virtual appointments and on rows that have no event_id.
-  void supabase.functions
-    .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
-    .catch((e: unknown) =>
-      console.warn('[cancelAppointment] google-meet-delete failed:', e),
-    );
+  // Google Meet cleanup — best-effort, two-path routing matching the
+  // booking-side split. Per-host appointments route through
+  // meet-delete-event so the Calendar event comes off the original
+  // host's calendar (Karly's, Lab's, etc.) and the patient receives a
+  // proper Google cancellation. Legacy / Calendly-imported appointments
+  // keep using google-meet-delete against the service-account calendar.
+  if (existing.meet_host_id) {
+    void supabase.functions
+      .invoke('meet-delete-event', { body: { appointment_id: existing.id } })
+      .catch((e: unknown) =>
+        console.warn('[cancelAppointment] meet-delete-event failed:', e),
+      );
+  } else {
+    void supabase.functions
+      .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
+      .catch((e: unknown) =>
+        console.warn('[cancelAppointment] google-meet-delete failed:', e),
+      );
+  }
 
   // patient_events audit row — best-effort, doesn't unwind the
   // cancellation if it fails.

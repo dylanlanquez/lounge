@@ -72,6 +72,11 @@ interface AppointmentRowMin {
   repair_variant: string | null;
   product_key: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
+  // Per-host Meet integration carry-forward. When the old row was
+  // booked through the per-host flow, the new row inherits the same
+  // host so the Calendar event lands on the original host's calendar
+  // (Karly's, Lab's, etc.) and not the service-account fallback.
+  meet_host_id: string | null;
 }
 
 // Pre-flight conflict check — used by the reschedule sheet to give
@@ -138,7 +143,7 @@ export async function rescheduleAppointment(input: {
   const { data: existingRaw, error: readErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch',
+      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id',
     )
     .eq('id', input.appointmentId)
     .maybeSingle();
@@ -213,6 +218,12 @@ export async function rescheduleAppointment(input: {
       repair_variant: existing.repair_variant,
       product_key: existing.product_key,
       arch: existing.arch,
+      // Carry the host forward so meet-create-space creates the new
+      // Calendar event under the same Google account that owned the
+      // original room. Without this, a reschedule of a per-host
+      // booking would silently fall back to the service-account flow
+      // and the original host's calendar would never see the new slot.
+      meet_host_id: existing.meet_host_id,
     })
     .select('id')
     .single();
@@ -238,20 +249,40 @@ export async function rescheduleAppointment(input: {
   }
 
   // ── 7. Google Meet (virtual impression only) ────────────────────
-  // Create a fresh Meet for the new slot, then remove the old one.
-  // Both are best-effort: if either fails the reschedule stands and
-  // the failure is logged server-side in lng_system_failures.
+  // Two-path routing: per-host bookings (meet_host_id set) go through
+  // meet-create-space + meet-delete-event so the new event lands on
+  // the original host's calendar and the old event is removed from
+  // their calendar. Legacy / Calendly bookings (no host) keep using
+  // the service-account google-meet-create + google-meet-delete pair.
+  // Both paths are best-effort: a Meet failure doesn't unwind the
+  // reschedule — the failure is logged server-side, and the staff
+  // can retry via "Generate Meet link" on AppointmentDetail.
   if (serviceType === 'virtual_impression_appointment') {
-    void supabase.functions
-      .invoke('google-meet-create', { body: { appointmentId: newAppointmentId } })
-      .catch((e: unknown) =>
-        console.warn('[rescheduleAppointment] google-meet-create failed:', e),
-      );
-    void supabase.functions
-      .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
-      .catch((e: unknown) =>
-        console.warn('[rescheduleAppointment] google-meet-delete failed:', e),
-      );
+    if (existing.meet_host_id) {
+      void supabase.functions
+        .invoke('meet-create-space', {
+          body: { appointment_id: newAppointmentId, host_id: existing.meet_host_id },
+        })
+        .catch((e: unknown) =>
+          console.warn('[rescheduleAppointment] meet-create-space failed:', e),
+        );
+      void supabase.functions
+        .invoke('meet-delete-event', { body: { appointment_id: existing.id } })
+        .catch((e: unknown) =>
+          console.warn('[rescheduleAppointment] meet-delete-event failed:', e),
+        );
+    } else {
+      void supabase.functions
+        .invoke('google-meet-create', { body: { appointmentId: newAppointmentId } })
+        .catch((e: unknown) =>
+          console.warn('[rescheduleAppointment] google-meet-create failed:', e),
+        );
+      void supabase.functions
+        .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
+        .catch((e: unknown) =>
+          console.warn('[rescheduleAppointment] google-meet-delete failed:', e),
+        );
+    }
   }
 
   // ── 8. patient_events audit row ────────────────────────────────
