@@ -135,12 +135,15 @@ export function NewBookingSheet({
   const [meetHostId, setMeetHostId] = useState<string | null>(null);
   const { hosts: meetHosts, loading: meetHostsLoading } = useMeetHosts({ activeOnly: true });
 
-  // Shopify-paid services (admin flag on lwo_catalogue.sold_on_shopify).
-  // Receptionist types the customer's order number, we resolve it
-  // against shopify_orders, and on save the order's total + name + id
-  // attach to the appointment so the amount paid online credits
-  // against the cart at checkout. Whole bundle resets on close so a
-  // stray order doesn't leak into the next booking.
+  // Shopify-paid services (admin flag on lwo_catalogue.sold_on_shopify
+  // makes the opt-in available). Most customers walking into a sold-
+  // on-shopify service haven't bought online — only ~10% have — so
+  // the input is hidden behind an explicit checkbox. Receptionist
+  // ticks "Coming in from an online order", then types the number and
+  // hits Look up. Without the tick the booking saves with no order
+  // attached, like any normal in-person booking. Whole bundle resets
+  // on close so a stray order can't leak into the next booking.
+  const [shopifyOrderApplies, setShopifyOrderApplies] = useState<boolean>(false);
   const [shopifyOrderInput, setShopifyOrderInput] = useState<string>('');
   const [shopifyOrder, setShopifyOrder] = useState<ShopifyOrderLookup | null>(null);
   const [shopifyLookupBusy, setShopifyLookupBusy] = useState<boolean>(false);
@@ -187,6 +190,7 @@ export function NewBookingSheet({
     setAxisOptionsLoading(false);
     setNotes('');
     setMeetHostId(null);
+    setShopifyOrderApplies(false);
     setShopifyOrderInput('');
     setShopifyOrder(null);
     setShopifyLookupBusy(false);
@@ -234,13 +238,22 @@ export function NewBookingSheet({
 
   // Wipe the staged order details when the service flips away from
   // sold_on_shopify — never let a stale order leak onto a non-Shopify
-  // booking.
+  // booking. Same wipe fires when the receptionist unticks the
+  // checkbox after pasting in an order: the staged state goes too,
+  // so a later re-tick starts from a clean slate.
   useEffect(() => {
-    if (!isShopifyService) {
+    if (!isShopifyService || !shopifyOrderApplies) {
       setShopifyOrderInput('');
       setShopifyOrder(null);
       setShopifyLookupError(null);
     }
+  }, [isShopifyService, shopifyOrderApplies]);
+
+  // Reset the opt-in flag whenever the service flips away. Without
+  // this a receptionist who toggled it on for an Impression booking
+  // and then changed the service would carry the tick across.
+  useEffect(() => {
+    if (!isShopifyService) setShopifyOrderApplies(false);
   }, [isShopifyService]);
 
   // Re-resolve the order whenever the input changes after a previous
@@ -460,11 +473,11 @@ export function NewBookingSheet({
   // no host has been connected yet — Save stays disabled until
   // someone runs the OAuth flow in Admin > Services.
   const meetHostPicked = !isVirtualService || !!meetHostId;
-  // Shopify-paid services need a resolved order before Save fires. A
-  // half-typed order number (no successful lookup yet) leaves
-  // shopifyOrder null; the gate stays closed until the receptionist
-  // hits "Look up" and gets a paid order back.
-  const shopifyOrderAttached = !isShopifyService || !!shopifyOrder;
+  // Shopify order is opt-in per booking. The gate only fires when the
+  // receptionist explicitly ticks "Coming in from an online order"
+  // AND we don't have a resolved order yet — a half-typed number
+  // can't slip through to Save. Untickets passes Save freely.
+  const shopifyOrderAttached = !shopifyOrderApplies || !!shopifyOrder;
   const canSave =
     !!patient &&
     !!serviceType &&
@@ -517,7 +530,7 @@ export function NewBookingSheet({
         arch: axisValues.arch,
         meetHostId: isVirtualService ? meetHostId : null,
         shopifyOrder:
-          isShopifyService && shopifyOrder
+          shopifyOrderApplies && shopifyOrder
             ? {
                 id: shopifyOrder.id,
                 name: shopifyOrder.name,
@@ -768,9 +781,8 @@ export function NewBookingSheet({
 
           {isShopifyService ? (
             <Section
-              title="Shopify order"
-              required
-              info="The patient's online order on venneir.com that this appointment relates to. The amount they've already paid will credit against the till at checkout, so they only owe the difference for anything extra. Type the order number (e.g. VEN73520) and tap Look up."
+              title="Online order"
+              info="Tick this when the patient is coming in to redeem something they bought on venneir.com. The amount they already paid online credits against the bill at checkout, so they only owe anything extra on the day. Leave it unticked for normal walk-in bookings of this service."
             >
               <div
                 style={{
@@ -779,59 +791,78 @@ export function NewBookingSheet({
                   gap: theme.space[3],
                 }}
               >
-                <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'stretch' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Input
-                      aria-label="Shopify order number"
-                      value={shopifyOrderInput}
-                      onChange={(e) => setShopifyOrderInput(e.target.value)}
-                      placeholder="e.g. VEN73520"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={handleShopifyLookup}
-                    disabled={shopifyLookupBusy || shopifyOrderInput.trim().length === 0}
-                    loading={shopifyLookupBusy}
-                  >
-                    Look up
-                  </Button>
-                </div>
+                <Checkbox
+                  checked={shopifyOrderApplies}
+                  onChange={(v) => setShopifyOrderApplies(v)}
+                  label="Coming in to redeem an online order from venneir.com"
+                />
 
-                {shopifyOrder ? (
-                  <ShopifyOrderCard
-                    order={shopifyOrder}
-                    onClear={() => {
-                      setShopifyOrder(null);
-                      setShopifyOrderInput('');
-                      setShopifyLookupError(null);
-                    }}
-                  />
-                ) : shopifyLookupError ? (
-                  <p
-                    role="alert"
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.sm,
-                      color: theme.color.alert,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {shopifyLookupError}
-                  </p>
-                ) : (
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.xs,
-                      color: theme.color.inkSubtle,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    The order's total will credit against the bill at checkout, so the patient only pays for anything extra on the day.
-                  </p>
-                )}
+                {shopifyOrderApplies ? (
+                  <>
+                    <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'stretch' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Input
+                          aria-label="Shopify order number"
+                          value={shopifyOrderInput}
+                          onChange={(e) => setShopifyOrderInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (!shopifyLookupBusy && shopifyOrderInput.trim().length > 0) {
+                                void handleShopifyLookup();
+                              }
+                            }
+                          }}
+                          placeholder="Order number, e.g. VEN73520"
+                          autoComplete="off"
+                          autoFocus
+                        />
+                      </div>
+                      <Button
+                        variant="secondary"
+                        onClick={handleShopifyLookup}
+                        disabled={shopifyLookupBusy || shopifyOrderInput.trim().length === 0 || !!shopifyOrder}
+                        loading={shopifyLookupBusy}
+                      >
+                        Look up
+                      </Button>
+                    </div>
+
+                    {shopifyOrder ? (
+                      <ShopifyOrderCard
+                        order={shopifyOrder}
+                        onClear={() => {
+                          setShopifyOrder(null);
+                          setShopifyOrderInput('');
+                          setShopifyLookupError(null);
+                        }}
+                      />
+                    ) : shopifyLookupError ? (
+                      <p
+                        role="alert"
+                        style={{
+                          margin: 0,
+                          fontSize: theme.type.size.sm,
+                          color: theme.color.alert,
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {shopifyLookupError}
+                      </p>
+                    ) : (
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: theme.type.size.xs,
+                          color: theme.color.inkSubtle,
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        The order's total will credit against the bill at checkout, so the patient only pays for anything extra on the day.
+                      </p>
+                    )}
+                  </>
+                ) : null}
               </div>
             </Section>
           ) : null}
