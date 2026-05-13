@@ -64,6 +64,11 @@ export interface AppointmentDetailRow {
   // meeting closes).
   conference_started_at: string | null;
   conference_ended_at: string | null;
+  // Number of distinct Google conferenceRecord rows logged against
+  // this appointment's space. Spaces can host more than one conference
+  // (rejoin out-of-window, reschedule on the same link); the
+  // attendance card surfaces "(N conferences)" when this is > 1.
+  conference_count: number;
   // Number of recordings + transcripts Google published for this
   // conference record. Non-zero is unfakeable proof the call took place.
   // 0 is the default until meet-fetch-attendance has run.
@@ -159,6 +164,7 @@ interface RawAppointment {
   meet_meeting_code: string | null;
   conference_started_at: string | null;
   conference_ended_at: string | null;
+  conference_count: number | null;
   recording_count: number | null;
   transcript_count: number | null;
   patient_rsvp_status: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
@@ -198,7 +204,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -356,6 +362,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           meet_meeting_code: (appt as RawAppointment & { meet_meeting_code?: string | null }).meet_meeting_code ?? null,
           conference_started_at: (appt as RawAppointment & { conference_started_at?: string | null }).conference_started_at ?? null,
           conference_ended_at: (appt as RawAppointment & { conference_ended_at?: string | null }).conference_ended_at ?? null,
+          conference_count: (appt as RawAppointment & { conference_count?: number | null }).conference_count ?? 0,
           recording_count: (appt as RawAppointment & { recording_count?: number | null }).recording_count ?? 0,
           transcript_count: (appt as RawAppointment & { transcript_count?: number | null }).transcript_count ?? 0,
           patient_rsvp_status: (appt as RawAppointment & { patient_rsvp_status?: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null }).patient_rsvp_status ?? null,

@@ -39,6 +39,10 @@ export interface MeetAttendanceCardProps {
   meetingHasEnded: boolean;
   conferenceStartedAt: string | null;
   conferenceEndedAt: string | null;
+  // Number of distinct conferences logged for this space — > 1 when
+  // the same Meet link has been rejoined outside its original window.
+  // The card renders "(N conferences)" alongside the window line.
+  conferenceCount: number | null;
   // Corroborating evidence pulled by meet-fetch-attendance. Counts are
   // the count of Google-published artefacts (non-zero = unfakeable
   // proof the meeting happened). RSVP is the patient's responseStatus
@@ -56,6 +60,7 @@ export function MeetAttendanceCard({
   meetingHasEnded,
   conferenceStartedAt,
   conferenceEndedAt,
+  conferenceCount,
   recordingCount,
   transcriptCount,
   patientRsvpStatus,
@@ -131,7 +136,11 @@ export function MeetAttendanceCard({
           }}
         />
         <VerdictBanner verdict={verdict} />
-        <ConferenceWindow startedAt={conferenceStartedAt} endedAt={conferenceEndedAt} />
+        <ConferenceWindow
+          startedAt={conferenceStartedAt}
+          endedAt={conferenceEndedAt}
+          conferenceCount={conferenceCount}
+        />
         <EvidenceStrip
           recordingCount={recordingCount}
           transcriptCount={transcriptCount}
@@ -327,15 +336,27 @@ function verdictPalette(tone: Verdict['tone']): { bg: string; border: string; fg
 function ConferenceWindow({
   startedAt,
   endedAt,
+  conferenceCount,
 }: {
   startedAt: string | null;
   endedAt: string | null;
+  conferenceCount: number | null;
 }) {
   if (!startedAt && !endedAt) return null;
   const fmt = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const fmtDay = (iso: string) =>
     new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  // endedAt may be on a later day than startedAt for multi-conference
+  // spaces — qualify it with the day so "12 May 09:00 → 13 May 09:35"
+  // reads correctly. Single-day windows still get the cleaner
+  // "12 May 09:00 → 09:35" treatment.
+  const endLabel = endedAt
+    ? startedAt && new Date(endedAt).toDateString() !== new Date(startedAt).toDateString()
+      ? `${fmtDay(endedAt)} ${fmt(endedAt)}`
+      : fmt(endedAt)
+    : 'still open';
+  const count = conferenceCount ?? 0;
   return (
     <div
       style={{
@@ -358,7 +379,8 @@ function ConferenceWindow({
         Conference window:&nbsp;
         {startedAt ? `${fmtDay(startedAt)} ${fmt(startedAt)}` : '—'}
         {' → '}
-        {endedAt ? fmt(endedAt) : 'still open'}
+        {endLabel}
+        {count > 1 ? ` · ${count} conferences` : ''}
       </span>
     </div>
   );

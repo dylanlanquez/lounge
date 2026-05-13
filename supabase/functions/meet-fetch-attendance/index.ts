@@ -105,25 +105,46 @@ Deno.serve(async (req) => {
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
   const accessToken = tokenResult.accessToken;
 
-  // 2. Find the conference record for this space. Filter syntax per
-  //    Meet API: filter=space.name="spaces/abc"
+  // 2. Walk EVERY conferenceRecord for this space, not just the most
+  //    recent. A single Meet space can host multiple conferences over
+  //    its lifetime — yesterday's empty room + today's real call, or
+  //    "rejoin tomorrow" follow-ups on the same link. Picking [0] would
+  //    miss the others. We page through the listing endpoint and
+  //    aggregate sessions, recordings, transcripts, and the start/end
+  //    window across all of them, so the attendance card reflects every
+  //    join the space ever saw.
   const filter = `space.name=\"${appt.meet_space_id}\"`;
-  const confRes = await fetch(
-    `https://meet.googleapis.com/v2/conferenceRecords?filter=${encodeURIComponent(filter)}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
-  if (!confRes.ok) {
-    const errBody = await confRes.text().catch(() => '');
-    return json(200, {
-      ok: false,
-      error: `conferenceRecords fetch failed: ${confRes.status} ${errBody.slice(0, 200)}`,
-    });
+  const conferenceRecords: Array<{ name: string; startTime?: string; endTime?: string }> = [];
+  {
+    let url: string | null =
+      `https://meet.googleapis.com/v2/conferenceRecords?filter=${encodeURIComponent(filter)}`;
+    let safetyHops = 0;
+    while (url && safetyHops < 10) {
+      safetyHops++;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        return json(200, {
+          ok: false,
+          error: `conferenceRecords fetch failed: ${res.status} ${errBody.slice(0, 200)}`,
+        });
+      }
+      const body = (await res.json()) as {
+        conferenceRecords?: Array<{ name?: string; startTime?: string; endTime?: string }>;
+        nextPageToken?: string;
+      };
+      for (const cr of body.conferenceRecords ?? []) {
+        if (cr.name) conferenceRecords.push({ name: cr.name, startTime: cr.startTime, endTime: cr.endTime });
+      }
+      if (!body.nextPageToken) break;
+      const next = new URL(
+        `https://meet.googleapis.com/v2/conferenceRecords?filter=${encodeURIComponent(filter)}`,
+      );
+      next.searchParams.set('pageToken', body.nextPageToken);
+      url = next.toString();
+    }
   }
-  const confData = (await confRes.json()) as {
-    conferenceRecords?: Array<{ name?: string; startTime?: string; endTime?: string }>;
-  };
-  const record = confData.conferenceRecords?.[0];
-  if (!record?.name) {
+  if (conferenceRecords.length === 0) {
     return json(200, {
       ok: true,
       waitingForMeeting: true,
@@ -132,136 +153,133 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Persist the conferenceRecord's own start/end times on the
-  // appointment. This is the smoking-gun column: if conference_started_at
-  // is still null after end_at has passed, Google has no record of the
-  // conference ever opening — i.e. nobody connected, period. Helps the
-  // verdict line settle "the patient never joined" disputes without the
-  // operator having to read the session list.
-  if (record.startTime || record.endTime) {
-    await admin
-      .from('lng_appointments')
-      .update({
-        conference_started_at: record.startTime ?? null,
-        conference_ended_at: record.endTime ?? null,
-      })
-      .eq('id', appointmentId);
+  // Compute the outer envelope across all conferences. The card's
+  // "Conference window" line shows this — earliest start, latest end —
+  // and the new conference_count column tells the UI to render
+  // "(N conferences)" when more than one occurred in the space.
+  let earliestStart: string | null = null;
+  let latestEnd: string | null = null;
+  for (const cr of conferenceRecords) {
+    if (cr.startTime && (earliestStart == null || cr.startTime < earliestStart)) {
+      earliestStart = cr.startTime;
+    }
+    if (cr.endTime && (latestEnd == null || cr.endTime > latestEnd)) {
+      latestEnd = cr.endTime;
+    }
   }
+  await admin
+    .from('lng_appointments')
+    .update({
+      conference_started_at: earliestStart,
+      conference_ended_at: latestEnd,
+      conference_count: conferenceRecords.length,
+    })
+    .eq('id', appointmentId);
 
-  // 2b. Corroborating evidence — recordings + transcripts. Both endpoints
-  //     return an empty list when the host didn't record or caption the
-  //     call, which is fine; the count of 0 is itself a useful negative
-  //     signal ("call happened but wasn't recorded"). A non-zero count is
-  //     unfakeable proof the meeting took place. Failures here downgrade
-  //     to "leave the counts as-is" — we don't want a transient 5xx on
-  //     /recordings to wipe out a previously-captured count.
-  const recordingCount = await countListing(
-    `https://meet.googleapis.com/v2/${record.name}/recordings`,
-    accessToken,
-    'recordings',
-  );
-  const transcriptCount = await countListing(
-    `https://meet.googleapis.com/v2/${record.name}/transcripts`,
-    accessToken,
-    'transcripts',
-  );
-  if (recordingCount != null || transcriptCount != null) {
+  // 2b. Recordings + transcripts — sum across every conference record.
+  //     The host might record one session and skip another; both contribute
+  //     to the "did this actually happen" evidence count.
+  let totalRecordings: number | null = 0;
+  let totalTranscripts: number | null = 0;
+  for (const cr of conferenceRecords) {
+    const r = await countListing(
+      `https://meet.googleapis.com/v2/${cr.name}/recordings`,
+      accessToken,
+      'recordings',
+    );
+    const t = await countListing(
+      `https://meet.googleapis.com/v2/${cr.name}/transcripts`,
+      accessToken,
+      'transcripts',
+    );
+    // A null from countListing means a non-OK response — don't fold a
+    // transient failure into the total; mark the whole field unknown so
+    // we leave the previously-stored count alone.
+    if (r == null) totalRecordings = null;
+    else if (totalRecordings != null) totalRecordings += r;
+    if (t == null) totalTranscripts = null;
+    else if (totalTranscripts != null) totalTranscripts += t;
+  }
+  if (totalRecordings != null || totalTranscripts != null) {
     const update: Record<string, unknown> = {};
-    if (recordingCount != null) update.recording_count = recordingCount;
-    if (transcriptCount != null) update.transcript_count = transcriptCount;
+    if (totalRecordings != null) update.recording_count = totalRecordings;
+    if (totalTranscripts != null) update.transcript_count = totalTranscripts;
     await admin.from('lng_appointments').update(update).eq('id', appointmentId);
   }
 
-  // 3. List participants and, for each, list their sessions.
-  const partRes = await fetch(
-    `https://meet.googleapis.com/v2/${record.name}/participants`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
-  if (!partRes.ok) {
-    const errBody = await partRes.text().catch(() => '');
-    return json(200, {
-      ok: false,
-      error: `participants fetch failed: ${partRes.status} ${errBody.slice(0, 200)}`,
-    });
-  }
-  const partData = (await partRes.json()) as {
-    participants?: Array<{
-      name?: string;
-      // signedinUser.user is the stable Google user-resource id we use
-      // to group rows by person across sessions. displayName covers the
-      // label rendered in the card.
-      signedinUser?: { displayName?: string; user?: string };
-      anonymousUser?: { displayName?: string };
-      phoneUser?: { displayName?: string };
-    }>;
-  };
-
-  // For email lookup we hit the userinfo API for signed-in users by
-  // their user resource name; the Meet API does NOT publish emails
-  // directly. We accept that the email may end up null for guests
-  // and surface "Guest" / "Anonymous" in the UI accordingly.
+  // 3. Walk participants + sessions per conference record. Session names
+  //    are globally unique across the Meet API so the upsert's
+  //    (appointment_id, meet_session_name) unique constraint dedupes
+  //    correctly even when the same person joined two different
+  //    conferences in the same space.
   let upserts = 0;
-  for (const participant of partData.participants ?? []) {
-    if (!participant.name) continue;
-    const displayName =
-      participant.signedinUser?.displayName
-      ?? participant.anonymousUser?.displayName
-      ?? participant.phoneUser?.displayName
-      ?? 'Guest';
-
-    // signedinUser.user is Google's stable user-resource id ("users/abc").
-    // Same person across sessions resolves to the same id, so the UI can
-    // group rows by it. Null for anonymous / phone joiners, in which case
-    // we fall back to participant_name (which is also null-safe — we
-    // group those under their displayName).
-    const meetUserId = participant.signedinUser?.user ?? null;
-
-    // Tag as host when the Meet display_name matches an active
-    // lng_meet_hosts.display_name. Lowercased + trimmed both sides for
-    // robustness. The patient's Meet display name has to come from
-    // their Google account or their typed-in guest name, neither of
-    // which we control — so a non-match defaults to false (patient).
-    const isHost = knownHostNames.has(displayName.trim().toLowerCase());
-
-    const sessRes = await fetch(
-      `https://meet.googleapis.com/v2/${participant.name}/participantSessions`,
+  for (const cr of conferenceRecords) {
+    const partRes = await fetch(
+      `https://meet.googleapis.com/v2/${cr.name}/participants`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
-    if (!sessRes.ok) {
-      // Skip this participant rather than aborting the whole sync —
-      // a transient 5xx on one row shouldn't lose attendance for the
-      // rest of the meeting.
+    if (!partRes.ok) {
+      // Skip this conference but keep aggregating the rest. The card's
+      // verdict logic gracefully handles partial data.
       continue;
     }
-    const sessData = (await sessRes.json()) as {
-      participantSessions?: Array<{ name?: string; startTime?: string; endTime?: string }>;
+    const partData = (await partRes.json()) as {
+      participants?: Array<{
+        name?: string;
+        signedinUser?: { displayName?: string; user?: string };
+        anonymousUser?: { displayName?: string };
+        phoneUser?: { displayName?: string };
+      }>;
     };
-    for (const session of sessData.participantSessions ?? []) {
-      if (!session.name || !session.startTime) continue;
-      const joinedAt = session.startTime;
-      const leftAt = session.endTime ?? null;
-      const durationSeconds = leftAt
-        ? Math.max(0, Math.floor((new Date(leftAt).getTime() - new Date(joinedAt).getTime()) / 1000))
-        : null;
-      const { error: upErr } = await admin
-        .from('lng_meet_attendance')
-        .upsert(
-          {
-            appointment_id: appointmentId,
-            participant_name: displayName,
-            participant_email: null,
-            meet_session_name: session.name,
-            joined_at: joinedAt,
-            left_at: leftAt,
-            duration_seconds: durationSeconds,
-            is_host: isHost,
-            meet_user_id: meetUserId,
-          },
-          { onConflict: 'appointment_id,meet_session_name' },
-        );
-      if (!upErr) upserts++;
+
+    for (const participant of partData.participants ?? []) {
+      if (!participant.name) continue;
+      const displayName =
+        participant.signedinUser?.displayName
+        ?? participant.anonymousUser?.displayName
+        ?? participant.phoneUser?.displayName
+        ?? 'Guest';
+
+      const meetUserId = participant.signedinUser?.user ?? null;
+      const isHost = knownHostNames.has(displayName.trim().toLowerCase());
+
+      const sessRes = await fetch(
+        `https://meet.googleapis.com/v2/${participant.name}/participantSessions`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!sessRes.ok) continue;
+      const sessData = (await sessRes.json()) as {
+        participantSessions?: Array<{ name?: string; startTime?: string; endTime?: string }>;
+      };
+      for (const session of sessData.participantSessions ?? []) {
+        if (!session.name || !session.startTime) continue;
+        const joinedAt = session.startTime;
+        const leftAt = session.endTime ?? null;
+        const durationSeconds = leftAt
+          ? Math.max(0, Math.floor((new Date(leftAt).getTime() - new Date(joinedAt).getTime()) / 1000))
+          : null;
+        const { error: upErr } = await admin
+          .from('lng_meet_attendance')
+          .upsert(
+            {
+              appointment_id: appointmentId,
+              participant_name: displayName,
+              participant_email: null,
+              meet_session_name: session.name,
+              joined_at: joinedAt,
+              left_at: leftAt,
+              duration_seconds: durationSeconds,
+              is_host: isHost,
+              meet_user_id: meetUserId,
+            },
+            { onConflict: 'appointment_id,meet_session_name' },
+          );
+        if (!upErr) upserts++;
+      }
     }
   }
+  const recordingCount = totalRecordings;
+  const transcriptCount = totalTranscripts;
 
   // 4. Patient RSVP from the underlying Calendar event. Tells us
   //    whether the patient ever opened the invite, and which way they

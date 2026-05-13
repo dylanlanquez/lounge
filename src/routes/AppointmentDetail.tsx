@@ -568,6 +568,7 @@ function Loaded({
             meetingHasEnded={new Date(appt.end_at).getTime() < Date.now()}
             conferenceStartedAt={appt.conference_started_at}
             conferenceEndedAt={appt.conference_ended_at}
+            conferenceCount={appt.conference_count}
             recordingCount={appt.recording_count}
             transcriptCount={appt.transcript_count}
             patientRsvpStatus={appt.patient_rsvp_status}
