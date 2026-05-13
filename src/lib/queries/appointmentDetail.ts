@@ -64,6 +64,18 @@ export interface AppointmentDetailRow {
   // meeting closes).
   conference_started_at: string | null;
   conference_ended_at: string | null;
+  // Number of recordings + transcripts Google published for this
+  // conference record. Non-zero is unfakeable proof the call took place.
+  // 0 is the default until meet-fetch-attendance has run.
+  recording_count: number;
+  transcript_count: number;
+  // Patient's responseStatus on the Calendar invite, pulled by
+  // meet-fetch-attendance. One of "accepted", "declined", "tentative",
+  // "needsAction", or NULL when no attendee row matches the patient
+  // email (or the row predates the column / a Calendar event wasn't
+  // created).
+  patient_rsvp_status: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
+  patient_rsvp_updated_at: string | null;
   // Host's google_email at view time, hydrated from lng_meet_hosts via
   // meet_host_id. Surfaced on the Booking details "Join from" row so
   // the patient + receptionist can see whose calendar owns the Meet.
@@ -147,6 +159,10 @@ interface RawAppointment {
   meet_meeting_code: string | null;
   conference_started_at: string | null;
   conference_ended_at: string | null;
+  recording_count: number | null;
+  transcript_count: number | null;
+  patient_rsvp_status: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
+  patient_rsvp_updated_at: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   deposit_pence: number | null;
   deposit_currency: string | null;
@@ -182,7 +198,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -340,6 +356,10 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           meet_meeting_code: (appt as RawAppointment & { meet_meeting_code?: string | null }).meet_meeting_code ?? null,
           conference_started_at: (appt as RawAppointment & { conference_started_at?: string | null }).conference_started_at ?? null,
           conference_ended_at: (appt as RawAppointment & { conference_ended_at?: string | null }).conference_ended_at ?? null,
+          recording_count: (appt as RawAppointment & { recording_count?: number | null }).recording_count ?? 0,
+          transcript_count: (appt as RawAppointment & { transcript_count?: number | null }).transcript_count ?? 0,
+          patient_rsvp_status: (appt as RawAppointment & { patient_rsvp_status?: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null }).patient_rsvp_status ?? null,
+          patient_rsvp_updated_at: (appt as RawAppointment & { patient_rsvp_updated_at?: string | null }).patient_rsvp_updated_at ?? null,
           meet_host_email: (hostRes.data as { google_email?: string | null } | null)?.google_email ?? null,
           intake: appt.intake,
           deposit_pence: appt.deposit_pence,

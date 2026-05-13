@@ -58,10 +58,12 @@ Deno.serve(async (req) => {
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // 1. Hydrate the appointment + its host.
+  // 1. Hydrate the appointment + its host. google_calendar_event_id
+  //    + patient_id are pulled here so the Calendar RSVP block below
+  //    can read the patient's responseStatus off the underlying event.
   const { data: apptRow, error: apptErr } = await admin
     .from('lng_appointments')
-    .select('id, meet_space_id, meet_host_id, end_at')
+    .select('id, meet_space_id, meet_host_id, end_at, google_calendar_event_id, patient_id')
     .eq('id', appointmentId)
     .maybeSingle();
   if (apptErr || !apptRow) return json(404, { ok: false, error: 'Appointment not found' });
@@ -70,6 +72,8 @@ Deno.serve(async (req) => {
     meet_space_id: string | null;
     meet_host_id: string | null;
     end_at: string;
+    google_calendar_event_id: string | null;
+    patient_id: string;
   };
   if (!appt.meet_space_id || !appt.meet_host_id) {
     return json(200, { ok: false, error: 'No Meet space recorded for this appointment' });
@@ -142,6 +146,30 @@ Deno.serve(async (req) => {
         conference_ended_at: record.endTime ?? null,
       })
       .eq('id', appointmentId);
+  }
+
+  // 2b. Corroborating evidence — recordings + transcripts. Both endpoints
+  //     return an empty list when the host didn't record or caption the
+  //     call, which is fine; the count of 0 is itself a useful negative
+  //     signal ("call happened but wasn't recorded"). A non-zero count is
+  //     unfakeable proof the meeting took place. Failures here downgrade
+  //     to "leave the counts as-is" — we don't want a transient 5xx on
+  //     /recordings to wipe out a previously-captured count.
+  const recordingCount = await countListing(
+    `https://meet.googleapis.com/v2/${record.name}/recordings`,
+    accessToken,
+    'recordings',
+  );
+  const transcriptCount = await countListing(
+    `https://meet.googleapis.com/v2/${record.name}/transcripts`,
+    accessToken,
+    'transcripts',
+  );
+  if (recordingCount != null || transcriptCount != null) {
+    const update: Record<string, unknown> = {};
+    if (recordingCount != null) update.recording_count = recordingCount;
+    if (transcriptCount != null) update.transcript_count = transcriptCount;
+    await admin.from('lng_appointments').update(update).eq('id', appointmentId);
   }
 
   // 3. List participants and, for each, list their sessions.
@@ -235,12 +263,92 @@ Deno.serve(async (req) => {
     }
   }
 
+  // 4. Patient RSVP from the underlying Calendar event. Tells us
+  //    whether the patient ever opened the invite, and which way they
+  //    responded if so. Best-effort: when there's no calendar event id
+  //    or no patient email we skip silently — the column just stays as
+  //    whatever was previously recorded (NULL on the first run).
+  if (appt.google_calendar_event_id) {
+    const { data: patientRow } = await admin
+      .from('patients')
+      .select('email')
+      .eq('id', appt.patient_id)
+      .maybeSingle();
+    const patientEmail = ((patientRow as { email: string | null } | null)?.email ?? '').trim().toLowerCase();
+    if (patientEmail) {
+      try {
+        const eventRes = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(appt.google_calendar_event_id)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (eventRes.ok) {
+          const eventData = (await eventRes.json()) as {
+            attendees?: Array<{ email?: string; responseStatus?: string }>;
+          };
+          const match = (eventData.attendees ?? []).find(
+            (a) => (a.email ?? '').trim().toLowerCase() === patientEmail,
+          );
+          const status = match?.responseStatus ?? null;
+          // Only persist when we get a recognised value or a null match
+          // for an attendee we know exists. If the calendar event has
+          // no attendees field at all (organiser-only event) we leave
+          // the column alone — no signal to write.
+          if (status && ['accepted', 'declined', 'tentative', 'needsAction'].includes(status)) {
+            await admin
+              .from('lng_appointments')
+              .update({
+                patient_rsvp_status: status,
+                patient_rsvp_updated_at: new Date().toISOString(),
+              })
+              .eq('id', appointmentId);
+          }
+        }
+      } catch {
+        // RSVP read failure is non-fatal — the verdict line keeps
+        // working off the conferenceRecord data.
+      }
+    }
+  }
+
   return json(200, {
     ok: true,
     waitingForMeeting: false,
     upserts,
+    recordingCount,
+    transcriptCount,
   });
 });
+
+// Returns the total number of items at a v2 listing endpoint
+// (recordings or transcripts) by walking nextPageToken. Returns null
+// on a non-OK response so callers can leave the previously-stored
+// count untouched rather than overwriting it with a transient 0.
+async function countListing(
+  baseUrl: string,
+  accessToken: string,
+  arrayKey: 'recordings' | 'transcripts',
+): Promise<number | null> {
+  let total = 0;
+  let url: string | null = baseUrl;
+  let safetyHops = 0;
+  while (url && safetyHops < 10) {
+    safetyHops++;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      recordings?: Array<unknown>;
+      transcripts?: Array<unknown>;
+      nextPageToken?: string;
+    };
+    const list = (body[arrayKey] ?? []) as Array<unknown>;
+    total += list.length;
+    if (!body.nextPageToken) break;
+    const next = new URL(baseUrl);
+    next.searchParams.set('pageToken', body.nextPageToken);
+    url = next.toString();
+  }
+  return total;
+}
 
 function cors(): Record<string, string> {
   return {

@@ -40,6 +40,15 @@ export interface MeetAttendanceCardProps {
   meetingHasEnded: boolean;
   conferenceStartedAt: string | null;
   conferenceEndedAt: string | null;
+  // Corroborating evidence pulled by meet-fetch-attendance. Counts are
+  // the count of Google-published artefacts (non-zero = unfakeable
+  // proof the meeting happened). RSVP is the patient's responseStatus
+  // on the underlying Calendar invite — shows whether they ever opened
+  // the email at all.
+  recordingCount: number | null;
+  transcriptCount: number | null;
+  patientRsvpStatus: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
+  patientRsvpUpdatedAt: string | null;
 }
 
 export function MeetAttendanceCard({
@@ -48,6 +57,10 @@ export function MeetAttendanceCard({
   meetingHasEnded,
   conferenceStartedAt,
   conferenceEndedAt,
+  recordingCount,
+  transcriptCount,
+  patientRsvpStatus,
+  patientRsvpUpdatedAt,
 }: MeetAttendanceCardProps) {
   const { rows, loading, error, refresh } = useMeetAttendance(appointmentId);
   const taps = useStaffTaps(appointmentId);
@@ -121,6 +134,13 @@ export function MeetAttendanceCard({
         />
         <VerdictBanner verdict={verdict} />
         <ConferenceWindow startedAt={conferenceStartedAt} endedAt={conferenceEndedAt} />
+        <EvidenceStrip
+          recordingCount={recordingCount}
+          transcriptCount={transcriptCount}
+          patientRsvpStatus={patientRsvpStatus}
+          patientRsvpUpdatedAt={patientRsvpUpdatedAt}
+          meetingHasEnded={meetingHasEnded}
+        />
         {loading ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
             <Skeleton height={48} radius={12} />
@@ -345,6 +365,129 @@ function ConferenceWindow({
       </span>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Evidence strip — recordings, transcripts, patient RSVP. These don't
+// answer "did they meet?" on their own (the verdict line does) but
+// they DO corroborate it from independent sources. A recording exists
+// → the call definitely happened. Patient declined the invite the day
+// before → no surprise they didn't show. Etc.
+// ─────────────────────────────────────────────────────────────────────
+
+function EvidenceStrip({
+  recordingCount,
+  transcriptCount,
+  patientRsvpStatus,
+  patientRsvpUpdatedAt,
+  meetingHasEnded,
+}: {
+  recordingCount: number | null;
+  transcriptCount: number | null;
+  patientRsvpStatus: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
+  patientRsvpUpdatedAt: string | null;
+  meetingHasEnded: boolean;
+}) {
+  const items: Array<{ label: string; tone: 'success' | 'warn' | 'muted'; detail?: string }> = [];
+
+  // Recordings + transcripts only have meaning post-meeting; before the
+  // call ends both are always 0 and saying "0 recordings" pre-meeting
+  // would just be noise. Once the meeting has ended we surface them
+  // either way — 0 is itself a signal worth seeing.
+  if (meetingHasEnded) {
+    if ((recordingCount ?? 0) > 0) {
+      items.push({
+        label: `${recordingCount} recording${recordingCount === 1 ? '' : 's'}`,
+        tone: 'success',
+        detail: 'unfakeable proof the call took place',
+      });
+    } else {
+      items.push({
+        label: 'No recording',
+        tone: 'muted',
+      });
+    }
+    if ((transcriptCount ?? 0) > 0) {
+      items.push({
+        label: `${transcriptCount} transcript${transcriptCount === 1 ? '' : 's'}`,
+        tone: 'success',
+      });
+    }
+  }
+
+  // RSVP is always interesting — "patient never opened the invite"
+  // pre-meeting is a useful early warning. Show whatever Google has,
+  // regardless of meeting state.
+  if (patientRsvpStatus) {
+    const map: Record<
+      'accepted' | 'declined' | 'tentative' | 'needsAction',
+      { label: string; tone: 'success' | 'warn' | 'muted' }
+    > = {
+      accepted: { label: 'Patient RSVP: Accepted', tone: 'success' },
+      declined: { label: 'Patient RSVP: Declined', tone: 'warn' },
+      tentative: { label: 'Patient RSVP: Tentative', tone: 'muted' },
+      needsAction: { label: 'Patient has not opened the invite', tone: 'warn' },
+    };
+    items.push({
+      ...map[patientRsvpStatus],
+      detail: patientRsvpUpdatedAt
+        ? `as of ${new Date(patientRsvpUpdatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+        : undefined,
+    });
+  }
+
+  if (items.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: theme.space[2],
+        marginBottom: theme.space[4],
+      }}
+    >
+      {items.map((item, i) => {
+        const palette = chipPalette(item.tone);
+        return (
+          <div
+            key={i}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              background: palette.bg,
+              border: `1px solid ${palette.border}`,
+              fontSize: theme.type.size.xs,
+              color: palette.fg,
+              lineHeight: 1.4,
+            }}
+          >
+            <span style={{ fontWeight: theme.type.weight.semibold }}>{item.label}</span>
+            {item.detail ? (
+              <span style={{ color: palette.fgMuted, fontWeight: theme.type.weight.medium }}>
+                · {item.detail}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function chipPalette(tone: 'success' | 'warn' | 'muted'): { bg: string; border: string; fg: string; fgMuted: string } {
+  switch (tone) {
+    case 'success':
+      return { bg: '#EAF7EE', border: '#C6E3CF', fg: '#1F5A33', fgMuted: '#3D7050' };
+    case 'warn':
+      return { bg: '#FFF6E5', border: '#F0D7A6', fg: '#7A5410', fgMuted: '#8E6826' };
+    case 'muted':
+    default:
+      return { bg: theme.color.bg, border: theme.color.border, fg: theme.color.ink, fgMuted: theme.color.inkMuted };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
