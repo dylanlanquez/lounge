@@ -46,6 +46,9 @@ import {
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
+import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
+import { lookupShopifyOrder, type ShopifyOrderLookup } from '../../lib/queries/shopifyOrderLookup.ts';
+import { formatPence } from '../../lib/queries/carts.ts';
 import { type PatientRow, patientFullName } from '../../lib/queries/patients.ts';
 import { supabase } from '../../lib/supabase.ts';
 
@@ -131,6 +134,18 @@ export function NewBookingSheet({
   // service-account flow (used by Calendly imports).
   const [meetHostId, setMeetHostId] = useState<string | null>(null);
   const { hosts: meetHosts, loading: meetHostsLoading } = useMeetHosts({ activeOnly: true });
+
+  // Shopify-paid services (admin flag on lwo_catalogue.sold_on_shopify).
+  // Receptionist types the customer's order number, we resolve it
+  // against shopify_orders, and on save the order's total + name + id
+  // attach to the appointment so the amount paid online credits
+  // against the cart at checkout. Whole bundle resets on close so a
+  // stray order doesn't leak into the next booking.
+  const [shopifyOrderInput, setShopifyOrderInput] = useState<string>('');
+  const [shopifyOrder, setShopifyOrder] = useState<ShopifyOrderLookup | null>(null);
+  const [shopifyLookupBusy, setShopifyLookupBusy] = useState<boolean>(false);
+  const [shopifyLookupError, setShopifyLookupError] = useState<string | null>(null);
+  const { rows: catalogueRows } = useCatalogueActive();
   // Default sendEmail to true, then re-derive once a patient is
   // picked (it stays on if they have an email, off if not). The
   // operator can flip it manually either way.
@@ -172,6 +187,10 @@ export function NewBookingSheet({
     setAxisOptionsLoading(false);
     setNotes('');
     setMeetHostId(null);
+    setShopifyOrderInput('');
+    setShopifyOrder(null);
+    setShopifyLookupBusy(false);
+    setShopifyLookupError(null);
     setSendEmail(true);
     setSendEmailUserOverride(false);
     setConfig(null);
@@ -195,6 +214,62 @@ export function NewBookingSheet({
     setAxisValues({ repair_variant: null, product_key: null, arch: null });
     setAxisOptions({});
   }, [serviceType]);
+
+  // Does the picked service have sold_on_shopify=true on its catalogue
+  // row? Matched on service_type + (product_key / repair_variant when
+  // pinned) so admin can configure the flag at the appropriate level.
+  // True even if any matching row has the flag set — admin should
+  // keep variants consistent, but this is lenient so a half-configured
+  // catalogue still surfaces the order input.
+  const isShopifyService = useMemo(() => {
+    if (!serviceType) return false;
+    return catalogueRows.some((r) => {
+      if (!r.sold_on_shopify) return false;
+      if (r.service_type !== serviceType) return false;
+      if (axisValues.product_key && r.product_key && r.product_key !== axisValues.product_key) return false;
+      if (axisValues.repair_variant && r.repair_variant && r.repair_variant !== axisValues.repair_variant) return false;
+      return true;
+    });
+  }, [serviceType, axisValues.product_key, axisValues.repair_variant, catalogueRows]);
+
+  // Wipe the staged order details when the service flips away from
+  // sold_on_shopify — never let a stale order leak onto a non-Shopify
+  // booking.
+  useEffect(() => {
+    if (!isShopifyService) {
+      setShopifyOrderInput('');
+      setShopifyOrder(null);
+      setShopifyLookupError(null);
+    }
+  }, [isShopifyService]);
+
+  // Re-resolve the order whenever the input changes after a previous
+  // resolve — the receptionist might tweak the number; we want stale
+  // matches gone the moment the value drifts from what was looked up.
+  useEffect(() => {
+    if (shopifyOrder && shopifyOrderInput.trim() !== shopifyOrder.name && shopifyOrderInput.trim() !== `#${shopifyOrder.name}`) {
+      setShopifyOrder(null);
+    }
+  }, [shopifyOrderInput, shopifyOrder]);
+
+  const handleShopifyLookup = async () => {
+    setShopifyLookupBusy(true);
+    setShopifyLookupError(null);
+    try {
+      const result = await lookupShopifyOrder(shopifyOrderInput);
+      if (result.ok) {
+        setShopifyOrder(result.order);
+      } else {
+        setShopifyOrder(null);
+        setShopifyLookupError(result.message);
+      }
+    } catch (e) {
+      setShopifyOrder(null);
+      setShopifyLookupError(e instanceof Error ? e.message : 'Could not look up the order.');
+    } finally {
+      setShopifyLookupBusy(false);
+    }
+  };
 
   // Auto-pick the top-priority host as soon as a virtual service is
   // chosen so the receptionist sees the most common selection
@@ -385,6 +460,11 @@ export function NewBookingSheet({
   // no host has been connected yet — Save stays disabled until
   // someone runs the OAuth flow in Admin > Services.
   const meetHostPicked = !isVirtualService || !!meetHostId;
+  // Shopify-paid services need a resolved order before Save fires. A
+  // half-typed order number (no successful lookup yet) leaves
+  // shopifyOrder null; the gate stays closed until the receptionist
+  // hits "Look up" and gets a paid order back.
+  const shopifyOrderAttached = !isShopifyService || !!shopifyOrder;
   const canSave =
     !!patient &&
     !!serviceType &&
@@ -395,7 +475,8 @@ export function NewBookingSheet({
     !saving &&
     !configError &&
     !conflictError &&
-    meetHostPicked;
+    meetHostPicked &&
+    shopifyOrderAttached;
 
   // Build the human-readable event_type_label that goes onto the row.
   // Receptionists see this on schedule cards, patients see it on
@@ -435,6 +516,15 @@ export function NewBookingSheet({
         productKey: axisValues.product_key,
         arch: axisValues.arch,
         meetHostId: isVirtualService ? meetHostId : null,
+        shopifyOrder:
+          isShopifyService && shopifyOrder
+            ? {
+                id: shopifyOrder.id,
+                name: shopifyOrder.name,
+                totalPricePence: shopifyOrder.total_price_pence,
+                currency: shopifyOrder.currency,
+              }
+            : null,
       });
       onCreated(result.appointmentId, {
         emailSent: result.emailSent,
@@ -673,6 +763,76 @@ export function NewBookingSheet({
                   disabled={meetHostsLoading}
                 />
               )}
+            </Section>
+          ) : null}
+
+          {isShopifyService ? (
+            <Section
+              title="Shopify order"
+              required
+              info="The patient's online order on venneir.com that this appointment relates to. The amount they've already paid will credit against the till at checkout, so they only owe the difference for anything extra. Type the order number (e.g. VEN73520) and tap Look up."
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[3],
+                }}
+              >
+                <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'stretch' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Input
+                      aria-label="Shopify order number"
+                      value={shopifyOrderInput}
+                      onChange={(e) => setShopifyOrderInput(e.target.value)}
+                      placeholder="e.g. VEN73520"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={handleShopifyLookup}
+                    disabled={shopifyLookupBusy || shopifyOrderInput.trim().length === 0}
+                    loading={shopifyLookupBusy}
+                  >
+                    Look up
+                  </Button>
+                </div>
+
+                {shopifyOrder ? (
+                  <ShopifyOrderCard
+                    order={shopifyOrder}
+                    onClear={() => {
+                      setShopifyOrder(null);
+                      setShopifyOrderInput('');
+                      setShopifyLookupError(null);
+                    }}
+                  />
+                ) : shopifyLookupError ? (
+                  <p
+                    role="alert"
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.alert,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {shopifyLookupError}
+                  </p>
+                ) : (
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkSubtle,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    The order's total will credit against the bill at checkout, so the patient only pays for anything extra on the day.
+                  </p>
+                )}
+              </div>
             </Section>
           ) : null}
 
@@ -1007,6 +1167,88 @@ function ConfirmationToggle({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Confirmation card shown when a Shopify order resolves successfully.
+// Same visual language as the Meet-host-empty callout below (rounded
+// surface with dashed/accent edge) so the receptionist reads it as
+// "this is staged on the booking" — and the Remove button lets them
+// pull it off if they typed the wrong number.
+function ShopifyOrderCard({
+  order,
+  onClear,
+}: {
+  order: ShopifyOrderLookup;
+  onClear: () => void;
+}) {
+  return (
+    <div
+      style={{
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.accentBg,
+        border: `1px solid ${theme.color.accent}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3] }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {order.name}
+        </p>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.accent,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatPence(order.total_price_pence)} paid
+        </p>
+      </div>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          lineHeight: 1.5,
+        }}
+      >
+        {order.customer_email ? `${order.customer_email} · ` : ''}
+        Paid online on {new Date(order.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+      </p>
+      <button
+        type="button"
+        onClick={onClear}
+        style={{
+          alignSelf: 'flex-start',
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          padding: 0,
+          color: theme.color.inkMuted,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.medium,
+          textDecoration: 'underline',
+          textUnderlineOffset: 3,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        Remove order
+      </button>
+    </div>
+  );
+}
+
 // Helpers (local copies of the small ISO splitters used by RescheduleSheet —
 // duplicated rather than extracted because the two sheets evolve independently
 // and the helpers are 5 lines each)

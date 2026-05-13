@@ -26,6 +26,7 @@ const baseRow = (over: Partial<CatalogueRow> = {}): CatalogueRow => ({
   is_virtual: false,
   meeting_platform: null,
   fulfilment_required: true,
+  sold_on_shopify: false,
   sort_order: 0,
   active: true,
   created_at: '2026-04-28T00:00:00Z',

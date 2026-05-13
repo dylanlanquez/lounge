@@ -75,6 +75,16 @@ export async function createAppointment(input: {
   // account google-meet-create — used today by Calendly imports
   // and any service that hasn't been wired through the new flow yet.
   meetHostId?: string | null;
+  // Shopify-paid services attach a resolved order at booking time.
+  // The order's total credits against the cart at checkout, the
+  // same way a Calendly deposit currently does. Null when the
+  // service isn't sold on venneir.com.
+  shopifyOrder?: {
+    id: string;
+    name: string;
+    totalPricePence: number;
+    currency: string | null;
+  } | null;
 }): Promise<CreateAppointmentResult> {
   // ── 1. Input validation ────────────────────────────────────────
   if (!input.patientId) throw new Error('Pick a patient first.');
@@ -126,6 +136,8 @@ export async function createAppointment(input: {
   // ── 4. Insert row ──────────────────────────────────────────────
   const eventLabel =
     input.eventTypeLabel?.trim() || labelForService(input.serviceType);
+  const { data: actorAccountIdRaw } = await supabase.rpc('auth_account_id');
+  const actorAccountIdEarly = (actorAccountIdRaw as string | null) ?? null;
   const { data: insertedRaw, error: insertErr } = await supabase
     .from('lng_appointments')
     .insert({
@@ -142,6 +154,18 @@ export async function createAppointment(input: {
       repair_variant: input.repairVariant ?? null,
       product_key: input.productKey ?? null,
       arch: input.arch ?? null,
+      // Shopify order credit. Attached at booking time so the cart
+      // total at checkout already reflects what the customer paid
+      // online. Currency stays as Shopify reports it (string) — we
+      // don't currently support non-GBP at the till, but keeping the
+      // field lets us surface the original currency on the waiver
+      // for an audit trail.
+      shopify_order_id: input.shopifyOrder?.id ?? null,
+      shopify_order_name: input.shopifyOrder?.name ?? null,
+      shopify_order_total_pence: input.shopifyOrder?.totalPricePence ?? null,
+      shopify_order_currency: input.shopifyOrder?.currency ?? null,
+      shopify_order_linked_at: input.shopifyOrder ? new Date().toISOString() : null,
+      shopify_order_linked_by: input.shopifyOrder ? actorAccountIdEarly : null,
     })
     .select('id')
     .single();
@@ -151,9 +175,9 @@ export async function createAppointment(input: {
   const appointmentId = (insertedRaw as { id: string }).id;
 
   // ── 5. patient_events ──────────────────────────────────────────
-  // Best-effort — failure here doesn't unwind the booking.
-  const { data: actorAccountIdRaw } = await supabase.rpc('auth_account_id');
-  const actorAccountId = (actorAccountIdRaw as string | null) ?? null;
+  // Best-effort — failure here doesn't unwind the booking. Re-uses
+  // the actor id resolved above so we don't burn a second RPC.
+  const actorAccountId = actorAccountIdEarly;
   await supabase.from('patient_events').insert({
     patient_id: input.patientId,
     event_type: 'appointment_booked',

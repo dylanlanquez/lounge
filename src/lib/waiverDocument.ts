@@ -63,6 +63,15 @@ export interface WaiverDocPaymentSummary {
   // Mirrors the same model VisitDetail's Totals component uses.
   depositPence: number;                          // 0 when no paid deposit
   depositProvider: 'paypal' | 'stripe' | null;
+  // Shopify-paid order linked to the appointment. Total credits
+  // against the bill the same way a Calendly deposit does and
+  // surfaces on the waiver as:
+  //   Subtotal £X
+  //   Shopify order VEN73520 (paid online) −£Y
+  //   Total paid £Z
+  // Null/zero when no order is attached.
+  shopifyCreditPence?: number;
+  shopifyOrderName?: string | null;
 }
 
 export interface WaiverDocInput {
@@ -448,13 +457,18 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
     const depositPence = input.payment?.depositPence ?? 0;
     const depositProvider = input.payment?.depositProvider ?? null;
+    const shopifyCreditPence = Math.max(0, input.payment?.shopifyCreditPence ?? 0);
+    const shopifyOrderName = input.payment?.shopifyOrderName ?? null;
     const tillPence =
       input.payment?.amountPence
-      ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence);
+      ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence - shopifyCreditPence);
 
-    // Totals breakdown: Subtotal → Discount (if any) → Deposit (if any)
-    // → Total. Mirrors the same model the visit page Totals component
-    // uses so the patient receipt matches what staff sees on screen.
+    // Totals breakdown: Subtotal → Discount → Deposit → Shopify
+    // credit → Total. Mirrors the same model the visit page Totals
+    // component uses so the patient receipt matches what staff sees
+    // on screen. The Shopify row reads "Shopify order VEN73520 (paid
+    // online)" so the patient knows the £X they paid on venneir.com
+    // already came off the till total.
     const discountRow =
       cartDiscountPence > 0
         ? `<div class="row deposit">
@@ -469,8 +483,15 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
              <span class="value">−${formatGbp(depositPence)}</span>
            </div>`
         : '';
+    const shopifyRow =
+      shopifyCreditPence > 0
+        ? `<div class="row deposit">
+             <span class="label">${shopifyOrderName ? `Shopify order ${escapeHtml(shopifyOrderName)} (paid online)` : 'Paid online via venneir.com'}</span>
+             <span class="value">−${formatGbp(shopifyCreditPence)}</span>
+           </div>`
+        : '';
     const totalLabel =
-      depositPence > 0
+      depositPence > 0 || shopifyCreditPence > 0
         ? 'Total paid'
         : cartDiscountPence > 0
           ? 'Total to pay'
@@ -481,6 +502,7 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
              <div class="row"><span class="label">Subtotal</span><span class="value">${formatGbp(subtotalPence)}</span></div>
              ${discountRow}
              ${depositRow}
+             ${shopifyRow}
              <div class="row total"><span class="label">${totalLabel}</span><span class="value">${formatGbp(tillPence)}</span></div>
            </div>`
         : '';

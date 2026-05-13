@@ -207,29 +207,40 @@ async function maybeFlipCartPaid(cartId: string): Promise<void> {
     0,
   );
 
-  // Pull the appointment deposit (if any) for this visit. Walk-ins
-  // have no appointment so the deposit term is 0. Failed deposits
-  // (deposit_status = 'failed') don't credit the till.
+  // Pull the appointment deposit (if any) for this visit AND any
+  // Shopify-order credit attached at booking time. Walk-ins have no
+  // appointment so both terms are 0. Failed deposits
+  // (deposit_status='failed') don't credit the till; a Shopify order
+  // attached at booking is only stored after the order resolves as
+  // paid, so no status check is needed for that branch.
   const { data: visit } = await supabase
     .from('lng_visits')
     .select('appointment_id')
     .eq('id', c.visit_id)
     .maybeSingle();
   let depositPaid = 0;
+  let shopifyCredit = 0;
   const v = visit as { appointment_id: string | null } | null;
   if (v?.appointment_id) {
     const { data: appt } = await supabase
       .from('lng_appointments')
-      .select('deposit_pence, deposit_status')
+      .select('deposit_pence, deposit_status, shopify_order_total_pence')
       .eq('id', v.appointment_id)
       .maybeSingle();
-    const a = appt as { deposit_pence: number | null; deposit_status: string | null } | null;
+    const a = appt as {
+      deposit_pence: number | null;
+      deposit_status: string | null;
+      shopify_order_total_pence: number | null;
+    } | null;
     if (a?.deposit_status === 'paid' && typeof a.deposit_pence === 'number') {
       depositPaid = a.deposit_pence;
     }
+    if (typeof a?.shopify_order_total_pence === 'number') {
+      shopifyCredit = a.shopify_order_total_pence;
+    }
   }
 
-  if (succeeded + depositPaid < c.total_pence) return;
+  if (succeeded + depositPaid + shopifyCredit < c.total_pence) return;
 
   await supabase
     .from('lng_carts')

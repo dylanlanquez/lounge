@@ -402,6 +402,18 @@ export interface AppointmentDeposit {
   status: 'paid' | 'failed';
 }
 
+// Shopify-paid order linked to an appointment at booking time. The
+// total credits against the cart at checkout the same way the
+// Calendly deposit does, and surfaces on the waiver as
+// "Shopify order VEN73520 (paid online) −£X". Null on appointments
+// that didn't come through a sold_on_shopify catalogue row.
+export interface AppointmentShopifyOrder {
+  id: string;
+  name: string;
+  pence: number;
+  currency: string;
+}
+
 // Appointment context the visit page passes through to the catalogue
 // picker so it can suggest matching products, and to the header so it
 // can surface the appointment_ref and JB ref. Both surfaces are
@@ -529,6 +541,7 @@ interface VisitDetailResult {
   visit: VisitRow | null;
   patient: PatientRow | null;
   deposit: AppointmentDeposit | null;
+  shopifyOrder: AppointmentShopifyOrder | null;
   appointment: VisitAppointmentContext | null;
   // Display name of the receptionist who opened the visit. Resolved
   // from lng_visits.receptionist_id → accounts. Surfaces on printed
@@ -544,6 +557,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
   const [visit, setVisit] = useState<VisitRow | null>(null);
   const [patient, setPatient] = useState<PatientRow | null>(null);
   const [deposit, setDeposit] = useState<AppointmentDeposit | null>(null);
+  const [shopifyOrder, setShopifyOrder] = useState<AppointmentShopifyOrder | null>(null);
   const [appointment, setAppointment] = useState<VisitAppointmentContext | null>(null);
   const [receptionistName, setReceptionistName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -595,7 +609,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, appointment_ref, jb_ref, created_at, start_at, source'
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, source'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -607,6 +621,10 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               deposit_currency: string | null;
               deposit_provider: 'paypal' | 'stripe' | null;
               deposit_status: 'paid' | 'failed' | null;
+              shopify_order_id: string | null;
+              shopify_order_name: string | null;
+              shopify_order_total_pence: number | null;
+              shopify_order_currency: string | null;
               appointment_ref: string | null;
               jb_ref: string | null;
               created_at: string;
@@ -636,6 +654,21 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               });
             } else {
               setDeposit(null);
+            }
+            if (
+              a.shopify_order_id
+              && a.shopify_order_name
+              && typeof a.shopify_order_total_pence === 'number'
+              && a.shopify_order_total_pence > 0
+            ) {
+              setShopifyOrder({
+                id: a.shopify_order_id,
+                name: a.shopify_order_name,
+                pence: a.shopify_order_total_pence,
+                currency: a.shopify_order_currency ?? 'GBP',
+              });
+            } else {
+              setShopifyOrder(null);
             }
           }
         } else if (visitRow.walk_in_id) {
@@ -718,7 +751,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
     refresh,
   );
 
-  return { visit, patient, deposit, appointment, receptionistName, loading, error, refresh };
+  return { visit, patient, deposit, shopifyOrder, appointment, receptionistName, loading, error, refresh };
 }
 
 // ---------- Unsuitability ----------

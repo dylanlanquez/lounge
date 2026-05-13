@@ -456,11 +456,13 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
   const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
   const depositPence = input.payment?.depositPence ?? 0;
   const depositProvider = input.payment?.depositProvider ?? null;
+  const shopifyCreditPence = Math.max(0, input.payment?.shopifyCreditPence ?? 0);
+  const shopifyOrderName = input.payment?.shopifyOrderName ?? null;
   const tillPence =
     input.payment?.amountPence
-    ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence);
+    ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence - shopifyCreditPence);
   const totalLabel =
-    depositPence > 0
+    depositPence > 0 || shopifyCreditPence > 0
       ? 'Total paid'
       : cartDiscountPence > 0
         ? 'Total to pay'
@@ -492,6 +494,19 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
     pdf.text(depositLabel, xL, c.y);
     setText(pdf, 9.5, c.accent, 'bold');
     pdf.text(`−${formatGbp(depositPence)}`, xR, c.y, { align: 'right' });
+    c.y += 5;
+  }
+
+  // Optional Shopify-order credit row. Shows the order number so the
+  // patient can match it against their venneir.com confirmation.
+  if (shopifyCreditPence > 0) {
+    setText(pdf, 9.5, MUTED, 'normal');
+    const shopifyLabel = shopifyOrderName
+      ? `Shopify order ${shopifyOrderName} (paid online)`
+      : 'Paid online via venneir.com';
+    pdf.text(shopifyLabel, xL, c.y);
+    setText(pdf, 9.5, c.accent, 'bold');
+    pdf.text(`−${formatGbp(shopifyCreditPence)}`, xR, c.y, { align: 'right' });
     c.y += 5;
   }
 
@@ -539,9 +554,10 @@ function renderPaymentRow(c: Cursor, input: WaiverDocInput): void {
   );
   const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
   const depositPence = input.payment?.depositPence ?? 0;
+  const shopifyCreditPence = Math.max(0, input.payment?.shopifyCreditPence ?? 0);
   const tillPence =
     input.payment?.amountPence
-    ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence);
+    ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence - shopifyCreditPence);
   const nothingToPay = !input.payment && tillPence === 0;
 
   if (input.payment) {

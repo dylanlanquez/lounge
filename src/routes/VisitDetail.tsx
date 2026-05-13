@@ -123,7 +123,7 @@ export function VisitDetail() {
   const { account: currentAccount } = useCurrentAccount();
   const navigate = useNavigate();
   const location = useLocation();
-  const { visit, patient, deposit, appointment, receptionistName, loading } = useVisitDetail(id);
+  const { visit, patient, deposit, shopifyOrder, appointment, receptionistName, loading } = useVisitDetail(id);
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
@@ -459,6 +459,8 @@ export function VisitDetail() {
               depositPence: deposit?.status === 'paid' ? deposit.pence : 0,
               depositProvider:
                 deposit?.status === 'paid' ? deposit.provider : null,
+              shopifyCreditPence: shopifyOrder?.pence ?? 0,
+              shopifyOrderName: shopifyOrder?.name ?? null,
             }
           : null,
       // Brand block is built here rather than read from the location
@@ -478,7 +480,7 @@ export function VisitDetail() {
       },
       accentColor: theme.color.accent,
     };
-  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit, paidPayments]);
+  }, [visit, patient, appointment, receptionistName, items, patientSignedRows, requiredSections, cart, deposit, shopifyOrder, paidPayments]);
 
 
   if (authLoading) return null;
@@ -495,10 +497,15 @@ export function VisitDetail() {
   // Only successful deposits credit the till. A failed deposit is shown
   // visually elsewhere; the bill still sums to the full subtotal.
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
-  // Balance is what the receptionist will collect at the till after the
-  // Calendly deposit is applied. Floor at 0 — manual PayPal refund handles
-  // the over-deposit case so we never produce a negative charge here.
-  const total = Math.max(0, subtotal - discount - depositPence);
+  // Shopify-paid order linked to the appointment. Already-paid online,
+  // so it nets against the bill the same way the deposit does — the
+  // till only collects whatever's left over.
+  const shopifyCreditPence = shopifyOrder?.pence ?? 0;
+  // Balance is what the receptionist will collect at the till after
+  // every pre-paid credit is applied. Floor at 0 — over-pays are
+  // handled by manual refund flows, so we never produce a negative
+  // charge here.
+  const total = Math.max(0, subtotal - discount - depositPence - shopifyCreditPence);
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
   // Primary action toggles between Take payment and Complete visit
   // based on whether there's a balance to collect. Free visits and

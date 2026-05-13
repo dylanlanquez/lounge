@@ -71,6 +71,13 @@ export interface CatalogueRow {
   // Which video platform this service uses. Only meaningful when
   // is_virtual is true. Values: 'google_meet' | 'zoom' | 'microsoft_teams' | 'whereby'.
   meeting_platform: string | null;
+  // When true, the booking form asks the receptionist for a Shopify
+  // order number. The order's total then credits against the cart at
+  // checkout (the customer's already paid for the product online; the
+  // appointment is just the in-clinic step to capture an impression /
+  // pick up the kit). Used for services like impression appointments
+  // where the underlying product was paid for on venneir.com.
+  sold_on_shopify: boolean;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -107,7 +114,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, fulfilment_required, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, fulfilment_required, sold_on_shopify, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -167,6 +174,7 @@ export async function upsertCatalogueRow(
     is_virtual: draft.is_virtual,
     meeting_platform: draft.meeting_platform ?? null,
     fulfilment_required: draft.fulfilment_required,
+    sold_on_shopify: draft.sold_on_shopify,
     sort_order: draft.sort_order,
     active: draft.active,
   };

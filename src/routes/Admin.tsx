@@ -2897,6 +2897,7 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         is_virtual: draft.is_virtual,
         meeting_platform: draft.is_virtual && draft.meeting_platform ? draft.meeting_platform : null,
         fulfilment_required: draft.fulfilment_required,
+        sold_on_shopify: draft.sold_on_shopify,
         sort_order: parseInt(draft.sort_order, 10) || 0,
         active: draft.active,
       });
@@ -3386,6 +3387,7 @@ interface CatalogueDraft {
   is_virtual: boolean;
   meeting_platform: string;
   fulfilment_required: boolean;
+  sold_on_shopify: boolean;
   sort_order: string;
   active: boolean;
 }
@@ -3422,6 +3424,7 @@ function emptyDraft(mode: CatalogueMode): CatalogueDraft {
     is_virtual: false,
     meeting_platform: '',
     fulfilment_required: true,
+    sold_on_shopify: false,
     sort_order: '0',
     active: true,
   };
@@ -3453,6 +3456,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
     is_virtual: row.is_virtual,
     meeting_platform: row.meeting_platform ?? '',
     fulfilment_required: row.fulfilment_required,
+    sold_on_shopify: row.sold_on_shopify,
     sort_order: String(row.sort_order),
     active: row.active,
   };
@@ -4132,6 +4136,11 @@ function ServiceForm({
               checked={!draft.fulfilment_required}
               onChange={(v) => set('fulfilment_required', !v)}
               label="Nothing to hand over or ship. Complete visit finishes straight away with no in-person / shipping question."
+            />
+            <Checkbox
+              checked={draft.sold_on_shopify}
+              onChange={(v) => set('sold_on_shopify', v)}
+              label="Sold on venneir.com. The booking form will ask for the customer's Shopify order number and credit the amount paid online against the bill at checkout."
             />
           </div>
         </ServiceSection>
