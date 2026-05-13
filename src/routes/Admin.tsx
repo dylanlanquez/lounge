@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -33,6 +33,8 @@ import {
   inviteNewStaffMember,
   deactivateStaffMember,
   reactivateStaffMember,
+  archiveStaffRole,
+  createStaffRole,
   resetTwoFactor,
   sendMagicLink,
   sendPasswordReset,
@@ -44,7 +46,12 @@ import {
   setIsManager,
   setRequire2fa,
   setStaffName,
+  setStaffRole,
+  unarchiveStaffRole,
+  updateStaffRole,
   useStaff,
+  useStaffRoles,
+  type StaffRoleRow,
   type StaffRow,
 } from '../lib/queries/staff.ts';
 import {
@@ -1758,6 +1765,32 @@ function StaffTab() {
   // so rapid taps don't queue up conflicting writes against the same
   // JSONB column.
   const [pageBusy, setPageBusy] = useState<string | null>(null);
+  // Tracks the role-assignment write so the Manage sheet's role
+  // dropdown can show a busy state without locking the rest of the
+  // sheet.
+  const [roleAssignBusy, setRoleAssignBusy] = useState(false);
+
+  // Role catalogue management. The "Manage roles" sheet is a sibling
+  // to the Manage staff sheet — opened from the header bar, not from
+  // a staff row, because it edits the shared catalogue rather than
+  // any one staff member's record.
+  const roles = useStaffRoles();
+  const [rolesOpen, setRolesOpen] = useState(false);
+  const [roleDraftName, setRoleDraftName] = useState('');
+  const [roleDraftDescription, setRoleDraftDescription] = useState('');
+  const [roleCreateBusy, setRoleCreateBusy] = useState(false);
+  const [roleCreateError, setRoleCreateError] = useState<string | null>(null);
+  // Per-row edit state inside the Manage roles sheet. Stores the row
+  // currently being renamed plus the in-flight name draft. Only one
+  // edit-in-place is permitted at a time so save/cancel state stays
+  // simple.
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [editingRoleName, setEditingRoleName] = useState('');
+  const [editingRoleDescription, setEditingRoleDescription] = useState('');
+  const [roleRowBusy, setRoleRowBusy] = useState<string | null>(null);
+  const [roleRowError, setRoleRowError] = useState<string | null>(null);
+  // Show archived roles toggle, parallel to showInactive on staff.
+  const [showArchivedRoles, setShowArchivedRoles] = useState(false);
 
   const canEditAdmin = currentAccount?.is_super_admin === true;
   const canEditFinancialPerms = currentAccount?.is_super_admin === true;
@@ -2066,6 +2099,129 @@ function StaffTab() {
     }
   };
 
+  // Assigns or clears a staff member's job title. Optimistic: flip
+  // the local sheet immediately, then mirror the change. The
+  // roleAssignBusy flag drives the dropdown's loading state without
+  // locking every other control in the sheet.
+  const handleAssignRole = async (roleId: string | null) => {
+    if (!managing) return;
+    const prevRoleId = managing.role_id;
+    const prevRoleName = managing.role_name;
+    const nextRoleName = roleId ? roles.data.find((r) => r.id === roleId)?.name ?? null : null;
+    setManaging((cur) => (cur ? { ...cur, role_id: roleId, role_name: nextRoleName } : cur));
+    setRoleAssignBusy(true);
+    setError(null);
+    try {
+      await setStaffRole(managing.staff_member_id, roleId);
+      staff.refresh();
+    } catch (e) {
+      setManaging((cur) =>
+        cur ? { ...cur, role_id: prevRoleId, role_name: prevRoleName } : cur,
+      );
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRoleAssignBusy(false);
+    }
+  };
+
+  const openRoles = () => {
+    setRoleDraftName('');
+    setRoleDraftDescription('');
+    setRoleCreateError(null);
+    setRoleRowError(null);
+    setEditingRoleId(null);
+    setShowArchivedRoles(false);
+    setRolesOpen(true);
+  };
+
+  const closeRoles = () => {
+    if (roleCreateBusy || roleRowBusy) return;
+    setRolesOpen(false);
+    setEditingRoleId(null);
+  };
+
+  const submitCreateRole = async () => {
+    const name = roleDraftName.trim();
+    if (!name) {
+      setRoleCreateError('Enter a role name.');
+      return;
+    }
+    setRoleCreateBusy(true);
+    setRoleCreateError(null);
+    try {
+      await createStaffRole({
+        name,
+        description: roleDraftDescription.trim() || null,
+      });
+      setRoleDraftName('');
+      setRoleDraftDescription('');
+      roles.refresh();
+    } catch (e) {
+      setRoleCreateError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRoleCreateBusy(false);
+    }
+  };
+
+  const beginEditRole = (row: StaffRoleRow) => {
+    setEditingRoleId(row.id);
+    setEditingRoleName(row.name);
+    setEditingRoleDescription(row.description ?? '');
+    setRoleRowError(null);
+  };
+
+  const submitEditRole = async () => {
+    if (!editingRoleId) return;
+    const name = editingRoleName.trim();
+    if (!name) {
+      setRoleRowError('Role name cannot be empty.');
+      return;
+    }
+    setRoleRowBusy(editingRoleId);
+    setRoleRowError(null);
+    try {
+      await updateStaffRole(editingRoleId, {
+        name,
+        description: editingRoleDescription.trim() || null,
+      });
+      setEditingRoleId(null);
+      roles.refresh();
+      // Refresh the staff list too — a rename should propagate to the
+      // pills in the Manage sheet and the row list.
+      staff.refresh();
+    } catch (e) {
+      setRoleRowError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRoleRowBusy(null);
+    }
+  };
+
+  const handleArchiveRole = async (row: StaffRoleRow) => {
+    setRoleRowBusy(row.id);
+    setRoleRowError(null);
+    try {
+      await archiveStaffRole(row.id);
+      roles.refresh();
+    } catch (e) {
+      setRoleRowError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRoleRowBusy(null);
+    }
+  };
+
+  const handleUnarchiveRole = async (row: StaffRoleRow) => {
+    setRoleRowBusy(row.id);
+    setRoleRowError(null);
+    try {
+      await unarchiveStaffRole(row.id);
+      roles.refresh();
+    } catch (e) {
+      setRoleRowError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRoleRowBusy(null);
+    }
+  };
+
   // Optimistic toggle for the three section-access flags. The old
   // version awaited the Supabase write + a full staff refetch before
   // the checkbox visually updated, which made every click feel like a
@@ -2163,11 +2319,18 @@ function StaffTab() {
             Only the people listed here can use Lounge. Add or deactivate without touching anyone's Meridian access. Names land on every signature, payment, and discount they sign off; pre-fill the witness field on waivers automatically.{canEditAdmin ? '' : ' Admin promotions are locked to the super admin.'}
           </p>
         </div>
-        <Button variant="primary" size="sm" onClick={openAdd}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-            <Plus size={14} aria-hidden /> Add staff member
-          </span>
-        </Button>
+        <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={openRoles}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Briefcase size={14} aria-hidden /> Manage roles
+            </span>
+          </Button>
+          <Button variant="primary" size="sm" onClick={openAdd}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Plus size={14} aria-hidden /> Add staff member
+            </span>
+          </Button>
+        </div>
       </div>
 
       <StaffSummary
@@ -2237,6 +2400,7 @@ function StaffTab() {
                         <StatusPill tone="cancelled" size="sm">Deactivated</StatusPill>
                       ) : (
                         <>
+                          {s.role_name ? <RolePill tone="neutral">{s.role_name}</RolePill> : null}
                           {isSuperAdminRow ? (
                             <RolePill tone="accent">Super admin</RolePill>
                           ) : s.is_admin ? (
@@ -2349,7 +2513,22 @@ function StaffTab() {
             </ManageSection>
 
             <ManageSection
-              title="Role"
+              title="Job title"
+              description="What this person actually does day-to-day. Independent of the permissions below — a hygienist and a receptionist might both be Managers, but they're different jobs. Manage the catalogue from the Manage roles button."
+              icon={<Briefcase size={14} aria-hidden />}
+            >
+              <StaffRoleField
+                value={managing.role_id}
+                roles={roles.data.filter((r) => r.archived_at === null || r.id === managing.role_id)}
+                rolesLoading={roles.loading}
+                onAssign={handleAssignRole}
+                onManage={openRoles}
+                busy={roleAssignBusy}
+              />
+            </ManageSection>
+
+            <ManageSection
+              title="Permissions"
               description="Admin opens the /admin tab and unlocks every page below by default. Manager is required to sign off discounts, voids, and refunds at the till."
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
@@ -2733,7 +2912,242 @@ function StaffTab() {
           ) : null}
         </div>
       </BottomSheet>
+
+      <BottomSheet
+        open={rolesOpen}
+        onClose={closeRoles}
+        dismissable={!roleCreateBusy && roleRowBusy === null}
+        title="Manage roles"
+        description="The job-title catalogue every staff member picks from. Add roles you actually use at the clinic (Receptionist, Treatment Coordinator, Hygienist, etc.). Renaming or archiving here propagates to every staff card."
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={closeRoles} disabled={roleCreateBusy || roleRowBusy !== null}>
+              Done
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+          <ManageSection title="Add a new role" description="Name is required. Description is optional but useful for explaining who the role is for.">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              <Input
+                label="Role name"
+                value={roleDraftName}
+                onChange={(e) => setRoleDraftName(e.target.value)}
+                placeholder="e.g. Receptionist"
+              />
+              <Input
+                label="Description (optional)"
+                value={roleDraftDescription}
+                onChange={(e) => setRoleDraftDescription(e.target.value)}
+                placeholder="e.g. Front of house, books appointments, takes payments."
+              />
+              {roleCreateError ? (
+                <p role="alert" style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+                  {roleCreateError}
+                </p>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={submitCreateRole}
+                  loading={roleCreateBusy}
+                  disabled={!roleDraftName.trim() || roleCreateBusy}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                    <Plus size={14} aria-hidden /> Add role
+                  </span>
+                </Button>
+              </div>
+            </div>
+          </ManageSection>
+
+          <ManageSection
+            title="Roles"
+            description={
+              roles.data.filter((r) => r.archived_at === null).length === 0
+                ? 'No roles yet. Add the first one above.'
+                : 'Click a row to rename or archive. Archived roles disappear from the assignment dropdown but stay on existing staff cards.'
+            }
+          >
+            {roleRowError ? (
+              <p role="alert" style={{ margin: 0, marginBottom: theme.space[2], color: theme.color.alert, fontSize: theme.type.size.sm }}>
+                {roleRowError}
+              </p>
+            ) : null}
+            {roles.loading ? (
+              <Skeleton height={120} />
+            ) : roles.error ? (
+              <p style={{ color: theme.color.alert, margin: 0 }}>Could not load roles: {roles.error}</p>
+            ) : (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {(showArchivedRoles ? roles.data : roles.data.filter((r) => r.archived_at === null)).map((row) => {
+                  const isEditing = editingRoleId === row.id;
+                  const isArchived = row.archived_at !== null;
+                  return (
+                    <li
+                      key={row.id}
+                      style={{
+                        padding: theme.space[3],
+                        background: isArchived ? theme.color.bg : theme.color.surface,
+                        border: `1px solid ${theme.color.border}`,
+                        borderRadius: theme.radius.input,
+                        opacity: isArchived ? 0.7 : 1,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: theme.space[3],
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                          <Input
+                            label="Role name"
+                            value={editingRoleName}
+                            onChange={(e) => setEditingRoleName(e.target.value)}
+                            autoFocus
+                          />
+                          <Input
+                            label="Description"
+                            value={editingRoleDescription}
+                            onChange={(e) => setEditingRoleDescription(e.target.value)}
+                          />
+                          <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end' }}>
+                            <Button variant="tertiary" size="sm" onClick={() => setEditingRoleId(null)} disabled={roleRowBusy === row.id}>
+                              Cancel
+                            </Button>
+                            <Button variant="primary" size="sm" onClick={submitEditRole} loading={roleRowBusy === row.id}>
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3], flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                                {row.name}
+                              </span>
+                              {isArchived ? (
+                                <StatusPill tone="cancelled" size="sm">Archived</StatusPill>
+                              ) : null}
+                              {row.member_count > 0 ? (
+                                <RolePill tone="neutral">
+                                  {row.member_count} {row.member_count === 1 ? 'person' : 'people'}
+                                </RolePill>
+                              ) : null}
+                            </div>
+                            {row.description ? (
+                              <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+                                {row.description}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div style={{ display: 'flex', gap: theme.space[2], flex: '0 0 auto' }}>
+                            <Button variant="tertiary" size="sm" onClick={() => beginEditRole(row)} disabled={roleRowBusy !== null}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                                <Pencil size={14} aria-hidden /> Edit
+                              </span>
+                            </Button>
+                            {isArchived ? (
+                              <Button variant="tertiary" size="sm" onClick={() => handleUnarchiveRole(row)} loading={roleRowBusy === row.id}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                                  <ArchiveRestore size={14} aria-hidden /> Restore
+                                </span>
+                              </Button>
+                            ) : (
+                              <Button variant="tertiary" size="sm" onClick={() => handleArchiveRole(row)} loading={roleRowBusy === row.id}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
+                                  <Trash2 size={14} aria-hidden /> Archive
+                                </span>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {roles.data.some((r) => r.archived_at !== null) ? (
+              <div style={{ marginTop: theme.space[3], display: 'flex', justifyContent: 'flex-end' }}>
+                <Button variant="tertiary" size="sm" onClick={() => setShowArchivedRoles((v) => !v)}>
+                  {showArchivedRoles
+                    ? `Hide ${roles.data.filter((r) => r.archived_at !== null).length} archived`
+                    : `Show ${roles.data.filter((r) => r.archived_at !== null).length} archived`}
+                </Button>
+              </div>
+            ) : null}
+          </ManageSection>
+        </div>
+      </BottomSheet>
     </Card>
+  );
+}
+
+// Compact role-assignment field inside the Manage sheet. Wraps
+// DropdownSelect with a sentinel "no role" option (value="" → null on
+// assign) and an empty-state hint when the catalogue itself is empty.
+function StaffRoleField({
+  value,
+  roles,
+  rolesLoading,
+  onAssign,
+  onManage,
+  busy,
+}: {
+  value: string | null;
+  roles: StaffRoleRow[];
+  rolesLoading: boolean;
+  onAssign: (roleId: string | null) => void | Promise<void>;
+  onManage: () => void;
+  busy: boolean;
+}) {
+  if (rolesLoading) {
+    return <Skeleton height={48} />;
+  }
+  if (roles.length === 0) {
+    return (
+      <div
+        style={{
+          padding: theme.space[3],
+          border: `1px dashed ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          background: theme.color.bg,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+        }}
+      >
+        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          No roles in the catalogue yet. Add the roles your clinic uses, then assign them here.
+        </p>
+        <div>
+          <Button variant="secondary" size="sm" onClick={onManage}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Briefcase size={14} aria-hidden /> Manage roles
+            </span>
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  const NONE = '__none__';
+  const opts = [
+    { value: NONE, label: 'No role assigned' },
+    ...roles.map((r) => ({ value: r.id, label: r.name })),
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <DropdownSelect<string>
+        ariaLabel="Job title"
+        value={value ?? NONE}
+        options={opts}
+        disabled={busy}
+        onChange={(v) => onAssign(v === NONE ? null : v)}
+      />
+    </div>
   );
 }
 

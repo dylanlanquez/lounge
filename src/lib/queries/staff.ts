@@ -35,6 +35,11 @@ export interface StaffRow {
   // true) see every tab regardless. Valid keys live in ADMIN_TABS
   // in src/routes/Admin.tsx.
   admin_page_access: string[];
+  // Job title FK into lng_staff_roles. Informational only —
+  // independent of admin/manager/page permissions. Null = no role
+  // assigned yet.
+  role_id: string | null;
+  role_name: string | null;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -63,6 +68,8 @@ interface RawJoinedRow {
   can_count_cash: boolean | null;
   require_2fa: boolean | null;
   admin_page_access: string[] | null;
+  role_id: string | null;
+  role: { id: string; name: string } | { id: string; name: string }[] | null;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -89,6 +96,7 @@ function pickOne<T>(value: T | T[] | null | undefined): T | null {
 
 function mapRow(r: RawJoinedRow): StaffRow {
   const a = pickOne(r.account);
+  const role = pickOne(r.role);
   const fn = a?.first_name?.trim() ?? null;
   const ln = a?.last_name?.trim() ?? null;
   const email = a?.login_email ?? '';
@@ -104,6 +112,8 @@ function mapRow(r: RawJoinedRow): StaffRow {
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
       : [],
+    role_id: r.role_id,
+    role_name: role?.name ?? null,
     status: r.status,
     hired_at: r.hired_at,
     deactivated_at: r.deactivated_at,
@@ -116,7 +126,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
+  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -501,6 +511,192 @@ export async function setAdminPageAccess(
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ admin_page_access: unique })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staff roles (job titles). Curated lookup table managed from Admin >
+// Staff > Manage roles. Independent of the permission flags above:
+// "Receptionist" is what someone does, not what the system lets them
+// do. See migration 20260513000007.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface StaffRoleRow {
+  id: string;
+  name: string;
+  description: string | null;
+  sort_order: number;
+  archived_at: string | null;
+  member_count: number;
+}
+
+interface StaffRolesResult {
+  data: StaffRoleRow[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+// Returns every role (active and archived) plus a count of how many
+// active staff members are currently assigned to each. The count is
+// what gates the "you're about to archive a role 4 people use"
+// confirmation; without it, archives feel risk-free even when they
+// silently clear several role pills.
+export function useStaffRoles(): StaffRolesResult {
+  const [data, setData] = useState<StaffRoleRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [rolesRes, countsRes] = await Promise.all([
+        supabase
+          .from('lng_staff_roles')
+          .select('id, name, description, sort_order, archived_at')
+          .order('sort_order', { ascending: true })
+          .order('name', { ascending: true }),
+        // One round-trip per role would be N+1 — instead pull every
+        // active staff row's role_id and aggregate client-side. Tiny
+        // dataset (typically <50 rows), so a JOIN aggregate isn't
+        // worth the extra view.
+        supabase
+          .from('lng_staff_members')
+          .select('role_id')
+          .eq('status', 'active'),
+      ]);
+      if (cancelled) return;
+      if (rolesRes.error) {
+        setError(rolesRes.error.message);
+        setLoading(false);
+        return;
+      }
+      const counts = new Map<string, number>();
+      if (!countsRes.error && Array.isArray(countsRes.data)) {
+        for (const r of countsRes.data as { role_id: string | null }[]) {
+          if (!r.role_id) continue;
+          counts.set(r.role_id, (counts.get(r.role_id) ?? 0) + 1);
+        }
+      }
+      const rows = ((rolesRes.data ?? []) as Array<{
+        id: string;
+        name: string;
+        description: string | null;
+        sort_order: number;
+        archived_at: string | null;
+      }>).map((r) => ({
+        ...r,
+        member_count: counts.get(r.id) ?? 0,
+      }));
+      setData(rows);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  return { data, loading, error, refresh };
+}
+
+// Convenience: just the active roles, ordered by sort_order then
+// name. The Manage sheet's role dropdown reads this — archived roles
+// stay readable on existing staff but disappear from new assignments.
+export async function listActiveStaffRoles(): Promise<StaffRoleRow[]> {
+  const { data, error } = await supabase
+    .from('lng_staff_roles')
+    .select('id, name, description, sort_order, archived_at')
+    .is('archived_at', null)
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (error) {
+    if (error.code === '42P01') return []; // pre-migration safety
+    throw new Error(error.message);
+  }
+  return ((data ?? []) as Array<Omit<StaffRoleRow, 'member_count'>>).map((r) => ({
+    ...r,
+    member_count: 0,
+  }));
+}
+
+export async function createStaffRole(input: {
+  name: string;
+  description?: string | null;
+}): Promise<StaffRoleRow> {
+  const name = input.name.trim();
+  if (!name) throw new Error('Role name is required.');
+  // Match the SORT_ORDER convention: new roles land at the end. We
+  // read the current max and add a sensible step (10) so manual
+  // re-ordering in the future doesn't have to renumber the whole
+  // list.
+  const { data: maxRow } = await supabase
+    .from('lng_staff_roles')
+    .select('sort_order')
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextSort = ((maxRow as { sort_order: number } | null)?.sort_order ?? 0) + 10;
+  const { data, error } = await supabase
+    .from('lng_staff_roles')
+    .insert({
+      name,
+      description: input.description?.trim() || null,
+      sort_order: nextSort,
+    })
+    .select('id, name, description, sort_order, archived_at')
+    .single();
+  if (error) throw new Error(error.message);
+  return { ...(data as Omit<StaffRoleRow, 'member_count'>), member_count: 0 };
+}
+
+export async function updateStaffRole(
+  id: string,
+  patch: { name?: string; description?: string | null },
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (typeof patch.name === 'string') {
+    const trimmed = patch.name.trim();
+    if (!trimmed) throw new Error('Role name cannot be empty.');
+    update.name = trimmed;
+  }
+  if (patch.description !== undefined) {
+    update.description = patch.description?.trim() || null;
+  }
+  if (Object.keys(update).length === 0) return;
+  const { error } = await supabase
+    .from('lng_staff_roles')
+    .update(update)
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function archiveStaffRole(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_roles')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function unarchiveStaffRole(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_roles')
+    .update({ archived_at: null })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// Assigns or clears a staff member's role. Pass null to clear.
+export async function setStaffRole(
+  staffMemberId: string,
+  roleId: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ role_id: roleId })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
