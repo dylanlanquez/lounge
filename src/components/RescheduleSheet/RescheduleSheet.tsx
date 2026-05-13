@@ -188,8 +188,16 @@ export function RescheduleSheet({
   }, [hoursForDate, time]);
 
   const slotIsValid = !!config && !!date && !!time && inWorkingHours;
+  // A reason on the new row's cancellation note is the audit trail
+  // for why the slot moved — staff sick day, patient asked, equipment
+  // delay, etc. Without it the patient timeline reads "Rescheduled"
+  // with no context next time anyone looks it up, which is the bit
+  // that bites at the till. Mandatory so the audit trail is always
+  // complete.
+  const reasonGiven = reason.trim().length > 0;
   const canSave =
     slotIsValid &&
+    reasonGiven &&
     conflicts.length === 0 &&
     !checkingConflicts &&
     !saving &&
@@ -382,13 +390,14 @@ export function RescheduleSheet({
 
           <Section
             title="Reason"
-            info="Optional. Stored on the rescheduled-out row's cancel_reason and surfaced on the patient's timeline event so the team has context next time they look the appointment up."
+            required
+            info="A short note about why the appointment is moving. It appears on the patient's timeline so anyone reading it later can see what happened, without having to ask around."
           >
             <Input
               aria-label="Reason for reschedule"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. patient asked to move; staff sick day; equipment delay."
+              placeholder="e.g. patient asked to move, staff sick day, equipment delay"
             />
           </Section>
         </div>
