@@ -103,21 +103,34 @@ export function PatientSearch({
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
       <style>{`
         @keyframes lng-patient-search-spin { to { transform: rotate(360deg); } }
-        @keyframes lng-patient-search-dot {
-          0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
-          40% { opacity: 1; transform: translateY(-1px); }
-        }
       `}</style>
       <Input
         autoFocus={autoFocus}
         placeholder={placeholder}
         leadingIcon={<Search size={20} />}
+        // In-input spinner replaces the search icon's role as the
+        // "I'm doing something" affordance while a request is in
+        // flight. Lands in the same trailing slot the password-toggle
+        // eye icon uses elsewhere, so the visual language is shared
+        // across the app. Disappears the moment results land — no
+        // orphaned pill, no fighting with browser autocomplete.
+        trailingIcon={
+          isSearching ? (
+            <Loader2
+              size={18}
+              aria-hidden
+              role="status"
+              style={{
+                color: theme.color.accent,
+                animation: 'lng-patient-search-spin 700ms linear infinite',
+              }}
+            />
+          ) : null
+        }
         value={term}
         inputMode="search"
         onChange={(e) => setTerm(e.target.value)}
       />
-
-      {isSearching ? <SearchingIndicator term={trimmed} /> : null}
 
       {trimmed.length < 2 ? (
         <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
@@ -558,72 +571,6 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
         ) : null}
       </div>
     </button>
-  );
-}
-
-// Inline "Searching" affordance shown while a request is in flight.
-// Sits between the input and the result list so a slow network reads
-// as "we're still looking" instead of a confusing "no results" flash.
-// Visual: subtle pill on the bg-tinted surface, sage spinner +
-// "Searching for <term>" with three quoting-style dots that animate
-// in sequence. Matches the rest of the May 2026 inline loading
-// affordances (Resend button spinner, MeetAttendance Refresh icon)
-// without competing for attention with the actual results.
-function SearchingIndicator({ term }: { term: string }) {
-  const dotStyle = (delayMs: number): React.CSSProperties => ({
-    display: 'inline-block',
-    width: 3,
-    height: 3,
-    margin: '0 1px',
-    borderRadius: '50%',
-    background: theme.color.inkSubtle,
-    animation: `lng-patient-search-dot 1.2s ${delayMs}ms infinite ease-in-out both`,
-  });
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        alignSelf: 'flex-start',
-        gap: theme.space[2],
-        padding: `${theme.space[2]}px ${theme.space[3]}px`,
-        borderRadius: theme.radius.pill,
-        background: theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-        color: theme.color.inkMuted,
-        fontSize: theme.type.size.xs,
-        fontWeight: theme.type.weight.medium,
-        letterSpacing: theme.type.tracking.tight,
-        maxWidth: '100%',
-      }}
-    >
-      <Loader2
-        size={13}
-        aria-hidden
-        style={{
-          color: theme.color.accent,
-          animation: 'lng-patient-search-spin 700ms linear infinite',
-          flexShrink: 0,
-        }}
-      />
-      <span
-        style={{
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          minWidth: 0,
-        }}
-      >
-        Searching for <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{term}</strong>
-      </span>
-      <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-        <span style={dotStyle(0)} />
-        <span style={dotStyle(150)} />
-        <span style={dotStyle(300)} />
-      </span>
-    </div>
   );
 }
 
