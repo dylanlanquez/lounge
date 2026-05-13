@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { Card } from '../Card/Card.tsx';
@@ -9,7 +9,6 @@ import {
   type MeetAttendanceRow,
   useMeetAttendance,
 } from '../../lib/queries/meetHosts.ts';
-import { supabase } from '../../lib/supabase.ts';
 
 // Renders the Google Meet attendance summary for a virtual appointment.
 // The card's job is to make staff-vs-patient attendance disputes
@@ -63,7 +62,6 @@ export function MeetAttendanceCard({
   patientRsvpUpdatedAt,
 }: MeetAttendanceCardProps) {
   const { rows, loading, error, refresh } = useMeetAttendance(appointmentId);
-  const taps = useStaffTaps(appointmentId);
   const [pulling, setPulling] = useState(false);
   const [toast, setToast] = useState<
     | { tone: 'success' | 'error'; title: string; description?: string }
@@ -155,7 +153,6 @@ export function MeetAttendanceCard({
         ) : (
           <ParticipantList grouped={grouped} />
         )}
-        <StaffTapsList taps={taps} googleSessions={rows} />
       </Card>
       {toast ? (
         <Toast
@@ -674,120 +671,6 @@ function formatSingleSessionWindow(person: GroupedParticipant): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Staff tap audit overlay — our own log, not Google's
-// ─────────────────────────────────────────────────────────────────────
-
-interface StaffTap {
-  id: string;
-  kind: 'joined' | 'rejoined';
-  occurredAt: string;
-  actorAccountId: string | null;
-}
-
-function useStaffTaps(appointmentId: string): {
-  rows: StaffTap[];
-  loading: boolean;
-} {
-  const [rows, setRows] = useState<StaffTap[]>([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const { data } = await supabase
-        .from('patient_events')
-        .select('id, event_type, payload, actor_account_id, created_at')
-        .in('event_type', ['virtual_meeting_joined', 'virtual_meeting_rejoined'])
-        .filter('payload->>appointment_id', 'eq', appointmentId)
-        .order('created_at', { ascending: true });
-      if (cancelled) return;
-      const mapped = ((data ?? []) as Array<{
-        id: string;
-        event_type: 'virtual_meeting_joined' | 'virtual_meeting_rejoined';
-        payload: Record<string, unknown> | null;
-        actor_account_id: string | null;
-        created_at: string;
-      }>).map((r) => ({
-        id: r.id,
-        kind: (r.event_type === 'virtual_meeting_joined' ? 'joined' : 'rejoined') as 'joined' | 'rejoined',
-        occurredAt: r.created_at,
-        actorAccountId: r.actor_account_id,
-      }));
-      setRows(mapped);
-      setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [appointmentId]);
-  return { rows, loading };
-}
-
-function StaffTapsList({
-  taps,
-  googleSessions,
-}: {
-  taps: { rows: StaffTap[]; loading: boolean };
-  googleSessions: MeetAttendanceRow[];
-}) {
-  if (taps.loading) return null;
-  if (taps.rows.length === 0) return null;
-  const hostJoinedInGoogle = googleSessions.some((s) => s.is_host && (s.duration_seconds ?? 0) > 0);
-  return (
-    <div style={{ marginTop: theme.space[5] }}>
-      <p
-        style={{
-          margin: `0 0 ${theme.space[2]}px`,
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-        }}
-      >
-        Staff app taps
-      </p>
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-        {taps.rows.map((tap) => (
-          <li
-            key={tap.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: theme.space[2],
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
-              fontSize: theme.type.size.xs,
-              color: theme.color.ink,
-              fontVariantNumeric: 'tabular-nums',
-              borderRadius: theme.radius.input,
-              background: theme.color.bg,
-            }}
-          >
-            <span>
-              Staff tapped <strong>{tap.kind === 'joined' ? 'Join' : 'Rejoin'}</strong>
-            </span>
-            <span style={{ color: theme.color.inkMuted }}>{formatStamp(tap.occurredAt)}</span>
-          </li>
-        ))}
-      </ul>
-      {!hostJoinedInGoogle && taps.rows.length > 0 ? (
-        <p
-          style={{
-            margin: `${theme.space[2]}px 0 0`,
-            fontSize: theme.type.size.xs,
-            color: '#8E1F1F',
-            lineHeight: 1.5,
-          }}
-        >
-          Staff tapped Join in the app but Google has no matching host session. The button was pressed; the meeting was not actually attended.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
 // Header
 // ─────────────────────────────────────────────────────────────────────
 
@@ -897,7 +780,7 @@ function EmptyMessage({ meetingHasEnded }: { meetingHasEnded: boolean }) {
     <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
       {meetingHasEnded
         ? 'Google has not published any session records for this meeting yet. If the meeting has just ended, tap Refresh in a minute; if no one ever joined the verdict above already says so.'
-        : 'Attendance lands here once the meeting has ended. Google only publishes conference records after the room closes. Staff app taps below are logged immediately.'}
+        : 'Attendance lands here once the meeting has ended. Google only publishes conference records after the room closes. Join and Rejoin taps are recorded on the Timeline below.'}
     </p>
   );
 }
@@ -913,7 +796,3 @@ function formatDuration(seconds: number | null): string {
   return `${hrs}h ${remMins.toString().padStart(2, '0')}m`;
 }
 
-function formatStamp(iso: string): string {
-  const d = new Date(iso);
-  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-}
