@@ -256,9 +256,7 @@ function GalleryCard({
       <PhotoLightbox items={items} index={openIndex} onChange={setOpenIndex} />
 
       {error ? (
-        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
-          <Toast tone="error" title="Could not upload" description={error} duration={6000} onDismiss={() => setError(null)} />
-        </div>
+        <Toast tone="error" title="Could not upload" description={error} duration={6000} onDismiss={() => setError(null)} />
       ) : null}
     </>
   );
