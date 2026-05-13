@@ -60,7 +60,7 @@ import {
   relativeDay,
 } from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
-import { createMeetSpaceForAppointment, useMeetHosts } from '../lib/queries/meetHosts.ts';
+import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
@@ -281,6 +281,43 @@ function Loaded({
   const [confirmReverseNoShowOpen, setConfirmReverseNoShowOpen] = useState(false);
   const [resending, setResending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Auto-pull Meet attendance once when the page opens on a virtual
+  // appointment whose end time has passed and Google has nothing for
+  // us yet (no conference_started_at on the row). Removes the
+  // "did the operator remember to tap Refresh?" failure mode that
+  // caused the original "attendance not working" complaint: by the
+  // time someone disputes who attended, the data is already pulled
+  // and the verdict line is already showing the truth. The hook
+  // listens on lng_meet_attendance changes (via useMeetAttendance's
+  // realtime subscription) so the freshly-inserted rows surface
+  // without needing to refresh the appointment row itself.
+  useEffect(() => {
+    if (!appt.meet_space_id) return;
+    if (appt.conference_started_at) return;
+    if (new Date(appt.end_at).getTime() > Date.now()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await fetchMeetAttendance(appt.id);
+        if (cancelled) return;
+        // Only refresh the appointment row if Google actually produced
+        // a conference record this round — otherwise we'd re-trigger
+        // this same effect on the next render with no new data, just
+        // burning a function invoke per visit.
+        if (result.ok && !result.waitingForMeeting) {
+          onChanged();
+        }
+      } catch {
+        // Auto-fetch is best-effort. The Refresh button stays available
+        // for an operator-initiated retry; we don't want a transient
+        // 5xx to throw a toast on every page open.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appt.id, appt.meet_space_id, appt.conference_started_at, appt.end_at, onChanged]);
 
   const fullName = patientFullDisplayName({
     patient_first_name: appt.patient.first_name,
@@ -529,6 +566,8 @@ function Loaded({
             appointmentId={appt.id}
             meetMeetingCode={appt.meet_meeting_code}
             meetingHasEnded={new Date(appt.end_at).getTime() < Date.now()}
+            conferenceStartedAt={appt.conference_started_at}
+            conferenceEndedAt={appt.conference_ended_at}
           />
         </section>
       ) : null}

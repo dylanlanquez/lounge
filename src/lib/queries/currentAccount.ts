@@ -52,6 +52,10 @@ export interface CurrentAccount {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  // Per-page admin grants. When is_admin = false but this array has
+  // entries, /admin opens and only the listed tab keys are shown.
+  // Super admins and full admins see every tab regardless.
+  admin_page_access: string[];
   // Per-staff "Require 2FA" policy. Read by the auth gate to decide
   // whether to route into /enroll-2fa or /verify-2fa before granting
   // access to protected routes. Super admin always passes the gate
@@ -156,6 +160,7 @@ export function useCurrentAccount(): Result {
           (isActiveStaff && membership?.can_view_financials === true) || isSuperAdmin,
         can_count_cash:
           (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
+        admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
         // Super admin is exempt from the require_2fa gate so a
         // brand-new install can never lock itself out. Every other
         // staff member's flag mirrors lng_staff_members.require_2fa.

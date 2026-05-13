@@ -56,6 +56,14 @@ export interface AppointmentDetailRow {
   meet_host_id: string | null;
   meet_space_id: string | null;
   meet_meeting_code: string | null;
+  // Captured from Google's conferenceRecords API when meet-fetch-
+  // attendance runs. conference_started_at is the smoking-gun signal
+  // the verdict line keys on: NULL after end_at = no one ever connected.
+  // Always paired with conference_ended_at because Google publishes
+  // them together at conference-record creation time (after the
+  // meeting closes).
+  conference_started_at: string | null;
+  conference_ended_at: string | null;
   // Host's google_email at view time, hydrated from lng_meet_hosts via
   // meet_host_id. Surfaced on the Booking details "Join from" row so
   // the patient + receptionist can see whose calendar owns the Meet.
@@ -137,6 +145,8 @@ interface RawAppointment {
   meet_host_id: string | null;
   meet_space_id: string | null;
   meet_meeting_code: string | null;
+  conference_started_at: string | null;
+  conference_ended_at: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   deposit_pence: number | null;
   deposit_currency: string | null;
@@ -172,7 +182,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -328,6 +338,8 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           meet_host_id: (appt as RawAppointment & { meet_host_id?: string | null }).meet_host_id ?? null,
           meet_space_id: (appt as RawAppointment & { meet_space_id?: string | null }).meet_space_id ?? null,
           meet_meeting_code: (appt as RawAppointment & { meet_meeting_code?: string | null }).meet_meeting_code ?? null,
+          conference_started_at: (appt as RawAppointment & { conference_started_at?: string | null }).conference_started_at ?? null,
+          conference_ended_at: (appt as RawAppointment & { conference_ended_at?: string | null }).conference_ended_at ?? null,
           meet_host_email: (hostRes.data as { google_email?: string | null } | null)?.google_email ?? null,
           intake: appt.intake,
           deposit_pence: appt.deposit_pence,

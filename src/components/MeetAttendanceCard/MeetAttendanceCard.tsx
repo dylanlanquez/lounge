@@ -1,33 +1,56 @@
-import { useState } from 'react';
-import { Loader2, RefreshCw, Users, Video } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { Card } from '../Card/Card.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import {
   fetchMeetAttendance,
+  type MeetAttendanceRow,
   useMeetAttendance,
 } from '../../lib/queries/meetHosts.ts';
+import { supabase } from '../../lib/supabase.ts';
 
-// Renders the Google Meet attendance summary for a virtual
-// appointment. Persists pulled rows in lng_meet_attendance so a
-// re-render between refreshes shows the same data; the Refresh
-// button hits meet-fetch-attendance which upserts a fresh
-// snapshot from the Meet API. Only renders when the appointment
-// has a meet_space_id (i.e. went through the per-host flow).
+// Renders the Google Meet attendance summary for a virtual appointment.
+// The card's job is to make staff-vs-patient attendance disputes
+// falsifiable from Google's data: who joined, when, for how long, and
+// what staff TAPS the app recorded against that. Anti-fibbing surface,
+// not a generic activity feed.
+//
+// Sources of truth:
+//   • lng_meet_attendance      — Google's per-session records (pulled
+//                                from conferenceRecords + participants)
+//   • lng_appointments         — conference_started_at /
+//                                conference_ended_at, captured at the
+//                                same time. Smoking-gun for "did the
+//                                conference open at all".
+//   • patient_events           — virtual_meeting_joined /
+//                                virtual_meeting_rejoined, written when
+//                                staff taps Join / Rejoin in the app.
+//                                The audit overlay below lists these.
+//
+// Auto-fetch: AppointmentDetail invokes meet-fetch-attendance on load
+// when the meeting has ended and we have no rows yet. The Refresh
+// button still works for manual re-pulls (e.g. someone left late and
+// the timing matters).
 
 export interface MeetAttendanceCardProps {
   appointmentId: string;
   meetMeetingCode: string | null;
   meetingHasEnded: boolean;
+  conferenceStartedAt: string | null;
+  conferenceEndedAt: string | null;
 }
 
 export function MeetAttendanceCard({
   appointmentId,
   meetMeetingCode,
   meetingHasEnded,
+  conferenceStartedAt,
+  conferenceEndedAt,
 }: MeetAttendanceCardProps) {
   const { rows, loading, error, refresh } = useMeetAttendance(appointmentId);
+  const taps = useStaffTaps(appointmentId);
   const [pulling, setPulling] = useState(false);
   const [toast, setToast] = useState<
     | { tone: 'success' | 'error'; title: string; description?: string }
@@ -71,7 +94,11 @@ export function MeetAttendanceCard({
     }
   };
 
-  const totalParticipants = new Set(rows.map((r) => r.participant_name ?? 'guest')).size;
+  const grouped = useMemo(() => groupByPerson(rows), [rows]);
+  const verdict = useMemo(
+    () => deriveVerdict({ rows, grouped, conferenceStartedAt, meetingHasEnded }),
+    [rows, grouped, conferenceStartedAt, meetingHasEnded],
+  );
 
   return (
     <>
@@ -79,8 +106,8 @@ export function MeetAttendanceCard({
       <Card padding="lg">
         <Header
           meetingCode={meetMeetingCode}
-          rowCount={rows.length}
-          totalParticipants={totalParticipants}
+          peopleCount={grouped.length}
+          sessionCount={rows.length}
           loading={loading}
           pulling={pulling}
           onRefresh={onRefresh}
@@ -92,6 +119,8 @@ export function MeetAttendanceCard({
             margin: `${theme.space[4]}px 0 ${theme.space[5]}px`,
           }}
         />
+        <VerdictBanner verdict={verdict} />
+        <ConferenceWindow startedAt={conferenceStartedAt} endedAt={conferenceEndedAt} />
         {loading ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
             <Skeleton height={48} radius={12} />
@@ -101,82 +130,12 @@ export function MeetAttendanceCard({
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
             Could not load attendance: {error}
           </p>
-        ) : rows.length === 0 ? (
+        ) : grouped.length === 0 ? (
           <EmptyMessage meetingHasEnded={meetingHasEnded} />
         ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: theme.space[3],
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  borderRadius: theme.radius.input,
-                  background: theme.color.surface,
-                  border: `1px solid ${theme.color.border}`,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.base,
-                      fontWeight: theme.type.weight.semibold,
-                      color: theme.color.ink,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {row.participant_name ?? 'Guest'}
-                  </p>
-                  <p
-                    style={{
-                      margin: `${theme.space[1]}px 0 0`,
-                      fontSize: theme.type.size.xs,
-                      color: theme.color.inkMuted,
-                    }}
-                  >
-                    {row.participant_email ? row.participant_email : 'No email (guest)'}
-                  </p>
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'flex-end',
-                    gap: 2,
-                  }}
-                >
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.sm,
-                      color: theme.color.ink,
-                      fontVariantNumeric: 'tabular-nums',
-                      fontWeight: theme.type.weight.medium,
-                    }}
-                  >
-                    {formatDuration(row.duration_seconds)}
-                  </p>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.xs,
-                      color: theme.color.inkMuted,
-                      fontVariantNumeric: 'tabular-nums',
-                    }}
-                  >
-                    {formatRange(row.joined_at, row.left_at)}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <ParticipantList grouped={grouped} />
         )}
+        <StaffTapsList taps={taps} googleSessions={rows} />
       </Card>
       {toast ? (
         <Toast
@@ -191,26 +150,524 @@ export function MeetAttendanceCard({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Verdict — single-sentence answer to "did the people meet?"
+// ─────────────────────────────────────────────────────────────────────
+
+type VerdictKind =
+  | 'pending'
+  | 'never_opened'
+  | 'only_host'
+  | 'only_patient'
+  | 'both';
+
+interface Verdict {
+  kind: VerdictKind;
+  title: string;
+  detail: string;
+  tone: 'success' | 'warn' | 'alert' | 'muted';
+}
+
+function deriveVerdict(args: {
+  rows: MeetAttendanceRow[];
+  grouped: GroupedParticipant[];
+  conferenceStartedAt: string | null;
+  meetingHasEnded: boolean;
+}): Verdict {
+  const { rows, grouped, conferenceStartedAt, meetingHasEnded } = args;
+
+  // Before the meeting ends Google publishes nothing, so anything we'd
+  // say would be speculative. Be honest: we're waiting on Google.
+  if (!meetingHasEnded) {
+    return {
+      kind: 'pending',
+      title: 'Verdict pending',
+      detail:
+        'Google publishes attendance only after the meeting closes. Once the booked end time passes the verdict and session list populate automatically.',
+      tone: 'muted',
+    };
+  }
+
+  // Meeting is over but Google has no conference record AND we have no
+  // session rows — the conference never opened. Hardest possible
+  // evidence that no one connected.
+  if (!conferenceStartedAt && rows.length === 0) {
+    return {
+      kind: 'never_opened',
+      title: 'Conference never opened',
+      detail:
+        'Google has no record of this meeting starting. Neither the host nor the patient connected at any point.',
+      tone: 'alert',
+    };
+  }
+
+  const hostJoined = grouped.some((p) => p.isHost && p.totalSeconds > 0);
+  const patientJoined = grouped.some((p) => !p.isHost && p.totalSeconds > 0);
+
+  if (hostJoined && patientJoined) {
+    return {
+      kind: 'both',
+      title: 'Both attended',
+      detail: 'Host and patient both connected to the meeting.',
+      tone: 'success',
+    };
+  }
+  if (hostJoined && !patientJoined) {
+    return {
+      kind: 'only_host',
+      title: 'Only the host joined',
+      detail:
+        'Google records the host joining, but no patient session was published. Treat any "patient attended" claim as unsubstantiated.',
+      tone: 'warn',
+    };
+  }
+  if (!hostJoined && patientJoined) {
+    return {
+      kind: 'only_patient',
+      title: 'Only the patient joined',
+      detail:
+        'Google records the patient joining, but no host session was published. The patient turned up; staff did not.',
+      tone: 'alert',
+    };
+  }
+  // Fallback: rows exist but nobody had > 0 seconds. Treat as never-opened.
+  return {
+    kind: 'never_opened',
+    title: 'No completed sessions',
+    detail:
+      'A conference record exists but no participant logged any time in the call. Treat as nobody connected.',
+    tone: 'alert',
+  };
+}
+
+function VerdictBanner({ verdict }: { verdict: Verdict }) {
+  const palette = verdictPalette(verdict.tone);
+  const Icon = verdict.tone === 'success'
+    ? CheckCircle2
+    : verdict.tone === 'muted'
+      ? ShieldCheck
+      : TriangleAlert;
+  return (
+    <div
+      role="status"
+      style={{
+        display: 'flex',
+        gap: theme.space[3],
+        alignItems: 'flex-start',
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
+        marginBottom: theme.space[4],
+      }}
+    >
+      <Icon size={16} aria-hidden style={{ color: palette.fg, marginTop: 2, flexShrink: 0 }} />
+      <div style={{ minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: palette.fg,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          {verdict.title}
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: palette.fgMuted,
+            lineHeight: 1.5,
+          }}
+        >
+          {verdict.detail}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function verdictPalette(tone: Verdict['tone']): { bg: string; border: string; fg: string; fgMuted: string } {
+  switch (tone) {
+    case 'success':
+      return { bg: '#EAF7EE', border: '#C6E3CF', fg: '#1F5A33', fgMuted: '#3D7050' };
+    case 'warn':
+      return { bg: '#FFF6E5', border: '#F0D7A6', fg: '#7A5410', fgMuted: '#8E6826' };
+    case 'alert':
+      return { bg: '#FFEFEF', border: '#F2C2C2', fg: '#8E1F1F', fgMuted: '#9F3939' };
+    case 'muted':
+    default:
+      return { bg: theme.color.bg, border: theme.color.border, fg: theme.color.ink, fgMuted: theme.color.inkMuted };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Conference window — start and end Google itself recorded
+// ─────────────────────────────────────────────────────────────────────
+
+function ConferenceWindow({
+  startedAt,
+  endedAt,
+}: {
+  startedAt: string | null;
+  endedAt: string | null;
+}) {
+  if (!startedAt && !endedAt) return null;
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const fmtDay = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        marginBottom: theme.space[4],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.bg,
+        border: `1px dashed ${theme.color.border}`,
+        fontSize: theme.type.size.xs,
+        color: theme.color.inkMuted,
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1.5,
+      }}
+    >
+      <Video size={11} aria-hidden />
+      <span>
+        Conference window:&nbsp;
+        {startedAt ? `${fmtDay(startedAt)} ${fmt(startedAt)}` : '—'}
+        {' → '}
+        {endedAt ? fmt(endedAt) : 'still open'}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Participants — grouped by person, one row each
+// ─────────────────────────────────────────────────────────────────────
+
+interface GroupedParticipant {
+  key: string;
+  displayName: string;
+  isHost: boolean;
+  sessionCount: number;
+  totalSeconds: number;
+  firstJoinedAt: string | null;
+  lastLeftAt: string | null;
+  stillIn: boolean;
+}
+
+function groupByPerson(rows: MeetAttendanceRow[]): GroupedParticipant[] {
+  const map = new Map<string, GroupedParticipant>();
+  for (const row of rows) {
+    // Prefer Google's stable user id; fall back to display name. Guests
+    // share a "Guest" bucket per appointment which is the same name
+    // Google publishes for them — acceptable since we can't distinguish
+    // anonymous joiners anyway.
+    const key = row.meet_user_id ?? row.participant_name ?? 'unknown';
+    const existing = map.get(key);
+    const seconds = row.duration_seconds ?? 0;
+    const joinedMs = row.joined_at ? new Date(row.joined_at).getTime() : null;
+    const leftMs = row.left_at ? new Date(row.left_at).getTime() : null;
+    if (!existing) {
+      map.set(key, {
+        key,
+        displayName: row.participant_name ?? 'Guest',
+        isHost: row.is_host,
+        sessionCount: 1,
+        totalSeconds: seconds,
+        firstJoinedAt: row.joined_at,
+        lastLeftAt: row.left_at,
+        stillIn: row.left_at == null,
+      });
+      continue;
+    }
+    existing.sessionCount += 1;
+    existing.totalSeconds += seconds;
+    // is_host = true for any session sticks; staff covering for one
+    // another counts as the staff side.
+    if (row.is_host) existing.isHost = true;
+    if (joinedMs != null) {
+      const prevJoined = existing.firstJoinedAt ? new Date(existing.firstJoinedAt).getTime() : null;
+      if (prevJoined == null || joinedMs < prevJoined) {
+        existing.firstJoinedAt = row.joined_at;
+      }
+    }
+    if (leftMs != null) {
+      const prevLeft = existing.lastLeftAt ? new Date(existing.lastLeftAt).getTime() : null;
+      if (prevLeft == null || leftMs > prevLeft) {
+        existing.lastLeftAt = row.left_at;
+      }
+    }
+    if (row.left_at == null) existing.stillIn = true;
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    // Host rows surface above non-host. Within each, longest stay first.
+    if (a.isHost !== b.isHost) return a.isHost ? -1 : 1;
+    return b.totalSeconds - a.totalSeconds;
+  });
+}
+
+function ParticipantList({ grouped }: { grouped: GroupedParticipant[] }) {
+  return (
+    <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      {grouped.map((person) => (
+        <li
+          key={person.key}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            background: theme.color.surface,
+            border: `1px solid ${theme.color.border}`,
+          }}
+        >
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.base,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {person.displayName}
+              </p>
+              <HostChip isHost={person.isHost} />
+            </div>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {person.sessionCount === 1
+                ? formatSingleSessionWindow(person)
+                : `${person.sessionCount} sessions · ${formatSingleSessionWindow(person)}`}
+            </p>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: 2,
+            }}
+          >
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.sm,
+                color: theme.color.ink,
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {formatDuration(person.totalSeconds)}
+            </p>
+            {person.stillIn ? (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                }}
+              >
+                still in meeting
+              </p>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function HostChip({ isHost }: { isHost: boolean }) {
+  if (!isHost) return null;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 8px',
+        borderRadius: theme.radius.pill,
+        background: '#EEF6FF',
+        border: '1px solid #C9DEF5',
+        color: '#1F4F86',
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: '0.02em',
+      }}
+    >
+      Host
+    </span>
+  );
+}
+
+function formatSingleSessionWindow(person: GroupedParticipant): string {
+  if (!person.firstJoinedAt) return '';
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (person.stillIn || !person.lastLeftAt) {
+    return `from ${fmt(person.firstJoinedAt)}`;
+  }
+  return `${fmt(person.firstJoinedAt)} → ${fmt(person.lastLeftAt)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Staff tap audit overlay — our own log, not Google's
+// ─────────────────────────────────────────────────────────────────────
+
+interface StaffTap {
+  id: string;
+  kind: 'joined' | 'rejoined';
+  occurredAt: string;
+  actorAccountId: string | null;
+}
+
+function useStaffTaps(appointmentId: string): {
+  rows: StaffTap[];
+  loading: boolean;
+} {
+  const [rows, setRows] = useState<StaffTap[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from('patient_events')
+        .select('id, event_type, payload, actor_account_id, created_at')
+        .in('event_type', ['virtual_meeting_joined', 'virtual_meeting_rejoined'])
+        .filter('payload->>appointment_id', 'eq', appointmentId)
+        .order('created_at', { ascending: true });
+      if (cancelled) return;
+      const mapped = ((data ?? []) as Array<{
+        id: string;
+        event_type: 'virtual_meeting_joined' | 'virtual_meeting_rejoined';
+        payload: Record<string, unknown> | null;
+        actor_account_id: string | null;
+        created_at: string;
+      }>).map((r) => ({
+        id: r.id,
+        kind: (r.event_type === 'virtual_meeting_joined' ? 'joined' : 'rejoined') as 'joined' | 'rejoined',
+        occurredAt: r.created_at,
+        actorAccountId: r.actor_account_id,
+      }));
+      setRows(mapped);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appointmentId]);
+  return { rows, loading };
+}
+
+function StaffTapsList({
+  taps,
+  googleSessions,
+}: {
+  taps: { rows: StaffTap[]; loading: boolean };
+  googleSessions: MeetAttendanceRow[];
+}) {
+  if (taps.loading) return null;
+  if (taps.rows.length === 0) return null;
+  const hostJoinedInGoogle = googleSessions.some((s) => s.is_host && (s.duration_seconds ?? 0) > 0);
+  return (
+    <div style={{ marginTop: theme.space[5] }}>
+      <p
+        style={{
+          margin: `0 0 ${theme.space[2]}px`,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+        }}
+      >
+        Staff app taps
+      </p>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+        {taps.rows.map((tap) => (
+          <li
+            key={tap.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: theme.space[2],
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              fontSize: theme.type.size.xs,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              borderRadius: theme.radius.input,
+              background: theme.color.bg,
+            }}
+          >
+            <span>
+              Staff tapped <strong>{tap.kind === 'joined' ? 'Join' : 'Rejoin'}</strong>
+            </span>
+            <span style={{ color: theme.color.inkMuted }}>{formatStamp(tap.occurredAt)}</span>
+          </li>
+        ))}
+      </ul>
+      {!hostJoinedInGoogle && taps.rows.length > 0 ? (
+        <p
+          style={{
+            margin: `${theme.space[2]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: '#8E1F1F',
+            lineHeight: 1.5,
+          }}
+        >
+          Staff tapped Join in the app but Google has no matching host session. The button was pressed; the meeting was not actually attended.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Header
+// ─────────────────────────────────────────────────────────────────────
+
 function Header({
   meetingCode,
-  rowCount,
-  totalParticipants,
+  peopleCount,
+  sessionCount,
   loading,
   pulling,
   onRefresh,
 }: {
   meetingCode: string | null;
-  rowCount: number;
-  totalParticipants: number;
+  peopleCount: number;
+  sessionCount: number;
   loading: boolean;
   pulling: boolean;
   onRefresh: () => void;
 }) {
   const meta = loading
     ? 'Loading'
-    : rowCount === 0
+    : peopleCount === 0
       ? 'No attendance yet'
-      : `${totalParticipants} ${totalParticipants === 1 ? 'person' : 'people'} · ${rowCount} ${rowCount === 1 ? 'session' : 'sessions'}`;
+      : `${peopleCount} ${peopleCount === 1 ? 'person' : 'people'} · ${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`;
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
@@ -296,14 +753,14 @@ function EmptyMessage({ meetingHasEnded }: { meetingHasEnded: boolean }) {
   return (
     <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
       {meetingHasEnded
-        ? 'No attendance recorded yet. Tap Refresh to pull the latest from Google.'
-        : 'Attendance lands here once the meeting has ended. Google only publishes conference records after the room closes.'}
+        ? 'Google has not published any session records for this meeting yet. If the meeting has just ended, tap Refresh in a minute; if no one ever joined the verdict above already says so.'
+        : 'Attendance lands here once the meeting has ended. Google only publishes conference records after the room closes. Staff app taps below are logged immediately.'}
     </p>
   );
 }
 
 function formatDuration(seconds: number | null): string {
-  if (seconds == null) return 'Still in meeting';
+  if (seconds == null || seconds === 0) return '—';
   if (seconds < 60) return `${seconds}s`;
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
@@ -313,9 +770,7 @@ function formatDuration(seconds: number | null): string {
   return `${hrs}h ${remMins.toString().padStart(2, '0')}m`;
 }
 
-function formatRange(joinedAtIso: string | null, leftAtIso: string | null): string {
-  if (!joinedAtIso) return '';
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return leftAtIso ? `${fmt(joinedAtIso)} → ${fmt(leftAtIso)}` : `from ${fmt(joinedAtIso)}`;
+function formatStamp(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
 }

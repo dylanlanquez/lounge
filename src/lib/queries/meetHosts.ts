@@ -202,6 +202,13 @@ export interface MeetAttendanceRow {
   joined_at: string | null;
   left_at: string | null;
   duration_seconds: number | null;
+  // is_host: matched against lng_meet_hosts.display_name when the row
+  // was fetched. False for the patient + any non-host participant.
+  is_host: boolean;
+  // Google's stable user-resource id ("users/abc"). Same person across
+  // sessions resolves to the same id, so the card groups by this when
+  // available and by participant_name when null (anonymous / phone).
+  meet_user_id: string | null;
 }
 
 export function useMeetAttendance(appointmentId: string | null | undefined): {
@@ -226,7 +233,7 @@ export function useMeetAttendance(appointmentId: string | null | undefined): {
     (async () => {
       const { data, error: err } = await supabase
         .from('lng_meet_attendance')
-        .select('id, appointment_id, participant_name, participant_email, joined_at, left_at, duration_seconds')
+        .select('id, appointment_id, participant_name, participant_email, joined_at, left_at, duration_seconds, is_host, meet_user_id')
         .eq('appointment_id', appointmentId)
         .order('joined_at', { ascending: true });
       if (cancelled) return;

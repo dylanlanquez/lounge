@@ -29,6 +29,12 @@ export interface StaffRow {
   // sign-in gate that enforces AAL2 lands in chunk 3 alongside the
   // /enroll-2fa and /verify-2fa screens.
   require_2fa: boolean;
+  // Per-admin-page grants for staff who aren't full admins. When
+  // is_admin = false but this array has entries, the Admin tab opens
+  // and only the listed tab keys are visible. Full admins (is_admin =
+  // true) see every tab regardless. Valid keys live in ADMIN_TABS
+  // in src/routes/Admin.tsx.
+  admin_page_access: string[];
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -56,6 +62,7 @@ interface RawJoinedRow {
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
   require_2fa: boolean | null;
+  admin_page_access: string[] | null;
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
@@ -94,6 +101,9 @@ function mapRow(r: RawJoinedRow): StaffRow {
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
     require_2fa: r.require_2fa === true,
+    admin_page_access: Array.isArray(r.admin_page_access)
+      ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
+      : [],
     status: r.status,
     hired_at: r.hired_at,
     deactivated_at: r.deactivated_at,
@@ -106,7 +116,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
+  'id, account_id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -479,6 +489,22 @@ export async function setRequire2fa(staffMemberId: string, value: boolean): Prom
   if (error) throw new Error(error.message);
 }
 
+// Writes the full admin_page_access array for a staff member. Replaces
+// the existing list rather than appending so the UI can present a set
+// of toggles and persist the whole state on each change. Empty array
+// means no per-page grants (the staff member is not a limited admin).
+export async function setAdminPageAccess(
+  staffMemberId: string,
+  pages: string[],
+): Promise<void> {
+  const unique = Array.from(new Set(pages.map((p) => p.trim()).filter(Boolean))).sort();
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ admin_page_access: unique })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
 function composeDisplay(a: {
   first_name: string | null;
   last_name: string | null;
@@ -534,6 +560,7 @@ export interface CurrentStaffMembership {
   can_view_financials: boolean;
   can_count_cash: boolean;
   require_2fa: boolean;
+  admin_page_access: string[];
   status: 'active' | 'inactive';
 }
 
@@ -542,7 +569,7 @@ export async function fetchCurrentStaffMembership(
 ): Promise<CurrentStaffMembership | null> {
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, status')
+    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -550,6 +577,39 @@ export async function fetchCurrentStaffMembership(
     // "no membership" rather than throwing. Older code paths still
     // call this before the foundation migration is applied in dev.
     if (error.code === '42P01') return null;
+    // admin_page_access is added by 20260513000005. If the column
+    // doesn't exist yet on this DB, fall back to a query without it
+    // so older deploys keep working until the migration lands.
+    if (error.code === '42703') {
+      const { data: legacy, error: legacyErr } = await supabase
+        .from('lng_staff_members')
+        .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, status')
+        .eq('account_id', accountId)
+        .maybeSingle();
+      if (legacyErr) throw new Error(legacyErr.message);
+      if (!legacy) return null;
+      const l = legacy as {
+        id: string;
+        is_admin: boolean;
+        is_manager: boolean;
+        can_view_reports: boolean | null;
+        can_view_financials: boolean | null;
+        can_count_cash: boolean | null;
+        require_2fa: boolean | null;
+        status: 'active' | 'inactive';
+      };
+      return {
+        staff_member_id: l.id,
+        is_admin: l.is_admin === true,
+        is_manager: l.is_manager === true,
+        can_view_reports: l.can_view_reports === true,
+        can_view_financials: l.can_view_financials === true,
+        can_count_cash: l.can_count_cash === true,
+        require_2fa: l.require_2fa === true,
+        admin_page_access: [],
+        status: l.status,
+      };
+    }
     throw new Error(error.message);
   }
   if (!data) return null;
@@ -561,6 +621,7 @@ export async function fetchCurrentStaffMembership(
     can_view_financials: boolean | null;
     can_count_cash: boolean | null;
     require_2fa: boolean | null;
+    admin_page_access: unknown;
     status: 'active' | 'inactive';
   };
   return {
@@ -571,6 +632,9 @@ export async function fetchCurrentStaffMembership(
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
     require_2fa: r.require_2fa === true,
+    admin_page_access: Array.isArray(r.admin_page_access)
+      ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
+      : [],
     status: r.status,
   };
 }

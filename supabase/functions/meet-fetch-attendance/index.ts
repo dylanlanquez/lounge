@@ -64,6 +64,20 @@ Deno.serve(async (req) => {
   const host = hostRow as MeetHostRow | null;
   if (!host) return json(404, { ok: false, error: 'Host not found' });
 
+  // Pre-load every active host's display_name. We label a participant
+  // as "host" if their Meet display name matches any host on file, not
+  // just THIS appointment's assigned host — a stand-in (Karly covering
+  // Lab) still reads as staff in the verdict line.
+  const { data: allHostsRaw } = await admin
+    .from('lng_meet_hosts')
+    .select('display_name, google_email')
+    .eq('is_active', true);
+  const knownHostNames = new Set(
+    ((allHostsRaw as Array<{ display_name: string | null }> | null) ?? [])
+      .map((h) => (h.display_name ?? '').trim().toLowerCase())
+      .filter((s) => s.length > 0),
+  );
+
   const tokenResult = await getValidAccessToken(admin, host);
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
   const accessToken = tokenResult.accessToken;
@@ -83,7 +97,7 @@ Deno.serve(async (req) => {
     });
   }
   const confData = (await confRes.json()) as {
-    conferenceRecords?: Array<{ name?: string }>;
+    conferenceRecords?: Array<{ name?: string; startTime?: string; endTime?: string }>;
   };
   const record = confData.conferenceRecords?.[0];
   if (!record?.name) {
@@ -93,6 +107,22 @@ Deno.serve(async (req) => {
       message: 'No conference record yet. Attendance lands once the meeting has ended.',
       attendance: [],
     });
+  }
+
+  // Persist the conferenceRecord's own start/end times on the
+  // appointment. This is the smoking-gun column: if conference_started_at
+  // is still null after end_at has passed, Google has no record of the
+  // conference ever opening — i.e. nobody connected, period. Helps the
+  // verdict line settle "the patient never joined" disputes without the
+  // operator having to read the session list.
+  if (record.startTime || record.endTime) {
+    await admin
+      .from('lng_appointments')
+      .update({
+        conference_started_at: record.startTime ?? null,
+        conference_ended_at: record.endTime ?? null,
+      })
+      .eq('id', appointmentId);
   }
 
   // 3. List participants and, for each, list their sessions.
@@ -110,6 +140,9 @@ Deno.serve(async (req) => {
   const partData = (await partRes.json()) as {
     participants?: Array<{
       name?: string;
+      // signedinUser.user is the stable Google user-resource id we use
+      // to group rows by person across sessions. displayName covers the
+      // label rendered in the card.
       signedinUser?: { displayName?: string; user?: string };
       anonymousUser?: { displayName?: string };
       phoneUser?: { displayName?: string };
@@ -128,6 +161,20 @@ Deno.serve(async (req) => {
       ?? participant.anonymousUser?.displayName
       ?? participant.phoneUser?.displayName
       ?? 'Guest';
+
+    // signedinUser.user is Google's stable user-resource id ("users/abc").
+    // Same person across sessions resolves to the same id, so the UI can
+    // group rows by it. Null for anonymous / phone joiners, in which case
+    // we fall back to participant_name (which is also null-safe — we
+    // group those under their displayName).
+    const meetUserId = participant.signedinUser?.user ?? null;
+
+    // Tag as host when the Meet display_name matches an active
+    // lng_meet_hosts.display_name. Lowercased + trimmed both sides for
+    // robustness. The patient's Meet display name has to come from
+    // their Google account or their typed-in guest name, neither of
+    // which we control — so a non-match defaults to false (patient).
+    const isHost = knownHostNames.has(displayName.trim().toLowerCase());
 
     const sessRes = await fetch(
       `https://meet.googleapis.com/v2/${participant.name}/participantSessions`,
@@ -160,6 +207,8 @@ Deno.serve(async (req) => {
             joined_at: joinedAt,
             left_at: leftAt,
             duration_seconds: durationSeconds,
+            is_host: isHost,
+            meet_user_id: meetUserId,
           },
           { onConflict: 'appointment_id,meet_session_name' },
         );

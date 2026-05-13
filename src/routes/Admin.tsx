@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Mail, MoreHorizontal, Package, Pencil, Plus, RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, BarChart3, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -36,6 +36,7 @@ import {
   resetTwoFactor,
   sendMagicLink,
   sendPasswordReset,
+  setAdminPageAccess,
   setCanCountCash,
   setCanViewFinancials,
   setCanViewReports,
@@ -142,20 +143,96 @@ import { CSS } from '@dnd-kit/utilities';
 
 type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
 
+// Canonical list of every Admin tab. Drives the SegmentedControl in
+// the Admin header, the per-staff "Admin pages" toggle list in the
+// Manage sheet, and the visibility filter at /admin for staff with
+// per-page grants. Adding a new admin tab? Add it here and the
+// permissions UI picks it up automatically — no migration needed,
+// because admin_page_access on lng_staff_members is a JSONB array
+// validated against this list app-side, not via a CHECK constraint.
+//
+// Two non-toggleable tabs:
+//   • staff   — must be full admin to manage staff. Listing it as a
+//               page grant would let a non-admin demote an admin.
+//   • testing — destructive dev tooling, super admin only.
+// Both are excluded from MANAGEABLE_ADMIN_TABS below. They still
+// render for full admins / super admins via the standard tab filter.
+const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
+  { key: 'calendly', label: 'Calendly', description: 'Webhook health, backfill imports, subscription diagnostics.' },
+  { key: 'services', label: 'Services', description: 'Bookable service catalogue, ordering, images.' },
+  { key: 'products', label: 'Products', description: 'Add-on product catalogue, pricing, archiving.' },
+  { key: 'booking_types', label: 'Booking types', description: 'Calendly mapping, deposits, services-per-type policy.' },
+  { key: 'conflicts', label: 'Resources', description: 'Resource conflict rules so two appointments never share a chair or surgeon.' },
+  { key: 'emails', label: 'Emails', description: 'Editable transactional email templates with version history.' },
+  { key: 'branding', label: 'Branding', description: 'Logo, colour, footer copy applied across emails and receipts.' },
+  { key: 'widget', label: 'Widget', description: 'Public-facing booking widget configuration and embed snippet.' },
+  { key: 'waivers', label: 'Waivers', description: 'Waiver section authoring + per-service requirement matrix.' },
+  { key: 'receipts', label: 'Receipts', description: 'Failed or pending receipt deliveries; retry sends.' },
+  { key: 'reports', label: 'Reports', description: 'Operational and revenue dashboards.' },
+  { key: 'devices', label: 'Devices', description: 'Stripe Terminal readers + location pairing.' },
+  { key: 'payments', label: 'Payments', description: 'Stripe payment log, reconciliation, retries.' },
+  { key: 'staff', label: 'Staff', description: 'Add, deactivate, permissions, and account actions for Lounge staff.' },
+  { key: 'failures', label: 'Failures', description: 'Unresolved system failures captured by lng_system_failures.' },
+  { key: 'testing', label: 'Testing', description: 'Dev-only resets and test-harness shortcuts.' },
+];
+
+// Admin tabs an admin can grant a non-admin staff member access to.
+// Staff + Testing are full-admin only and never appear as toggleable
+// per-page grants — see the comment on ADMIN_TABS.
+const NON_GRANTABLE_TABS: ReadonlySet<Tab> = new Set<Tab>(['staff', 'testing']);
+const MANAGEABLE_ADMIN_TABS = ADMIN_TABS.filter((t) => !NON_GRANTABLE_TABS.has(t.key));
+
 export function Admin() {
   const { user, loading: authLoading } = useAuth();
   const { account, loading: accountLoading } = useCurrentAccount();
   const isMobile = useIsMobile(640);
-  const [tab, setTab] = useState<Tab>('calendly');
+
+  // Visible tabs depend on the operator. Super admins and full admins
+  // see every tab. Limited admins (is_admin = false, but
+  // admin_page_access has entries) see only the tabs they've been
+  // granted. Memoised here so the segmented control + the initial
+  // tab pick stay in sync.
+  const visibleTabs = useMemo(() => {
+    if (!account) return [];
+    if (account.is_super_admin || account.is_admin) return ADMIN_TABS;
+    const allowed = new Set(account.admin_page_access);
+    return ADMIN_TABS.filter((t) => allowed.has(t.key));
+  }, [account]);
+
+  // Pick the first available tab as the default. Lazy initialiser so
+  // the first render lands on a tab the operator actually has access
+  // to — calendly is no longer hardcoded because a limited admin may
+  // not have it granted.
+  const [tab, setTab] = useState<Tab>(() => {
+    if (!account) return 'calendly';
+    if (account.is_super_admin || account.is_admin) return 'calendly';
+    return (account.admin_page_access[0] as Tab | undefined) ?? 'calendly';
+  });
+
+  // If the operator's grants shift while /admin is open (rare — would
+  // require a permission write landing mid-session) AND the active
+  // tab is no longer visible to them, jump them onto the first tab
+  // they can still see. Skipped when no tabs are visible because the
+  // gate below will redirect anyway.
+  useEffect(() => {
+    if (visibleTabs.length === 0) return;
+    if (!visibleTabs.some((t) => t.key === tab)) {
+      setTab(visibleTabs[0]!.key);
+    }
+  }, [visibleTabs, tab]);
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
-  // Admin gate: account_types must contain 'admin', or be the super
-  // admin email. Anything else falls through to the home redirect —
-  // non-admin staff can use everything else in Lounge but Admin (and
-  // therefore Staff config, Waivers, Stripe payment log etc.) is
-  // off-limits.
-  if (!account || (!account.is_admin && !account.is_super_admin)) {
+  // Admin gate. Three ways in:
+  //   • Super admin                  — fixed email, always sees everything
+  //   • Full admin                   — lng_staff_members.is_admin = true
+  //   • Limited admin (page grants)  — admin_page_access has entries
+  // No path in → home redirect. Non-admin staff can use everything
+  // else in Lounge but /admin (and the Staff tab specifically) stays
+  // off-limits without an explicit grant.
+  const hasFullAdmin = account?.is_admin === true || account?.is_super_admin === true;
+  const hasLimitedAdmin = (account?.admin_page_access?.length ?? 0) > 0;
+  if (!account || (!hasFullAdmin && !hasLimitedAdmin)) {
     return <Navigate to="/" replace />;
   }
 
@@ -187,24 +264,7 @@ export function Admin() {
             scrollable
             value={tab}
             onChange={setTab}
-            options={[
-              { value: 'calendly', label: 'Calendly' },
-              { value: 'services', label: 'Services' },
-              { value: 'products', label: 'Products' },
-              { value: 'booking_types', label: 'Booking types' },
-              { value: 'conflicts', label: 'Resources' },
-              { value: 'emails', label: 'Emails' },
-              { value: 'branding', label: 'Branding' },
-              { value: 'widget', label: 'Widget' },
-              { value: 'waivers', label: 'Waivers' },
-              { value: 'receipts', label: 'Receipts' },
-              { value: 'reports', label: 'Reports' },
-              { value: 'devices', label: 'Devices' },
-              { value: 'payments', label: 'Payments' },
-              { value: 'staff', label: 'Staff' },
-              { value: 'failures', label: 'Failures' },
-              { value: 'testing', label: 'Testing' },
-            ]}
+            options={visibleTabs.map((t) => ({ value: t.key, label: t.label }))}
           />
         </div>
 
@@ -1654,11 +1714,8 @@ function StaffTab() {
   const { account: currentAccount } = useCurrentAccount();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<StaffRow | null>(null);
-  const [draftFirst, setDraftFirst] = useState('');
-  const [draftLast, setDraftLast] = useState('');
-  const [editBusy, setEditBusy] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+  const [search, setSearch] = useState('');
 
   // Add-staff sheet
   const [addOpen, setAddOpen] = useState(false);
@@ -1679,22 +1736,15 @@ function StaffTab() {
     reason: string | null;
   } | null>(null);
 
-  // Deactivate confirm sheet
-  const [deactivating, setDeactivating] = useState<StaffRow | null>(null);
+  // Single Manage sheet — replaces the four overlapping sheets the
+  // tab used to expose (edit name, permissions, account actions,
+  // deactivate). One row state, six sections inside.
+  const [managing, setManaging] = useState<StaffRow | null>(null);
+  const [draftFirst, setDraftFirst] = useState('');
+  const [draftLast, setDraftLast] = useState('');
+  const [nameBusy, setNameBusy] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
-
-  // Permissions sheet — fine-grained Reports / Financials / Cash count
-  // flags. Reports default-on for everyone, the other two default-off
-  // and are super-admin-grant only. Sheet shows all three so an admin
-  // can read what's set even if they can't change everything.
-  const [permsOpen, setPermsOpen] = useState<StaffRow | null>(null);
-
-  // Account actions sheet — chunk 2's per-staff one-shot actions
-  // (password reset, magic link, reset 2FA) plus the Require 2FA
-  // policy toggle. Each action's busy/feedback state is colocated
-  // here rather than per-button so the sheet's controls stay locked
-  // while one is in flight.
-  const [actionsOpen, setActionsOpen] = useState<StaffRow | null>(null);
   const [actionBusy, setActionBusy] = useState<null | 'password_reset' | 'magic_link' | 'reset_2fa' | 'toggle_2fa'>(null);
   const [actionFeedback, setActionFeedback] = useState<{
     tone: 'success' | 'error';
@@ -1703,14 +1753,48 @@ function StaffTab() {
     manualLink?: string;
   } | null>(null);
   const [confirmReset2fa, setConfirmReset2fa] = useState(false);
+  // Tab key currently mid-write for the per-page access toggles.
+  // Used to disable just-clicked rows while their PATCH is in flight,
+  // so rapid taps don't queue up conflicting writes against the same
+  // JSONB column.
+  const [pageBusy, setPageBusy] = useState<string | null>(null);
 
   const canEditAdmin = currentAccount?.is_super_admin === true;
   const canEditFinancialPerms = currentAccount?.is_super_admin === true;
+  // Page-access grants are admin-editable, but the operator must
+  // already have admin rights themselves (full or super). A limited
+  // admin can't grant other people access.
+  const canEditPageAccess = currentAccount?.is_admin === true || currentAccount?.is_super_admin === true;
 
-  const visibleStaff = showInactive
-    ? staff.data
-    : staff.data.filter((s) => s.status === 'active');
-  const inactiveCount = staff.data.filter((s) => s.status === 'inactive').length;
+  // Stats line at the top — answers "how many people, who's an
+  // admin, how many limited admins, how many sat in the inactive
+  // bucket". Cheap derivation, kept inline rather than memoised.
+  const activeStaff = staff.data.filter((s) => s.status === 'active');
+  const inactiveCount = staff.data.length - activeStaff.length;
+  const adminCount = activeStaff.filter((s) => s.is_admin).length;
+  const limitedAdminCount = activeStaff.filter((s) => !s.is_admin && s.admin_page_access.length > 0).length;
+
+  const searchTerm = search.trim().toLowerCase();
+  const visibleStaff = (showInactive ? staff.data : activeStaff)
+    .filter((s) =>
+      !searchTerm
+        ? true
+        : s.display_name.toLowerCase().includes(searchTerm) ||
+          s.login_email.toLowerCase().includes(searchTerm),
+    );
+
+  // Keep the open Manage sheet's row in sync with fresh data from the
+  // staff list. Without this, optimistic toggles applied to
+  // `managing` would be lost the moment the background refetch lands
+  // and the sheet would re-render with stale-looking state. We snap
+  // the local row to whatever the latest list has when ids match.
+  useEffect(() => {
+    if (!managing) return;
+    const fresh = staff.data.find((s) => s.staff_member_id === managing.staff_member_id);
+    if (fresh && fresh !== managing) {
+      setManaging(fresh);
+    }
+  }, [staff.data, managing]);
 
   const toggleManager = async (staffMemberId: string, next: boolean) => {
     setBusyId(staffMemberId);
@@ -1739,24 +1823,40 @@ function StaffTab() {
     }
   };
 
-  const openEdit = (row: StaffRow) => {
-    setEditing(row);
+  const openManage = (row: StaffRow) => {
+    setManaging(row);
     setDraftFirst(row.first_name ?? '');
     setDraftLast(row.last_name ?? '');
+    setActionFeedback(null);
+    setConfirmReset2fa(false);
+    setConfirmDeactivate(false);
+    setError(null);
   };
 
-  const saveEdit = async () => {
-    if (!editing) return;
-    setEditBusy(true);
+  const closeManage = () => {
+    if (nameBusy || actionBusy || deactivateBusy) return;
+    setManaging(null);
+    setActionFeedback(null);
+    setConfirmReset2fa(false);
+    setConfirmDeactivate(false);
+  };
+
+  const saveName = async () => {
+    if (!managing) return;
+    const trimmedFirst = draftFirst.trim();
+    const trimmedLast = draftLast.trim();
+    if (trimmedFirst === (managing.first_name ?? '') && trimmedLast === (managing.last_name ?? '')) {
+      return;
+    }
+    setNameBusy(true);
     setError(null);
     try {
-      await setStaffName(editing.account_id, draftFirst, draftLast);
+      await setStaffName(managing.account_id, trimmedFirst, trimmedLast);
       staff.refresh();
-      setEditing(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setEditBusy(false);
+      setNameBusy(false);
     }
   };
 
@@ -1824,30 +1924,17 @@ function StaffTab() {
     }
   };
 
-  const openActions = (row: StaffRow) => {
-    setActionsOpen(row);
-    setActionFeedback(null);
-    setConfirmReset2fa(false);
-  };
-
-  const closeActions = () => {
-    if (actionBusy) return;
-    setActionsOpen(null);
-    setActionFeedback(null);
-    setConfirmReset2fa(false);
-  };
-
   const handleSendPasswordReset = async () => {
-    if (!actionsOpen) return;
+    if (!managing) return;
     setActionBusy('password_reset');
     setActionFeedback(null);
     try {
-      const r = await sendPasswordReset(actionsOpen.staff_member_id);
+      const r = await sendPasswordReset(managing.staff_member_id);
       if (r.emailSent) {
         setActionFeedback({
           tone: 'success',
           title: 'Password reset link sent.',
-          description: `Delivered to ${actionsOpen.login_email}. The link is good for one hour.`,
+          description: `Delivered to ${managing.login_email}. The link is good for one hour.`,
         });
       } else {
         setActionFeedback({
@@ -1869,16 +1956,16 @@ function StaffTab() {
   };
 
   const handleSendMagicLink = async () => {
-    if (!actionsOpen) return;
+    if (!managing) return;
     setActionBusy('magic_link');
     setActionFeedback(null);
     try {
-      const r = await sendMagicLink(actionsOpen.staff_member_id);
+      const r = await sendMagicLink(managing.staff_member_id);
       if (r.emailSent) {
         setActionFeedback({
           tone: 'success',
           title: 'Sign-in link sent.',
-          description: `Delivered to ${actionsOpen.login_email}. The link is good for ten minutes.`,
+          description: `Delivered to ${managing.login_email}. The link is good for ten minutes.`,
         });
       } else {
         setActionFeedback({
@@ -1900,11 +1987,11 @@ function StaffTab() {
   };
 
   const handleReset2fa = async () => {
-    if (!actionsOpen) return;
+    if (!managing) return;
     setActionBusy('reset_2fa');
     setActionFeedback(null);
     try {
-      const r = await resetTwoFactor(actionsOpen.staff_member_id);
+      const r = await resetTwoFactor(managing.staff_member_id);
       setActionFeedback({
         tone: 'success',
         title:
@@ -1929,17 +2016,17 @@ function StaffTab() {
   };
 
   const handleToggleRequire2fa = async (next: boolean) => {
-    if (!actionsOpen) return;
+    if (!managing) return;
     setActionBusy('toggle_2fa');
     setActionFeedback(null);
     // Optimistic — flip the in-sheet row immediately so the toggle
     // doesn't fight the user's click. Refresh after the write lands.
-    setActionsOpen((cur) => (cur ? { ...cur, require_2fa: next } : cur));
+    setManaging((cur) => (cur ? { ...cur, require_2fa: next } : cur));
     try {
-      await setRequire2fa(actionsOpen.staff_member_id, next);
+      await setRequire2fa(managing.staff_member_id, next);
       staff.refresh();
     } catch (e) {
-      setActionsOpen((cur) => (cur ? { ...cur, require_2fa: !next } : cur));
+      setManaging((cur) => (cur ? { ...cur, require_2fa: !next } : cur));
       setActionFeedback({
         tone: 'error',
         title: 'Could not update the 2FA requirement.',
@@ -1951,13 +2038,14 @@ function StaffTab() {
   };
 
   const submitDeactivate = async () => {
-    if (!deactivating) return;
+    if (!managing) return;
     setDeactivateBusy(true);
     setError(null);
     try {
-      await deactivateStaffMember(deactivating.staff_member_id);
+      await deactivateStaffMember(managing.staff_member_id);
       staff.refresh();
-      setDeactivating(null);
+      setManaging(null);
+      setConfirmDeactivate(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1978,9 +2066,9 @@ function StaffTab() {
     }
   };
 
-  // Optimistic toggle for the three permission flags. The old version
-  // awaited the Supabase write + a full staff refetch before the
-  // checkbox visually updated, which made every click feel like a
+  // Optimistic toggle for the three section-access flags. The old
+  // version awaited the Supabase write + a full staff refetch before
+  // the checkbox visually updated, which made every click feel like a
   // 300-500ms freeze and ate rapid taps. Now: flip the local state
   // first so the checkbox responds instantly, then mirror the change
   // to the server in the background. On error, revert and surface a
@@ -1997,10 +2085,7 @@ function StaffTab() {
           ? 'can_view_financials'
           : 'can_count_cash';
     const prev = !next;
-    // Optimistic: update the open sheet immediately so the user sees
-    // the click land. The full staff list refresh happens after the
-    // server confirms.
-    setPermsOpen((cur) =>
+    setManaging((cur) =>
       cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: next } : cur,
     );
     setError(null);
@@ -2015,13 +2100,57 @@ function StaffTab() {
         staff.refresh();
       })
       .catch((e) => {
-        // Revert the optimistic update so the checkbox snaps back.
-        setPermsOpen((cur) =>
+        setManaging((cur) =>
           cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: prev } : cur,
         );
         setError(e instanceof Error ? e.message : String(e));
       });
   };
+
+  // Toggles a single tab key on/off in admin_page_access. The whole
+  // array is rewritten on every change rather than diff'd because
+  // Postgres' JSONB arrays don't have an efficient "remove one
+  // element" primitive — the round trip cost is identical either way.
+  // Optimistic update so each click responds instantly; pageBusy
+  // locks the just-clicked row until the write confirms so rapid
+  // taps don't race against the server.
+  const togglePageAccess = (staffMemberId: string, tabKey: string, next: boolean) => {
+    if (!canEditPageAccess) return;
+    setManaging((cur) => {
+      if (!cur || cur.staff_member_id !== staffMemberId) return cur;
+      const has = cur.admin_page_access.includes(tabKey);
+      const nextList = next
+        ? has
+          ? cur.admin_page_access
+          : [...cur.admin_page_access, tabKey].sort()
+        : cur.admin_page_access.filter((k) => k !== tabKey);
+      return { ...cur, admin_page_access: nextList };
+    });
+    setPageBusy(tabKey);
+    setError(null);
+    // Read the latest list off the freshest managing snapshot we have.
+    const sourceRow = managing?.staff_member_id === staffMemberId ? managing : staff.data.find((s) => s.staff_member_id === staffMemberId);
+    const nextList = next
+      ? Array.from(new Set([...(sourceRow?.admin_page_access ?? []), tabKey]))
+      : (sourceRow?.admin_page_access ?? []).filter((k) => k !== tabKey);
+    setAdminPageAccess(staffMemberId, nextList)
+      .then(() => {
+        staff.refresh();
+      })
+      .catch((e) => {
+        // Revert.
+        setManaging((cur) => {
+          if (!cur || cur.staff_member_id !== staffMemberId) return cur;
+          return { ...cur, admin_page_access: sourceRow?.admin_page_access ?? [] };
+        });
+        setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => setPageBusy(null));
+  };
+
+  const nameDirty =
+    managing !== null &&
+    (draftFirst.trim() !== (managing.first_name ?? '') || draftLast.trim() !== (managing.last_name ?? ''));
 
   return (
     <Card padding="lg">
@@ -2041,7 +2170,32 @@ function StaffTab() {
         </Button>
       </div>
 
-      <div style={{ marginTop: theme.space[5], marginBottom: theme.space[4] }}>
+      <StaffSummary
+        active={activeStaff.length}
+        admins={adminCount}
+        limited={limitedAdminCount}
+        inactive={inactiveCount}
+      />
+
+      <div style={{ marginTop: theme.space[4], marginBottom: theme.space[4], display: 'flex', gap: theme.space[3], flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ flex: '1 1 240px', minWidth: 200 }}>
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name or email"
+            aria-label="Search staff"
+          />
+        </div>
+        {inactiveCount > 0 ? (
+          <Button variant="tertiary" size="sm" onClick={() => setShowInactive((v) => !v)}>
+            {showInactive
+              ? `Hide ${inactiveCount} deactivated`
+              : `Show ${inactiveCount} deactivated`}
+          </Button>
+        ) : null}
+      </div>
+
+      <div style={{ marginBottom: theme.space[4] }}>
         {staff.loading ? (
           <Skeleton height={120} />
         ) : staff.error ? (
@@ -2049,55 +2203,64 @@ function StaffTab() {
         ) : visibleStaff.length === 0 ? (
           <EmptyState
             icon={<Users size={20} />}
-            title="No staff yet"
-            description="Add the first staff member to get started."
+            title={searchTerm ? 'No matches' : 'No staff yet'}
+            description={searchTerm ? 'No staff member matched that search.' : 'Add the first staff member to get started.'}
           />
         ) : (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
             {visibleStaff.map((s) => {
               const isInactive = s.status === 'inactive';
-              const isMe = s.account_id === currentAccount?.account_id;
               const isSuperAdminRow = s.login_email === 'dylan@lanquez.com';
+              const nameMissing = !s.first_name || !s.last_name;
+              const pageGrantCount = s.admin_page_access.length;
               return (
                 <li
                   key={s.staff_member_id}
                   style={{
                     display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'stretch',
-                    gap: theme.space[3],
+                    alignItems: 'center',
+                    gap: theme.space[4],
                     padding: theme.space[4],
                     background: isInactive ? theme.color.bg : theme.color.surface,
                     border: `1px solid ${theme.color.border}`,
                     borderRadius: 12,
-                    opacity: isInactive ? 0.65 : 1,
+                    opacity: isInactive ? 0.7 : 1,
+                    flexWrap: 'wrap',
                   }}
                 >
-                  <div>
-                    <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
-                      <span>{s.display_name}</span>
+                  <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                        {s.display_name}
+                      </span>
                       {isInactive ? (
-                        <StatusPill tone="cancelled" size="sm">
-                          Deactivated
-                        </StatusPill>
-                      ) : null}
-                      {!s.first_name || !s.last_name ? (
-                        <span
-                          style={{
-                            fontSize: theme.type.size.xs,
-                            color: theme.color.warn,
-                            fontWeight: theme.type.weight.medium,
-                          }}
-                        >
+                        <StatusPill tone="cancelled" size="sm">Deactivated</StatusPill>
+                      ) : (
+                        <>
+                          {isSuperAdminRow ? (
+                            <RolePill tone="accent">Super admin</RolePill>
+                          ) : s.is_admin ? (
+                            <RolePill tone="accent">Admin</RolePill>
+                          ) : pageGrantCount > 0 ? (
+                            <RolePill tone="accent-soft">
+                              Admin · {pageGrantCount} {pageGrantCount === 1 ? 'page' : 'pages'}
+                            </RolePill>
+                          ) : null}
+                          {s.is_manager ? <RolePill tone="neutral">Manager</RolePill> : null}
+                          {s.require_2fa ? <RolePill tone="neutral">2FA required</RolePill> : null}
+                        </>
+                      )}
+                      {nameMissing && !isInactive ? (
+                        <span style={{ fontSize: theme.type.size.xs, color: theme.color.warn, fontWeight: theme.type.weight.medium }}>
                           Name incomplete
                         </span>
                       ) : null}
-                    </p>
-                    <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.xs }}>
+                    </div>
+                    <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {s.login_email || 'No login email'}
-                    </p>
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[4], flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: theme.space[2], flex: '0 0 auto' }}>
                     {isInactive ? (
                       <Button
                         variant="secondary"
@@ -2108,46 +2271,15 @@ function StaffTab() {
                         Reactivate
                       </Button>
                     ) : (
-                      <>
-                        <Checkbox
-                          checked={s.is_manager}
-                          onChange={(v) => toggleManager(s.staff_member_id, v)}
-                          disabled={busyId === s.staff_member_id}
-                          label="Manager"
-                        />
-                        <Checkbox
-                          checked={s.is_admin}
-                          onChange={(v) => toggleAdmin(s.staff_member_id, v)}
-                          disabled={busyId === s.staff_member_id || !canEditAdmin || isSuperAdminRow}
-                          label="Admin"
-                        />
-                        <Button variant="tertiary" size="sm" onClick={() => openEdit(s)}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                            <Pencil size={14} aria-hidden /> Edit name
-                          </span>
-                        </Button>
-                        <Button variant="tertiary" size="sm" onClick={() => setPermsOpen(s)}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                            <ShieldAlert size={14} aria-hidden /> Permissions
-                          </span>
-                        </Button>
-                        <Button variant="tertiary" size="sm" onClick={() => openActions(s)}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                            <MoreHorizontal size={14} aria-hidden /> Account actions
-                          </span>
-                        </Button>
-                        {isSuperAdminRow || isMe ? null : (
-                          <Button
-                            variant="tertiary"
-                            size="sm"
-                            onClick={() => setDeactivating(s)}
-                          >
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
-                              <Trash2 size={14} aria-hidden /> Deactivate
-                            </span>
-                          </Button>
-                        )}
-                      </>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => openManage(s)}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                          <Settings size={14} aria-hidden /> Manage
+                        </span>
+                      </Button>
                     )}
                   </div>
                 </li>
@@ -2157,16 +2289,6 @@ function StaffTab() {
         )}
       </div>
 
-      {inactiveCount > 0 ? (
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button variant="tertiary" size="sm" onClick={() => setShowInactive((v) => !v)}>
-            {showInactive
-              ? `Hide ${inactiveCount} deactivated`
-              : `Show ${inactiveCount} deactivated`}
-          </Button>
-        </div>
-      ) : null}
-
       {error ? (
         <p role="alert" style={{ marginTop: theme.space[3], color: theme.color.alert, fontSize: theme.type.size.sm }}>
           {error}
@@ -2174,37 +2296,320 @@ function StaffTab() {
       ) : null}
 
       <BottomSheet
-        open={editing !== null}
-        onClose={() => !editBusy && setEditing(null)}
-        dismissable={!editBusy}
-        title={editing ? `Edit ${editing.display_name}` : 'Edit staff'}
-        description="First and last name are used wherever this account leaves a mark — waiver witness, timeline attribution, signed-document footer."
+        open={managing !== null}
+        onClose={closeManage}
+        dismissable={!nameBusy && !actionBusy && !deactivateBusy}
+        title={managing ? `Manage ${managing.display_name}` : 'Manage staff'}
+        description={managing?.login_email ?? undefined}
         footer={
           <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={() => setEditing(null)} disabled={editBusy}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={saveEdit} loading={editBusy}>
-              Save
+            <Button variant="secondary" onClick={closeManage} disabled={nameBusy || !!actionBusy || deactivateBusy}>
+              Done
             </Button>
           </div>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-          <Input
-            label="First name"
-            value={draftFirst}
-            onChange={(e) => setDraftFirst(e.target.value)}
-            placeholder="e.g. Dylan"
-            autoFocus
-          />
-          <Input
-            label="Last name"
-            value={draftLast}
-            onChange={(e) => setDraftLast(e.target.value)}
-            placeholder="e.g. Lane"
-          />
-        </div>
+        {managing ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+            <ManageSection
+              title="Identity"
+              description="Name lands on every signature, payment, and discount this person signs off. Pre-fills the witness field on waivers automatically."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <div style={{ display: 'flex', gap: theme.space[3], flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 160px' }}>
+                    <Input
+                      label="First name"
+                      value={draftFirst}
+                      onChange={(e) => setDraftFirst(e.target.value)}
+                      placeholder="e.g. Sarah"
+                    />
+                  </div>
+                  <div style={{ flex: '1 1 160px' }}>
+                    <Input
+                      label="Last name"
+                      value={draftLast}
+                      onChange={(e) => setDraftLast(e.target.value)}
+                      placeholder="e.g. Mackay"
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={saveName}
+                    loading={nameBusy}
+                    disabled={!nameDirty || nameBusy}
+                  >
+                    Save name
+                  </Button>
+                </div>
+              </div>
+            </ManageSection>
+
+            <ManageSection
+              title="Role"
+              description="Admin opens the /admin tab and unlocks every page below by default. Manager is required to sign off discounts, voids, and refunds at the till."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <PermissionRow
+                  title="Admin"
+                  description="Full /admin access. Sees every tab, can manage staff, configure the catalogue, and view financials."
+                  checked={managing.is_admin}
+                  disabled={!canEditAdmin || managing.login_email === 'dylan@lanquez.com'}
+                  disabledReason={
+                    managing.login_email === 'dylan@lanquez.com'
+                      ? 'The super admin role is permanent.'
+                      : canEditAdmin
+                        ? undefined
+                        : 'Only the super admin can promote or demote admins.'
+                  }
+                  onChange={(v) => toggleAdmin(managing.staff_member_id, v)}
+                />
+                <PermissionRow
+                  title="Manager"
+                  description="Required to sign off discounts, voided sales, and refunds at the till. Distinct from Admin: a manager doesn't see /admin unless they're also an admin."
+                  checked={managing.is_manager}
+                  onChange={(v) => toggleManager(managing.staff_member_id, v)}
+                />
+              </div>
+            </ManageSection>
+
+            <ManageSection
+              title="Section access"
+              description="Top-level destinations outside the /admin tab. Reports defaults on; Financials and Cash counting are super-admin grants only."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <PermissionRow
+                  title="Reports"
+                  description="Operational dashboards covering bookings, demographics, marketing, service mix, lifetime value."
+                  checked={managing.can_view_reports}
+                  onChange={(v) => togglePerm(managing.staff_member_id, 'reports', v)}
+                />
+                <PermissionRow
+                  title="Financials"
+                  description="Sales, discounts, voids, anomaly flags, cash reconciliation. Super-admin-grant only."
+                  checked={managing.can_view_financials}
+                  disabled={!canEditFinancialPerms}
+                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Financials access.'}
+                  onChange={(v) => togglePerm(managing.staff_member_id, 'financials', v)}
+                />
+                <PermissionRow
+                  title="Cash counting"
+                  description="Lets this person initiate a cash reconciliation count. Sign-off still requires a different manager. Super-admin-grant only."
+                  checked={managing.can_count_cash}
+                  disabled={!canEditFinancialPerms}
+                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
+                  onChange={(v) => togglePerm(managing.staff_member_id, 'cash', v)}
+                />
+              </div>
+            </ManageSection>
+
+            <ManageSection
+              title="Admin pages"
+              description={
+                managing.is_admin
+                  ? 'This person is a full admin — every page is unlocked. Remove the Admin role above to grant page-by-page access instead.'
+                  : 'Grant access to specific /admin pages without making this person a full admin. They land on /admin and only see the pages you tick here. Staff and Testing are admin-only and can never be granted as a page.'
+              }
+              icon={<Layers size={14} aria-hidden />}
+            >
+              {managing.is_admin ? (
+                <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle, fontStyle: 'italic' }}>
+                  Page-level grants are inactive while this person is a full admin.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: theme.space[2],
+                  }}
+                >
+                  {MANAGEABLE_ADMIN_TABS.map((t) => {
+                    const checked = managing.admin_page_access.includes(t.key);
+                    return (
+                      <label
+                        key={t.key}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: theme.space[2],
+                          padding: theme.space[3],
+                          border: `1px solid ${checked ? theme.color.accent : theme.color.border}`,
+                          borderRadius: theme.radius.input,
+                          background: checked ? theme.color.accentBg : theme.color.surface,
+                          cursor: canEditPageAccess ? 'pointer' : 'not-allowed',
+                          opacity: canEditPageAccess ? 1 : 0.65,
+                        }}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onChange={(v) => togglePageAccess(managing.staff_member_id, t.key, v)}
+                          disabled={!canEditPageAccess || pageBusy === t.key}
+                          ariaLabel={t.label}
+                        />
+                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                            {t.label}
+                          </span>
+                          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+                            {t.description}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </ManageSection>
+
+            <ManageSection
+              title="Account actions"
+              description="Send sign-in help or remove their authenticator. Every action is delivered to their email on file."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+                <ActionRow
+                  icon={<KeyRound size={16} aria-hidden />}
+                  title="Send password reset link"
+                  description="Emails a one-time link they can use to set a new password. Use this when a new starter never set theirs, or for forgotten-password support."
+                  cta="Send reset link"
+                  loading={actionBusy === 'password_reset'}
+                  disabled={!!actionBusy}
+                  onClick={handleSendPasswordReset}
+                />
+                <ActionRow
+                  icon={<Mail size={16} aria-hidden />}
+                  title="Send sign-in link"
+                  description="Emails a one-time magic link that signs them in without a password. Useful as a fallback when password reset isn't reaching their inbox."
+                  cta="Send sign-in link"
+                  loading={actionBusy === 'magic_link'}
+                  disabled={!!actionBusy}
+                  onClick={handleSendMagicLink}
+                />
+                <ActionRow
+                  icon={<ShieldAlert size={16} aria-hidden />}
+                  title="Reset two-factor authentication"
+                  description="Removes the authenticator app linked to their account. They'll be prompted to enrol a new one on next sign-in if 2FA is required."
+                  cta={confirmReset2fa ? 'Confirm reset' : 'Reset 2FA'}
+                  ctaTone={confirmReset2fa ? 'alert' : 'default'}
+                  loading={actionBusy === 'reset_2fa'}
+                  disabled={!!actionBusy}
+                  onClick={() => {
+                    if (!confirmReset2fa) {
+                      setConfirmReset2fa(true);
+                      return;
+                    }
+                    void handleReset2fa();
+                  }}
+                  secondaryCta={confirmReset2fa ? 'Cancel' : undefined}
+                  onSecondary={confirmReset2fa ? () => setConfirmReset2fa(false) : undefined}
+                />
+                <ActionRow
+                  icon={<ShieldCheck size={16} aria-hidden />}
+                  title="Require two-factor authentication"
+                  description="When enabled, this person must enrol an authenticator app on their next sign-in before they can use Lounge. If they already have 2FA set up, nothing changes for them."
+                  toggleChecked={managing.require_2fa}
+                  onToggle={handleToggleRequire2fa}
+                  toggleDisabled={!!actionBusy}
+                  toggleLoading={actionBusy === 'toggle_2fa'}
+                />
+                {actionFeedback ? (
+                  <div
+                    role={actionFeedback.tone === 'error' ? 'alert' : 'status'}
+                    style={{
+                      margin: 0,
+                      padding: theme.space[4],
+                      background: actionFeedback.tone === 'error' ? 'rgba(184, 58, 42, 0.06)' : theme.color.accentBg,
+                      border: `1px solid ${actionFeedback.tone === 'error' ? 'rgba(184, 58, 42, 0.18)' : theme.color.border}`,
+                      borderRadius: theme.radius.input,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: theme.space[2],
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: actionFeedback.tone === 'error' ? theme.color.alert : theme.color.ink }}>
+                      {actionFeedback.title}
+                    </p>
+                    {actionFeedback.description ? (
+                      <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+                        {actionFeedback.description}
+                      </p>
+                    ) : null}
+                    {actionFeedback.manualLink ? (
+                      <>
+                        <textarea
+                          readOnly
+                          value={actionFeedback.manualLink}
+                          onFocus={(e) => e.currentTarget.select()}
+                          style={{
+                            width: '100%',
+                            minHeight: 72,
+                            padding: theme.space[3],
+                            border: `1px solid ${theme.color.border}`,
+                            borderRadius: theme.radius.input,
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                            fontSize: theme.type.size.xs,
+                            background: theme.color.surface,
+                            color: theme.color.ink,
+                            resize: 'vertical',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            if (actionFeedback.manualLink) {
+                              void navigator.clipboard?.writeText(actionFeedback.manualLink).catch(() => {});
+                            }
+                          }}
+                        >
+                          Copy link
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </ManageSection>
+
+            {managing.login_email === 'dylan@lanquez.com' || managing.account_id === currentAccount?.account_id ? null : (
+              <ManageSection
+                title="Danger zone"
+                description="Deactivation immediately removes Lounge access. Their attribution on every past signature, payment, and discount they signed off stays in place. Their access to Meridian or any other Venneir tool is untouched. You can reactivate them later."
+                tone="alert"
+              >
+                {confirmDeactivate ? (
+                  <div style={{ display: 'flex', gap: theme.space[3], alignItems: 'center', flexWrap: 'wrap' }}>
+                    <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+                      Deactivate {managing.display_name}?
+                    </p>
+                    <div style={{ display: 'flex', gap: theme.space[2], marginLeft: 'auto' }}>
+                      <Button variant="tertiary" size="sm" onClick={() => setConfirmDeactivate(false)} disabled={deactivateBusy}>
+                        Cancel
+                      </Button>
+                      <Button variant="primary" size="sm" onClick={submitDeactivate} loading={deactivateBusy}>
+                        Confirm deactivate
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <Button variant="secondary" size="sm" onClick={() => setConfirmDeactivate(true)}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
+                        <Trash2 size={14} aria-hidden /> Deactivate
+                      </span>
+                    </Button>
+                  </div>
+                )}
+              </ManageSection>
+            )}
+          </div>
+        ) : (
+          <div />
+        )}
       </BottomSheet>
 
       <BottomSheet
@@ -2328,220 +2733,150 @@ function StaffTab() {
           ) : null}
         </div>
       </BottomSheet>
-
-      <BottomSheet
-        open={deactivating !== null}
-        onClose={() => !deactivateBusy && setDeactivating(null)}
-        dismissable={!deactivateBusy}
-        title={deactivating ? `Deactivate ${deactivating.display_name}?` : 'Deactivate staff'}
-        description="They lose access to Lounge immediately. Their attribution on every past signature, payment, and discount they signed off stays in place. Their access to Meridian or any other Venneir tool is untouched. You can reactivate them later."
-        footer={
-          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={() => setDeactivating(null)} disabled={deactivateBusy}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={submitDeactivate} loading={deactivateBusy}>
-              Deactivate
-            </Button>
-          </div>
-        }
-      >
-        <div />
-      </BottomSheet>
-
-      <BottomSheet
-        open={permsOpen !== null}
-        onClose={() => setPermsOpen(null)}
-        title={permsOpen ? `${permsOpen.display_name} — Permissions` : 'Permissions'}
-        description="Granular access. Reports is operational and on by default; Financials and Cash counting are super-admin-grants only."
-        footer={
-          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={() => setPermsOpen(null)}>
-              Done
-            </Button>
-          </div>
-        }
-      >
-        {permsOpen ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-            <PermissionRow
-              title="Reports"
-              description="Opens the Reports tab — operational dashboards covering bookings, demographics, marketing, service mix, lifetime value."
-              checked={permsOpen.can_view_reports}
-              onChange={(v) => togglePerm(permsOpen.staff_member_id, 'reports', v)}
-            />
-            <PermissionRow
-              title="Financials"
-              description="Opens the Financials tab — sales, discounts, voids, anomaly flags, cash reconciliation. Super-admin-grant only."
-              checked={permsOpen.can_view_financials}
-              disabled={!canEditFinancialPerms}
-              disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Financials access.'}
-              onChange={(v) => togglePerm(permsOpen.staff_member_id, 'financials', v)}
-            />
-            <PermissionRow
-              title="Cash counting"
-              description="Lets this person initiate a cash reconciliation count. Sign-off still requires a different manager. Super-admin-grant only."
-              checked={permsOpen.can_count_cash}
-              disabled={!canEditFinancialPerms}
-              disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
-              onChange={(v) => togglePerm(permsOpen.staff_member_id, 'cash', v)}
-            />
-          </div>
-        ) : (
-          <div />
-        )}
-      </BottomSheet>
-
-      <BottomSheet
-        open={actionsOpen !== null}
-        onClose={closeActions}
-        dismissable={!actionBusy}
-        title={actionsOpen ? `${actionsOpen.display_name} — Account actions` : 'Account actions'}
-        description="Send sign-in help or remove their authenticator. Every action is delivered to their email on file."
-        footer={
-          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={closeActions} disabled={!!actionBusy}>
-              Done
-            </Button>
-          </div>
-        }
-      >
-        {actionsOpen ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
-            <ActionRow
-              icon={<KeyRound size={16} aria-hidden />}
-              title="Send password reset link"
-              description="Emails a one-time link they can use to set a new password. Use this when a new starter never set theirs, or for forgotten-password support."
-              cta="Send reset link"
-              loading={actionBusy === 'password_reset'}
-              disabled={!!actionBusy}
-              onClick={handleSendPasswordReset}
-            />
-            <ActionRow
-              icon={<Mail size={16} aria-hidden />}
-              title="Send sign-in link"
-              description="Emails a one-time magic link that signs them in without a password. Useful as a fallback when password reset isn't reaching their inbox."
-              cta="Send sign-in link"
-              loading={actionBusy === 'magic_link'}
-              disabled={!!actionBusy}
-              onClick={handleSendMagicLink}
-            />
-            <ActionRow
-              icon={<ShieldAlert size={16} aria-hidden />}
-              title="Reset two-factor authentication"
-              description="Removes the authenticator app linked to their account. They'll be prompted to enrol a new one on next sign-in if 2FA is required."
-              cta={confirmReset2fa ? 'Confirm reset' : 'Reset 2FA'}
-              ctaTone={confirmReset2fa ? 'alert' : 'default'}
-              loading={actionBusy === 'reset_2fa'}
-              disabled={!!actionBusy}
-              onClick={() => {
-                if (!confirmReset2fa) {
-                  setConfirmReset2fa(true);
-                  return;
-                }
-                void handleReset2fa();
-              }}
-              secondaryCta={confirmReset2fa ? 'Cancel' : undefined}
-              onSecondary={confirmReset2fa ? () => setConfirmReset2fa(false) : undefined}
-            />
-
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: theme.space[3],
-                paddingTop: theme.space[4],
-                borderTop: `1px solid ${theme.color.border}`,
-              }}
-            >
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  letterSpacing: theme.type.tracking.tight,
-                }}
-              >
-                Security
-              </h3>
-              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
-                Require this staff member to use an authenticator app.
-              </p>
-              <ActionRow
-                icon={<ShieldCheck size={16} aria-hidden />}
-                title="Require two-factor authentication"
-                description="When enabled, this person must enrol an authenticator app on their next sign-in before they can use Lounge. If they already have 2FA set up, nothing changes for them."
-                toggleChecked={actionsOpen.require_2fa}
-                onToggle={handleToggleRequire2fa}
-                toggleDisabled={!!actionBusy}
-                toggleLoading={actionBusy === 'toggle_2fa'}
-              />
-            </div>
-
-            {actionFeedback ? (
-              <div
-                role={actionFeedback.tone === 'error' ? 'alert' : 'status'}
-                style={{
-                  margin: 0,
-                  padding: theme.space[4],
-                  background: actionFeedback.tone === 'error' ? 'rgba(184, 58, 42, 0.06)' : theme.color.accentBg,
-                  border: `1px solid ${actionFeedback.tone === 'error' ? 'rgba(184, 58, 42, 0.18)' : theme.color.border}`,
-                  borderRadius: theme.radius.input,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: theme.space[2],
-                }}
-              >
-                <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: actionFeedback.tone === 'error' ? theme.color.alert : theme.color.ink }}>
-                  {actionFeedback.title}
-                </p>
-                {actionFeedback.description ? (
-                  <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
-                    {actionFeedback.description}
-                  </p>
-                ) : null}
-                {actionFeedback.manualLink ? (
-                  <>
-                    <textarea
-                      readOnly
-                      value={actionFeedback.manualLink}
-                      onFocus={(e) => e.currentTarget.select()}
-                      style={{
-                        width: '100%',
-                        minHeight: 72,
-                        padding: theme.space[3],
-                        border: `1px solid ${theme.color.border}`,
-                        borderRadius: theme.radius.input,
-                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                        fontSize: theme.type.size.xs,
-                        background: theme.color.surface,
-                        color: theme.color.ink,
-                        resize: 'vertical',
-                        boxSizing: 'border-box',
-                      }}
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        if (actionFeedback.manualLink) {
-                          void navigator.clipboard?.writeText(actionFeedback.manualLink).catch(() => {});
-                        }
-                      }}
-                    >
-                      Copy link
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div />
-        )}
-      </BottomSheet>
     </Card>
+  );
+}
+
+// Summary tiles at the top of Staff. Compact stat strip showing active
+// roster size, admin headcount, limited-admin grants, and inactive
+// staff. Kept inline (no Card wrapper) so it reads as a sub-section of
+// the existing Staff card rather than a competing surface.
+function StaffSummary({
+  active,
+  admins,
+  limited,
+  inactive,
+}: {
+  active: number;
+  admins: number;
+  limited: number;
+  inactive: number;
+}) {
+  const items: { label: string; value: number; tone?: 'normal' | 'accent' | 'muted' }[] = [
+    { label: 'Active', value: active, tone: 'accent' },
+    { label: 'Full admins', value: admins },
+    { label: 'Limited admins', value: limited },
+    { label: 'Deactivated', value: inactive, tone: 'muted' },
+  ];
+  return (
+    <div
+      style={{
+        marginTop: theme.space[5],
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+        gap: theme.space[2],
+      }}
+    >
+      {items.map((it) => (
+        <div
+          key={it.label}
+          style={{
+            padding: theme.space[3],
+            background: it.tone === 'accent' ? theme.color.accentBg : theme.color.bg,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.input,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}
+        >
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {it.label}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xl,
+              fontWeight: theme.type.weight.semibold,
+              color: it.tone === 'muted' ? theme.color.inkMuted : theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {it.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Compact role tag used on the staff list rows. Lower-weight than
+// StatusPill so a row of three pills doesn't out-shout the name; the
+// accent / accent-soft / neutral tones cover the three distinctions
+// that matter here (full admin / page-grant admin / non-admin role).
+function RolePill({ tone, children }: { tone: 'accent' | 'accent-soft' | 'neutral'; children: ReactNode }) {
+  const styles: CSSProperties =
+    tone === 'accent'
+      ? { background: theme.color.accent, color: theme.color.surface }
+      : tone === 'accent-soft'
+        ? { background: theme.color.accentBg, color: theme.color.accent, boxShadow: `inset 0 0 0 1px ${theme.color.accent}` }
+        : { background: 'transparent', color: theme.color.inkMuted, boxShadow: `inset 0 0 0 1px ${theme.color.border}` };
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        height: 20,
+        padding: `0 ${theme.space[2]}px`,
+        borderRadius: theme.radius.pill,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        letterSpacing: theme.type.tracking.tight,
+        ...styles,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+// Vertical layout for one section inside the Manage sheet. Title +
+// description on top, content below. Keeps the rhythm consistent
+// across six sections without forcing a single mega-Card per section.
+function ManageSection({
+  title,
+  description,
+  icon,
+  tone = 'default',
+  children,
+}: {
+  title: string;
+  description?: string;
+  icon?: ReactNode;
+  tone?: 'default' | 'alert';
+  children: ReactNode;
+}) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: tone === 'alert' ? theme.color.alert : theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+          }}
+        >
+          {icon}
+          {title}
+        </h3>
+        {description ? (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {children}
+    </section>
   );
 }
 
