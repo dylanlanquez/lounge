@@ -17,6 +17,8 @@ interface MountDataset {
   product?: string;
   arch?: 'upper' | 'lower' | 'both';
   location?: string;
+  /** data-repair-variant on the trigger — denture_repair only. */
+  repairVariant?: string;
   shopifyCustomerEmail?: string;
   shopifyCustomerId?: string;
 }
@@ -89,6 +91,7 @@ function getDlounge(): DloungeApi | undefined {
         product: ds.product,
         arch: ds.arch as MountDataset['arch'],
         location: ds.location,
+        repairVariant: ds.repairVariant,
         shopifyCustomerEmail: ds.shopifyCustomerEmail,
         shopifyCustomerId: ds.shopifyCustomerId,
       });

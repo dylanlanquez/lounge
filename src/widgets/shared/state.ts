@@ -195,36 +195,63 @@ export function activeStepsFor(
   return out;
 }
 
+/** Resolved prefill the engine seeds initial state from. Builders:
+ *  - WidgetReady, which resolves the host page's data-* attributes
+ *    against the locations + booking-types live reads before passing
+ *    the result here.
+ *
+ *  Every field is optional — an empty prefill is the legacy
+ *  no-deep-link case where the patient picks every axis manually. */
+export interface ResolvedPrefill {
+  location: WidgetLocation | null;
+  service: WidgetBookingType | null;
+  axes: AxisPinState;
+  details: Partial<WidgetDetails>;
+}
+
+const EMPTY_PREFILL: ResolvedPrefill = {
+  location: null,
+  service: null,
+  axes: {},
+  details: {},
+};
+
 /** Hook that owns the booking state, the current-step pointer, and
  *  the navigation helpers. Call from the route component once,
- *  passing the live-loaded locations list (and an optional
- *  pre-selected location for ?location= deep-links).
+ *  passing the live-loaded locations list and a resolved prefill
+ *  (location + service + axes + details prefilled from the host
+ *  page's data-* attributes or the legacy ?location= search param).
  *
  *  The hook also runs the live upgrades query against the patient's
  *  resolved axes; the Upgrades step becomes part of the active
  *  list whenever the query returns rows. */
-export function useBookingState(locations: WidgetLocation[], preSelected: WidgetLocation | null = null) {
+export function useBookingState(
+  locations: WidgetLocation[],
+  prefill: ResolvedPrefill = EMPTY_PREFILL,
+) {
   const [state, setState] = useState<WidgetState>(() => {
     const remembered = loadRememberedIdentity();
-    // Pre-selection priority: an explicit URL deep-link wins,
-    // then auto-select if there's only one location, else null
+    // Pre-selection priority: an explicit prefill from the host page
+    // wins, then auto-select if there's only one location, else null
     // (the patient picks on Step 1).
     const startingLocation =
-      preSelected ?? (locations.length === 1 ? locations[0]! : null);
+      prefill.location ?? (locations.length === 1 ? locations[0]! : null);
     return {
       location: startingLocation,
-      service: null,
-      axes: {},
+      service: prefill.service,
+      axes: { ...prefill.axes },
       upgradeIds: [],
       slotIso: null,
-      details: { ...EMPTY_DETAILS, ...(remembered ?? {}) },
+      // Prefill-supplied identity (Shopify customer email) wins over
+      // localStorage — the host page knows who the logged-in customer
+      // is, our localStorage is a guess based on a previous session
+      // that may have ended on a different account.
+      details: { ...EMPTY_DETAILS, ...(remembered ?? {}), ...prefill.details },
     };
   });
-  const [stepKey, setStepKey] = useState<StepKey>(() => {
-    const startingLocation =
-      preSelected ?? (locations.length === 1 ? locations[0]! : null);
-    return startingLocation ? 'service' : 'location';
-  });
+  const [stepKey, setStepKey] = useState<StepKey>(() =>
+    initialStepFor(prefill, locations.length),
+  );
 
   // Upgrades + catalogue resolution both live inside the hook so
   // every consumer (Summary, Service step, Payment step) sees the
@@ -385,6 +412,52 @@ export function useBookingState(locations: WidgetLocation[], preSelected: Widget
 }
 
 export type BookingStateApi = ReturnType<typeof useBookingState>;
+
+/** Walks the would-be active steps for the prefilled state and
+ *  returns the first one that still needs patient input. Used to
+ *  decide where the engine lands on first render — a deep-link with
+ *  service + product + arch all pinned should drop the patient on
+ *  the time picker, not Step 1.
+ *
+ *  Note: we pass `hasUpgrades: false` here because upgrades load
+ *  async and the engine doesn't know on first render whether they
+ *  apply. If they do, the upgrades step inserts on a later render
+ *  and the patient sees it before time. That's the correct UX —
+ *  upgrades depend on the resolved catalogue row which itself
+ *  depends on the pinned axes. */
+function initialStepFor(prefill: ResolvedPrefill, locationCount: number): StepKey {
+  const seed: WidgetState = {
+    location:
+      prefill.location ?? (locationCount === 1 ? null : null), // location pinning irrelevant for activeStepsFor's location branch — that one only checks locationCount
+    service: prefill.service,
+    axes: { ...prefill.axes },
+    upgradeIds: [],
+    slotIso: null,
+    details: { ...EMPTY_DETAILS, ...prefill.details },
+  };
+  const steps = activeStepsFor(seed, false, locationCount);
+  for (const step of steps) {
+    if (step === 'location') {
+      if (prefill.location) continue;
+      return step;
+    }
+    if (step === 'service') {
+      if (prefill.service) continue;
+      return step;
+    }
+    if (step.startsWith('axis:')) {
+      const axisKey = step.slice(5) as AxisKey;
+      if (axisKey === 'product_key' && prefill.axes.product_key) continue;
+      if (axisKey === 'arch' && prefill.axes.arch) continue;
+      if (axisKey === 'repair_variant' && prefill.axes.repair_variant) continue;
+      return step;
+    }
+    return step;
+  }
+  // Defensive: shouldn't reach here unless every step is somehow
+  // pinned including time, which the trigger can't provide.
+  return 'time';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Display helpers used across multiple steps

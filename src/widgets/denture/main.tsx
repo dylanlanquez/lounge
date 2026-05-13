@@ -13,7 +13,7 @@
 
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { Widget } from '../shared/Widget.tsx';
+import { Widget, type WidgetPrefill } from '../shared/Widget.tsx';
 import { brand } from './brand.ts';
 
 interface MountDataset {
@@ -21,6 +21,9 @@ interface MountDataset {
   product?: string;
   arch?: 'upper' | 'lower' | 'both';
   location?: string;
+  /** denture_repair only — passes through to the catalogue's
+   *  repair_variant axis (e.g. 'chip', 'rebase'). */
+  repairVariant?: string;
   shopifyCustomerEmail?: string;
   shopifyCustomerId?: string;
 }
@@ -58,13 +61,19 @@ const api: DloungeApi = {
   },
 };
 
-function renderTree(_dataset: MountDataset) {
-  // Brand + prefill wiring lands in a follow-up. See widgets/venneir/
-  // main.tsx for the same TODO — both bundles depend on the same
-  // shared Widget contract.
+function renderTree(dataset: MountDataset) {
+  const prefill: WidgetPrefill = {
+    serviceKey: dataset.service ?? null,
+    productKey: dataset.product ?? null,
+    arch: dataset.arch ?? null,
+    repairVariant: dataset.repairVariant ?? null,
+    locationId: dataset.location ?? null,
+    shopifyCustomerEmail: dataset.shopifyCustomerEmail ?? null,
+    shopifyCustomerId: dataset.shopifyCustomerId ?? null,
+  };
   return (
     <StrictMode>
-      <Widget />
+      <Widget brand={brand} prefill={prefill} embedded />
     </StrictMode>
   );
 }

@@ -4,12 +4,18 @@ import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import {
   type BookingStateApi,
+  type ResolvedPrefill,
   formatPrice,
   stepTitle,
   useBookingState,
 } from './state.ts';
 import { useWidgetCopy, type WidgetCopy } from './copy.ts';
-import { useWidgetLocations, type WidgetLocation } from './data.ts';
+import {
+  useWidgetBookingTypes,
+  useWidgetLocations,
+  type WidgetBookingType,
+  type WidgetLocation,
+} from './data.ts';
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
@@ -63,88 +69,184 @@ const TWO_COLUMN_BREAKPOINT = 880;
 // Optional props passed by the per-brand embed entries
 // (widgets/venneir/main.tsx, widgets/denture/main.tsx). The legacy
 // /book + /manage routes still render <Widget /> with no props and
-// fall back to URL-search-param prefill. New embed callers pass
-// brand tokens for header chrome + a prefill object so the modal
-// can deep-link past the first few steps without writing to the
-// host page's URL bar. Prefill plumbing into the step machine lands
-// in a follow-up commit; for now the props are accepted-but-unused
-// so the brand bundles compile and mount in place.
-export interface WidgetProps {
-  embedded?: boolean;
-  brand?: {
-    id: 'venneir' | 'denture';
-    name: string;
-    accent: string;
-    accentBg: string;
-    logoSrc: string;
-    logoAlt: string;
-    tagline: string;
-  };
-  prefill?: {
-    service: string | null;
-    product: string | null;
-    arch: 'upper' | 'lower' | 'both' | null;
-    location: string | null;
-    shopifyCustomerEmail: string | null;
-    shopifyCustomerId: string | null;
-  };
+// fall back to URL-search-param prefill.
+//
+// The prefill carries the raw string values straight off the
+// Shopify trigger's data-* attributes. Widget resolves
+// `serviceKey` against the loaded booking types and `locationId`
+// against the loaded locations before seeding the engine — see
+// resolvePrefill below.
+export interface WidgetBrand {
+  id: 'venneir' | 'denture';
+  name: string;
+  accent: string;
+  accentBg: string;
+  logoSrc: string;
+  logoAlt: string;
+  tagline: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function Widget(_props: WidgetProps = {}) {
-  // Live reads of locations + copy. We gate the first render on
-  // both, so the page never flashes a "Welcome, pick a location"
-  // header for half a second before stepping into a deep-linked
-  // service flow (no-flicker rule). The booking-types and slots
-  // queries each have their own per-step loading state and don't
-  // block the shell.
+export interface WidgetPrefill {
+  /** Maps to lng_widget_booking_types.service_type (closed enum:
+   *  'click_in_veneers', 'denture_repair', 'same_day_appliance', etc.). */
+  serviceKey?: string | null;
+  /** Maps to the catalogue's product_key (e.g. 'click_in',
+   *  'whitening_tray', 'retainer'). */
+  productKey?: string | null;
+  /** 'upper' | 'lower' | 'both'. */
+  arch?: 'upper' | 'lower' | 'both' | null;
+  /** Maps to the catalogue's repair_variant column. */
+  repairVariant?: string | null;
+  /** Maps to lng_widget_locations.id. */
+  locationId?: string | null;
+  /** Pre-fills the Details step email field. The host page knows the
+   *  logged-in Shopify customer; we just trust it. */
+  shopifyCustomerEmail?: string | null;
+  /** Held but not used yet — see staff-link-shopify-customer for the
+   *  follow-up that links a confirmed booking back to the Shopify
+   *  customer record. */
+  shopifyCustomerId?: string | null;
+}
+
+export interface WidgetProps {
+  embedded?: boolean;
+  brand?: WidgetBrand;
+  prefill?: WidgetPrefill;
+}
+
+export function Widget({ brand, prefill }: WidgetProps = {}) {
+  // Live reads of locations + booking types + copy. We gate the
+  // first render on all three so a deep-linked service has its
+  // matching booking-type object resolved before useBookingState
+  // seeds initial state — otherwise the engine would land on
+  // Step 2 (Service) for one render before correcting to the
+  // pre-pinned service, violating the no-flicker rule.
   const locationsResult = useWidgetLocations();
+  const bookingTypesResult = useWidgetBookingTypes();
   const { copy, loading: copyLoading } = useWidgetCopy();
   const isMobile = useIsMobile(TWO_COLUMN_BREAKPOINT);
 
-  if (locationsResult.loading || copyLoading || !locationsResult.data) {
-    return <BootScreen error={locationsResult.error} />;
+  if (
+    locationsResult.loading ||
+    bookingTypesResult.loading ||
+    copyLoading ||
+    !locationsResult.data ||
+    !bookingTypesResult.data
+  ) {
+    return (
+      <BootScreen error={locationsResult.error ?? bookingTypesResult.error} />
+    );
   }
 
   return (
     <WidgetReady
       locations={locationsResult.data}
+      bookingTypes={bookingTypesResult.data}
       copy={copy}
       isMobile={isMobile}
+      brand={brand}
+      prefill={prefill}
     />
   );
 }
 
 function WidgetReady({
   locations,
+  bookingTypes,
   copy,
   isMobile,
+  brand: _brand,
+  prefill,
 }: {
   locations: WidgetLocation[];
+  bookingTypes: WidgetBookingType[];
   copy: WidgetCopy;
   isMobile: boolean;
+  brand?: WidgetBrand;
+  prefill?: WidgetPrefill;
 }) {
-  // ?location=<uuid> deep-link: when an embed pins the widget to a
-  // specific clinic, pre-select it and the engine drops Step 1.
-  // Read once on mount; we don't react to URL changes mid-session.
-  const preSelected = useMemo<WidgetLocation | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const param = new URLSearchParams(window.location.search).get('location');
-    if (!param) return null;
-    return locations.find((l) => l.id === param) ?? null;
+  // Resolve the host-page prefill (Shopify trigger data-* attrs)
+  // and the legacy URL deep-link into a single ResolvedPrefill the
+  // engine seeds initial state from.
+  //
+  // Precedence:
+  //   1. Trigger data-* attrs (modal embed, the future)
+  //   2. URL ?location= (legacy iframe, kept working)
+  //
+  // String values from the trigger are matched against the loaded
+  // locations / booking-types. A miss falls through to the next
+  // source rather than throwing — a misconfigured trigger should
+  // open the modal at Step 1, not break.
+  const resolvedPrefill = useMemo<ResolvedPrefill>(() => {
+    const out: ResolvedPrefill = {
+      location: null,
+      service: null,
+      axes: {},
+      details: {},
+    };
+
+    // 1. Trigger data-* attrs
+    if (prefill?.locationId) {
+      const match = locations.find((l) => l.id === prefill.locationId);
+      if (match) out.location = match;
+    }
+    if (prefill?.serviceKey) {
+      const match = bookingTypes.find(
+        (bt) => bt.serviceType === prefill.serviceKey,
+      );
+      if (match) out.service = match;
+    }
+    if (prefill?.productKey) out.axes.product_key = prefill.productKey;
+    if (prefill?.arch) out.axes.arch = prefill.arch;
+    if (prefill?.repairVariant) out.axes.repair_variant = prefill.repairVariant;
+    if (prefill?.shopifyCustomerEmail) {
+      out.details.email = prefill.shopifyCustomerEmail.toLowerCase().trim();
+    }
+
+    // 2. URL ?location= fallback for the legacy iframe
+    if (!out.location && typeof window !== 'undefined') {
+      const param = new URLSearchParams(window.location.search).get('location');
+      if (param) {
+        const match = locations.find((l) => l.id === param);
+        if (match) out.location = match;
+      }
+    }
+
+    return out;
+    // Resolved once on mount; we don't react to dataset changes
+    // mid-session (the modal can be re-opened from a different
+    // trigger, but the opener re-mounts a fresh root each time).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // True when the host page actually told us something useful —
+  // distinguishes "Shopify customer clicked a product CTA" from
+  // "standalone /book load with localStorage maybe but no host
+  // context". Drives the welcome-screen bypass below.
+  const hasMeaningfulPrefill =
+    Boolean(
+      resolvedPrefill.service ||
+        resolvedPrefill.axes.product_key ||
+        resolvedPrefill.axes.arch ||
+        resolvedPrefill.axes.repair_variant ||
+        resolvedPrefill.details.email,
+    );
 
   // Returning-patient gate: when localStorage holds tokens that
   // resolve to upcoming-active bookings, we show a welcome screen
   // first. The patient picks "Manage" to deep-link into the manage
   // page, or "Book another" to drop into the normal flow. Skipped
-  // for ?location= deep-links — those embeds are pinned to a single
-  // clinic-page CTA and a welcome screen would feel like a detour.
+  // for any deep-link (URL location OR Shopify trigger prefill) —
+  // those embeds are pinned to a specific CTA and a welcome screen
+  // would feel like a detour.
   const remembered = useRememberedBookings();
   const [mode, setMode] = useState<'welcome' | 'booking'>('welcome');
   const showWelcome =
-    mode === 'welcome' && !preSelected && !remembered.loading && remembered.data.length > 0;
+    mode === 'welcome' &&
+    !resolvedPrefill.location &&
+    !hasMeaningfulPrefill &&
+    !remembered.loading &&
+    remembered.data.length > 0;
   const greetingName = useMemo(() => {
     const stored = loadRememberedIdentity();
     if (stored?.firstName?.trim()) return stored.firstName.trim();
@@ -154,7 +256,7 @@ function WidgetReady({
 
   // Hooks below run for both modes — calling useBookingState
   // unconditionally keeps the hook order stable across renders.
-  const api = useBookingState(locations, preSelected);
+  const api = useBookingState(locations, resolvedPrefill);
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
     appointmentRef: string | null;

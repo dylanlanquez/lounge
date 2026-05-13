@@ -15,14 +15,20 @@
 
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { Widget } from '../shared/Widget.tsx';
+import { Widget, type WidgetPrefill } from '../shared/Widget.tsx';
 import { brand } from './brand.ts';
 
 interface MountDataset {
+  /** Maps to lng_widget_booking_types.service_type. */
   service?: string;
+  /** Maps to the catalogue's product_key. */
   product?: string;
+  /** 'upper' | 'lower' | 'both'. */
   arch?: 'upper' | 'lower' | 'both';
+  /** Maps to lng_widget_locations.id. */
   location?: string;
+  /** Maps to the catalogue's repair_variant column (denture_repair only). */
+  repairVariant?: string;
   shopifyCustomerEmail?: string;
   shopifyCustomerId?: string;
 }
@@ -66,17 +72,24 @@ const api: VloungeApi = {
   },
 };
 
-function renderTree(_dataset: MountDataset) {
-  // Brand + prefill wiring lands in a follow-up — Widget today only
-  // reads the URL search-param for ?location=, which is empty inside
-  // the modal embed. The legacy step machine still renders correctly
-  // from scratch; the customer manually picks the missing axes. Once
-  // Widget accepts a `prefill` prop, swap in dataset.service /
-  // .product / .arch / .location here so click-in-veneers + retainer
-  // pages deep-link past the first three steps.
+function renderTree(dataset: MountDataset) {
+  // Translate the raw Shopify data-* attributes into the WidgetPrefill
+  // shape Widget's resolver expects. The trigger's data-arch value is
+  // already type-narrowed by MountDataset, but data-service /
+  // data-product / data-location stay opaque here — Widget validates
+  // them against the live booking-types + locations reads.
+  const prefill: WidgetPrefill = {
+    serviceKey: dataset.service ?? null,
+    productKey: dataset.product ?? null,
+    arch: dataset.arch ?? null,
+    repairVariant: dataset.repairVariant ?? null,
+    locationId: dataset.location ?? null,
+    shopifyCustomerEmail: dataset.shopifyCustomerEmail ?? null,
+    shopifyCustomerId: dataset.shopifyCustomerId ?? null,
+  };
   return (
     <StrictMode>
-      <Widget />
+      <Widget brand={brand} prefill={prefill} embedded />
     </StrictMode>
   );
 }
