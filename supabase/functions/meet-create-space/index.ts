@@ -184,16 +184,34 @@ async function handle(req: Request): Promise<Response> {
   //    conferenceRecords for this space return empty — even after the
   //    meeting actually happened.
   //
-  //    An empty `{}` body asks for default access (OPEN entry, no
-  //    waiting room, anyone with the link can join), matching the
-  //    behaviour of a Calendar-created Meet room.
+  //    Explicit config so patients (especially those without a Google
+  //    account) can join straight from the link, no lobby knock:
+  //
+  //      accessType: OPEN         — anyone with the link joins; no
+  //                                 sign-in required, no knocking.
+  //                                 Guests get Google's "type your
+  //                                 name" prompt and appear in the
+  //                                 participants list as anonymousUser.
+  //      entryPointAccess: ALL    — all entry points (web link, dial-in)
+  //                                 honour the OPEN access type.
+  //
+  //    A Workspace admin can still override this with org-level
+  //    policy (e.g. "require sign-in for all meetings"); we can't
+  //    bypass that from the API, but our default no longer
+  //    accidentally inherits the strictest possible org default
+  //    (TRUSTED) which was forcing patients into a lobby.
   const spaceRes = await fetch('https://meet.googleapis.com/v2/spaces', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify({
+      config: {
+        accessType: 'OPEN',
+        entryPointAccess: 'ALL',
+      },
+    }),
   });
   if (!spaceRes.ok) {
     const errBody = await spaceRes.text().catch(() => '');
