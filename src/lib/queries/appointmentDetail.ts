@@ -56,6 +56,12 @@ export interface AppointmentDetailRow {
   meet_host_id: string | null;
   meet_space_id: string | null;
   meet_meeting_code: string | null;
+  // Host's google_email at view time, hydrated from lng_meet_hosts via
+  // meet_host_id. Surfaced on the Booking details "Join from" row so
+  // the patient + receptionist can see whose calendar owns the Meet.
+  // Null for legacy / Calendly-imported rows that ran through the
+  // service-account flow (those fall back to clinicSettings.virtualHostEmail).
+  meet_host_email: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   // Deposit captured at booking time. Null when no deposit was taken
   // (Calendly event without one, or native booking pre-deposit
@@ -183,11 +189,13 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           return;
         }
 
-        const appt = rawAppt as RawAppointment;
+        const appt = rawAppt as RawAppointment & { meet_host_id?: string | null };
 
-        // Fetch patient + location + staff + visit in parallel so the
-        // page paints with everything on first useable render.
-        const [patientRes, locationRes, staffRes, visitRes] = await Promise.all([
+        // Fetch patient + location + staff + visit + host in parallel
+        // so the page paints with everything on first useable render.
+        // Host fetch returns null when meet_host_id is unset (legacy /
+        // Calendly-imported rows).
+        const [patientRes, locationRes, staffRes, visitRes, hostRes] = await Promise.all([
           supabase
             .from('patients')
             .select('id, first_name, last_name, email, phone, avatar_data, internal_ref, lwo_ref')
@@ -225,6 +233,13 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
                 .select('id, opened_at')
                 .eq('appointment_id', appt.id)
                 .maybeSingle(),
+          appt.meet_host_id
+            ? supabase
+                .from('lng_meet_hosts')
+                .select('google_email')
+                .eq('id', appt.meet_host_id)
+                .maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
         ]);
         if (cancelled) return;
 
@@ -306,6 +321,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           meet_host_id: (appt as RawAppointment & { meet_host_id?: string | null }).meet_host_id ?? null,
           meet_space_id: (appt as RawAppointment & { meet_space_id?: string | null }).meet_space_id ?? null,
           meet_meeting_code: (appt as RawAppointment & { meet_meeting_code?: string | null }).meet_meeting_code ?? null,
+          meet_host_email: (hostRes.data as { google_email?: string | null } | null)?.google_email ?? null,
           intake: appt.intake,
           deposit_pence: appt.deposit_pence,
           deposit_currency: appt.deposit_currency,

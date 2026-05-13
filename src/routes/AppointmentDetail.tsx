@@ -1077,6 +1077,19 @@ function GenerateMeetLinkCard({
         setErrorMsg(result.error ?? 'Could not create the Meet link.');
         return;
       }
+      // Fire the Lounge-branded confirmation email now that join_url
+      // is set. The Calendar invite Google sent from the host's
+      // account covers the .ics / calendar attendance side; this
+      // covers the branded "You're booked in" email pattern. The
+      // confirmation sender is idempotent at the message-id level,
+      // so a duplicate at booking time is harmless.
+      try {
+        await sendAppointmentConfirmation({ appointmentId });
+      } catch (e) {
+        // Non-fatal — the Meet link is the urgent fix; the email can
+        // be re-sent from the action list.
+        console.warn('[GenerateMeetLinkCard] confirmation send failed:', e);
+      }
       onCreated();
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'Could not create the Meet link.');
@@ -1234,11 +1247,17 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
       value: locationLine,
     });
   }
-  if (isVirtual && clinicSettings.virtualHostEmail) {
+  // "Join from" = the host's email. For per-host Meet bookings we
+  // surface the actual host whose Google account owns the room
+  // (Karly / Lab / Venneirlaboratory). Legacy / Calendly-imported
+  // rows fall back to the clinic-wide setting so they keep their
+  // current behaviour.
+  const joinFromEmail = appt.meet_host_email ?? clinicSettings.virtualHostEmail;
+  if (isVirtual && joinFromEmail) {
     rows.push({
       icon: <Mail size={13} aria-hidden />,
       label: 'Join from',
-      value: clinicSettings.virtualHostEmail,
+      value: joinFromEmail,
     });
   }
   if (staffLine) {

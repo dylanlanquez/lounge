@@ -1,21 +1,31 @@
 // meet-create-space
 //
-// Creates a Google Meet space for a virtual appointment using the
-// chosen host's OAuth token. Called from the manual booking flow
-// (createAppointment.ts) after the appointment row is inserted; on
-// success we write meet_host_id + meet_space_id + meet_meeting_code
-// back onto the appointment AND set join_url so the existing
-// virtual-impression UI surfaces the join button without any extra
-// rewiring.
+// Creates a Google Calendar event with Meet conferencing for a virtual
+// appointment under the chosen host's OAuth grant. End-to-end this
+// produces:
 //
-// Idempotent: if the appointment already has a meet_space_id we
-// return the cached identifiers and skip the API call. Re-running
-// after a host change requires meet_space_id=null on the row
-// (caller's responsibility).
+//   1. A Calendar event on the host's primary calendar (the host sees
+//      the appointment alongside their other meetings).
+//   2. A Google Meet room attached to that event (the join URL goes
+//      onto the appointment row as join_url, matching the legacy
+//      flow's contract).
+//   3. A Calendar invite emailed to the patient by Google itself, so
+//      Apple Mail / Outlook / Gmail surface the booking as a calendar
+//      event the same way they do for legacy bookings.
+//   4. A Meet space resource we can later query for attendance.
 //
-// Auth: signed-in staff JWT. Booking-flow callers already have one;
-// we re-verify rather than trust the body so a stale public link
-// can't be used to spin up Meet rooms.
+// This replaces the earlier "create a standalone Meet space" approach,
+// which gave us a join URL but skipped the host calendar visibility +
+// patient invite that legacy virtual impression appointments have. The
+// brief asked for parity-or-better with the legacy service-account
+// flow — this surface delivers parity (host calendar + invite) AND the
+// new per-host attendance capability.
+//
+// Idempotent: if the appointment already has a meet_space_id we return
+// the cached identifiers and skip the API call. Re-running after a
+// host change requires meet_space_id=null on the row.
+//
+// Auth: signed-in staff JWT.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
@@ -42,9 +52,6 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors() });
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 
-  // Expected failures return 200 with ok:false so callers surface the
-  // real reason in the toast (supabase-js wraps non-2xx as a generic
-  // "non-2xx status code" string and the precise message is lost).
   const userJwt = req.headers.get('authorization') ?? '';
   if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
@@ -65,12 +72,14 @@ async function handle(req: Request): Promise<Response> {
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // 1. Load the appointment — if it already has a Meet space, return
-  //    the cached values. Saves an API call and prevents a flaky
-  //    booking-flow retry from creating two rooms.
+  // 1. Hydrate the appointment + patient. We need patient email for
+  //    the Calendar invite, and the event label for a host-readable
+  //    summary on their calendar.
   const { data: apptRow, error: apptErr } = await admin
     .from('lng_appointments')
-    .select('id, meet_space_id, meet_meeting_code, join_url, meet_host_id, location_id, patient_id, start_at, end_at')
+    .select(
+      'id, meet_space_id, meet_meeting_code, join_url, meet_host_id, google_calendar_event_id, location_id, patient_id, start_at, end_at, event_type_label, service_type',
+    )
     .eq('id', body.appointment_id)
     .maybeSingle();
   if (apptErr || !apptRow) {
@@ -82,10 +91,13 @@ async function handle(req: Request): Promise<Response> {
     meet_meeting_code: string | null;
     join_url: string | null;
     meet_host_id: string | null;
+    google_calendar_event_id: string | null;
     location_id: string | null;
     patient_id: string;
     start_at: string;
     end_at: string;
+    event_type_label: string | null;
+    service_type: string | null;
   };
   if (appt.meet_space_id && appt.join_url) {
     return json(200, {
@@ -96,6 +108,17 @@ async function handle(req: Request): Promise<Response> {
       join_url: appt.join_url,
     });
   }
+
+  const { data: patientRow } = await admin
+    .from('patients')
+    .select('first_name, last_name, email')
+    .eq('id', appt.patient_id)
+    .maybeSingle();
+  const patient = patientRow as {
+    first_name: string | null;
+    last_name: string | null;
+    email: string | null;
+  } | null;
 
   // 2. Load the host + refresh tokens if needed.
   const { data: hostRow } = await admin
@@ -109,50 +132,128 @@ async function handle(req: Request): Promise<Response> {
 
   const tokenResult = await getValidAccessToken(admin, host);
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
+  const accessToken = tokenResult.accessToken;
 
-  // 3. Create the Meet space. We deliberately do NOT pass
-  //    attendanceReportGenerationType — that field is Workspace-only
-  //    (FEATURE_UNAVAILABLE_TO_USER on personal Gmail accounts like
-  //    venneirlaboratory@gmail.com) and Google rejects the whole
-  //    request with 403 when an unauthorised account sets it.
-  //    Attendance is still readable on every tier via the
-  //    conferenceRecords → participants → participantSessions chain
-  //    in meet-fetch-attendance — the report-generation flag only
-  //    governs the downloadable post-meeting CSV, which we don't use.
-  const spaceRes = await fetch('https://meet.googleapis.com/v2/spaces', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${tokenResult.accessToken}`,
-      'Content-Type': 'application/json',
+  // 3. Create the Calendar event with Meet conferencing on the host's
+  //    primary calendar. conferenceDataVersion=1 + createRequest tells
+  //    Calendar to provision a new Meet room as part of the event.
+  //    sendUpdates=all triggers Google's automatic invite to the
+  //    attendees — that's the email that legacy bookings get from
+  //    Google, separately from our Lounge-branded confirmation that
+  //    send-appointment-confirmation later sends.
+  const patientName = [patient?.first_name, patient?.last_name].filter(Boolean).join(' ').trim();
+  const summary = patientName
+    ? `${appt.event_type_label ?? 'Virtual appointment'} with ${patientName}`
+    : appt.event_type_label ?? 'Virtual appointment';
+  const description = [
+    appt.event_type_label ? `Service: ${appt.event_type_label}` : null,
+    patientName ? `Patient: ${patientName}` : null,
+    patient?.email ? `Patient email: ${patient.email}` : null,
+    '',
+    'This event was created by Venneir Lounge. Reply to lounge@venneir.com for any changes.',
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
+
+  const calendarBody: Record<string, unknown> = {
+    summary,
+    description,
+    start: { dateTime: appt.start_at, timeZone: 'Europe/London' },
+    end: { dateTime: appt.end_at, timeZone: 'Europe/London' },
+    conferenceData: {
+      createRequest: {
+        requestId: appt.id, // Idempotency key for retries.
+        conferenceSolutionKey: { type: 'hangoutsMeet' },
+      },
     },
-    body: JSON.stringify({}),
-  });
-  if (!spaceRes.ok) {
-    const errBody = await spaceRes.text().catch(() => '');
+    guestsCanModify: false,
+    guestsCanInviteOthers: false,
+  };
+  if (patient?.email) {
+    calendarBody.attendees = [{ email: patient.email, responseStatus: 'needsAction' }];
+  }
+
+  // sendUpdates=all → Google emails the calendar invite to attendees.
+  // conferenceDataVersion=1 enables the conferenceData.createRequest path.
+  const calRes = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(calendarBody),
+    },
+  );
+  if (!calRes.ok) {
+    const errBody = await calRes.text().catch(() => '');
     return json(200, {
       ok: false,
-      error: `Meet API create failed: ${spaceRes.status} ${errBody.slice(0, 300)}`,
+      error: `Calendar event create failed: ${calRes.status} ${errBody.slice(0, 300)}`,
     });
   }
-  const space = (await spaceRes.json()) as {
-    name?: string;       // spaces/abc123
-    meetingUri?: string; // https://meet.google.com/abc-defg-hij
-    meetingCode?: string; // abc-defg-hij
+  const calEvent = (await calRes.json()) as {
+    id?: string;
+    hangoutLink?: string;
+    conferenceData?: {
+      conferenceId?: string;
+      entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
+    };
   };
-  if (!space.name || !space.meetingUri || !space.meetingCode) {
-    return json(200, { ok: false, error: 'Meet API returned an incomplete space record' });
+  if (!calEvent.id) {
+    return json(200, { ok: false, error: 'Calendar API returned no event id.' });
+  }
+  // hangoutLink is the user-facing Meet URL; conferenceId is the short
+  // meetingCode (e.g. abc-defg-hij). Pull them robustly because Google
+  // sometimes returns the URL on conferenceData.entryPoints[].uri rather
+  // than the top-level hangoutLink field.
+  const joinUrl =
+    calEvent.hangoutLink
+    ?? calEvent.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri
+    ?? null;
+  const meetingCode = calEvent.conferenceData?.conferenceId ?? null;
+  if (!joinUrl || !meetingCode) {
+    return json(200, {
+      ok: false,
+      error: 'Calendar event created but Meet details were not returned. Confirm Google Meet is enabled for this host.',
+    });
   }
 
-  // 4. Persist onto the appointment. Reusing join_url keeps the
-  //    existing virtual-impression UI (Schedule cards, AppointmentDetail
-  //    Join button, email templates) working without per-call rewiring.
+  // 4. Look up the canonical Meet space resource so we can query it
+  //    later for attendance. The Meet API's spaces.get endpoint accepts
+  //    the meetingCode in the resource path. The returned space.name
+  //    is what conferenceRecords filter on.
+  let meetSpaceName: string | null = null;
+  try {
+    const spaceRes = await fetch(`https://meet.googleapis.com/v2/spaces/${encodeURIComponent(meetingCode)}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (spaceRes.ok) {
+      const space = (await spaceRes.json()) as { name?: string };
+      if (space.name) meetSpaceName = space.name;
+    }
+    // Non-fatal: a missing space lookup just means attendance fetches
+    // will fail. Booking still works because Calendar + Meet are live.
+  } catch {
+    // Same: non-fatal.
+  }
+
+  // 5. Persist onto the appointment. We mirror the legacy column set
+  //    (join_url + google_calendar_event_id) so every existing surface
+  //    — schedule card teal accent, AppointmentDetail virtual hero,
+  //    confirmation email template, cancel-deletes-calendar-event flow
+  //    — reads the appointment as virtual identically. The new
+  //    meet_host_id + meet_space_id + meet_meeting_code add per-host
+  //    attendance capability on top of that.
   const { error: updErr } = await admin
     .from('lng_appointments')
     .update({
       meet_host_id: host.id,
-      meet_space_id: space.name,
-      meet_meeting_code: space.meetingCode,
-      join_url: space.meetingUri,
+      meet_space_id: meetSpaceName ?? `spaces/${meetingCode}`,
+      meet_meeting_code: meetingCode,
+      google_calendar_event_id: calEvent.id,
+      join_url: joinUrl,
       meeting_platform: 'google_meet',
     })
     .eq('id', appt.id);
@@ -163,9 +264,10 @@ async function handle(req: Request): Promise<Response> {
   return json(200, {
     ok: true,
     cached: false,
-    meet_space_id: space.name,
-    meet_meeting_code: space.meetingCode,
-    join_url: space.meetingUri,
+    meet_space_id: meetSpaceName ?? `spaces/${meetingCode}`,
+    meet_meeting_code: meetingCode,
+    join_url: joinUrl,
+    google_calendar_event_id: calEvent.id,
   });
 }
 
