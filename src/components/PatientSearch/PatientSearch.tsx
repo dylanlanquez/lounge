@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useState } from 'react';
-import { Info, Phone, Search, User, Users, Mail, ShoppingBag } from 'lucide-react';
+import { Info, Loader2, Phone, Search, User, Users, Mail, ShoppingBag } from 'lucide-react';
 import { Input } from '../Input/Input.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Tooltip } from '../Tooltip/Tooltip.tsx';
@@ -51,9 +51,18 @@ export function PatientSearch({
   registerLocationId,
 }: PatientSearchProps) {
   const [term, setTerm] = useState('');
-  const { data, loading } = usePatientSearch(term);
+  const { data, loading, fetching } = usePatientSearch(term);
   const shopify = useShopifyCustomerSearch(term, { enabled: enableShopifyLookup });
   const trimmed = term.trim();
+  // "Searching" indicator: shown whenever a network request is in
+  // flight for the current term AND we're not also rendering a fresh
+  // skeleton (the skeleton already communicates loading). Slow
+  // connections and keystroke-triggered re-searches both surface as
+  // "Searching" instead of a phantom "no results".
+  const isSearching =
+    trimmed.length >= 2
+    && !loading
+    && (fetching || (enableShopifyLookup && shopify.fetching));
 
   // Dedup Shopify-only hits against local patients so we never show
   // a Shopify row that already has a corresponding patient. Match on
@@ -85,11 +94,20 @@ export function PatientSearch({
     trimmed.length >= 2 &&
     !loading &&
     !shopify.loading &&
+    !fetching &&
+    !shopify.fetching &&
     data.length === 0 &&
     shopifyOnly.length === 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <style>{`
+        @keyframes lng-patient-search-spin { to { transform: rotate(360deg); } }
+        @keyframes lng-patient-search-dot {
+          0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+          40% { opacity: 1; transform: translateY(-1px); }
+        }
+      `}</style>
       <Input
         autoFocus={autoFocus}
         placeholder={placeholder}
@@ -98,6 +116,8 @@ export function PatientSearch({
         inputMode="search"
         onChange={(e) => setTerm(e.target.value)}
       />
+
+      {isSearching ? <SearchingIndicator term={trimmed} /> : null}
 
       {trimmed.length < 2 ? (
         <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
@@ -538,6 +558,72 @@ function PatientResultRow({ patient, onPick }: { patient: PatientRow; onPick: (p
         ) : null}
       </div>
     </button>
+  );
+}
+
+// Inline "Searching" affordance shown while a request is in flight.
+// Sits between the input and the result list so a slow network reads
+// as "we're still looking" instead of a confusing "no results" flash.
+// Visual: subtle pill on the bg-tinted surface, sage spinner +
+// "Searching for <term>" with three quoting-style dots that animate
+// in sequence. Matches the rest of the May 2026 inline loading
+// affordances (Resend button spinner, MeetAttendance Refresh icon)
+// without competing for attention with the actual results.
+function SearchingIndicator({ term }: { term: string }) {
+  const dotStyle = (delayMs: number): React.CSSProperties => ({
+    display: 'inline-block',
+    width: 3,
+    height: 3,
+    margin: '0 1px',
+    borderRadius: '50%',
+    background: theme.color.inkSubtle,
+    animation: `lng-patient-search-dot 1.2s ${delayMs}ms infinite ease-in-out both`,
+  });
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        gap: theme.space[2],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.pill,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        color: theme.color.inkMuted,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        letterSpacing: theme.type.tracking.tight,
+        maxWidth: '100%',
+      }}
+    >
+      <Loader2
+        size={13}
+        aria-hidden
+        style={{
+          color: theme.color.accent,
+          animation: 'lng-patient-search-spin 700ms linear infinite',
+          flexShrink: 0,
+        }}
+      />
+      <span
+        style={{
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          minWidth: 0,
+        }}
+      >
+        Searching for <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{term}</strong>
+      </span>
+      <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+        <span style={dotStyle(0)} />
+        <span style={dotStyle(150)} />
+        <span style={dotStyle(300)} />
+      </span>
+    </div>
   );
 }
 

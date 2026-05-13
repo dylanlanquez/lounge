@@ -17,7 +17,15 @@ export interface PatientRow {
 
 interface SearchResult {
   data: PatientRow[];
+  // True for the first search on this hook (no prior results yet).
+  // Drives the skeleton render — chunky placeholders that anchor the
+  // result list's eventual height.
   loading: boolean;
+  // True any time a network request is in flight. Stays true on
+  // every keystroke after the first one, even when `loading` has
+  // settled and previous results are visible. Drives the "Searching"
+  // affordance so a slow network doesn't read as "no results".
+  fetching: boolean;
   error: string | null;
 }
 
@@ -37,6 +45,7 @@ export interface ShopifyCustomerResult {
 interface ShopifySearchResult {
   data: ShopifyCustomerResult[];
   loading: boolean;
+  fetching: boolean;
   error: string | null;
 }
 
@@ -55,11 +64,17 @@ export function useShopifyCustomerSearch(
   // flick the UI back to a skeleton — previous results stay visible
   // while the next request runs (stale-while-revalidate).
   const { loading, settle } = useStaleQueryLoading('shopify-search');
+  // Per-request fetching flag. Loading-via-key only flips true on
+  // initial mount; this flag flips on every keystroke-triggered
+  // request so the UI can show "Searching" while the network is
+  // in flight, regardless of whether previous results exist.
+  const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
     if (!opts.enabled) {
       setData([]);
       settle();
+      setFetching(false);
       setError(null);
       return;
     }
@@ -67,10 +82,12 @@ export function useShopifyCustomerSearch(
     if (cleaned.length < 3) {
       setData([]);
       settle();
+      setFetching(false);
       setError(null);
       return;
     }
     let cancelled = false;
+    setFetching(true);
     const timer = setTimeout(async () => {
       try {
         const { data: res, error: err } = await supabase.functions.invoke(
@@ -122,11 +139,13 @@ export function useShopifyCustomerSearch(
         setData(filtered);
         setError(null);
         settle();
+        setFetching(false);
       } catch (e: unknown) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : 'Unknown error');
         setData([]);
         settle();
+        setFetching(false);
       }
     }, 350);
     return () => {
@@ -135,7 +154,7 @@ export function useShopifyCustomerSearch(
     };
   }, [term, opts.enabled, settle]);
 
-  return { data, loading, error };
+  return { data, loading, fetching, error };
 }
 
 // Calls staff-link-shopify-customer in REGISTER mode. Creates a fresh
@@ -458,16 +477,24 @@ export function usePatientSearch(term: string): SearchResult {
   // skeleton; the previous results stay visible while the next
   // request runs.
   const { loading, settle } = useStaleQueryLoading('patient-search');
+  // Per-request fetching flag. Flips true the moment a new term
+  // enters the debounce so the UI can render a "Searching"
+  // indicator — without this, a slow network on a fresh query
+  // reads as "no results" because the stale-while-revalidate
+  // loading state never re-fires after the first settle.
+  const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
     const cleaned = term.trim();
     if (cleaned.length < 2) {
       setData([]);
       settle();
+      setFetching(false);
       setError(null);
       return;
     }
     let cancelled = false;
+    setFetching(true);
     const timer = setTimeout(async () => {
       try {
         // Shopify order-number search runs in parallel with the regular
@@ -499,15 +526,18 @@ export function usePatientSearch(term: string): SearchResult {
         if (err) {
           setError(err.message);
           settle();
+          setFetching(false);
           return;
         }
         setData((rows ?? []) as PatientRow[]);
         setError(null);
         settle();
+        setFetching(false);
       } catch (e: unknown) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : 'Unknown error');
         settle();
+        setFetching(false);
       }
     }, 220);
     return () => {
@@ -516,7 +546,7 @@ export function usePatientSearch(term: string): SearchResult {
     };
   }, [term, settle]);
 
-  return { data, loading, error };
+  return { data, loading, fetching, error };
 }
 
 export async function getPatient(id: string): Promise<PatientRow | null> {
