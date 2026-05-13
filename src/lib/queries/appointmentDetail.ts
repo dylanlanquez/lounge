@@ -71,6 +71,11 @@ export interface AppointmentDetailRow {
   deposit_currency: string | null;
   deposit_provider: 'paypal' | 'stripe' | null;
   deposit_status: 'paid' | 'failed' | null;
+  // Shopify-paid online order linked at booking, surfaced as a
+  // hero card on the appointment detail page so the receptionist
+  // sees at a glance what the customer's already paid for online.
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
   patient: {
     id: string;
     first_name: string | null;
@@ -137,6 +142,8 @@ interface RawAppointment {
   deposit_currency: string | null;
   deposit_provider: 'paypal' | 'stripe' | null;
   deposit_status: 'paid' | 'failed' | null;
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
   // Walk-in marker rows store the underlying lng_walk_ins id here.
   // The marker exists only so walk-ins show on Schedule alongside
   // booked appointments; the real entity is the visit. Used here to
@@ -165,7 +172,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -327,6 +334,8 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           deposit_currency: appt.deposit_currency,
           deposit_provider: appt.deposit_provider,
           deposit_status: appt.deposit_status,
+          shopify_order_name: appt.shopify_order_name,
+          shopify_order_total_pence: appt.shopify_order_total_pence,
           patient: patientRow,
           location:
             (locationRes.data as { id: string; name: string | null; city: string | null } | null) ?? null,

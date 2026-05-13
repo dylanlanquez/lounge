@@ -439,6 +439,12 @@ function Loaded({
         <BookingFactsCard appt={appt} />
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
+        {appt.shopify_order_name && (appt.shopify_order_total_pence ?? 0) > 0 ? (
+          <OnlineOrderCreditCard
+            orderName={appt.shopify_order_name}
+            pence={appt.shopify_order_total_pence ?? 0}
+          />
+        ) : null}
         <NotesCard appt={appt} onChanged={onChanged} />
         {appt.status === 'cancelled' && appt.cancel_reason ? (
           <ReasonCard
@@ -1397,6 +1403,60 @@ function humaniseIntakeAnswer(label: string, value: string): string {
   if (lower === 'yes' || lower === 'y' || lower === 'true') return 'Yes';
   if (lower === 'no' || lower === 'n' || lower === 'false') return 'No';
   return trimmed;
+}
+
+// Hero card for the Shopify-paid order linked at booking. Mirrors
+// DepositCard's accent-tinted background and 32px amount typography
+// so the receptionist reads it as the same "money already in" signal,
+// but with copy that makes the difference clear: this isn't a
+// deposit reserved against a future bill, it's the actual amount the
+// customer paid online for the product they're coming in to redeem,
+// and that amount will come off the till at checkout.
+function OnlineOrderCreditCard({ orderName, pence }: { orderName: string; pence: number }) {
+  return (
+    <Card
+      padding="lg"
+      style={{
+        background: theme.color.accentBg,
+        border: '1px solid rgba(31, 77, 58, 0.18)',
+      }}
+    >
+      <DetailSectionHeader
+        icon={<BadgeCheck size={16} aria-hidden />}
+        title="Paid online via venneir.com"
+      />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: theme.space[3],
+          marginTop: theme.space[1],
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          style={{
+            fontSize: 32,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatPence(pence)}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+          }}
+        >
+          already paid for order <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{orderName}</strong>. This credits against the bill at checkout, so the till only collects anything extra on the day.
+        </span>
+      </div>
+    </Card>
+  );
 }
 
 function DepositCard({ appt }: { appt: AppointmentDetailRow }) {

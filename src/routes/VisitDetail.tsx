@@ -1199,6 +1199,8 @@ export function VisitDetail() {
                   discount={discount}
                   depositPence={depositPence}
                   depositProvider={deposit?.provider ?? null}
+                  shopifyCreditPence={shopifyCreditPence}
+                  shopifyOrderName={shopifyOrder?.name ?? null}
                   total={total}
                   // Suppress the giant "Total £X.XX" row when the cart
                   // is paid — the PaidHeader above already carries that
@@ -3030,6 +3032,8 @@ function Totals({
   discount,
   depositPence,
   depositProvider,
+  shopifyCreditPence,
+  shopifyOrderName,
   total,
   hideTotalRow = false,
   dim = false,
@@ -3038,6 +3042,8 @@ function Totals({
   discount: number;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
+  shopifyCreditPence: number;
+  shopifyOrderName: string | null;
   total: number;
   /** When true, suppress the bottom "Total £X.XX" hero row — used when
    * the cart is paid and the PaidHeader already states the amount. */
@@ -3046,6 +3052,7 @@ function Totals({
    * PaidHeader. Used when the cart is paid. */
   dim?: boolean;
 }) {
+  const hasCredit = depositPence > 0 || shopifyCreditPence > 0;
   return (
     <div
       style={{
@@ -3067,6 +3074,13 @@ function Totals({
           accent
         />
       ) : null}
+      {shopifyCreditPence > 0 ? (
+        <Row
+          label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
+          value={`-${formatPence(shopifyCreditPence)}`}
+          accent
+        />
+      ) : null}
       {hideTotalRow ? null : (
         <div
           style={{
@@ -3079,7 +3093,7 @@ function Totals({
           }}
         >
           <span style={{ fontSize: theme.type.size.md, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
-            {depositPence > 0 ? 'To collect' : 'Total'}
+            {hasCredit ? 'To collect' : 'Total'}
           </span>
           <span style={{ fontSize: theme.type.size.xxl, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
             {formatPence(total)}
