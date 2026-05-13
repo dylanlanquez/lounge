@@ -456,17 +456,28 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
   const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
   const depositPence = input.payment?.depositPence ?? 0;
   const depositProvider = input.payment?.depositProvider ?? null;
-  const shopifyCreditPence = Math.max(0, input.payment?.shopifyCreditPence ?? 0);
-  const shopifyOrderName = input.payment?.shopifyOrderName ?? null;
+  // Top-level fields take precedence so the credit lands on the
+  // waiver regardless of whether the cart's been paid yet — matches
+  // the HTML renderer's behaviour.
+  const shopifyCreditPence = Math.max(
+    0,
+    input.shopifyCreditPence ?? input.payment?.shopifyCreditPence ?? 0,
+  );
+  const shopifyOrderName =
+    input.shopifyOrderName ?? input.payment?.shopifyOrderName ?? null;
   const tillPence =
     input.payment?.amountPence
     ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence - shopifyCreditPence);
-  const totalLabel =
-    depositPence > 0 || shopifyCreditPence > 0
-      ? 'Total paid'
-      : cartDiscountPence > 0
-        ? 'Total to pay'
-        : 'Total';
+  // Same label semantics as the HTML renderer: only flip to "Total
+  // paid" once payment is in; otherwise read as the outstanding
+  // balance ("Total to pay") whenever there's any deduction.
+  const hasDeduction =
+    depositPence > 0 || shopifyCreditPence > 0 || cartDiscountPence > 0;
+  const totalLabel = input.payment?.status === 'paid'
+    ? 'Total paid'
+    : hasDeduction
+      ? 'Total to pay'
+      : 'Total';
 
   // Subtotal row
   ensureSpace(c, 14);
@@ -554,7 +565,10 @@ function renderPaymentRow(c: Cursor, input: WaiverDocInput): void {
   );
   const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
   const depositPence = input.payment?.depositPence ?? 0;
-  const shopifyCreditPence = Math.max(0, input.payment?.shopifyCreditPence ?? 0);
+  const shopifyCreditPence = Math.max(
+    0,
+    input.shopifyCreditPence ?? input.payment?.shopifyCreditPence ?? 0,
+  );
   const tillPence =
     input.payment?.amountPence
     ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence - shopifyCreditPence);

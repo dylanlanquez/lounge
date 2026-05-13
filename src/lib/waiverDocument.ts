@@ -127,6 +127,14 @@ export interface WaiverDocInput {
   // the discount shows on the waiver even before the till takes
   // payment (the waiver may be signed at arrival).
   cartDiscountPence?: number;
+  // Shopify-paid online order attached to the appointment. Surfaces
+  // as an "Online order VEN… (paid online)" line in the totals
+  // breakdown the same way a Calendly deposit does. Threaded as a
+  // top-level field (sibling of cartDiscountPence) so the credit
+  // shows on the waiver BEFORE the till takes payment — the patient
+  // signs at arrival and the credit is already a fact of the booking.
+  shopifyCreditPence?: number;
+  shopifyOrderName?: string | null;
   notes: string | null;
   sections: WaiverDocSection[];
   // Full SVG document string from lng_waiver_signatures.signature_svg
@@ -457,8 +465,18 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
     const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
     const depositPence = input.payment?.depositPence ?? 0;
     const depositProvider = input.payment?.depositProvider ?? null;
-    const shopifyCreditPence = Math.max(0, input.payment?.shopifyCreditPence ?? 0);
-    const shopifyOrderName = input.payment?.shopifyOrderName ?? null;
+    // Credit shows whenever the booking carries a Shopify order,
+    // regardless of whether the cart's been paid yet — the patient
+    // signs the waiver at arrival, before the till closes, but the
+    // online-paid amount is already a fact of the booking. Prefer
+    // the top-level field; fall back to payment.shopifyCreditPence
+    // for any callers still on the older shape.
+    const shopifyCreditPence = Math.max(
+      0,
+      input.shopifyCreditPence ?? input.payment?.shopifyCreditPence ?? 0,
+    );
+    const shopifyOrderName =
+      input.shopifyOrderName ?? input.payment?.shopifyOrderName ?? null;
     const tillPence =
       input.payment?.amountPence
       ?? Math.max(0, subtotalPence - cartDiscountPence - depositPence - shopifyCreditPence);
@@ -490,12 +508,19 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
              <span class="value">−${formatGbp(shopifyCreditPence)}</span>
            </div>`
         : '';
-    const totalLabel =
-      depositPence > 0 || shopifyCreditPence > 0
-        ? 'Total paid'
-        : cartDiscountPence > 0
-          ? 'Total to pay'
-          : 'Total';
+    // Label semantics:
+    //   • input.payment present + status='paid' → till closed,
+    //     show "Total paid" (the amount actually charged).
+    //   • input.payment absent + any deduction (discount, deposit,
+    //     Shopify credit) → "Total to pay" (the balance still owed).
+    //   • Plain "Total" otherwise.
+    const hasDeduction =
+      depositPence > 0 || shopifyCreditPence > 0 || cartDiscountPence > 0;
+    const totalLabel = input.payment?.status === 'paid'
+      ? 'Total paid'
+      : hasDeduction
+        ? 'Total to pay'
+        : 'Total';
     totalsHtml =
       input.items.length > 0
         ? `<div class="totals">

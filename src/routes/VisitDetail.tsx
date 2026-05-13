@@ -431,6 +431,13 @@ export function VisitDetail() {
       witnessName: receptionistName,
       items: docItems,
       cartDiscountPence: cart?.discount_pence ?? 0,
+      // Surface the Shopify credit independent of payment state so
+      // the waiver signed at arrival already shows it as a
+      // deduction. Without this the patient signs a doc that reads
+      // "Total £399" + "Awaiting payment" and never sees that £140
+      // is already covered online.
+      shopifyCreditPence: shopifyOrder?.pence ?? 0,
+      shopifyOrderName: shopifyOrder?.name ?? null,
       notes: visit.notes,
       sections: docSections,
       signatureSvg: latestSig?.signature_svg ?? null,
