@@ -129,6 +129,13 @@ interface AppointmentContext {
   deposit_pence: number | null;
   deposit_status: 'paid' | 'failed' | null;
   deposit_provider: 'paypal' | 'stripe' | null;
+  // Shopify-paid online order linked at booking. Same role as a
+  // deposit (credits against the till) but conceptually different
+  // (the customer's already paid for the product they're redeeming).
+  // Surfaced through every arrival step so the receptionist and the
+  // patient both see what's already covered and what's still owed.
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
   // Booking-type axis pins — set when the receptionist or widget
   // pinned a specific child config at booking time. Used to
   // pre-populate the arrival-form basket with the intended product.
@@ -424,7 +431,7 @@ export function Arrival() {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider, service_type, product_key, arch, repair_variant, intake'
+              'id, patient_id, location_id, event_type_label, start_at, deposit_pence, deposit_status, deposit_provider, shopify_order_name, shopify_order_total_pence, service_type, product_key, arch, repair_variant, intake'
             )
             .eq('id', id)
             .maybeSingle();
@@ -725,6 +732,12 @@ export function Arrival() {
     appointment?.deposit_status === 'paid' ? appointment.deposit_pence ?? 0 : 0;
   const depositProvider =
     depositPence > 0 ? appointment?.deposit_provider ?? null : null;
+  // Shopify-paid online order linked at booking. Treated as a
+  // separate-but-deposit-shaped credit line so the customer sees
+  // "Online order VEN70833 (venneir.com) −£X" alongside any Calendly
+  // deposit without confusing the two.
+  const shopifyCreditPence = appointment?.shopify_order_total_pence ?? 0;
+  const shopifyOrderName = appointment?.shopify_order_name ?? null;
 
   const handleStartAppointment = async () => {
     if (!patient) return;
@@ -922,6 +935,8 @@ export function Arrival() {
             stagedTotalPence={stagedTotalPence}
             depositPence={depositPence}
             depositProvider={depositProvider}
+            shopifyCreditPence={shopifyCreditPence}
+            shopifyOrderName={shopifyOrderName}
             onIncrement={(key) =>
               setStagedItems((s) =>
                 s.map((it) => (it.key === key ? { ...it, qty: it.qty + 1 } : it))
@@ -965,6 +980,8 @@ export function Arrival() {
             linkedToShopify={!!patient.shopify_customer_id}
             depositPence={depositPence}
             depositProvider={depositProvider}
+            shopifyCreditPence={shopifyCreditPence}
+            shopifyOrderName={shopifyOrderName}
           />
         ) : step === 'consent' ? (
           <ConsentStep
@@ -986,6 +1003,8 @@ export function Arrival() {
             stagedTotalPence={stagedTotalPence}
             depositPence={depositPence}
             depositProvider={depositProvider}
+            shopifyCreditPence={shopifyCreditPence}
+            shopifyOrderName={shopifyOrderName}
             jbRef={jbRequired ? jbRef.trim() : null}
             consentSigned={consentReady}
           />
@@ -1381,6 +1400,8 @@ function ServiceStep({
   stagedTotalPence,
   depositPence,
   depositProvider,
+  shopifyCreditPence,
+  shopifyOrderName,
   onIncrement,
   onDecrement,
   onRemoveItem,
@@ -1400,6 +1421,8 @@ function ServiceStep({
   stagedTotalPence: number;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
+  shopifyCreditPence: number;
+  shopifyOrderName: string | null;
   onIncrement: (key: string) => void;
   onDecrement: (key: string) => void;
   onRemoveItem: (key: string) => void;
@@ -1553,6 +1576,8 @@ function ServiceStep({
             subtotalPence={stagedTotalPence}
             depositPence={depositPence}
             depositProvider={depositProvider}
+            shopifyCreditPence={shopifyCreditPence}
+            shopifyOrderName={shopifyOrderName}
           />
         ) : null}
       </Section>
@@ -1633,13 +1658,17 @@ function TotalsBlock({
   subtotalPence,
   depositPence,
   depositProvider,
+  shopifyCreditPence,
+  shopifyOrderName,
 }: {
   subtotalPence: number;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
+  shopifyCreditPence: number;
+  shopifyOrderName: string | null;
 }) {
-  const balancePence = Math.max(0, subtotalPence - depositPence);
-  const showBreakdown = depositPence > 0;
+  const balancePence = Math.max(0, subtotalPence - depositPence - shopifyCreditPence);
+  const showBreakdown = depositPence > 0 || shopifyCreditPence > 0;
   return (
     <div
       style={{
@@ -1654,8 +1683,15 @@ function TotalsBlock({
       }}
     >
       <TotalsRow label="Subtotal" valuePence={subtotalPence} />
-      {showBreakdown ? (
+      {depositPence > 0 ? (
         <TotalsRow label={depositLabel(depositProvider)} valuePence={-depositPence} accent />
+      ) : null}
+      {shopifyCreditPence > 0 ? (
+        <TotalsRow
+          label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
+          valuePence={-shopifyCreditPence}
+          accent
+        />
       ) : null}
       <TotalsRow
         label={showBreakdown ? 'To collect' : 'Total'}
@@ -1674,13 +1710,17 @@ function ConfirmationTotals({
   subtotalPence,
   depositPence,
   depositProvider,
+  shopifyCreditPence,
+  shopifyOrderName,
 }: {
   subtotalPence: number;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
+  shopifyCreditPence: number;
+  shopifyOrderName: string | null;
 }) {
-  const balancePence = Math.max(0, subtotalPence - depositPence);
-  const showBreakdown = depositPence > 0;
+  const balancePence = Math.max(0, subtotalPence - depositPence - shopifyCreditPence);
+  const showBreakdown = depositPence > 0 || shopifyCreditPence > 0;
   return (
     <div
       style={{
@@ -1692,8 +1732,15 @@ function ConfirmationTotals({
       }}
     >
       <TotalsRow label="Subtotal" valuePence={subtotalPence} />
-      {showBreakdown ? (
+      {depositPence > 0 ? (
         <TotalsRow label={depositLabel(depositProvider)} valuePence={-depositPence} accent />
+      ) : null}
+      {shopifyCreditPence > 0 ? (
+        <TotalsRow
+          label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
+          valuePence={-shopifyCreditPence}
+          accent
+        />
       ) : null}
       <TotalsRow
         label={showBreakdown ? 'To collect' : 'Total'}
@@ -2005,6 +2052,8 @@ function CustomerStep({
   linkedToShopify,
   depositPence,
   depositProvider,
+  shopifyCreditPence,
+  shopifyOrderName,
 }: {
   patient: PatientLite;
   snapshot: ArrivalIntakeSnapshot;
@@ -2020,6 +2069,8 @@ function CustomerStep({
   linkedToShopify: boolean;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
+  shopifyCreditPence: number;
+  shopifyOrderName: string | null;
 }) {
   const isEditing = (k: keyof FormState) => editingFields.has(k);
   const stagedTotalPence = stagedItems.reduce(
@@ -2171,6 +2222,8 @@ function CustomerStep({
                 subtotalPence={stagedTotalPence}
                 depositPence={depositPence}
                 depositProvider={depositProvider}
+                shopifyCreditPence={shopifyCreditPence}
+                shopifyOrderName={shopifyOrderName}
               />
               <div
                 style={{
@@ -2418,6 +2471,8 @@ function StartStep({
   stagedTotalPence,
   depositPence,
   depositProvider,
+  shopifyCreditPence,
+  shopifyOrderName,
   jbRef,
   consentSigned,
 }: {
@@ -2426,10 +2481,13 @@ function StartStep({
   stagedTotalPence: number;
   depositPence: number;
   depositProvider: 'paypal' | 'stripe' | null;
+  shopifyCreditPence: number;
+  shopifyOrderName: string | null;
   jbRef: string | null;
   consentSigned: boolean;
 }) {
-  const totalPence = Math.max(0, stagedTotalPence - depositPence);
+  const totalPence = Math.max(0, stagedTotalPence - depositPence - shopifyCreditPence);
+  const hasCredit = depositPence > 0 || shopifyCreditPence > 0;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       <h1
@@ -2524,16 +2582,24 @@ function StartStep({
               <TotalsRow
                 label="Subtotal"
                 valuePence={stagedTotalPence}
-                emphasis={depositPence === 0}
+                emphasis={!hasCredit}
               />
               {depositPence > 0 ? (
-                <>
-                  <TotalsRow
-                    label={`Deposit (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`}
-                    valuePence={-depositPence}
-                  />
-                  <TotalsRow label="Total" valuePence={totalPence} emphasis />
-                </>
+                <TotalsRow
+                  label={`Deposit (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`}
+                  valuePence={-depositPence}
+                  accent
+                />
+              ) : null}
+              {shopifyCreditPence > 0 ? (
+                <TotalsRow
+                  label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
+                  valuePence={-shopifyCreditPence}
+                  accent
+                />
+              ) : null}
+              {hasCredit ? (
+                <TotalsRow label="To collect" valuePence={totalPence} emphasis />
               ) : null}
             </div>
           </div>

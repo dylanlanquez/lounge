@@ -804,7 +804,15 @@ export function NewBookingSheet({
                         <Input
                           aria-label="Shopify order number"
                           value={shopifyOrderInput}
-                          onChange={(e) => setShopifyOrderInput(e.target.value)}
+                          // Force uppercase as the receptionist types
+                          // — Shopify order numbers are always
+                          // uppercased (VEN70933, PSG-991630) and
+                          // typing "ven" then seeing "VEN" rerender
+                          // is cleaner than letting mixed case sit
+                          // in the field. The RPC is already case-
+                          // insensitive so this is purely visual.
+                          onChange={(e) => setShopifyOrderInput(e.target.value.toUpperCase())}
+                          style={{ textTransform: 'uppercase' }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
