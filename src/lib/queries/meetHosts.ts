@@ -134,7 +134,12 @@ export async function createMeetSpaceForAppointment(args: {
 }): Promise<{
   ok: boolean;
   cached?: boolean;
-  meet_space_id?: string;
+  // meet_space_id is null when meet-create-space could not resolve the
+  // canonical Meet space resource name via spaces.get. Booking still
+  // succeeds in that case — the Calendar event and Meet join URL are
+  // live, and meet-fetch-attendance keys off meet_meeting_code which
+  // is always set. The failure is logged to lng_system_failures.
+  meet_space_id?: string | null;
   meet_meeting_code?: string;
   join_url?: string;
   error?: string;
@@ -147,7 +152,7 @@ export async function createMeetSpaceForAppointment(args: {
   const payload = (data ?? {}) as {
     ok?: boolean;
     cached?: boolean;
-    meet_space_id?: string;
+    meet_space_id?: string | null;
     meet_meeting_code?: string;
     join_url?: string;
     error?: string;

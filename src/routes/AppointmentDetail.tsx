@@ -293,7 +293,13 @@ function Loaded({
   // realtime subscription) so the freshly-inserted rows surface
   // without needing to refresh the appointment row itself.
   useEffect(() => {
-    if (!appt.meet_space_id) return;
+    // Gate on the fields meet-fetch-attendance actually needs:
+    // meet_meeting_code (what it filters on) + meet_host_id (whose
+    // OAuth token to use). meet_space_id is intentionally not part of
+    // this gate — it can legitimately be NULL when an earlier
+    // spaces.get lookup failed, and meeting_code is sufficient for
+    // every downstream API call.
+    if (!appt.meet_meeting_code || !appt.meet_host_id) return;
     if (appt.conference_started_at) return;
     if (new Date(appt.end_at).getTime() > Date.now()) return;
     let cancelled = false;
@@ -317,7 +323,7 @@ function Loaded({
     return () => {
       cancelled = true;
     };
-  }, [appt.id, appt.meet_space_id, appt.conference_started_at, appt.end_at, onChanged]);
+  }, [appt.id, appt.meet_meeting_code, appt.meet_host_id, appt.conference_started_at, appt.end_at, onChanged]);
 
   const fullName = patientFullDisplayName({
     patient_first_name: appt.patient.first_name,
@@ -560,7 +566,7 @@ function Loaded({
         }
       />
 
-      {appt.meet_space_id ? (
+      {appt.meet_meeting_code && appt.meet_host_id ? (
         <section style={{ marginTop: theme.space[5] }}>
           <MeetAttendanceCard
             appointmentId={appt.id}

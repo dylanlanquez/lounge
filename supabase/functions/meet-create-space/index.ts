@@ -99,7 +99,14 @@ async function handle(req: Request): Promise<Response> {
     event_type_label: string | null;
     service_type: string | null;
   };
-  if (appt.meet_space_id && appt.join_url) {
+  // Idempotency: if we already created a Calendar event + Meet for
+  // this appointment, return the cached identifiers and skip. We key
+  // off google_calendar_event_id (the most authoritative "we did create
+  // an event" signal) + join_url. meet_space_id is intentionally not
+  // part of this gate because it can legitimately be NULL when an
+  // earlier spaces.get lookup failed — that's not a reason to redo
+  // the Calendar event.
+  if (appt.google_calendar_event_id && appt.join_url) {
     return json(200, {
       ok: true,
       cached: true,
@@ -221,9 +228,26 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // 4. Look up the canonical Meet space resource so we can query it
-  //    later for attendance. The Meet API's spaces.get endpoint accepts
-  //    the meetingCode in the resource path. The returned space.name
-  //    is what conferenceRecords filter on.
+  //    later for attendance. The Meet API's spaces.get endpoint resolves
+  //    a meetingCode in the resource path. The returned space.name is
+  //    the opaque server-generated identifier (`spaces/Yqfg7gQAAAAB`),
+  //    NOT the meeting code with a prefix.
+  //
+  //    On failure we store NULL and log the response to
+  //    lng_system_failures rather than fabricating a value. Two reasons:
+  //
+  //      a. The old code fell through to `spaces/${meetingCode}` when
+  //         this call failed. That string isn't a valid space resource
+  //         name, so every later filter against it matched nothing —
+  //         attendance was silently broken for any appointment whose
+  //         spaces.get failed at create time.
+  //      b. meet-fetch-attendance now filters by space.meeting_code
+  //         (which is always correct) rather than space.name, so a NULL
+  //         meet_space_id doesn't break attendance fetching. It just
+  //         means we don't carry the canonical name around — also fine.
+  //
+  //    Logging the failure makes the cause visible (scope, quota,
+  //    propagation delay) instead of paving over it.
   let meetSpaceName: string | null = null;
   try {
     const spaceRes = await fetch(`https://meet.googleapis.com/v2/spaces/${encodeURIComponent(meetingCode)}`, {
@@ -232,11 +256,32 @@ async function handle(req: Request): Promise<Response> {
     if (spaceRes.ok) {
       const space = (await spaceRes.json()) as { name?: string };
       if (space.name) meetSpaceName = space.name;
+    } else {
+      const errBody = await spaceRes.text().catch(() => '');
+      await admin.from('lng_system_failures').insert({
+        source: 'meet-create-space',
+        severity: 'warning',
+        message: `spaces.get failed: ${spaceRes.status}`,
+        context: {
+          appointment_id: appt.id,
+          meeting_code: meetingCode,
+          host_email: host.google_email,
+          response_status: spaceRes.status,
+          response_body_preview: errBody.slice(0, 500),
+        },
+      });
     }
-    // Non-fatal: a missing space lookup just means attendance fetches
-    // will fail. Booking still works because Calendar + Meet are live.
-  } catch {
-    // Same: non-fatal.
+  } catch (e) {
+    await admin.from('lng_system_failures').insert({
+      source: 'meet-create-space',
+      severity: 'warning',
+      message: `spaces.get threw: ${e instanceof Error ? e.message : String(e)}`,
+      context: {
+        appointment_id: appt.id,
+        meeting_code: meetingCode,
+        host_email: host.google_email,
+      },
+    });
   }
 
   // 5. Persist onto the appointment. We mirror the legacy column set
@@ -245,12 +290,14 @@ async function handle(req: Request): Promise<Response> {
   //    confirmation email template, cancel-deletes-calendar-event flow
   //    — reads the appointment as virtual identically. The new
   //    meet_host_id + meet_space_id + meet_meeting_code add per-host
-  //    attendance capability on top of that.
+  //    attendance capability on top of that. meet_space_id is null when
+  //    spaces.get failed; meet_meeting_code is always set (it's what
+  //    meet-fetch-attendance actually filters on).
   const { error: updErr } = await admin
     .from('lng_appointments')
     .update({
       meet_host_id: host.id,
-      meet_space_id: meetSpaceName ?? `spaces/${meetingCode}`,
+      meet_space_id: meetSpaceName,
       meet_meeting_code: meetingCode,
       google_calendar_event_id: calEvent.id,
       join_url: joinUrl,
@@ -264,7 +311,7 @@ async function handle(req: Request): Promise<Response> {
   return json(200, {
     ok: true,
     cached: false,
-    meet_space_id: meetSpaceName ?? `spaces/${meetingCode}`,
+    meet_space_id: meetSpaceName,
     meet_meeting_code: meetingCode,
     join_url: joinUrl,
     google_calendar_event_id: calEvent.id,

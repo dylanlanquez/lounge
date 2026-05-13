@@ -61,21 +61,30 @@ Deno.serve(async (req) => {
   // 1. Hydrate the appointment + its host. google_calendar_event_id
   //    + patient_id are pulled here so the Calendar RSVP block below
   //    can read the patient's responseStatus off the underlying event.
+  //    meet_meeting_code is the canonical filter key for the
+  //    conferenceRecords listing below — it's the human-readable code
+  //    (abc-defg-hij) that Calendar's createRequest hands us at booking
+  //    time, and Google's Meet API exposes it as a filterable field
+  //    (space.meeting_code) on conferenceRecords. meet_space_id is
+  //    sometimes a fallback constructed value (`spaces/<meeting_code>`)
+  //    when an earlier spaces.get lookup failed; meeting_code is always
+  //    the real thing because it comes straight from Calendar.
   const { data: apptRow, error: apptErr } = await admin
     .from('lng_appointments')
-    .select('id, meet_space_id, meet_host_id, end_at, google_calendar_event_id, patient_id')
+    .select('id, meet_space_id, meet_meeting_code, meet_host_id, end_at, google_calendar_event_id, patient_id')
     .eq('id', appointmentId)
     .maybeSingle();
   if (apptErr || !apptRow) return json(404, { ok: false, error: 'Appointment not found' });
   const appt = apptRow as {
     id: string;
     meet_space_id: string | null;
+    meet_meeting_code: string | null;
     meet_host_id: string | null;
     end_at: string;
     google_calendar_event_id: string | null;
     patient_id: string;
   };
-  if (!appt.meet_space_id || !appt.meet_host_id) {
+  if (!appt.meet_meeting_code || !appt.meet_host_id) {
     return json(200, { ok: false, error: 'No Meet space recorded for this appointment' });
   }
 
@@ -109,11 +118,27 @@ Deno.serve(async (req) => {
   //    recent. A single Meet space can host multiple conferences over
   //    its lifetime — yesterday's empty room + today's real call, or
   //    "rejoin tomorrow" follow-ups on the same link. Picking [0] would
-  //    miss the others. We page through the listing endpoint and
-  //    aggregate sessions, recordings, transcripts, and the start/end
-  //    window across all of them, so the attendance card reflects every
-  //    join the space ever saw.
-  const filter = `space.name=\"${appt.meet_space_id}\"`;
+  //    miss the others.
+  //
+  //    Filter on space.meeting_code, NOT space.name. Two reasons:
+  //
+  //      a. meeting_code is the canonical stable identifier we have on
+  //         every appointment — it comes straight from the Calendar
+  //         API's conferenceData.conferenceId at booking time.
+  //      b. meet_space_id can be a fabricated fallback value when an
+  //         earlier spaces.get lookup in meet-create-space failed
+  //         silently (the function used to write `spaces/<meetingCode>`
+  //         as a placeholder when it couldn't read the real
+  //         server-generated space.name). Real Meet space resource
+  //         names are opaque IDs like `spaces/Yqfg7gQAAAAB`, not
+  //         meeting codes with a prefix. Filtering by space.name against
+  //         a fabricated value matches nothing.
+  //
+  //    Google's Meet API v2 docs list `space.meeting_code` alongside
+  //    `space.name`, `start_time`, and `end_time` as filterable fields
+  //    on conferenceRecords. Using meeting_code is correct AND robust to
+  //    the meet_space_id storage bug above.
+  const filter = `space.meeting_code=\"${appt.meet_meeting_code}\"`;
   const conferenceRecords: Array<{ name: string; startTime?: string; endTime?: string }> = [];
   {
     let url: string | null =
@@ -124,6 +149,24 @@ Deno.serve(async (req) => {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');
+        // Loud failure: any non-2xx here means the operator can't see
+        // attendance until somebody investigates. Surface to the
+        // failures sink with the full body so the cause (scope, quota,
+        // malformed filter, revoked grant) is visible without re-running
+        // anything.
+        await admin.from('lng_system_failures').insert({
+          source: 'meet-fetch-attendance',
+          severity: 'error',
+          message: `conferenceRecords list failed: ${res.status}`,
+          context: {
+            appointment_id: appointmentId,
+            meet_meeting_code: appt.meet_meeting_code,
+            host_email: host.google_email,
+            response_status: res.status,
+            response_body_preview: errBody.slice(0, 500),
+            filter,
+          },
+        });
         return json(200, {
           ok: false,
           error: `conferenceRecords fetch failed: ${res.status} ${errBody.slice(0, 200)}`,
@@ -144,6 +187,7 @@ Deno.serve(async (req) => {
       url = next.toString();
     }
   }
+
   if (conferenceRecords.length === 0) {
     return json(200, {
       ok: true,
