@@ -421,10 +421,19 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
   } else if (status === 'rescheduled') {
     if (hasRescheduleTarget) out.push('view_rescheduled_to');
   } else if (status === 'joined') {
-    // Staff joined but the patient may not have connected — no-show is
-    // still a valid outcome. Rejoin lets them reconnect if dropped.
+    // Staff joined the meeting but the patient may not have connected —
+    // every recovery path stays open. Rejoin lets them reconnect, no_show
+    // covers a true no-show, and reschedule/cancel/resend match the
+    // booked-state options for when the call needs to be moved or the
+    // confirmation re-sent live. Calendly-sourced bookings reschedule
+    // on Calendly so those three are gated the same way as for booked.
     out.push('rejoin_meeting');
     out.push('mark_no_show');
+    if (!isCalendly) {
+      out.push('reschedule');
+      out.push('cancel');
+      if (hasPatientEmail) out.push('resend_confirmation');
+    }
   } else if (status === 'arrived' || status === 'complete') {
     // Virtual appointments never produce a visit row, so offer Rejoin instead.
     if (isVirtual) out.push('rejoin_meeting');

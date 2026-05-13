@@ -98,7 +98,7 @@ interface RawSystemFailureRow {
   severity: 'info' | 'warning' | 'error' | 'critical';
   message: string;
   context: Record<string, unknown> | null;
-  created_at: string;
+  occurred_at: string;
 }
 
 interface UseAppointmentTimelineResult {
@@ -212,9 +212,9 @@ export function useAppointmentTimeline(
             .order('created_at', { ascending: true }),
           supabase
             .from('lng_system_failures')
-            .select('id, source, severity, message, context, created_at')
+            .select('id, source, severity, message, context, occurred_at')
             .or(orClauses.map((c) => c.replace('payload->>', 'context->>')).join(','))
-            .order('created_at', { ascending: true }),
+            .order('occurred_at', { ascending: true }),
         ]);
         if (cancelled) return;
 
@@ -691,7 +691,7 @@ function mapFailure(f: RawSystemFailureRow): TimelineEvent {
   return {
     id: `failure:${f.id}`,
     type: 'patient_event',
-    timestamp: f.created_at,
+    timestamp: f.occurred_at,
     title: humaniseFailureSource(f.source),
     detail: f.message,
     hint: 'flag',
