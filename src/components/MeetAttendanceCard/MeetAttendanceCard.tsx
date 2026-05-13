@@ -423,26 +423,35 @@ function MetadataList({
     }
   }
 
-  // Invite RSVP row, qualified with the email we sent to. Important
-  // because the patient may join from a different Google account than
-  // this address — common in practice. The RSVP only tracks the
-  // address Google sent the Calendar invite to; the participants list
-  // below is the source of truth for who actually connected.
+  // Calendar invite RSVP row. Two things to communicate clearly:
+  //
+  //   • Where we sent the Google Calendar invite (the patient email on
+  //     file). The patient may join from a different Google account
+  //     than this — common in practice — so showing the tracked
+  //     mailbox prevents the operator from misreading "no response"
+  //     as "patient unreachable".
+  //   • What their RSVP state means in plain English. "No response
+  //     yet" used to read as "we have no data on this patient", but
+  //     it actually means "they haven't clicked Yes / No / Maybe on
+  //     the Google Calendar invite". Many iCloud users never do —
+  //     Apple Mail handles Calendar invites differently from Gmail —
+  //     so this is not a "they won't attend" signal. The participants
+  //     list below is the source of truth for who actually joined.
   if (patientEmail) {
     const status = patientRsvpStatus
       ? ({
-          accepted: { label: 'Accepted invite', tone: 'success' as const },
-          declined: { label: 'Declined invite', tone: 'warn' as const },
-          tentative: { label: 'Tentative', tone: 'muted' as const },
-          needsAction: { label: 'No response yet', tone: 'warn' as const },
+          accepted: { label: 'Patient accepted the invite', tone: 'success' as const },
+          declined: { label: 'Patient declined the invite', tone: 'warn' as const },
+          tentative: { label: 'Patient marked as maybe', tone: 'muted' as const },
+          needsAction: { label: 'Patient has not clicked Yes / No / Maybe yet', tone: 'muted' as const },
         } satisfies Record<'accepted' | 'declined' | 'tentative' | 'needsAction', { label: string; tone: 'success' | 'warn' | 'muted' }>)[patientRsvpStatus]
-      : { label: 'No response yet', tone: 'muted' as const };
+      : { label: 'Patient has not clicked Yes / No / Maybe yet', tone: 'muted' as const };
     rows.push({
-      label: 'Invite sent to',
+      label: 'Calendar invite',
       value: (
         <span>
-          <span style={{ color: theme.color.ink }}>{patientEmail}</span>
-          <span style={{ color: toneColor(status.tone) }}> · {status.label}</span>
+          <span style={{ color: theme.color.ink }}>Sent to {patientEmail}.</span>{' '}
+          <span style={{ color: toneColor(status.tone) }}>{status.label}.</span>
         </span>
       ),
       tone: status.tone,
@@ -843,7 +852,7 @@ function FooterHint() {
         lineHeight: 1.55,
       }}
     >
-      Sessions land here only after the Meet room closes — host ends the call for everyone, or it sits empty for ~5 minutes. Google does not publish lobby knocks, and does not expose the email a participant used to join — only their display name. If the patient joined from a different Google account, look for an unexpected name in the participants list.
+      Sessions appear once the Meet room closes — host ends the call for everyone, or the room sits empty for ~5 minutes. Google does not publish the email a participant used to join (only their display name), and does not publish lobby knocks. The Calendar invite row above tracks whether the patient has clicked Yes / No / Maybe on the Google Calendar invite Google sends them; many iCloud users never interact with that invite even when they join the meeting, so &ldquo;no response&rdquo; is not a &ldquo;won&rsquo;t attend&rdquo; signal. The participants list above is the source of truth for who actually joined.
     </p>
   );
 }
