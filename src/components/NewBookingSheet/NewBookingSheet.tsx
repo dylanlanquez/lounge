@@ -1210,29 +1210,46 @@ function ShopifyOrderCard({
   order: ShopifyOrderLookup;
   onClear: () => void;
 }) {
+  const customerLine = order.customer_name?.trim()
+    ? order.customer_name.trim()
+    : null;
   return (
     <div
       style={{
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        padding: `${theme.space[4]}px ${theme.space[4]}px`,
         borderRadius: theme.radius.input,
         background: theme.color.accentBg,
         border: `1px solid ${theme.color.accent}`,
         display: 'flex',
         flexDirection: 'column',
-        gap: theme.space[2],
+        gap: theme.space[3],
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3] }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.base,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-          }}
-        >
-          {order.name}
-        </p>
+        <div style={{ minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            {order.name}
+          </p>
+          {customerLine ? (
+            <p
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                lineHeight: 1.4,
+              }}
+            >
+              {customerLine}
+            </p>
+          ) : null}
+        </div>
         <p
           style={{
             margin: 0,
@@ -1240,11 +1257,63 @@ function ShopifyOrderCard({
             fontWeight: theme.type.weight.semibold,
             color: theme.color.accent,
             fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
           }}
         >
           {formatPence(order.total_price_pence)} paid
         </p>
       </div>
+
+      {order.items.length > 0 ? (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: `${theme.space[3]}px 0 0`,
+            borderTop: `1px solid ${theme.color.accent}`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[1],
+          }}
+        >
+          {order.items.map((item, i) => (
+            <li
+              key={`${item.sku ?? 'noSku'}|${i}`}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: theme.space[3],
+                fontSize: theme.type.size.sm,
+                color: theme.color.ink,
+                lineHeight: 1.4,
+              }}
+            >
+              <span
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  minWidth: 0,
+                  flex: 1,
+                }}
+              >
+                {item.title ?? item.sku ?? 'Item'}
+              </span>
+              <span
+                style={{
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                ×{item.quantity}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       <p
         style={{
           margin: 0,
@@ -1253,8 +1322,8 @@ function ShopifyOrderCard({
           lineHeight: 1.5,
         }}
       >
-        {order.customer_email ? `${order.customer_email} · ` : ''}
-        Paid online on {new Date(order.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+        Paid online on{' '}
+        {new Date(order.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
       </p>
       <button
         type="button"

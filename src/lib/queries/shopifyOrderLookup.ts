@@ -7,17 +7,29 @@ import { supabase } from '../supabase.ts';
 // number, this resolves it, and the amount already paid online lands
 // on the appointment row as a credit against the cart at checkout.
 
+export interface ShopifyOrderItem {
+  title: string | null;
+  sku: string | null;
+  quantity: number;
+  price: number | string | null;
+}
+
 export interface ShopifyOrderLookup {
   id: string;
   name: string;
   customer_id: string | null;
   customer_email: string | null;
+  // Resolved through patients via shopify_customer_id (Meridian
+  // doesn't replicate shopify_customers). Empty string when the
+  // online-only customer hasn't been registered as a patient yet.
+  customer_name: string | null;
   total_price_pence: number;
   currency: string | null;
   financial_status: string | null;
   fulfillment_status: string | null;
   cancelled_at: string | null;
   created_at: string;
+  items: ShopifyOrderItem[];
 }
 
 export type ShopifyOrderLookupResult =
