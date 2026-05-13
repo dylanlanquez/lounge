@@ -603,23 +603,21 @@ function ParticipantList({
   patientFirstName: string | null;
   patientLastName: string | null;
 }) {
-  // Display-name occurrence index. When two distinct Google accounts
+  // Display-name duplicate detection. When two distinct Google accounts
   // share the same display name (genuine case: receptionist on work +
   // personal account during a test, or two staff with the same name),
-  // the participant list shows two rows with identical labels. We
-  // count duplicates here so each gets a small "account 1 / account 2"
-  // disambiguator — otherwise operators can't tell the rows apart.
+  // the participant list would otherwise show identical-looking rows.
+  // We tag every row of a duplicate-name group with "Separate Google
+  // account" so the operator can tell that the rows really are
+  // different identities, not double-counted sessions of the same
+  // person.
   const sameNameTally = new Map<string, number>();
   for (const p of grouped) sameNameTally.set(p.displayName, (sameNameTally.get(p.displayName) ?? 0) + 1);
-  const sameNameSeen = new Map<string, number>();
 
   return (
     <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
       {grouped.map((person) => {
-        const dupTotal = sameNameTally.get(person.displayName) ?? 1;
-        const dupIndex = (sameNameSeen.get(person.displayName) ?? 0) + 1;
-        sameNameSeen.set(person.displayName, dupIndex);
-        const accountSuffix = dupTotal > 1 ? ` (account ${dupIndex}/${dupTotal})` : '';
+        const hasSameNameDuplicate = (sameNameTally.get(person.displayName) ?? 0) > 1;
         // Identity match is only meaningful for non-host participants —
         // it's specifically the "is this actually the patient on file?"
         // question. Skip hosts entirely; they have their own Host chip.
@@ -654,13 +652,9 @@ function ParticipantList({
                   }}
                 >
                   {person.displayName}
-                  {accountSuffix ? (
-                    <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-                      {accountSuffix}
-                    </span>
-                  ) : null}
                 </p>
                 <HostChip isHost={person.isHost} />
+                {hasSameNameDuplicate ? <SeparateAccountChip /> : null}
                 {identityMatch === 'mismatch' ? <IdentityMismatchChip /> : null}
               </div>
               <p
@@ -758,6 +752,36 @@ function IdentityMismatchChip() {
       }}
     >
       Different name on file
+    </span>
+  );
+}
+
+// Tagged on every row whose display name is shared with at least one
+// other row in the participants list. The display names are identical
+// but the underlying Google user IDs differ — distinct identities,
+// not double-counted sessions. Without this chip operators reading
+// "Dylan Lane, Dylan Lane, Dylan Lane" three times might assume one
+// of them is a duplicate. The chip + tooltip together make the truth
+// clear without needing to surface raw user IDs.
+function SeparateAccountChip() {
+  return (
+    <span
+      title="Another participant uses the same display name but a different Google account. Same name, different identities."
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 8px',
+        borderRadius: theme.radius.pill,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        color: theme.color.inkMuted,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        letterSpacing: '0.02em',
+      }}
+    >
+      Separate Google account
     </span>
   );
 }
