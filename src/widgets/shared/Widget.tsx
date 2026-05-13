@@ -155,7 +155,7 @@ function WidgetReady({
   bookingTypes,
   copy,
   isMobile,
-  brand: _brand,
+  brand,
   prefill,
 }: {
   locations: WidgetLocation[];
@@ -308,7 +308,13 @@ function WidgetReady({
   };
 
   if (submission.state === 'done') {
-    return <SuccessScreen state={api.state} appointmentRef={submission.appointmentRef} />;
+    return (
+      <SuccessScreen
+        state={api.state}
+        appointmentRef={submission.appointmentRef}
+        brand={brand}
+      />
+    );
   }
 
   if (showWelcome) {
@@ -355,6 +361,7 @@ function WidgetReady({
         totalSteps={api.totalSteps}
         canGoBack={api.currentIdx > 0}
         onBack={api.goBack}
+        brand={brand}
       />
 
       <main
@@ -422,12 +429,14 @@ function Header({
   totalSteps,
   canGoBack,
   onBack,
+  brand,
 }: {
   title: string;
   currentIdx: number;
   totalSteps: number;
   canGoBack: boolean;
   onBack: () => void;
+  brand?: WidgetBrand;
 }) {
   return (
     <header
@@ -439,6 +448,11 @@ function Header({
         borderBottom: `1px solid ${theme.color.border}`,
       }}
     >
+      {/* Brand row — only renders inside the per-brand bundles where
+          a `brand` prop is passed. Legacy /book route leaves this off
+          so the standalone iframe widget keeps its existing
+          chrome-free look. */}
+      {brand ? <BrandRow brand={brand} /> : null}
       <div
         style={{
           maxWidth: 1080,
@@ -498,6 +512,47 @@ function Header({
         <ProgressDot currentIdx={currentIdx} totalSteps={totalSteps} />
       </div>
     </header>
+  );
+}
+
+// Renders above the existing nav row inside a per-brand bundle so
+// the customer knows whose booking flow they've opened — the modal
+// otherwise reads as generic. Logo on the left, brand name to the
+// right of it; uses brand.accent as a subtle inner border so a
+// future per-brand colour drops in without further edits here.
+function BrandRow({ brand }: { brand: WidgetBrand }) {
+  return (
+    <div
+      style={{
+        maxWidth: 1080,
+        margin: '0 auto',
+        padding: `${theme.space[3]}px ${theme.space[5]}px ${theme.space[2]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <img
+        src={brand.logoSrc}
+        alt={brand.logoAlt}
+        // 24px logo height balances against the H1 ("What you need")
+        // in the nav row below — bigger reads as marketing, smaller
+        // hides the brand. Width auto preserves whatever aspect ratio
+        // the asset has so a wordmark + a square mark both work.
+        style={{ height: 24, width: 'auto', display: 'block' }}
+      />
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        {brand.name}
+      </span>
+    </div>
   );
 }
 

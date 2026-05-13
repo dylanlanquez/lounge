@@ -1,6 +1,7 @@
 import { Calendar, Check } from 'lucide-react';
 import { theme } from '../../../theme/index.ts';
 import type { WidgetState } from '../state.ts';
+import type { WidgetBrand } from '../Widget.tsx';
 
 // Confirmation screen — shown after a successful (mock or real)
 // submission. Plain, calm, single-column. Tells the patient
@@ -13,9 +14,11 @@ import type { WidgetState } from '../state.ts';
 export function SuccessScreen({
   state,
   appointmentRef,
+  brand,
 }: {
   state: WidgetState;
   appointmentRef: string | null;
+  brand?: WidgetBrand;
 }) {
   const slot = state.slotIso ? new Date(state.slotIso) : null;
   const slotLabel = slot
@@ -52,12 +55,24 @@ export function SuccessScreen({
           textAlign: 'center',
         }}
       >
+        {brand ? (
+          <img
+            src={brand.logoSrc}
+            alt={brand.logoAlt}
+            style={{
+              height: 28,
+              width: 'auto',
+              display: 'block',
+              margin: `0 auto ${theme.space[5]}px`,
+            }}
+          />
+        ) : null}
         <div
           style={{
             width: 56,
             height: 56,
             borderRadius: '50%',
-            background: theme.color.accent,
+            background: brand?.accent ?? theme.color.accent,
             color: theme.color.surface,
             margin: `0 auto ${theme.space[4]}px`,
             display: 'flex',
