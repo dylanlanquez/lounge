@@ -209,7 +209,7 @@ function deriveVerdict(args: {
       kind: 'pending',
       title: 'Verdict pending',
       detail:
-        'Google publishes attendance only after the meeting closes. Once the booked end time passes the verdict and session list populate automatically.',
+        'Google publishes attendance only after the Meet room itself closes — i.e. the host ends the call for everyone, or the room sits empty for ~5 minutes. Joining and leaving alone is not enough. Once the room closes the verdict and session list populate automatically.',
       tone: 'muted',
     };
   }
@@ -801,8 +801,8 @@ function EmptyMessage({ meetingHasEnded }: { meetingHasEnded: boolean }) {
   return (
     <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
       {meetingHasEnded
-        ? 'Google has not published any session records for this meeting yet. If the meeting has just ended, tap Refresh in a minute; if no one ever joined the verdict above already says so.'
-        : 'Attendance lands here once the meeting has ended. Google only publishes conference records after the room closes. Join and Rejoin taps are recorded on the Timeline below.'}
+        ? 'Google has not published any session records for this meeting yet. End the Meet call (three-dot menu in Meet → "End call for everyone") or wait ~5 minutes after the last person leaves, then tap Refresh. If no one ever joined the verdict above already says so.'
+        : 'Attendance lands here once the Meet room closes — either the host ends the call for everyone, or it sits empty for ~5 minutes. Join and Rejoin taps are recorded on the Timeline below.'}
     </p>
   );
 }
