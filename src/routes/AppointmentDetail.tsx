@@ -431,7 +431,10 @@ function Loaded({
           marginTop: theme.space[5],
         }}
       >
-        {appt.join_url ? (
+        {appt.status === 'rescheduled' ||
+        appt.status === 'cancelled' ||
+        appt.status === 'no_show' ||
+        appt.status === 'complete' ? null : appt.join_url ? (
           <MeetingLinkCard joinUrl={appt.join_url} />
         ) : appt.service_type === 'virtual_impression_appointment' ? (
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />

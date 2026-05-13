@@ -254,29 +254,35 @@ export async function rescheduleAppointment(input: {
   // the original host's calendar and the old event is removed from
   // their calendar. Legacy / Calendly bookings (no host) keep using
   // the service-account google-meet-create + google-meet-delete pair.
-  // Both paths are best-effort: a Meet failure doesn't unwind the
-  // reschedule — the failure is logged server-side, and the staff
-  // can retry via "Generate Meet link" on AppointmentDetail.
+  //
+  // Creation is awaited so join_url is persisted on the new row
+  // BEFORE step 9's confirmation email reads it — otherwise the
+  // email function sees join_url=null and picks the in-person
+  // template instead of the virtual one. Deletion of the old event
+  // stays fire-and-forget: it's audit cleanup, doesn't affect the
+  // template chosen for the new slot, and shouldn't block the UI.
   if (serviceType === 'virtual_impression_appointment') {
     if (existing.meet_host_id) {
-      void supabase.functions
-        .invoke('meet-create-space', {
+      try {
+        await supabase.functions.invoke('meet-create-space', {
           body: { appointment_id: newAppointmentId, host_id: existing.meet_host_id },
-        })
-        .catch((e: unknown) =>
-          console.warn('[rescheduleAppointment] meet-create-space failed:', e),
-        );
+        });
+      } catch (e: unknown) {
+        console.warn('[rescheduleAppointment] meet-create-space failed:', e);
+      }
       void supabase.functions
         .invoke('meet-delete-event', { body: { appointment_id: existing.id } })
         .catch((e: unknown) =>
           console.warn('[rescheduleAppointment] meet-delete-event failed:', e),
         );
     } else {
-      void supabase.functions
-        .invoke('google-meet-create', { body: { appointmentId: newAppointmentId } })
-        .catch((e: unknown) =>
-          console.warn('[rescheduleAppointment] google-meet-create failed:', e),
-        );
+      try {
+        await supabase.functions.invoke('google-meet-create', {
+          body: { appointmentId: newAppointmentId },
+        });
+      } catch (e: unknown) {
+        console.warn('[rescheduleAppointment] google-meet-create failed:', e);
+      }
       void supabase.functions
         .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
         .catch((e: unknown) =>
