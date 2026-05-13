@@ -279,7 +279,11 @@ function WidgetReady({
     if (submission.state === 'submitting') return;
     setSubmission({ state: 'submitting', appointmentRef: null, error: null });
     try {
-      const result = await submitBooking(api.state, paymentIntentId);
+      // Brand id falls through to the edge function so the
+      // appointment row records which storefront the booking came
+      // from. Standalone /book route (no brand prop) defaults to
+      // 'venneir' inside submitBooking — preserves existing behaviour.
+      const result = await submitBooking(api.state, paymentIntentId, brand?.id);
       // Stash the manage token locally so a returning visit can
       // recall this booking on Step 1 — see WelcomeBack screen.
       if (result.manageToken) rememberBookingToken(result.manageToken);

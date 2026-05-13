@@ -66,6 +66,13 @@ interface SubmitBody {
    *  with Stripe before populating the appointment's deposit_*
    *  fields — never trust the client to claim payment. */
   paymentIntentId?: string | null;
+  /** Which customer-facing brand the booking came through:
+   *  'venneir' (venneir.com Shopify) or 'denture'
+   *  (denture-services.co.uk Shopify). Stored on lng_appointments.brand_id
+   *  so the confirmation email + reports can differentiate. Defaults
+   *  to 'venneir' for legacy callers (the standalone /book route)
+   *  that don't pass a brand. */
+  brandId?: 'venneir' | 'denture' | null;
   details: {
     firstName: string;
     lastName: string;
@@ -303,6 +310,12 @@ Deno.serve(async (req) => {
       repair_variant: body.repairVariant ?? null,
       product_key: body.productKey ?? null,
       arch: body.arch ?? null,
+      // Whitelist guard: the column accepts any text but we only
+      // recognise these two values. Anything else (a typo, a
+      // future brand the email function hasn't been taught about)
+      // falls back to 'venneir' so emails still send rather than
+      // 500-ing the booking write.
+      brand_id: body.brandId === 'denture' ? 'denture' : 'venneir',
       ...(depositFields ?? {}),
     })
     .select('id, appointment_ref, manage_token')

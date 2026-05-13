@@ -34,6 +34,7 @@ export class SubmitError extends Error {
 export async function submitBooking(
   state: WidgetState,
   paymentIntentId: string | null = null,
+  brandId: 'venneir' | 'denture' = 'venneir',
 ): Promise<SubmitResult> {
   if (!state.location) throw new SubmitError('no_location', null);
   if (!state.service) throw new SubmitError('no_service', null);
@@ -48,6 +49,12 @@ export async function submitBooking(
     arch: state.axes.arch ?? null,
     upgradeIds: state.upgradeIds,
     paymentIntentId,
+    // The brand the customer booked through. Stored on the
+    // appointment row so the confirmation email + downstream
+    // reporting can differentiate venneir.com from
+    // denture-services.co.uk bookings. Defaults to 'venneir' when
+    // the caller didn't pass a brand (legacy /book route).
+    brandId,
     details: state.details,
   };
 

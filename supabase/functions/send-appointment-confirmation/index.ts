@@ -467,6 +467,13 @@ interface AppointmentRow {
   appointment_ref: string | null;
   join_url: string | null;
   manage_token: string | null;
+  /** Which customer-facing brand the booking came in through:
+   *  'venneir' (venneir.com Shopify) or 'denture'
+   *  (denture-services.co.uk Shopify). Drives email branding
+   *  variables — see the template-vars block below. Backed by
+   *  lng_appointments.brand_id (defaults to 'venneir' for rows
+   *  that predate the column). */
+  brand_id: string | null;
 }
 
 interface PatientRow {
@@ -562,7 +569,7 @@ async function readAppointment(
   const { data } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, appointment_ref, join_url, manage_token',
+      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, appointment_ref, join_url, manage_token, brand_id',
     )
     .eq('id', id)
     .maybeSingle();
@@ -841,6 +848,16 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     fmtRange(iso, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const dateTime = (iso: string) => `${dayShort(iso)} at ${time24(iso)}`;
 
+  // Brand identity for {{brandName}} / {{brandId}} placeholders.
+  // Used by templates that want to differentiate venneir.com bookings
+  // from denture-services.co.uk ones (e.g. greeting copy, signoff,
+  // logo selection). Today both brand surfaces use the same Venneir
+  // sender + branding; once denture-services has its own DNS-verified
+  // Resend sender + brand assets in lng_settings, switching the
+  // template to {{brandName}} will be a content-only change.
+  const brandId = apt.brand_id === 'denture' ? 'denture' : 'venneir';
+  const brandName = brandId === 'denture' ? 'Denture Services' : 'Venneir';
+
   const vars: Record<string, string> = {
     patientFirstName: patient.first_name?.trim() || 'there',
     patientLastName: patient.last_name?.trim() || '',
@@ -849,6 +866,8 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     appointmentDate: dayShort(apt.start_at),
     appointmentDateLong: dayLong(apt.start_at),
     appointmentTime: time24(apt.start_at),
+    brandId,
+    brandName,
     locationName: location?.name?.trim() || 'Venneir Lounge',
     locationCity: location?.city?.trim() || '',
     locationAddress: locationFreeform(location),
