@@ -54,15 +54,13 @@ export function PatientSearch({
   const { data, loading, fetching } = usePatientSearch(term);
   const shopify = useShopifyCustomerSearch(term, { enabled: enableShopifyLookup });
   const trimmed = term.trim();
-  // "Searching" indicator: shown whenever a network request is in
-  // flight for the current term AND we're not also rendering a fresh
-  // skeleton (the skeleton already communicates loading). Slow
-  // connections and keystroke-triggered re-searches both surface as
-  // "Searching" instead of a phantom "no results".
-  const isSearching =
-    trimmed.length >= 2
-    && !loading
-    && (fetching || (enableShopifyLookup && shopify.fetching));
+  // Spinner fires whenever either hook reports a request in flight.
+  // Both hooks already gate `fetching` on their own min-length rule
+  // (2 chars for patients, 3 for Shopify), so we just trust them and
+  // render the spinner unconditionally — no second-level !loading
+  // gate that could suppress the indicator during the first-search
+  // window when loading and fetching are simultaneously true.
+  const isSearching = fetching || (enableShopifyLookup && shopify.fetching);
 
   // Dedup Shopify-only hits against local patients so we never show
   // a Shopify row that already has a corresponding patient. Match on
@@ -117,11 +115,12 @@ export function PatientSearch({
         trailingIcon={
           isSearching ? (
             <Loader2
-              size={18}
+              size={20}
               aria-hidden
               role="status"
+              color={theme.color.accent}
+              strokeWidth={2.25}
               style={{
-                color: theme.color.accent,
                 animation: 'lng-patient-search-spin 700ms linear infinite',
               }}
             />
@@ -141,8 +140,14 @@ export function PatientSearch({
           {/* Local patients (existing rows). The section header mirrors
               the venneir.com one structurally (icon + sentence-case
               h3) so the two groups read as siblings. Without this,
-              the list reads as one undifferentiated wall. */}
-          {loading ? (
+              the list reads as one undifferentiated wall.
+              Skeleton renders on:
+                • initial loading (first mount + first search),
+                • re-searches where we have no previous results to
+                  keep visible — without this, a slow request after
+                  a "no matches" search reads as still showing the
+                  empty state instead of "still working". */}
+          {loading || (fetching && data.length === 0) ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               <Skeleton height={88} radius={12} />
               <Skeleton height={88} radius={12} />
