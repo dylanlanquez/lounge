@@ -868,15 +868,6 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     manageUrl: apt.manage_token
       ? `${WIDGET_PUBLIC_URL}/manage?token=${apt.manage_token}`
       : '',
-    // Universal add-to-calendar URL. The lng-appointment-ics edge
-    // function emits a fresh .ics for the appointment when tapped on
-    // any device; manage_token gates access the same way it gates the
-    // self-serve manageUrl. Empty when the row predates the token
-    // column (older Calendly imports) so the {{addToCalendarUrl}}
-    // variable renders as nothing rather than a broken link.
-    addToCalendarUrl: apt.manage_token
-      ? `${SUPABASE_URL}/functions/v1/lng-appointment-ics?id=${apt.id}&token=${apt.manage_token}`
-      : '',
     googleCalendarUrl: googleCalendarUrl(apt, location),
     patientFacingDuration: formatPatientFacingDurationForEmail(
       ctx.patientFacingMinMinutes,

@@ -1,9 +1,9 @@
 // _shared/icsBuilder.ts
 //
 // RFC 5545 .ics builder, originally inlined in send-appointment-confirmation.
-// Lifted out so the new lng-appointment-ics endpoint can re-emit the same
-// invite on demand (powers the "Add to calendar" button in the booking
-// emails) without duplicating the line-folding / escaping logic.
+// Lifted out to keep line-folding / escaping logic in one place; today
+// it's only used to attach .ics files to confirmation and reschedule
+// emails (see send-appointment-confirmation/index.ts).
 //
 // METHOD:REQUEST is what Apple Mail / Outlook / Google Calendar treat as
 // "an invitation": tapping the .ics on iOS prompts "Add to Calendar".

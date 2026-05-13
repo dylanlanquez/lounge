@@ -362,18 +362,10 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
       'Book-in & Imps at 09:00 (30 min). Please return at approximately 13:30 for Try In (10 min).',
   },
   {
-    name: 'addToCalendarUrl',
-    label: 'Add to calendar (universal)',
-    description:
-      'Tappable calendar invite for the patient’s phone. On iOS Mail / Safari and Android Gmail / Chrome the link opens the native Calendar app with the event ready to add. Desktop browsers download the .ics file. Use inside [button:Add to calendar](url) for a CTA in the email body.',
-    sample:
-      'https://npuvhxakffxqoszytkxw.supabase.co/functions/v1/lng-appointment-ics?id=abc&token=xyz',
-  },
-  {
     name: 'googleCalendarUrl',
     label: 'Add to Google Calendar (web)',
     description:
-      'Pre-built Google Calendar link for users who specifically want to add the event to Google Calendar in their browser. The universal {{addToCalendarUrl}} above is preferred for the primary CTA; use this only when you also want a Google-specific shortcut.',
+      'Pre-built Google Calendar link for users who want to add the event to Google Calendar in their browser. The .ics file attached to confirmation and reschedule emails covers iOS Mail and Outlook natively — this variable is for staff who want an explicit Google-specific shortcut on top of that.',
     sample:
       'https://www.google.com/calendar/render?action=TEMPLATE&text=Click-in+veneers&dates=20260509T100000Z/20260509T110000Z',
   },
@@ -490,9 +482,10 @@ const VIRTUAL_RESCHEDULE_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   },
 ];
 
-// Cancellation templates don't get the calendar-link variable — the
-// .ics attachment is the cancel signal, and a "Add to calendar" CTA
-// for an event that's been cancelled is contradictory copy.
+// Cancellation templates don't get the Google Calendar link — the
+// .ics attachment is the cancel signal, and surfacing an "add to
+// calendar" affordance for an event that's been cancelled is
+// contradictory copy.
 const CANCELLATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = APPOINTMENT_VARIABLES.filter(
   (v) => v.name !== 'googleCalendarUrl',
 );
