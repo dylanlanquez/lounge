@@ -1057,7 +1057,7 @@ function CombinedStatusFilter({
             };
             return (
               <div role="listbox" aria-multiselectable="true" style={panelStyle}>
-                <SectionLabel>Workflow</SectionLabel>
+                <SectionLabel>Status</SectionLabel>
                 {STATUS_OPTIONS.map((opt) => (
                   <OptionRow
                     key={opt.value}
