@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { persistRememberedIdentity } from '../state.ts';
 import {

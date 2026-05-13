@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Calendar, Check, MapPin, PoundSterling, X } from 'lucide-react';
-import { theme } from '../theme/index.ts';
+import { theme } from '../../theme/index.ts';
 import {
   cancelBooking,
   rescheduleBooking,

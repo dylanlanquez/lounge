@@ -1,5 +1,5 @@
 import { ChevronRight, Phone } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import { formatPrice, type BookingStateApi } from '../state.ts';
 import { useWidgetBookingTypes } from '../data.ts';
 

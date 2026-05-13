@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import {
   axesForService,
   type AxisDef,
   type AxisKey,
   type AxisValueOption,
   loadAxisValues,
-} from '../../lib/queries/bookingTypeAxes.ts';
-import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
+} from '../../../lib/queries/bookingTypeAxes.ts';
+import type { BookingServiceType } from '../../../lib/queries/bookingTypes.ts';
 import type { BookingStateApi } from '../state.ts';
 
 // AxisStep — one axis question at a time.

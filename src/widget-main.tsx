@@ -3,12 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { theme } from './theme/index.ts';
 
-// Customer-facing entry. Built into a separate Vercel project at
-// book.venneir.com so the bundle that lands on patient devices
-// contains zero staff-app code — by construction, not just by
-// route guards. Anything outside src/widget/* (Schedule, Admin,
-// Reports, the auth provider, the kiosk status bar, …) is
-// tree-shaken out because nothing in this entry tree imports it.
+// Customer-facing entry for the legacy iframe widget at
+// book.venneir.com. The widget source has been relocated to
+// src/widgets/shared/ so the new per-brand bundles can fork their
+// own steps off the same shared core; this entry point still ships
+// the original full-screen flow unchanged. The bundle contains zero
+// staff-app code — by construction, not just route guards — because
+// nothing in this entry tree imports outside src/widgets/shared/
+// (and shared libs).
 //
 // Routes are kept intentionally thin:
 //
@@ -20,10 +22,10 @@ import { theme } from './theme/index.ts';
 //   anything else         — redirect to /book
 
 const Widget = lazy(() =>
-  import('./widget/Widget.tsx').then((m) => ({ default: m.Widget })),
+  import('./widgets/shared/Widget.tsx').then((m) => ({ default: m.Widget })),
 );
 const Manage = lazy(() =>
-  import('./widget/Manage.tsx').then((m) => ({ default: m.Manage })),
+  import('./widgets/shared/Manage.tsx').then((m) => ({ default: m.Manage })),
 );
 
 function BootFallback() {

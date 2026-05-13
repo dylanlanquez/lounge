@@ -1,5 +1,5 @@
 import { Calendar, Check } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import type { WidgetState } from '../state.ts';
 
 // Confirmation screen — shown after a successful (mock or real)

@@ -1,5 +1,5 @@
 import { ChevronRight, Home, MapPin } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { clearRememberedIdentity, loadRememberedIdentity } from '../state.ts';
 import type { WidgetLocation } from '../data.ts';

@@ -1,9 +1,28 @@
 // meet-fetch-attendance
 //
-// Called from the Appointment detail page's "Refresh attendance" button.
-// Reads the host's OAuth tokens, queries the Meet conferenceRecords
-// API for the appointment's space, walks participants → sessions,
-// upserts each session into lng_meet_attendance.
+// Pulls every scrap of evidence we can from Google about a virtual
+// appointment, so staff-vs-patient disputes ("the patient never joined"
+// / "the host wasn't there") are answerable from data, not opinion.
+//
+// What it captures, written back to lng_appointments + lng_meet_attendance:
+//
+//   conferenceRecords.startTime / .endTime
+//     → conference_started_at / conference_ended_at.
+//       NULL after end_at = the conference never opened. Smoking gun.
+//
+//   participants + participantSessions
+//     → one lng_meet_attendance row per session, with is_host derived
+//       from a display_name match against lng_meet_hosts, and
+//       meet_user_id (Google's stable user-resource id) so the card
+//       can group multi-session joins into one row per person.
+//
+//   recordings + transcripts (per conference record)
+//     → recording_count / transcript_count on the appointment. Their
+//       very existence is unfakeable proof the call happened.
+//
+//   Calendar event attendees[] for the patient
+//     → patient_rsvp_status / patient_rsvp_updated_at. Tells us if the
+//       patient accepted, declined, or never opened the invite.
 //
 // Meet only publishes conferenceRecords once the meeting has ended,
 // so an empty response before then is not an error — the response

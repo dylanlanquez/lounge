@@ -27,7 +27,7 @@ import {
   saveWidgetCopy,
   useWidgetCopyOverrides,
   type WidgetCopy,
-} from '../widget/copy.ts';
+} from '../widgets/shared/copy.ts';
 
 // Toggle `window.LNG_DEBUG = true` from the dev console to see
 // per-render / per-event diagnostics from this admin page. Off by

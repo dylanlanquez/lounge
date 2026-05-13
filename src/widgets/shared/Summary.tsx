@@ -1,5 +1,5 @@
 import { Calendar, MapPin, Plus, PoundSterling } from 'lucide-react';
-import { theme } from '../theme/index.ts';
+import { theme } from '../../theme/index.ts';
 import {
   formatPrice,
   type PriceBreakdown,
@@ -9,8 +9,8 @@ import {
   axesForService,
   axisValueLabel,
   type AxisKey,
-} from '../lib/queries/bookingTypeAxes.ts';
-import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
+} from '../../lib/queries/bookingTypeAxes.ts';
+import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
 import type { ResolvedCatalogueRow, WidgetUpgrade } from './data.ts';
 import type { WidgetCopy } from './copy.ts';
 

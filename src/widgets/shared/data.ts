@@ -114,7 +114,7 @@ export function useWidgetLocations(): LocationReadResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../../lib/supabase.ts';
 
 interface BookingTypeReadResult {
   data: WidgetBookingType[] | null;

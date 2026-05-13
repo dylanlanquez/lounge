@@ -9,8 +9,8 @@ import {
   axesForService,
   type AxisKey,
   type CatalogueArchMatch,
-} from '../lib/queries/bookingTypeAxes.ts';
-import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
+} from '../../lib/queries/bookingTypeAxes.ts';
+import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
 import { DEFAULT_COPY, type WidgetCopy } from './copy.ts';
 
 // Booking-widget state + step engine.

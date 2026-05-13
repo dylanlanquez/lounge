@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { formatPrice } from '../state.ts';
-import { env } from '../../lib/env.ts';
-import { supabase } from '../../lib/supabase.ts';
+import { env } from '../../../lib/env.ts';
+import { supabase } from '../../../lib/supabase.ts';
 
 // Payment step.
 //

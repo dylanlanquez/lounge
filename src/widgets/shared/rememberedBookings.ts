@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../../lib/supabase.ts';
 import type { ManagedBooking } from './manage.ts';
 
 // Patient-side recall of booking-management tokens.

@@ -1,5 +1,5 @@
 import { Calendar, ChevronRight, MapPin, Plus } from 'lucide-react';
-import { theme } from '../theme/index.ts';
+import { theme } from '../../theme/index.ts';
 import type { RememberedBooking } from './rememberedBookings.ts';
 
 // Welcome screen shown ahead of the booking step engine when the

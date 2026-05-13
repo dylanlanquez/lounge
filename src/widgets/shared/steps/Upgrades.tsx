@@ -1,5 +1,5 @@
 import { Check, Plus } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
+import { theme } from '../../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import type { WidgetUpgrade } from '../data.ts';
 import { formatPrice } from '../state.ts';

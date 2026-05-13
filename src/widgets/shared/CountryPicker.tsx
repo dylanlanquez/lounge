@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
-import { theme } from '../theme/index.ts';
+import { theme } from '../../theme/index.ts';
 import { PHONE_COUNTRIES, type PhoneCountry } from './countries.ts';
 
 // Phone-country picker for the widget Details step.

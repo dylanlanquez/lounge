@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange } from 'lucide-react';
-import { theme } from '../theme/index.ts';
+import { theme } from '../../theme/index.ts';
 import {
   firstAvailable,
   isClosedDay,
@@ -8,7 +8,7 @@ import {
   useWidgetFirstAvailable,
   type WidgetSlot,
 } from './data.ts';
-import { useIsMobile } from '../lib/useIsMobile.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 // Reusable date+time picker for the booking flow AND the
 // patient-side reschedule flow on /widget/manage.

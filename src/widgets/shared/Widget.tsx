@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { theme } from '../theme/index.ts';
-import { useIsMobile } from '../lib/useIsMobile.ts';
+import { theme } from '../../theme/index.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 import {
   type BookingStateApi,
   formatPrice,
@@ -26,7 +26,7 @@ import {
 import { rememberBookingToken, useRememberedBookings } from './rememberedBookings.ts';
 import { WelcomeBack } from './WelcomeBack.tsx';
 import { isDetailsValid } from './validation.ts';
-import type { AxisKey } from '../lib/queries/bookingTypeAxes.ts';
+import type { AxisKey } from '../../lib/queries/bookingTypeAxes.ts';
 
 // Public booking widget — embedded on the practice's website.
 //

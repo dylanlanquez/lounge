@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../../lib/supabase.ts';
 import type { WidgetState } from './state.ts';
 
 // Widget submission helper.

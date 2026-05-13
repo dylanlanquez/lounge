@@ -11,8 +11,9 @@ import { resolve } from 'node:path';
 //   • VITE_BUILD_TARGET=widget: builds the customer-facing
 //     widget from widget.html → src/widget-main.tsx, also into
 //     dist/. The bundle excludes everything outside
-//     src/widget/* (and shared libs) by tree-shaking — there's
-//     no staff code in the customer deployment by construction.
+//     src/widgets/shared/* (and shared libs) by tree-shaking —
+//     there's no staff code in the customer deployment by
+//     construction.
 //     A close-bundle hook renames dist/widget.html to
 //     dist/index.html so Vercel serves it as the SPA root.
 //
