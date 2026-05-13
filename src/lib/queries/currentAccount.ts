@@ -56,6 +56,12 @@ export interface CurrentAccount {
   // entries, /admin opens and only the listed tab keys are shown.
   // Super admins and full admins see every tab regardless.
   admin_page_access: string[];
+  // Job title (Receptionist, Hygienist, etc.) from lng_staff_roles.
+  // Informational only — shown on the profile sheet and anywhere we
+  // attribute work to a staff member. Null when no role is assigned
+  // or the assigned role has been archived. Independent of all the
+  // permission flags above.
+  role_name: string | null;
   // Per-staff "Require 2FA" policy. Read by the auth gate to decide
   // whether to route into /enroll-2fa or /verify-2fa before granting
   // access to protected routes. Super admin always passes the gate
@@ -161,6 +167,7 @@ export function useCurrentAccount(): Result {
         can_count_cash:
           (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
         admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
+        role_name: isActiveStaff ? (membership?.role_name ?? null) : null,
         // Super admin is exempt from the require_2fa gate so a
         // brand-new install can never lock itself out. Every other
         // staff member's flag mirrors lng_staff_members.require_2fa.

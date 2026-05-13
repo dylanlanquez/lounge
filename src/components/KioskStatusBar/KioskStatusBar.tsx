@@ -158,6 +158,7 @@ export function KioskStatusBar() {
       onClose={() => setProfileOpen(false)}
       email={user.email ?? null}
       displayName={account?.display_name ?? null}
+      roleName={account?.role_name ?? null}
       onSignOut={() => {
         setProfileOpen(false);
         void signOut();
@@ -206,12 +207,14 @@ function ProfileSheet({
   onClose,
   email,
   displayName,
+  roleName,
   onSignOut,
 }: {
   open: boolean;
   onClose: () => void;
   email: string | null;
   displayName: string | null;
+  roleName: string | null;
   onSignOut: () => void;
 }) {
   const label = displayName ?? email ?? 'No account';
@@ -249,15 +252,17 @@ function ProfileSheet({
           <p style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
             {label}
           </p>
-          <p
-            style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-            }}
-          >
-            Receptionist
-          </p>
+          {roleName ? (
+            <p
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+              }}
+            >
+              {roleName}
+            </p>
+          ) : null}
         </div>
       </div>
     </BottomSheet>

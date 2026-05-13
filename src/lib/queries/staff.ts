@@ -757,15 +757,28 @@ export interface CurrentStaffMembership {
   can_count_cash: boolean;
   require_2fa: boolean;
   admin_page_access: string[];
+  // Job-title FK + resolved display name from lng_staff_roles. Both
+  // nullable: a staff member without a role assigned, or with a role
+  // that's been archived since assignment, lands here with null
+  // role_name (we still keep the role_id so the relationship survives
+  // a future restore from archive).
+  role_id: string | null;
+  role_name: string | null;
   status: 'active' | 'inactive';
 }
 
 export async function fetchCurrentStaffMembership(
   accountId: string,
 ): Promise<CurrentStaffMembership | null> {
+  // Primary query: staff member columns including role_id. The role
+  // name is fetched via a separate lookup below rather than an
+  // embedded `role:lng_staff_roles(name)` select. Why: this function
+  // runs on every app load via useCurrentAccount, so a stale
+  // PostgREST schema cache on the role relationship would brick the
+  // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, status')
+    .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -773,9 +786,10 @@ export async function fetchCurrentStaffMembership(
     // "no membership" rather than throwing. Older code paths still
     // call this before the foundation migration is applied in dev.
     if (error.code === '42P01') return null;
-    // admin_page_access is added by 20260513000005. If the column
-    // doesn't exist yet on this DB, fall back to a query without it
-    // so older deploys keep working until the migration lands.
+    // admin_page_access is added by 20260513000005 and role_id by
+    // 20260513000007. If either column doesn't exist yet on this DB,
+    // fall back to a query without them so older deploys keep
+    // working until the migrations land.
     if (error.code === '42703') {
       const { data: legacy, error: legacyErr } = await supabase
         .from('lng_staff_members')
@@ -803,6 +817,8 @@ export async function fetchCurrentStaffMembership(
         can_count_cash: l.can_count_cash === true,
         require_2fa: l.require_2fa === true,
         admin_page_access: [],
+        role_id: null,
+        role_name: null,
         status: l.status,
       };
     }
@@ -818,8 +834,26 @@ export async function fetchCurrentStaffMembership(
     can_count_cash: boolean | null;
     require_2fa: boolean | null;
     admin_page_access: unknown;
+    role_id: string | null;
     status: 'active' | 'inactive';
   };
+
+  // Resolve role name if a role is assigned. Done as a separate
+  // lookup so a missing lng_staff_roles table (42P01 — migration not
+  // applied yet) or stale PostgREST relationship cache degrades to
+  // "no role name" instead of breaking the auth gate.
+  let roleName: string | null = null;
+  if (r.role_id) {
+    const { data: roleRow, error: roleErr } = await supabase
+      .from('lng_staff_roles')
+      .select('name')
+      .eq('id', r.role_id)
+      .maybeSingle();
+    if (!roleErr && roleRow) {
+      roleName = (roleRow as { name: string }).name ?? null;
+    }
+  }
+
   return {
     staff_member_id: r.id,
     is_admin: r.is_admin === true,
@@ -831,6 +865,8 @@ export async function fetchCurrentStaffMembership(
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
       : [],
+    role_id: r.role_id,
+    role_name: roleName,
     status: r.status,
   };
 }
