@@ -325,9 +325,17 @@ export async function markVirtualMeetingJoined(appointmentId: string): Promise<v
 // Records that staff rejoined an already-joined virtual meeting. No
 // status flip — the appointment stays 'joined'. Writes a patient_events
 // row so the timeline tracks every time the link was reopened.
+//
+// Throws on insert error rather than silently swallowing it. The
+// previous version awaited `.insert()` without checking the response
+// — Supabase doesn't reject on RLS denial, it returns the error in
+// the response object — so an RLS misconfiguration would make every
+// Rejoin tap appear to succeed while writing nothing. The caller in
+// AppointmentDetail catches the throw and forwards it to logFailure
+// so the audit trail stays loud.
 export async function logVirtualMeetingRejoin(appointmentId: string, patientId: string): Promise<void> {
   const { data: accountId } = await supabase.rpc('auth_account_id');
-  await supabase.from('patient_events').insert({
+  const { error } = await supabase.from('patient_events').insert({
     patient_id: patientId,
     event_type: 'virtual_meeting_rejoined',
     actor_account_id: (accountId as string | null) ?? null,
@@ -336,6 +344,7 @@ export async function logVirtualMeetingRejoin(appointmentId: string, patientId: 
       rejoined_at: new Date().toISOString(),
     },
   });
+  if (error) throw new Error(error.message);
 }
 
 export async function markAppointmentArrived(

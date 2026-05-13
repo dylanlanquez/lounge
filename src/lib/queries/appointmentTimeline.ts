@@ -578,6 +578,19 @@ function mapEvent(
         tone: 'neutral',
       };
 
+    case 'virtual_meeting_rejoined':
+      // Every tap of the Rejoin button writes its own row; the
+      // timeline surfaces each one so the audit trail captures who
+      // reconnected and when (handy when chasing a disconnection
+      // pattern with a specific patient).
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'Rejoined virtual meeting',
+        hint: 'check',
+        tone: 'neutral',
+      };
+
     case 'visit_arrived': {
       const visitId = readString(row.payload, 'visit_id');
       return {
