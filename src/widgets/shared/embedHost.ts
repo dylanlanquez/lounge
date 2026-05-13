@@ -1,0 +1,345 @@
+// embedHost.ts — modal chrome for the booking widget when it's
+// loaded into a partner page (venneir.com / denture-services.co.uk)
+// via the per-brand opener script. The chrome is plain DOM with no
+// React dependency on purpose: it has to render before the brand
+// bundle has finished downloading so the customer sees activity
+// within ~16 ms of the click.
+//
+// Responsibilities:
+//   • Build the backdrop + card + close button + initial spinner.
+//   • Trap focus inside the modal while it's open.
+//   • Lock the host page's body scroll without losing the scroll
+//     position on iOS Safari (which forgets it if we just toggle
+//     overflow: hidden).
+//   • Mount-point handoff: returns the inner element React will
+//     mount into once the bundle has loaded.
+//   • Esc + backdrop click + close-button click all converge on a
+//     single onClose handler so cleanup is symmetric.
+//
+// Animations respect prefers-reduced-motion. Sizing breaks at
+// 768px: mobile = full-bleed 100vw × 100dvh, desktop = centred 720×900
+// card. Z-index is 2147483646 (one below max int) so a host-page
+// modal on top of us can still win if it really needs to.
+
+const MODAL_ID = 'vlounge-embed-modal';
+const MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+const SPIN_STYLE_ID = 'vlounge-embed-keyframes';
+
+export interface ModalOpenOptions {
+  /** Accessible name announced to screen readers. */
+  ariaLabel: string;
+  /** Element to return focus to after close (the trigger button). */
+  returnFocusTo?: HTMLElement | null;
+  /** Called for any close path: backdrop click, Esc, X button. */
+  onClose: () => void;
+}
+
+export interface ModalHandle {
+  /** Root <div> of the modal in the DOM. Use for teardown. */
+  root: HTMLElement;
+  /** The element React should mount into. */
+  mountContainer: HTMLElement;
+  /** Programmatic close (also fires onClose). */
+  close: () => void;
+}
+
+// Open the modal. If one's already open (rare; defensive), the
+// existing chrome is dropped first — we never want two stacked
+// modals on the same page.
+export function openModal(opts: ModalOpenOptions): ModalHandle {
+  const existing = document.getElementById(MODAL_ID);
+  if (existing) {
+    existing.remove();
+  }
+
+  ensureKeyframes();
+
+  const reducedMotion = window.matchMedia?.(MOTION_QUERY).matches ?? false;
+  const root = document.createElement('div');
+  root.id = MODAL_ID;
+  root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'true');
+  root.setAttribute('aria-label', opts.ariaLabel);
+  Object.assign(root.style, {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '2147483646',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'auto',
+    isolation: 'isolate',
+  } as Partial<CSSStyleDeclaration>);
+
+  // Backdrop. Click-to-close lives here; the card stops propagation.
+  const backdrop = document.createElement('div');
+  Object.assign(backdrop.style, {
+    position: 'absolute',
+    inset: '0',
+    background: 'rgba(14, 20, 20, 0.55)',
+    opacity: reducedMotion ? '1' : '0',
+    transition: reducedMotion ? 'none' : 'opacity 200ms ease',
+    cursor: 'pointer',
+  } as Partial<CSSStyleDeclaration>);
+
+  // Card. Mobile = full-bleed, desktop = centred sheet.
+  const card = document.createElement('div');
+  const isDesktop = window.matchMedia('(min-width: 768px)').matches;
+  Object.assign(card.style, {
+    position: 'relative',
+    background: '#F7F6F2',
+    width: isDesktop ? 'min(720px, calc(100vw - 32px))' : '100vw',
+    height: isDesktop ? 'min(900px, calc(100dvh - 32px))' : '100dvh',
+    maxHeight: '100dvh',
+    borderRadius: isDesktop ? '20px' : '0',
+    boxShadow: isDesktop ? '0 20px 60px rgba(0, 0, 0, 0.25)' : 'none',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    transform: reducedMotion ? 'none' : 'scale(0.96)',
+    opacity: reducedMotion ? '1' : '0',
+    transition: reducedMotion
+      ? 'none'
+      : 'transform 240ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease',
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif',
+    color: '#0E1414',
+  } as Partial<CSSStyleDeclaration>);
+
+  // Close button. 44 × 44 touch target, top-right of the card.
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', 'Close booking');
+  closeBtn.innerHTML = closeIconSvg();
+  Object.assign(closeBtn.style, {
+    position: 'absolute',
+    top: isDesktop ? '12px' : 'calc(env(safe-area-inset-top, 0px) + 8px)',
+    right: '12px',
+    width: '44px',
+    height: '44px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(255, 255, 255, 0.7)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    border: '1px solid rgba(14, 20, 20, 0.08)',
+    borderRadius: '999px',
+    cursor: 'pointer',
+    color: '#0E1414',
+    padding: '0',
+    zIndex: '2',
+    fontFamily: 'inherit',
+  } as Partial<CSSStyleDeclaration>);
+
+  // Content slot. Starts as a loading spinner so the customer sees
+  // activity within one frame; React replaces this once the brand
+  // bundle has loaded + hydrated.
+  const mountContainer = document.createElement('div');
+  Object.assign(mountContainer.style, {
+    flex: '1',
+    minHeight: '0',
+    overflow: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
+  } as Partial<CSSStyleDeclaration>);
+  mountContainer.appendChild(buildLoadingSpinner());
+
+  card.appendChild(closeBtn);
+  card.appendChild(mountContainer);
+  root.appendChild(backdrop);
+  root.appendChild(card);
+  document.body.appendChild(root);
+
+  // Body scroll lock. iOS Safari forgets the scroll position when
+  // we toggle overflow: hidden, so we pin the body to its current
+  // scroll Y with position: fixed + top: -<scrollY>px and restore on
+  // close. Desktop browsers don't need the position trick, but the
+  // same code path works there too.
+  const scrollY = window.scrollY;
+  const previousBodyStyle = {
+    overflow: document.body.style.overflow,
+    position: document.body.style.position,
+    top: document.body.style.top,
+    width: document.body.style.width,
+  };
+  document.body.style.overflow = 'hidden';
+  document.body.style.position = 'fixed';
+  document.body.style.top = `-${scrollY}px`;
+  document.body.style.width = '100%';
+
+  // Focus management. Snapshot the previously-focused element so we
+  // can return focus on close (a11y requirement for modals). The
+  // initial focus goes to the close button — it's the only element
+  // before React mounts so there's nowhere else useful to land.
+  const previousFocus = document.activeElement as HTMLElement | null;
+  closeBtn.focus();
+
+  // Animate in on the next frame so the browser sees the initial
+  // opacity:0 / scale:0.96 state and animates from there.
+  if (!reducedMotion) {
+    requestAnimationFrame(() => {
+      backdrop.style.opacity = '1';
+      card.style.opacity = '1';
+      card.style.transform = 'scale(1)';
+    });
+  }
+
+  let closed = false;
+  function close() {
+    if (closed) return;
+    closed = true;
+
+    if (!reducedMotion) {
+      backdrop.style.opacity = '0';
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.96)';
+    }
+
+    document.removeEventListener('keydown', onKey, true);
+    root.removeEventListener('focusin', onFocusIn, true);
+
+    // Restore body scroll BEFORE the next frame so the page doesn't
+    // visually scroll-jump during the close animation.
+    document.body.style.overflow = previousBodyStyle.overflow;
+    document.body.style.position = previousBodyStyle.position;
+    document.body.style.top = previousBodyStyle.top;
+    document.body.style.width = previousBodyStyle.width;
+    window.scrollTo(0, scrollY);
+
+    const removeAfterAnimation = () => {
+      root.remove();
+      const target = opts.returnFocusTo ?? previousFocus;
+      if (target && typeof target.focus === 'function') {
+        try {
+          target.focus({ preventScroll: true });
+        } catch {
+          // ignore — focus on a removed node can throw in older Safaris
+        }
+      }
+      opts.onClose();
+    };
+
+    if (reducedMotion) {
+      removeAfterAnimation();
+    } else {
+      window.setTimeout(removeAfterAnimation, 240);
+    }
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (e.key === 'Tab') {
+      // Focus trap. The close button is the only stable focusable
+      // before React mounts; once React arrives there'll be inputs
+      // and buttons inside mountContainer. Query the live set every
+      // tab press so the trap stays correct as React re-renders.
+      const focusables = collectFocusables(root);
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+  document.addEventListener('keydown', onKey, true);
+
+  function onFocusIn(e: FocusEvent) {
+    // Catch the case where some external script grabs focus while
+    // we're open (e.g. Shopify's own quick-shop). Pull it back.
+    if (!root.contains(e.target as Node)) {
+      e.stopPropagation();
+      closeBtn.focus();
+    }
+  }
+  root.addEventListener('focusin', onFocusIn, true);
+
+  backdrop.addEventListener('click', close);
+  closeBtn.addEventListener('click', close);
+
+  return {
+    root,
+    mountContainer,
+    close,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Internals
+// ─────────────────────────────────────────────────────────────────
+
+function ensureKeyframes() {
+  if (document.getElementById(SPIN_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = SPIN_STYLE_ID;
+  style.textContent = `@keyframes vlounge-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+  document.head.appendChild(style);
+}
+
+function buildLoadingSpinner(): HTMLElement {
+  const wrap = document.createElement('div');
+  Object.assign(wrap.style, {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    width: '100%',
+    flexDirection: 'column',
+    gap: '12px',
+    color: '#5A6266',
+  } as Partial<CSSStyleDeclaration>);
+
+  const spinner = document.createElement('div');
+  Object.assign(spinner.style, {
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    border: '3px solid rgba(14, 20, 20, 0.08)',
+    borderTopColor: 'rgba(14, 20, 20, 0.55)',
+    animation: 'vlounge-spin 0.9s linear infinite',
+  } as Partial<CSSStyleDeclaration>);
+
+  const label = document.createElement('p');
+  label.textContent = 'Loading booking…';
+  Object.assign(label.style, {
+    margin: '0',
+    fontSize: '14px',
+    lineHeight: '1.4',
+    color: '#5A6266',
+    fontFamily: 'inherit',
+  } as Partial<CSSStyleDeclaration>);
+
+  wrap.appendChild(spinner);
+  wrap.appendChild(label);
+  return wrap;
+}
+
+function closeIconSvg(): string {
+  // Lucide X glyph, inlined as raw SVG to keep the chrome React-free.
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+}
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function collectFocusables(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => !el.hasAttribute('disabled') && el.offsetParent !== null,
+  );
+}

@@ -16,7 +16,9 @@
       "permanent": false
     }
   ],
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "rewrites": [
+    { "source": "/((?!embed/|widgets/).*)", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -44,10 +46,31 @@
       ]
     },
     {
-      "source": "/((?!widget/).*)",
+      "source": "/((?!widget/|embed/|widgets/).*)",
       "has": [{ "type": "host", "value": "lounge.venneir.com" }],
       "headers": [
         { "key": "Content-Security-Policy", "value": "frame-ancestors 'self'" }
+      ]
+    },
+    {
+      "source": "/embed/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=600, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/widgets/(.*)/main.js",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=600, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/widgets/(.*)/chunks/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
       ]
     }
   ]

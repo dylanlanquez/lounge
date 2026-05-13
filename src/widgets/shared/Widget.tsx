@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import {
@@ -16,7 +16,12 @@ import { AxisStep } from './steps/Axis.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
-import { PaymentStep } from './steps/Payment.tsx';
+// PaymentStep is lazy-loaded so @stripe/stripe-js (~80 KB) and
+// @stripe/react-stripe-js only download when a paid booking actually
+// reaches the deposit screen. Free-service bookings never fetch Stripe.
+const PaymentStep = lazy(() =>
+  import('./steps/Payment.tsx').then((m) => ({ default: m.PaymentStep })),
+);
 import { SuccessScreen } from './steps/Success.tsx';
 import { Summary } from './Summary.tsx';
 import { submitBooking, SubmitError } from './submit.ts';
@@ -55,7 +60,38 @@ import type { AxisKey } from '../../lib/queries/bookingTypeAxes.ts';
 const SIDEBAR_WIDTH = 320;
 const TWO_COLUMN_BREAKPOINT = 880;
 
-export function Widget() {
+// Optional props passed by the per-brand embed entries
+// (widgets/venneir/main.tsx, widgets/denture/main.tsx). The legacy
+// /book + /manage routes still render <Widget /> with no props and
+// fall back to URL-search-param prefill. New embed callers pass
+// brand tokens for header chrome + a prefill object so the modal
+// can deep-link past the first few steps without writing to the
+// host page's URL bar. Prefill plumbing into the step machine lands
+// in a follow-up commit; for now the props are accepted-but-unused
+// so the brand bundles compile and mount in place.
+export interface WidgetProps {
+  embedded?: boolean;
+  brand?: {
+    id: 'venneir' | 'denture';
+    name: string;
+    accent: string;
+    accentBg: string;
+    logoSrc: string;
+    logoAlt: string;
+    tagline: string;
+  };
+  prefill?: {
+    service: string | null;
+    product: string | null;
+    arch: 'upper' | 'lower' | 'both' | null;
+    location: string | null;
+    shopifyCustomerEmail: string | null;
+    shopifyCustomerId: string | null;
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function Widget(_props: WidgetProps = {}) {
   // Live reads of locations + copy. We gate the first render on
   // both, so the page never flashes a "Welcome, pick a location"
   // header for half a second before stepping into a deep-linked
@@ -465,7 +501,9 @@ function StepContent({
       return <DetailsStep api={api} />;
     case 'payment':
       return (
-        <PaymentStep api={api} onPaid={(pi) => onSubmit(pi)} submitting={submitting} />
+        <Suspense fallback={<PaymentLoadingFallback />}>
+          <PaymentStep api={api} onPaid={(pi) => onSubmit(pi)} submitting={submitting} />
+        </Suspense>
       );
   }
   return null;
@@ -581,6 +619,31 @@ function MobileSummaryDock({
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Suspense fallback shown while the lazy-loaded PaymentStep chunk
+// (Stripe.js + react-stripe-js + our Payment.tsx) downloads. The
+// chunk is small (~10 KB gz) so this almost always paints once; the
+// PaymentElement spinner inside Payment.tsx takes over from there.
+function PaymentLoadingFallback() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '200px',
+        color: theme.color.inkMuted,
+        fontSize: theme.type.size.sm,
+        gap: theme.space[2],
+      }}
+      aria-live="polite"
+    >
+      <style>{`@keyframes lng-widget-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      <Loader2 size={16} style={{ animation: 'lng-widget-spin 0.9s linear infinite' }} />
+      <span>Preparing payment…</span>
+    </div>
+  );
+}
 
 function BootScreen({ error }: { error: string | null }) {
   // Shown while locations + copy are loading on first mount. Plain
