@@ -1,29 +1,44 @@
 // meet-create-space
 //
-// Creates a Google Calendar event with Meet conferencing for a virtual
-// appointment under the chosen host's OAuth grant. End-to-end this
-// produces:
+// Creates a Meet space and attaches it to a Calendar event so the
+// virtual appointment shows on the host's calendar, the patient gets a
+// Calendar invite, AND the host can later read attendance from the
+// Meet REST API.
 //
-//   1. A Calendar event on the host's primary calendar (the host sees
-//      the appointment alongside their other meetings).
-//   2. A Google Meet room attached to that event (the join URL goes
-//      onto the appointment row as join_url, matching the legacy
-//      flow's contract).
-//   3. A Calendar invite emailed to the patient by Google itself, so
-//      Apple Mail / Outlook / Gmail surface the booking as a calendar
-//      event the same way they do for legacy bookings.
-//   4. A Meet space resource we can later query for attendance.
+// IMPORTANT — order of operations:
 //
-// This replaces the earlier "create a standalone Meet space" approach,
-// which gave us a join URL but skipped the host calendar visibility +
-// patient invite that legacy virtual impression appointments have. The
-// brief asked for parity-or-better with the legacy service-account
-// flow — this surface delivers parity (host calendar + invite) AND the
-// new per-host attendance capability.
+//   1. POST /v2/spaces (Meet REST API, host's OAuth) — creates the
+//      space directly. The host OWNS the space in Meet's books, which
+//      is what lets meet-fetch-attendance later read its
+//      conferenceRecords. Earlier versions of this function used
+//      Calendar's conferenceData.createRequest to provision the Meet
+//      room as a side-effect of the Calendar event, but the spaces
+//      that path produces are tagged as Calendar-owned, NOT
+//      meetings.space.created-owned, and the Meet REST API returns 0
+//      conferenceRecords for them under the host's grant. We
+//      diagnosed this with tokeninfo + an unfiltered list: the host
+//      could see Meet-API-created spaces but NOT Calendar-created
+//      ones. The fix is to create the space first, via Meet, then
+//      attach.
 //
-// Idempotent: if the appointment already has a meet_space_id we return
-// the cached identifiers and skip the API call. Re-running after a
-// host change requires meet_space_id=null on the row.
+//   2. POST /calendar/v3/events with conferenceData populated to
+//      reference the Meet space we just created (entryPoints +
+//      conferenceSolutionKey, no createRequest). Calendar links the
+//      event to the existing space rather than minting a new one.
+//      The patient gets the invite from Google as before.
+//
+// End-to-end this still produces:
+//
+//   • A Calendar event on the host's primary calendar.
+//   • A Meet room (owned by the host in Meet's books — the critical
+//     difference from before) with the join URL on join_url.
+//   • A Calendar invite emailed to the patient.
+//   • A queryable Meet space resource for attendance.
+//
+// Idempotent: if google_calendar_event_id + join_url are already
+// populated we return the cached identifiers and skip every API call.
+// Recovering from a partial state (e.g. space created but Calendar
+// failed) requires nulling both columns on the appointment row.
 //
 // Auth: signed-in staff JWT.
 
@@ -162,16 +177,90 @@ async function handle(req: Request): Promise<Response> {
     .filter((line) => line !== null)
     .join('\n');
 
+  // 3. Create the Meet space FIRST via the Meet REST API. Doing it
+  //    this way (instead of using Calendar's conferenceData.createRequest)
+  //    is what makes the host the owner of the space in Meet's books.
+  //    Without that ownership, meetings.space.created scoped reads of
+  //    conferenceRecords for this space return empty — even after the
+  //    meeting actually happened.
+  //
+  //    An empty `{}` body asks for default access (OPEN entry, no
+  //    waiting room, anyone with the link can join), matching the
+  //    behaviour of a Calendar-created Meet room.
+  const spaceRes = await fetch('https://meet.googleapis.com/v2/spaces', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  });
+  if (!spaceRes.ok) {
+    const errBody = await spaceRes.text().catch(() => '');
+    await admin.from('lng_system_failures').insert({
+      source: 'meet-create-space',
+      severity: 'error',
+      message: `Meet spaces.create failed: ${spaceRes.status}`,
+      context: {
+        appointment_id: appt.id,
+        host_email: host.google_email,
+        response_status: spaceRes.status,
+        response_body_preview: errBody.slice(0, 500),
+      },
+    });
+    return json(200, {
+      ok: false,
+      error: `Meet space create failed: ${spaceRes.status} ${errBody.slice(0, 300)}`,
+    });
+  }
+  const meetSpace = (await spaceRes.json()) as {
+    name?: string;
+    meetingUri?: string;
+    meetingCode?: string;
+  };
+  if (!meetSpace.name || !meetSpace.meetingUri || !meetSpace.meetingCode) {
+    await admin.from('lng_system_failures').insert({
+      source: 'meet-create-space',
+      severity: 'error',
+      message: 'Meet spaces.create returned an incomplete payload',
+      context: {
+        appointment_id: appt.id,
+        host_email: host.google_email,
+        space_payload: meetSpace,
+      },
+    });
+    return json(200, {
+      ok: false,
+      error: 'Meet space created but key fields are missing. Check the host\'s Workspace plan includes Meet API access.',
+    });
+  }
+  const meetSpaceName = meetSpace.name;
+  const meetingCode = meetSpace.meetingCode;
+  const joinUrl = meetSpace.meetingUri;
+
+  // 4. Create the Calendar event with the existing Meet space attached.
+  //    conferenceData.conferenceSolution + entryPoints (no createRequest)
+  //    tells Calendar to use the supplied Meet, rather than minting a
+  //    new one. The patient still gets the standard Google invite via
+  //    sendUpdates=all; the host's calendar still shows the appointment.
   const calendarBody: Record<string, unknown> = {
     summary,
     description,
     start: { dateTime: appt.start_at, timeZone: 'Europe/London' },
     end: { dateTime: appt.end_at, timeZone: 'Europe/London' },
     conferenceData: {
-      createRequest: {
-        requestId: appt.id, // Idempotency key for retries.
-        conferenceSolutionKey: { type: 'hangoutsMeet' },
+      conferenceSolution: {
+        key: { type: 'hangoutsMeet' },
+        name: 'Google Meet',
       },
+      conferenceId: meetingCode,
+      entryPoints: [
+        {
+          entryPointType: 'video',
+          uri: joinUrl,
+          label: meetingCode,
+        },
+      ],
     },
     guestsCanModify: false,
     guestsCanInviteOthers: false,
@@ -180,8 +269,6 @@ async function handle(req: Request): Promise<Response> {
     calendarBody.attendees = [{ email: patient.email, responseStatus: 'needsAction' }];
   }
 
-  // sendUpdates=all → Google emails the calendar invite to attendees.
-  // conferenceDataVersion=1 enables the conferenceData.createRequest path.
   const calRes = await fetch(
     'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
     {
@@ -195,104 +282,38 @@ async function handle(req: Request): Promise<Response> {
   );
   if (!calRes.ok) {
     const errBody = await calRes.text().catch(() => '');
+    // The Meet space exists at this point but Calendar didn't accept
+    // the attach. Log loud, then bail. The host can still send the
+    // join URL manually if absolutely needed, but typically this
+    // signals a Calendar API quota / scope issue.
+    await admin.from('lng_system_failures').insert({
+      source: 'meet-create-space',
+      severity: 'error',
+      message: `Calendar event create failed: ${calRes.status}`,
+      context: {
+        appointment_id: appt.id,
+        meeting_code: meetingCode,
+        meet_space_name: meetSpaceName,
+        host_email: host.google_email,
+        response_status: calRes.status,
+        response_body_preview: errBody.slice(0, 500),
+      },
+    });
     return json(200, {
       ok: false,
       error: `Calendar event create failed: ${calRes.status} ${errBody.slice(0, 300)}`,
     });
   }
-  const calEvent = (await calRes.json()) as {
-    id?: string;
-    hangoutLink?: string;
-    conferenceData?: {
-      conferenceId?: string;
-      entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
-    };
-  };
+  const calEvent = (await calRes.json()) as { id?: string };
   if (!calEvent.id) {
     return json(200, { ok: false, error: 'Calendar API returned no event id.' });
   }
-  // hangoutLink is the user-facing Meet URL; conferenceId is the short
-  // meetingCode (e.g. abc-defg-hij). Pull them robustly because Google
-  // sometimes returns the URL on conferenceData.entryPoints[].uri rather
-  // than the top-level hangoutLink field.
-  const joinUrl =
-    calEvent.hangoutLink
-    ?? calEvent.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri
-    ?? null;
-  const meetingCode = calEvent.conferenceData?.conferenceId ?? null;
-  if (!joinUrl || !meetingCode) {
-    return json(200, {
-      ok: false,
-      error: 'Calendar event created but Meet details were not returned. Confirm Google Meet is enabled for this host.',
-    });
-  }
 
-  // 4. Look up the canonical Meet space resource so we can query it
-  //    later for attendance. The Meet API's spaces.get endpoint resolves
-  //    a meetingCode in the resource path. The returned space.name is
-  //    the opaque server-generated identifier (`spaces/Yqfg7gQAAAAB`),
-  //    NOT the meeting code with a prefix.
-  //
-  //    On failure we store NULL and log the response to
-  //    lng_system_failures rather than fabricating a value. Two reasons:
-  //
-  //      a. The old code fell through to `spaces/${meetingCode}` when
-  //         this call failed. That string isn't a valid space resource
-  //         name, so every later filter against it matched nothing —
-  //         attendance was silently broken for any appointment whose
-  //         spaces.get failed at create time.
-  //      b. meet-fetch-attendance now filters by space.meeting_code
-  //         (which is always correct) rather than space.name, so a NULL
-  //         meet_space_id doesn't break attendance fetching. It just
-  //         means we don't carry the canonical name around — also fine.
-  //
-  //    Logging the failure makes the cause visible (scope, quota,
-  //    propagation delay) instead of paving over it.
-  let meetSpaceName: string | null = null;
-  try {
-    const spaceRes = await fetch(`https://meet.googleapis.com/v2/spaces/${encodeURIComponent(meetingCode)}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (spaceRes.ok) {
-      const space = (await spaceRes.json()) as { name?: string };
-      if (space.name) meetSpaceName = space.name;
-    } else {
-      const errBody = await spaceRes.text().catch(() => '');
-      await admin.from('lng_system_failures').insert({
-        source: 'meet-create-space',
-        severity: 'warning',
-        message: `spaces.get failed: ${spaceRes.status}`,
-        context: {
-          appointment_id: appt.id,
-          meeting_code: meetingCode,
-          host_email: host.google_email,
-          response_status: spaceRes.status,
-          response_body_preview: errBody.slice(0, 500),
-        },
-      });
-    }
-  } catch (e) {
-    await admin.from('lng_system_failures').insert({
-      source: 'meet-create-space',
-      severity: 'warning',
-      message: `spaces.get threw: ${e instanceof Error ? e.message : String(e)}`,
-      context: {
-        appointment_id: appt.id,
-        meeting_code: meetingCode,
-        host_email: host.google_email,
-      },
-    });
-  }
-
-  // 5. Persist onto the appointment. We mirror the legacy column set
-  //    (join_url + google_calendar_event_id) so every existing surface
-  //    — schedule card teal accent, AppointmentDetail virtual hero,
-  //    confirmation email template, cancel-deletes-calendar-event flow
-  //    — reads the appointment as virtual identically. The new
-  //    meet_host_id + meet_space_id + meet_meeting_code add per-host
-  //    attendance capability on top of that. meet_space_id is null when
-  //    spaces.get failed; meet_meeting_code is always set (it's what
-  //    meet-fetch-attendance actually filters on).
+  // 5. Persist onto the appointment. meet_space_id is the canonical
+  //    server-generated opaque resource name (`spaces/<opaque-id>`);
+  //    meet_meeting_code is the human-readable join code. Both come
+  //    straight from the Meet REST API so they're authoritative — no
+  //    fallback constructions, no fabricated values.
   const { error: updErr } = await admin
     .from('lng_appointments')
     .update({

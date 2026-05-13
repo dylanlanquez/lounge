@@ -188,6 +188,53 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Audit log: every successful fetch records what Google returned so
+  // operators can trace "I joined but the card stayed empty" disputes
+  // by reading lng_event_log. Kept as a normal event, not a debug
+  // toggle, because the same trail is useful for ops dashboards and
+  // post-mortems. Records the filter we used, the count, and a small
+  // preview so the cause (idle conference, scope, no record yet) is
+  // visible without re-running the function.
+  //
+  // When the filtered list comes back empty, we ALSO call tokeninfo +
+  // an unfiltered list so we know whether the host's grant can see
+  // ANY of their own conferenceRecords. Two outcomes:
+  //
+  //   • Unfiltered list returns records → API + scope both work; our
+  //     specific filter (or this conference) genuinely isn't there.
+  //     Likely cause: Calendar-created Meet rooms not always queryable
+  //     via the Meet REST API for the room's "creator".
+  //   • Unfiltered list returns nothing AND tokeninfo lacks the
+  //     meetings.* scope → the host's OAuth grant is too narrow;
+  //     they need to disconnect + reconnect from /admin/services to
+  //     re-consent with the current scope set.
+  //
+  // tokeninfo + unfiltered list are best-effort. We don't fail the
+  // function on a 5xx from either — they're audit data, not the
+  // primary path.
+  let diagnostic: Record<string, unknown> | null = null;
+  if (conferenceRecords.length === 0) {
+    diagnostic = await runEmptyResultDiagnostic(accessToken);
+  }
+
+  await admin.from('lng_event_log').insert({
+    source: 'meet-fetch-attendance',
+    event_type: 'conference_list_fetched',
+    payload: {
+      appointment_id: appointmentId,
+      meet_meeting_code: appt.meet_meeting_code,
+      host_email: host.google_email,
+      filter,
+      conference_records_found: conferenceRecords.length,
+      records_preview: conferenceRecords.slice(0, 5).map((r) => ({
+        name: r.name,
+        startTime: r.startTime ?? null,
+        endTime: r.endTime ?? null,
+      })),
+      diagnostic,
+    },
+  });
+
   if (conferenceRecords.length === 0) {
     return json(200, {
       ok: true,
@@ -410,6 +457,87 @@ async function countListing(
     url = next.toString();
   }
   return total;
+}
+
+// Fired only when the filtered conferenceRecords list comes back empty.
+// Pulls two independent signals so the lng_event_log audit row tells us
+// which of the four failure modes we're in:
+//
+//   • scopes_missing: the granted OAuth scopes don't include the Meet
+//     ones; the host needs to reconnect.
+//   • api_works_no_records_at_all: API + scopes fine, but the host has
+//     NO conferenceRecords visible to them — likely the Calendar-
+//     created Meet room isn't attributed to the host in a way Meet's
+//     "user-created spaces" scope can read.
+//   • api_works_other_records_exist: host can see other conference
+//     records but not this one — our filter is wrong or this specific
+//     space isn't visible to the host (e.g. they joined as a guest).
+//   • diagnostic_failed: tokeninfo and/or unfiltered list errored;
+//     surface the response bodies so we can diagnose anyway.
+//
+// Each Google call wraps its own errors so a failure on one signal
+// doesn't suppress the other.
+async function runEmptyResultDiagnostic(
+  accessToken: string,
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+
+  // tokeninfo — returns the actual scopes the access token holds,
+  // regardless of what we asked for at consent time. The granted set
+  // can be narrower than the requested set if the user reviewed and
+  // un-checked a scope on the consent screen.
+  try {
+    const tokenRes = await fetch(
+      `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(accessToken)}`,
+    );
+    const tokenBody = await tokenRes.text();
+    out.tokeninfo_status = tokenRes.status;
+    out.tokeninfo_body = tokenBody.slice(0, 800);
+    if (tokenRes.ok) {
+      try {
+        const parsed = JSON.parse(tokenBody) as { scope?: string };
+        const scopes = (parsed.scope ?? '').split(/\s+/).filter(Boolean);
+        out.granted_scopes = scopes;
+        out.has_meet_scope = scopes.some((s) => s.startsWith('https://www.googleapis.com/auth/meetings.'));
+      } catch {
+        out.tokeninfo_parse_error = true;
+      }
+    }
+  } catch (e) {
+    out.tokeninfo_threw = e instanceof Error ? e.message : String(e);
+  }
+
+  // Unfiltered conferenceRecords list — top 10. If this returns rows,
+  // the API + scope work and the issue is filter-specific (or this
+  // particular conference isn't owned by the host). If it returns
+  // empty, the host has no visible conferenceRecords at all.
+  try {
+    const listRes = await fetch(
+      'https://meet.googleapis.com/v2/conferenceRecords?pageSize=10',
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    out.unfiltered_list_status = listRes.status;
+    if (listRes.ok) {
+      const body = (await listRes.json()) as {
+        conferenceRecords?: Array<{ name?: string; startTime?: string; endTime?: string; space?: string }>;
+      };
+      const records = body.conferenceRecords ?? [];
+      out.unfiltered_list_count = records.length;
+      out.unfiltered_list_preview = records.slice(0, 5).map((r) => ({
+        name: r.name ?? null,
+        space: r.space ?? null,
+        startTime: r.startTime ?? null,
+        endTime: r.endTime ?? null,
+      }));
+    } else {
+      const errBody = await listRes.text().catch(() => '');
+      out.unfiltered_list_error = errBody.slice(0, 500);
+    }
+  } catch (e) {
+    out.unfiltered_list_threw = e instanceof Error ? e.message : String(e);
+  }
+
+  return out;
 }
 
 function cors(): Record<string, string> {
