@@ -114,7 +114,14 @@ Deno.serve(async (req) => {
   const expiresIn = typeof tokens.expires_in === 'number' ? tokens.expires_in : 3600;
   const tokenExpiry = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-  // 2. Get the host's profile so we can stamp display_name + email.
+  // 2. Get the host's profile so we can stamp display_name, email, and
+  //    Google's stable user resource id. The id is what the Meet REST
+  //    API returns as signedinUser.user on conferenceRecord
+  //    participants — the un-forgeable signal that "this participant
+  //    is genuinely THIS Google account", regardless of what display
+  //    name they put in Meet's "your name" prompt. Stored alongside
+  //    the email so meet-fetch-attendance can tag is_host without
+  //    trusting display_name strings.
   const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
   });
@@ -125,15 +132,19 @@ Deno.serve(async (req) => {
       error: `Profile fetch failed: ${profileRes.status} ${errBody.slice(0, 200)}`,
     });
   }
-  const profile = (await profileRes.json()) as { email?: string; name?: string };
+  const profile = (await profileRes.json()) as { id?: string; email?: string; name?: string };
   if (!profile.email) {
     return json(200, { ok: false, error: 'Profile fetch returned no email' });
+  }
+  if (!profile.id) {
+    return json(200, { ok: false, error: 'Profile fetch returned no user id' });
   }
 
   // 3. Upsert the host. Service role bypasses RLS.
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const upsertPayload = {
     google_email: profile.email,
+    google_user_id: profile.id,
     display_name: profile.name ?? profile.email,
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,

@@ -96,19 +96,33 @@ Deno.serve(async (req) => {
   const host = hostRow as MeetHostRow | null;
   if (!host) return json(404, { ok: false, error: 'Host not found' });
 
-  // Pre-load every active host's display_name. We label a participant
-  // as "host" if their Meet display name matches any host on file, not
-  // just THIS appointment's assigned host — a stand-in (Karly covering
-  // Lab) still reads as staff in the verdict line.
+  // Pre-load every active host's stable Google user ID + display
+  // name. Host detection prefers user ID match (`signedinUser.user`
+  // from the Meet API matches `users/<google_user_id>` for a host on
+  // file) because the display name is forgeable — anyone can set
+  // their Meet "your name" to "Dylan Lane", but only the actual
+  // dylan.lane@venneir.com account can match its own Google user ID.
+  //
+  // Hosts that pre-date the google_user_id column (i.e. connected
+  // before the OAuth-callback capture) fall back to display name
+  // matching for that host specifically, so we don't suddenly lose
+  // is_host detection during the rollout. After the backfill in
+  // 20260513000010_lng_meet_hosts_google_user_id.sql, the only
+  // registered host has its user_id, so the strict path is used.
   const { data: allHostsRaw } = await admin
     .from('lng_meet_hosts')
-    .select('display_name, google_email')
+    .select('display_name, google_email, google_user_id')
     .eq('is_active', true);
-  const knownHostNames = new Set(
-    ((allHostsRaw as Array<{ display_name: string | null }> | null) ?? [])
-      .map((h) => (h.display_name ?? '').trim().toLowerCase())
-      .filter((s) => s.length > 0),
-  );
+  const knownHostUserIds = new Set<string>();
+  const fallbackHostNames = new Set<string>();
+  for (const h of ((allHostsRaw as Array<{ display_name: string | null; google_user_id: string | null }> | null) ?? [])) {
+    if (h.google_user_id) {
+      knownHostUserIds.add(`users/${h.google_user_id}`);
+    } else if (h.display_name) {
+      const lc = h.display_name.trim().toLowerCase();
+      if (lc) fallbackHostNames.add(lc);
+    }
+  }
 
   const tokenResult = await getValidAccessToken(admin, host);
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
@@ -332,7 +346,28 @@ Deno.serve(async (req) => {
         ?? 'Guest';
 
       const meetUserId = participant.signedinUser?.user ?? null;
-      const isHost = knownHostNames.has(displayName.trim().toLowerCase());
+      // Two-tier host detection:
+      //
+      //   1. PREFERRED — Google user ID match. signedinUser.user is the
+      //      same stable resource id we capture for each host at OAuth
+      //      time (lng_meet_hosts.google_user_id, with "users/" prefix
+      //      added at compare time). Un-forgeable: even if a stranger
+      //      sets their Meet display name to match the host's, they'll
+      //      have a different Google user ID and won't match here.
+      //
+      //   2. FALLBACK — display name match for legacy hosts that
+      //      pre-date the google_user_id column. Only consulted when
+      //      knownHostUserIds is empty OR this participant has no
+      //      signedinUser.user (anonymous joiner). After the backfill
+      //      in 20260513000010, every active host has a user_id, so
+      //      this branch is effectively dead code — kept as a safety
+      //      net for stand-in hosts connected before the migration.
+      let isHost = false;
+      if (meetUserId && knownHostUserIds.has(meetUserId)) {
+        isHost = true;
+      } else if (knownHostUserIds.size === 0 && fallbackHostNames.has(displayName.trim().toLowerCase())) {
+        isHost = true;
+      }
 
       const sessRes = await fetch(
         `https://meet.googleapis.com/v2/${participant.name}/participantSessions`,
