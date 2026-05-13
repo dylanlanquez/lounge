@@ -579,6 +579,7 @@ function Loaded({
             transcriptCount={appt.transcript_count}
             patientRsvpStatus={appt.patient_rsvp_status}
             patientRsvpUpdatedAt={appt.patient_rsvp_updated_at}
+            patientEmail={appt.patient.email}
           />
         </section>
       ) : null}

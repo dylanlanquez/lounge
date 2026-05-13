@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { Card } from '../Card/Card.tsx';
@@ -52,6 +52,13 @@ export interface MeetAttendanceCardProps {
   transcriptCount: number | null;
   patientRsvpStatus: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
   patientRsvpUpdatedAt: string | null;
+  // The patient's email on file. Surfaced inline on the invite row so
+  // operators can tell at a glance which inbox we tracked — important
+  // because Google's Meet API doesn't publish the email a participant
+  // used to join (only their display name). If the patient joined from
+  // a different Google account than the one we have, the only visible
+  // signal is the display name in the participants list.
+  patientEmail: string | null;
 }
 
 export function MeetAttendanceCard({
@@ -64,7 +71,8 @@ export function MeetAttendanceCard({
   recordingCount,
   transcriptCount,
   patientRsvpStatus,
-  patientRsvpUpdatedAt,
+  patientRsvpUpdatedAt: _patientRsvpUpdatedAt,
+  patientEmail,
 }: MeetAttendanceCardProps) {
   const { rows, loading, error, refresh } = useMeetAttendance(appointmentId);
   const [pulling, setPulling] = useState(false);
@@ -136,16 +144,14 @@ export function MeetAttendanceCard({
           }}
         />
         <VerdictBanner verdict={verdict} />
-        <ConferenceWindow
+        <MetadataList
           startedAt={conferenceStartedAt}
           endedAt={conferenceEndedAt}
           conferenceCount={conferenceCount}
-        />
-        <EvidenceStrip
           recordingCount={recordingCount}
           transcriptCount={transcriptCount}
           patientRsvpStatus={patientRsvpStatus}
-          patientRsvpUpdatedAt={patientRsvpUpdatedAt}
+          patientEmail={patientEmail}
           meetingHasEnded={meetingHasEnded}
         />
         {loading ? (
@@ -157,11 +163,13 @@ export function MeetAttendanceCard({
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
             Could not load attendance: {error}
           </p>
-        ) : grouped.length === 0 ? (
-          <EmptyMessage meetingHasEnded={meetingHasEnded} />
-        ) : (
-          <ParticipantList grouped={grouped} />
+        ) : grouped.length === 0 ? null : (
+          <>
+            <SectionLabel>Participants</SectionLabel>
+            <ParticipantList grouped={grouped} />
+          </>
         )}
+        <FooterHint />
       </Card>
       {toast ? (
         <Toast
@@ -203,13 +211,15 @@ function deriveVerdict(args: {
   const { rows, grouped, conferenceStartedAt, meetingHasEnded } = args;
 
   // Before the meeting ends Google publishes nothing, so anything we'd
-  // say would be speculative. Be honest: we're waiting on Google.
+  // say would be speculative. Be honest: we're waiting on Google. The
+  // longer "how Google publishes attendance" explanation lives in the
+  // card's footer hint — keep the verdict detail to one short line so
+  // the card is scannable.
   if (!meetingHasEnded) {
     return {
       kind: 'pending',
-      title: 'Verdict pending',
-      detail:
-        'Google publishes attendance only after the Meet room itself closes — i.e. the host ends the call for everyone, or the room sits empty for ~5 minutes. Joining and leaving alone is not enough. Once the room closes the verdict and session list populate automatically.',
+      title: 'Awaiting Google publication',
+      detail: 'Verdict populates once the Meet room closes.',
       tone: 'muted',
     };
   }
@@ -220,9 +230,8 @@ function deriveVerdict(args: {
   if (!conferenceStartedAt && rows.length === 0) {
     return {
       kind: 'never_opened',
-      title: 'Conference never opened',
-      detail:
-        'Google has no record of this meeting starting. Neither the host nor the patient connected at any point.',
+      title: 'Nobody joined',
+      detail: 'Google has no record of the conference starting.',
       tone: 'alert',
     };
   }
@@ -234,34 +243,31 @@ function deriveVerdict(args: {
     return {
       kind: 'both',
       title: 'Both attended',
-      detail: 'Host and patient both connected to the meeting.',
+      detail: 'Host and patient both connected.',
       tone: 'success',
     };
   }
   if (hostJoined && !patientJoined) {
     return {
       kind: 'only_host',
-      title: 'Only the host joined',
-      detail:
-        'Google records the host joining, but no patient session was published. Treat any "patient attended" claim as unsubstantiated.',
+      title: 'Patient did not join',
+      detail: 'Host has a recorded session; patient has none.',
       tone: 'warn',
     };
   }
   if (!hostJoined && patientJoined) {
     return {
       kind: 'only_patient',
-      title: 'Only the patient joined',
-      detail:
-        'Google records the patient joining, but no host session was published. The patient turned up; staff did not.',
+      title: 'Host did not join',
+      detail: 'Patient has a recorded session; host has none.',
       tone: 'alert',
     };
   }
   // Fallback: rows exist but nobody had > 0 seconds. Treat as never-opened.
   return {
     kind: 'never_opened',
-    title: 'No completed sessions',
-    detail:
-      'A conference record exists but no participant logged any time in the call. Treat as nobody connected.',
+    title: 'Nobody stayed connected',
+    detail: 'Conference opened but no session logged any duration.',
     tone: 'alert',
   };
 }
@@ -333,179 +339,171 @@ function verdictPalette(tone: Verdict['tone']): { bg: string; border: string; fg
 // Conference window — start and end Google itself recorded
 // ─────────────────────────────────────────────────────────────────────
 
-function ConferenceWindow({
+// ─────────────────────────────────────────────────────────────────────
+// MetadataList — the single scannable facts block that replaces the
+// old "Conference window" pill + "Evidence chips" row. Definition-list
+// style: label on the left, value on the right, tabular nums for
+// times. Each row is a discrete fact about the meeting:
+//
+//   • Conference: when Google saw the room open / close (and how many
+//     distinct conferences happened in this space).
+//   • Recording / Transcript: corroborating artefact counts, shown
+//     once the meeting has ended (post-meeting only — zeros pre-
+//     meeting are just noise).
+//   • Invite sent to: the patient email we wired to the Calendar invite.
+//     CRITICAL for identity-mismatch cases: if the patient joins from
+//     a different Google account than this email, the RSVP row says
+//     "no response" but the participants list below shows the actual
+//     identity they used. Surfacing the tracked email makes the
+//     mismatch visible at a glance instead of the operator wondering
+//     which mailbox we're talking about.
+// ─────────────────────────────────────────────────────────────────────
+
+function MetadataList({
   startedAt,
   endedAt,
   conferenceCount,
+  recordingCount,
+  transcriptCount,
+  patientRsvpStatus,
+  patientEmail,
+  meetingHasEnded,
 }: {
   startedAt: string | null;
   endedAt: string | null;
   conferenceCount: number | null;
-}) {
-  if (!startedAt && !endedAt) return null;
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const fmtDay = (iso: string) =>
-    new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  // endedAt may be on a later day than startedAt for multi-conference
-  // spaces — qualify it with the day so "12 May 09:00 → 13 May 09:35"
-  // reads correctly. Single-day windows still get the cleaner
-  // "12 May 09:00 → 09:35" treatment.
-  const endLabel = endedAt
-    ? startedAt && new Date(endedAt).toDateString() !== new Date(startedAt).toDateString()
-      ? `${fmtDay(endedAt)} ${fmt(endedAt)}`
-      : fmt(endedAt)
-    : 'still open';
-  const count = conferenceCount ?? 0;
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[2],
-        marginBottom: theme.space[4],
-        padding: `${theme.space[2]}px ${theme.space[3]}px`,
-        borderRadius: theme.radius.input,
-        background: theme.color.bg,
-        border: `1px dashed ${theme.color.border}`,
-        fontSize: theme.type.size.xs,
-        color: theme.color.inkMuted,
-        fontVariantNumeric: 'tabular-nums',
-        lineHeight: 1.5,
-      }}
-    >
-      <Video size={11} aria-hidden />
-      <span>
-        Conference window:&nbsp;
-        {startedAt ? `${fmtDay(startedAt)} ${fmt(startedAt)}` : '—'}
-        {' → '}
-        {endLabel}
-        {count > 1 ? ` · ${count} conferences` : ''}
-      </span>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Evidence strip — recordings, transcripts, patient RSVP. These don't
-// answer "did they meet?" on their own (the verdict line does) but
-// they DO corroborate it from independent sources. A recording exists
-// → the call definitely happened. Patient declined the invite the day
-// before → no surprise they didn't show. Etc.
-// ─────────────────────────────────────────────────────────────────────
-
-function EvidenceStrip({
-  recordingCount,
-  transcriptCount,
-  patientRsvpStatus,
-  patientRsvpUpdatedAt,
-  meetingHasEnded,
-}: {
   recordingCount: number | null;
   transcriptCount: number | null;
   patientRsvpStatus: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
-  patientRsvpUpdatedAt: string | null;
+  patientEmail: string | null;
   meetingHasEnded: boolean;
 }) {
-  const items: Array<{ label: string; tone: 'success' | 'warn' | 'muted'; detail?: string }> = [];
+  const rows: Array<{ label: string; value: ReactNode; tone?: 'success' | 'warn' | 'muted' }> = [];
 
-  // Recordings + transcripts only have meaning post-meeting; before the
-  // call ends both are always 0 and saying "0 recordings" pre-meeting
-  // would just be noise. Once the meeting has ended we surface them
-  // either way — 0 is itself a signal worth seeing.
-  if (meetingHasEnded) {
-    if ((recordingCount ?? 0) > 0) {
-      items.push({
-        label: `${recordingCount} recording${recordingCount === 1 ? '' : 's'}`,
-        tone: 'success',
-        detail: 'unfakeable proof the call took place',
-      });
-    } else {
-      items.push({
-        label: 'No recording',
-        tone: 'muted',
-      });
-    }
-    if ((transcriptCount ?? 0) > 0) {
-      items.push({
-        label: `${transcriptCount} transcript${transcriptCount === 1 ? '' : 's'}`,
-        tone: 'success',
-      });
-    }
-  }
-
-  // RSVP is always interesting — "patient never opened the invite"
-  // pre-meeting is a useful early warning. Show whatever Google has,
-  // regardless of meeting state.
-  if (patientRsvpStatus) {
-    const map: Record<
-      'accepted' | 'declined' | 'tentative' | 'needsAction',
-      { label: string; tone: 'success' | 'warn' | 'muted' }
-    > = {
-      accepted: { label: 'Patient RSVP: Accepted', tone: 'success' },
-      declined: { label: 'Patient RSVP: Declined', tone: 'warn' },
-      tentative: { label: 'Patient RSVP: Tentative', tone: 'muted' },
-      needsAction: { label: 'Patient has not opened the invite', tone: 'warn' },
-    };
-    items.push({
-      ...map[patientRsvpStatus],
-      detail: patientRsvpUpdatedAt
-        ? `as of ${new Date(patientRsvpUpdatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
-        : undefined,
+  // Conference timing. Same-day window collapses to a single date
+  // prefix on the left, "still open" reads cleanly for an active
+  // conference, and the multi-conference count appends only when > 1
+  // so the common single-conference case stays minimal.
+  if (startedAt || endedAt) {
+    const fmt = (iso: string) =>
+      new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const fmtDay = (iso: string) =>
+      new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    const startLabel = startedAt ? `${fmtDay(startedAt)} ${fmt(startedAt)}` : '—';
+    const endLabel = endedAt
+      ? startedAt && new Date(endedAt).toDateString() !== new Date(startedAt).toDateString()
+        ? `${fmtDay(endedAt)} ${fmt(endedAt)}`
+        : fmt(endedAt)
+      : 'still open';
+    const count = conferenceCount ?? 0;
+    rows.push({
+      label: 'Conference',
+      value: `${startLabel} → ${endLabel}${count > 1 ? ` · ${count} conferences` : ''}`,
     });
   }
 
-  if (items.length === 0) return null;
+  // Post-meeting: recording + transcript counts. A non-zero recording
+  // count is the strongest corroborating evidence we have ("the call
+  // produced bytes"). Zero is also useful — confirms no recording was
+  // taken. Transcript is only meaningful when present.
+  if (meetingHasEnded) {
+    const r = recordingCount ?? 0;
+    rows.push({
+      label: 'Recording',
+      value: r > 0 ? `${r} recording${r === 1 ? '' : 's'}` : 'Not recorded',
+      tone: r > 0 ? 'success' : 'muted',
+    });
+    const t = transcriptCount ?? 0;
+    if (t > 0) {
+      rows.push({
+        label: 'Transcript',
+        value: `${t} transcript${t === 1 ? '' : 's'}`,
+        tone: 'success',
+      });
+    }
+  }
+
+  // Invite RSVP row, qualified with the email we sent to. Important
+  // because the patient may join from a different Google account than
+  // this address — common in practice. The RSVP only tracks the
+  // address Google sent the Calendar invite to; the participants list
+  // below is the source of truth for who actually connected.
+  if (patientEmail) {
+    const status = patientRsvpStatus
+      ? ({
+          accepted: { label: 'Accepted invite', tone: 'success' as const },
+          declined: { label: 'Declined invite', tone: 'warn' as const },
+          tentative: { label: 'Tentative', tone: 'muted' as const },
+          needsAction: { label: 'No response yet', tone: 'warn' as const },
+        } satisfies Record<'accepted' | 'declined' | 'tentative' | 'needsAction', { label: string; tone: 'success' | 'warn' | 'muted' }>)[patientRsvpStatus]
+      : { label: 'No response yet', tone: 'muted' as const };
+    rows.push({
+      label: 'Invite sent to',
+      value: (
+        <span>
+          <span style={{ color: theme.color.ink }}>{patientEmail}</span>
+          <span style={{ color: toneColor(status.tone) }}> · {status.label}</span>
+        </span>
+      ),
+      tone: status.tone,
+    });
+  }
+
+  if (rows.length === 0) return null;
 
   return (
-    <div
+    <dl
       style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: theme.space[2],
-        marginBottom: theme.space[4],
+        margin: `0 0 ${theme.space[4]}px`,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr',
+        rowGap: theme.space[2],
+        columnGap: theme.space[4],
+        fontSize: theme.type.size.sm,
+        lineHeight: 1.4,
       }}
     >
-      {items.map((item, i) => {
-        const palette = chipPalette(item.tone);
-        return (
-          <div
-            key={i}
+      {rows.map((r, i) => (
+        <Fragment key={i}>
+          <dt
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: theme.space[2],
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
-              borderRadius: theme.radius.input,
-              background: palette.bg,
-              border: `1px solid ${palette.border}`,
-              fontSize: theme.type.size.xs,
-              color: palette.fg,
-              lineHeight: 1.4,
+              margin: 0,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              whiteSpace: 'nowrap',
             }}
           >
-            <span style={{ fontWeight: theme.type.weight.semibold }}>{item.label}</span>
-            {item.detail ? (
-              <span style={{ color: palette.fgMuted, fontWeight: theme.type.weight.medium }}>
-                · {item.detail}
-              </span>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
+            {r.label}
+          </dt>
+          <dd
+            style={{
+              margin: 0,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              wordBreak: 'break-word',
+            }}
+          >
+            {r.value}
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
   );
 }
 
-function chipPalette(tone: 'success' | 'warn' | 'muted'): { bg: string; border: string; fg: string; fgMuted: string } {
+function toneColor(tone: 'success' | 'warn' | 'muted'): string {
   switch (tone) {
     case 'success':
-      return { bg: '#EAF7EE', border: '#C6E3CF', fg: '#1F5A33', fgMuted: '#3D7050' };
+      return '#1F5A33';
     case 'warn':
-      return { bg: '#FFF6E5', border: '#F0D7A6', fg: '#7A5410', fgMuted: '#8E6826' };
+      return '#8E6826';
     case 'muted':
     default:
-      return { bg: theme.color.bg, border: theme.color.border, fg: theme.color.ink, fgMuted: theme.color.inkMuted };
+      return theme.color.inkMuted;
   }
 }
 
@@ -797,12 +795,55 @@ function Header({
   );
 }
 
-function EmptyMessage({ meetingHasEnded }: { meetingHasEnded: boolean }) {
+// Section heading for the participants list. Tiny uppercase eyebrow
+// so the list reads as part of the same card without competing with
+// the verdict for visual weight.
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
-      {meetingHasEnded
-        ? 'Google has not published any session records for this meeting yet. End the Meet call (three-dot menu in Meet → "End call for everyone") or wait ~5 minutes after the last person leaves, then tap Refresh. If no one ever joined the verdict above already says so.'
-        : 'Attendance lands here once the Meet room closes — either the host ends the call for everyone, or it sits empty for ~5 minutes. Join and Rejoin taps are recorded on the Timeline below.'}
+    <p
+      style={{
+        margin: `0 0 ${theme.space[2]}px`,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.inkMuted,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+// The footer hint replaces a longer paragraph that used to sit in the
+// empty-state. Two short sentences cover everything an operator needs
+// to know about why the card might look empty:
+//
+//   1. Google publishes attendance only after the Meet room closes
+//      (host ends call, or it sits empty for ~5 minutes). This is the
+//      most common cause of "I attended but the card is empty".
+//
+//   2. The Meet REST API doesn't publish lobby knocks or the email
+//      a participant used to join — only display names. So if the
+//      patient joins from a different Google account than the one on
+//      the invite, the only visible signal is the display name in the
+//      Participants list above.
+//
+// Kept terse so it doesn't dominate the card. Operators who need the
+// detail will find it; everyone else can ignore it.
+function FooterHint() {
+  return (
+    <p
+      style={{
+        margin: `${theme.space[4]}px 0 0`,
+        paddingTop: theme.space[3],
+        borderTop: `1px solid ${theme.color.border}`,
+        fontSize: theme.type.size.xs,
+        color: theme.color.inkMuted,
+        lineHeight: 1.55,
+      }}
+    >
+      Sessions land here only after the Meet room closes — host ends the call for everyone, or it sits empty for ~5 minutes. Google does not publish lobby knocks, and does not expose the email a participant used to join — only their display name. If the patient joined from a different Google account, look for an unexpected name in the participants list.
     </p>
   );
 }
