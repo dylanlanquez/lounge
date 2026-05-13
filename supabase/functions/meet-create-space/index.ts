@@ -110,22 +110,22 @@ async function handle(req: Request): Promise<Response> {
   const tokenResult = await getValidAccessToken(admin, host);
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
 
-  // 3. Create the Meet space. attendanceReportGenerationType may
-  //    quietly fall back on Workspace tiers that don't support it —
-  //    we still proceed because participant sessions are readable
-  //    on every tier via the conferenceRecords API.
+  // 3. Create the Meet space. We deliberately do NOT pass
+  //    attendanceReportGenerationType — that field is Workspace-only
+  //    (FEATURE_UNAVAILABLE_TO_USER on personal Gmail accounts like
+  //    venneirlaboratory@gmail.com) and Google rejects the whole
+  //    request with 403 when an unauthorised account sets it.
+  //    Attendance is still readable on every tier via the
+  //    conferenceRecords → participants → participantSessions chain
+  //    in meet-fetch-attendance — the report-generation flag only
+  //    governs the downloadable post-meeting CSV, which we don't use.
   const spaceRes = await fetch('https://meet.googleapis.com/v2/spaces', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${tokenResult.accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      config: {
-        accessType: 'TRUSTED',
-        attendanceReportGenerationType: 'GENERATE_REPORT',
-      },
-    }),
+    body: JSON.stringify({}),
   });
   if (!spaceRes.ok) {
     const errBody = await spaceRes.text().catch(() => '');
