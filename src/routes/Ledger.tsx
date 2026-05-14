@@ -704,8 +704,9 @@ function PaymentLine({ state }: { state: LedgerPaymentState }) {
           // story reads as one consistent surface across the app.
           // Dashed arc around a tick = "partial / secured to here",
           // distinct from BadgeCheck's solid mark used by Paid in
-          // full.
-          icon: <DepositGlyph size={12} />,
+          // full. Size 14 (was 12) so the filled-arc dash gaps
+          // read as visibly dashed on the ledger row.
+          icon: <DepositGlyph size={14} />,
           label: 'Deposit paid',
           // Sage green — clearly green-family (positive money fact)
           // but visually distinct from the dark forest accent used by

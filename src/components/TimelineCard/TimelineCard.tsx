@@ -579,8 +579,12 @@ function iconFor(event: TimelineEvent): ReactNode {
       // Shared DepositGlyph mark — same icon used by the
       // AppointmentDetail hero pill + Deposit card and the Ledger
       // PaymentLine, so the "deposit paid" story reads as one
-      // surface across the app.
-      return <DepositGlyph size={size} />;
+      // surface across the app. Bumped 2px past the rest of the
+      // hint family so the filled-arc dash gaps render visibly —
+      // at 16px the gaps blurred into a solid ring; at 18px they
+      // resolve as the dashed treatment the widget footer
+      // (size 20) uses as the reference.
+      return <DepositGlyph size={18} />;
     case 'box':
       return <Box size={size} />;
     case 'mail':

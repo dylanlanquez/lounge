@@ -771,7 +771,11 @@ function Hero({
     pills.push({
       tone: 'deposit_paid',
       label: 'Deposit paid',
-      icon: <DepositGlyph size={12} />,
+      // Size 14 (was 12) — the filled-arc DepositGlyph's dash gaps
+      // are small relative to the viewBox, so at 12px they blur
+      // into a solid ring. 14px lets them read as visibly dashed,
+      // matching how the widget footer renders the same glyph.
+      icon: <DepositGlyph size={14} />,
     });
   }
 
@@ -1830,7 +1834,7 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
         }}
       >
         <DetailSectionHeader
-          icon={<DepositGlyph size={16} />}
+          icon={<DepositGlyph size={20} />}
           title="Deposit paid"
         />
         <div
