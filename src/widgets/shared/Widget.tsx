@@ -887,47 +887,18 @@ function Footer({
           confirmOTD ? (
             // Confirmation beat — Pay-on-the-day was tapped once;
             // surfacing the explicit "Book appointment" makes the
-            // commit step obvious (no surprise bookings from a
-            // mistapped CTA). "Change" reopens the two-button row.
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'stretch',
-                gap: 6,
-                minWidth: 0,
-              }}
+            // commit step obvious. The "Paying on the day · Change"
+            // link is rendered as a separate row UNDER this one
+            // (see below) so the button column doesn't stretch and
+            // drag the Back arrow's vertical centre down with it.
+            <NextButton
+              disabled={nextDisabled}
+              onClick={onPayOnTheDay}
+              accent={accent}
+              shimmer={false}
             >
-              <NextButton
-                disabled={nextDisabled}
-                onClick={onPayOnTheDay}
-                accent={accent}
-                shimmer={false}
-              >
-                {submitting ? 'Booking…' : 'Book appointment'}
-              </NextButton>
-              <button
-                type="button"
-                onClick={() => setConfirmOTD(false)}
-                disabled={submitting}
-                style={{
-                  appearance: 'none',
-                  border: 'none',
-                  background: 'transparent',
-                  fontFamily: 'inherit',
-                  fontSize: 13,
-                  color: QUIZ.MUTED_2,
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                  textAlign: 'center',
-                  padding: '4px 8px',
-                  textDecoration: 'underline',
-                  textUnderlineOffset: 3,
-                }}
-              >
-                Paying on the day · Change
-              </button>
-            </div>
+              {submitting ? 'Booking…' : 'Book appointment'}
+            </NextButton>
           ) : (
             // Two-CTA summary footer. Pay-now is the primary path so
             // it lives on the right (the same slot Next/Pay used to
@@ -1004,6 +975,31 @@ function Footer({
           </NextButton>
         )}
       </div>
+
+      {summaryPaid && confirmOTD ? (
+        // Sits on its own row under the buttons so the BackButton +
+        // Book-appointment line stays single-row aligned. Tapping
+        // Change rolls back to the two-CTA view.
+        <button
+          type="button"
+          onClick={() => setConfirmOTD(false)}
+          disabled={submitting}
+          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            fontFamily: 'inherit',
+            fontSize: 13,
+            color: QUIZ.MUTED_2,
+            cursor: submitting ? 'not-allowed' : 'pointer',
+            padding: '0 8px',
+            textDecoration: 'underline',
+            textUnderlineOffset: 3,
+          }}
+        >
+          Paying on the day · Change
+        </button>
+      ) : null}
     </footer>
   );
 }
