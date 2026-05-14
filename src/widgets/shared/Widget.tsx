@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, CalendarCheck, Loader2, Lock } from 'lucide-react';
 import type { PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -864,7 +864,12 @@ function FooterPrice({
       }}
     >
       {showDeposit ? (
-        <FooterPriceBlock label="Today" valuePence={depositPence} muted={false} />
+        <FooterPriceBlock
+          label="Today"
+          valuePence={depositPence}
+          muted={false}
+          icon={<BadgeCheck size={18} aria-hidden />}
+        />
       ) : null}
       {showDeposit && showOnTheDay ? (
         <span
@@ -889,10 +894,12 @@ function FooterPriceBlock({
   label,
   valuePence,
   muted,
+  icon,
 }: {
   label: string;
   valuePence: number;
   muted: boolean;
+  icon?: React.ReactNode;
 }) {
   return (
     <div
@@ -918,14 +925,30 @@ function FooterPriceBlock({
       </span>
       <span
         style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 4,
           fontSize: 22,
           fontWeight: 700,
           color: QUIZ.INK,
           fontVariantNumeric: 'tabular-nums',
-          marginTop: 4,
           letterSpacing: '-0.01em',
         }}
       >
+        {icon ? (
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: QUIZ.ACCENT,
+            }}
+          >
+            {icon}
+          </span>
+        ) : null}
         {formatPrice(valuePence)}
       </span>
     </div>
