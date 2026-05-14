@@ -491,11 +491,10 @@ function AfterYouPayCard() {
       <h3
         style={{
           margin: '0 0 10px',
-          fontSize: 13,
+          fontSize: 16,
           fontWeight: 700,
           color: QUIZ.ACCENT,
-          letterSpacing: '0.04em',
-          textTransform: 'uppercase',
+          letterSpacing: '-0.01em',
         }}
       >
         After you pay
