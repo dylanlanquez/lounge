@@ -155,15 +155,12 @@ export function DetailsStep({
             onChange={(e) => update('notes', e.target.value)}
             rows={3}
             placeholder="Anything we should know about beforehand?"
-            style={{
-              ...textareaStyle,
-              borderColor: QUIZ.BORDER,
-            }}
+            style={textareaStyle}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = QUIZ.ACCENT;
+              e.currentTarget.style.boxShadow = `0 0 0 2px ${QUIZ.ACCENT}`;
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = QUIZ.BORDER;
+              e.currentTarget.style.boxShadow = 'none';
             }}
           />
         </label>
@@ -236,7 +233,10 @@ function Field({
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
+        onBlur={(e) => {
+          e.currentTarget.style.boxShadow = showError ? `0 0 0 2px ${QUIZ.ALERT}` : 'none';
+          onBlur?.();
+        }}
         placeholder={placeholder}
         autoComplete={autoComplete}
         aria-required={required || undefined}
@@ -244,10 +244,12 @@ function Field({
         aria-describedby={showError ? errorId : undefined}
         style={{
           ...inputStyle,
-          borderColor: showError ? QUIZ.ALERT : QUIZ.BORDER,
+          boxShadow: showError ? `0 0 0 2px ${QUIZ.ALERT}` : 'none',
         }}
         onFocus={(e) => {
-          e.currentTarget.style.borderColor = showError ? QUIZ.ALERT : QUIZ.ACCENT;
+          e.currentTarget.style.boxShadow = showError
+            ? `0 0 0 2px ${QUIZ.ALERT}`
+            : `0 0 0 2px ${QUIZ.ACCENT}`;
         }}
       />
       {showError ? <ErrorLine id={errorId}>{error}</ErrorLine> : null}
@@ -272,16 +274,16 @@ function PhoneField({
 }) {
   const showError = Boolean(error);
   const errorId = useId();
-  // Track input focus so the composite outer border lights up
+  // Track input focus so the composite outer ring lights up
   // accent like a normal text input. Without this, focusing the
   // number input gave no visual confirmation the field was active,
   // making the mobile-number field feel "broken".
   const [focused, setFocused] = useState(false);
-  const borderColour = showError
-    ? QUIZ.ALERT
+  const ringShadow = showError
+    ? `0 0 0 2px ${QUIZ.ALERT}`
     : focused
-      ? QUIZ.ACCENT
-      : QUIZ.BORDER;
+      ? `0 0 0 2px ${QUIZ.ACCENT}`
+      : 'none';
   return (
     <div>
       <LabelText required>Mobile number</LabelText>
@@ -289,12 +291,13 @@ function PhoneField({
         style={{
           display: 'flex',
           alignItems: 'stretch',
-          border: `2px solid ${borderColour}`,
+          border: 'none',
           borderRadius: QUIZ.R_INPUT,
           background: QUIZ.SURFACE,
           overflow: 'hidden',
           height: 46,
-          transition: 'border-color 0.15s ease',
+          boxShadow: ringShadow,
+          transition: 'box-shadow 0.15s ease',
         }}
       >
         <CountryPicker value={countryCode} onChange={onCountryChange} />
@@ -397,26 +400,32 @@ function ErrorLine({
   );
 }
 
+// Borderless inputs against the modal's #f4f4f4 surface. The
+// white field contrasts the page background enough to read as
+// "input here"; a focus ring (via box-shadow) takes over on focus
+// so the active field still gets clear visual feedback without
+// the resting state shouting at the patient with 2px borders.
 const inputStyle: React.CSSProperties = {
   width: '100%',
   height: 46,
   padding: '0 14px',
   borderRadius: QUIZ.R_INPUT,
-  border: `2px solid ${QUIZ.BORDER}`,
+  border: 'none',
   background: QUIZ.SURFACE,
   color: QUIZ.INK,
   fontFamily: 'inherit',
   fontSize: 15,
   outline: 'none',
   boxSizing: 'border-box',
-  transition: 'border-color 0.15s ease',
+  boxShadow: 'none',
+  transition: 'box-shadow 0.15s ease',
 };
 
 const textareaStyle: React.CSSProperties = {
   width: '100%',
   padding: '12px 14px',
   borderRadius: QUIZ.R_INPUT,
-  border: `2px solid ${QUIZ.BORDER}`,
+  border: 'none',
   background: QUIZ.SURFACE,
   color: QUIZ.INK,
   fontFamily: 'inherit',
@@ -424,5 +433,6 @@ const textareaStyle: React.CSSProperties = {
   resize: 'vertical',
   outline: 'none',
   boxSizing: 'border-box',
-  transition: 'border-color 0.15s ease',
+  boxShadow: 'none',
+  transition: 'box-shadow 0.15s ease',
 };

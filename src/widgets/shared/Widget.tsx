@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, CircleDashed, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, Loader2, Lock } from 'lucide-react';
 import type { PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -872,7 +872,12 @@ function FooterPrice({
           label="Today"
           valuePence={depositPence}
           muted={false}
-          icon={<CircleDashed size={18} strokeWidth={2.5} aria-hidden />}
+          icon={
+            <DepositRing
+              depositPence={depositPence}
+              totalPence={depositPence + onTheDayPence}
+            />
+          }
         />
       ) : null}
       {showDeposit && showOnTheDay ? (
@@ -891,6 +896,71 @@ function FooterPrice({
         <FooterPriceBlock label="On the day" valuePence={onTheDayPence} muted />
       ) : null}
     </div>
+  );
+}
+
+function DepositRing({
+  depositPence,
+  totalPence,
+  size = 18,
+  stroke = 2.25,
+}: {
+  depositPence: number;
+  totalPence: number;
+  size?: number;
+  stroke?: number;
+}) {
+  // Visual cue for "you're paying this fraction of the total now".
+  // Two stacked circles: a faint track (the full bill) plus an
+  // accent-coloured arc whose length equals the deposit-to-total
+  // ratio. Stroke uses currentColor so the parent's text colour
+  // (QUIZ.ACCENT in the footer) drives the arc tint — matches the
+  // existing ledger-pill convention without an extra prop.
+  const r = (size - stroke) / 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const rawFraction = totalPence > 0 ? depositPence / totalPence : 0;
+  // Clamp the visible arc so any non-zero deposit reads as more
+  // than a single dot, and a deposit that equals the whole bill
+  // never paints a tiny gap (full ring instead of 100% dasharray
+  // hairline). 0.06 ≈ 22° minimum arc — recognisable on an 18px
+  // icon at zoom levels patients actually use.
+  const fraction =
+    rawFraction <= 0 ? 0 : Math.max(0.06, Math.min(1, rawFraction));
+  const dashLength = circumference * fraction;
+  const restLength = Math.max(0, circumference - dashLength);
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      aria-hidden
+      style={{ display: 'block', flexShrink: 0 }}
+    >
+      <circle
+        cx={cx}
+        cy={cy}
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity={0.22}
+        strokeWidth={stroke}
+      />
+      {fraction > 0 ? (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${dashLength} ${restLength}`}
+          transform={`rotate(-90 ${cx} ${cy})`}
+        />
+      ) : null}
+    </svg>
   );
 }
 
