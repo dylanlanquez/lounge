@@ -141,7 +141,13 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   Object.assign(mountContainer.style, {
     flex: '1',
     minHeight: '0',
-    overflow: 'auto',
+    // Allow vertical scrolling for tall content; hard-clip horizontal
+    // overflow so a long email / wide grid in one of the steps can't
+    // surface a horizontal scrollbar at the modal level. Anything
+    // that genuinely needs to scroll horizontally (eg. the day strip
+    // in TimeStep) sets its own overflow on its inner container.
+    overflowY: 'auto',
+    overflowX: 'hidden',
     WebkitOverflowScrolling: 'touch',
     overscrollBehavior: 'contain',
   } as Partial<CSSStyleDeclaration>);
