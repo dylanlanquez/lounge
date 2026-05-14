@@ -60,7 +60,7 @@ export interface SlotPickerProps {
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
   selectedIso: string | null;
-  onPick: (iso: string) => void;
+  onPick: (iso: string | null) => void;
   /** Show the "Our first opening" suggestion banner above the
    *  calendar. Default true. The manage / reschedule flow turns
    *  it off because the patient is moving an existing booking
@@ -193,7 +193,19 @@ export function SlotPicker({
         monthCursor={monthCursor}
         selectedDate={selectedDate}
         openingHours={openingHours}
-        onSelectDate={(d) => setSelectedDate(d)}
+        onSelectDate={(d) => {
+          setSelectedDate(d);
+          // If the patient had already locked in a time on a
+          // different day, clear it so they're forced to pick one
+          // on the new day. Without this, state.slotIso silently
+          // stays on the previous date's slot and Continue
+          // advances with a stale ISO that doesn't match the
+          // calendar choice on screen. (No-op when there's no
+          // selection, or when they re-tap the same day.)
+          if (selectedIso && !sameDay(new Date(selectedIso), d)) {
+            onPick(null);
+          }
+        }}
         onShiftMonth={(delta) => {
           const next = new Date(monthCursor);
           next.setMonth(next.getMonth() + delta);
@@ -434,7 +446,7 @@ function SlotList({
   loading: boolean;
   error: string | null;
   selectedIso: string | null;
-  onPick: (iso: string) => void;
+  onPick: (iso: string | null) => void;
 }) {
   const [, forceRerender] = useState(0);
   useEffect(() => {
@@ -516,7 +528,7 @@ function Bucket({
   label: string;
   slots: WidgetSlot[];
   selectedIso: string | null;
-  onPick: (iso: string) => void;
+  onPick: (iso: string | null) => void;
 }) {
   if (slots.length === 0) return null;
   return (
