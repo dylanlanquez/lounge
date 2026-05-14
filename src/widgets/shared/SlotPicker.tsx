@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   firstAvailable,
@@ -93,6 +93,13 @@ export function SlotPicker({
     return next?.date ?? startOfDay(new Date());
   });
   const [monthCursor, setMonthCursor] = useState<Date>(() => startOfMonth(selectedDate));
+  // Tracks whether the patient has manually picked a date (calendar
+  // cell click or "Our first opening" banner). While false, the
+  // selected date is still the stub-based initial guess and we're
+  // allowed to override it with live data as soon as the server
+  // responds. Once true, the patient's choice sticks even if the
+  // live first-available query later returns a different day.
+  const userPickedRef = useRef(false);
 
   // Clinic opening hours from lng_settings — single source of truth
   // for which days of the week are closed. The calendar reads this
@@ -112,6 +119,29 @@ export function SlotPicker({
     arch,
   });
   const earliest = liveFirstAvailable.data ?? stubEarliest;
+
+  // Auto-jump: when the live first-available RPC resolves, switch
+  // selectedDate to that day IF the patient hasn't manually picked
+  // something else and IF it differs from where we are. The stub
+  // firstAvailable() that seeds the initial selectedDate only knows
+  // clinic opening hours — it can't tell that a given day is fully
+  // booked, so the initial pick can land on a day with zero slots
+  // and the patient sees "Nothing free on this day. Pick another
+  // date." instead of being walked to the next real opening. The
+  // live RPC has the conflict data; this effect closes that gap.
+  // Disabled when the parent passed a `selectedIso` (reschedule
+  // flow), where the previously-booked slot is the authoritative
+  // starting point.
+  useEffect(() => {
+    if (userPickedRef.current) return;
+    if (selectedIso) return;
+    const live = liveFirstAvailable.data;
+    if (!live) return;
+    if (sameDay(live.date, selectedDate)) return;
+    setSelectedDate(startOfDay(live.date));
+    setMonthCursor(startOfMonth(live.date));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveFirstAvailable.data]);
 
   const availability = useWidgetAvailableSlots({
     locationId,
@@ -162,6 +192,7 @@ export function SlotPicker({
         <button
           type="button"
           onClick={() => {
+            userPickedRef.current = true;
             setSelectedDate(earliest.date);
             setMonthCursor(startOfMonth(earliest.date));
             onPick(earliest.slot.iso);
@@ -215,6 +246,7 @@ export function SlotPicker({
         openingHours={openingHours}
         durationMinutes={durationMinutes}
         onSelectDate={(d) => {
+          userPickedRef.current = true;
           setSelectedDate(d);
           // If the patient had already locked in a time on a
           // different day, clear it so they're forced to pick one
