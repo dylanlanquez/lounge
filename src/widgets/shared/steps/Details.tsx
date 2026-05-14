@@ -272,6 +272,16 @@ function PhoneField({
 }) {
   const showError = Boolean(error);
   const errorId = useId();
+  // Track input focus so the composite outer border lights up
+  // accent like a normal text input. Without this, focusing the
+  // number input gave no visual confirmation the field was active,
+  // making the mobile-number field feel "broken".
+  const [focused, setFocused] = useState(false);
+  const borderColour = showError
+    ? QUIZ.ALERT
+    : focused
+      ? QUIZ.ACCENT
+      : QUIZ.BORDER;
   return (
     <div>
       <LabelText required>Mobile number</LabelText>
@@ -279,11 +289,12 @@ function PhoneField({
         style={{
           display: 'flex',
           alignItems: 'stretch',
-          border: `2px solid ${showError ? QUIZ.ALERT : QUIZ.BORDER}`,
+          border: `2px solid ${borderColour}`,
           borderRadius: QUIZ.R_INPUT,
           background: QUIZ.SURFACE,
           overflow: 'hidden',
           height: 46,
+          transition: 'border-color 0.15s ease',
         }}
       >
         <CountryPicker value={countryCode} onChange={onCountryChange} />
@@ -291,7 +302,11 @@ function PhoneField({
           type="tel"
           value={number}
           onChange={(e) => onNumberChange(e.target.value)}
-          onBlur={onBlur}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           placeholder="7700 900000"
           autoComplete="tel-national"
           aria-label="Mobile number"
@@ -302,7 +317,7 @@ function PhoneField({
             flex: 1,
             border: 'none',
             background: 'transparent',
-            padding: '0 12px',
+            padding: '0 14px',
             fontFamily: 'inherit',
             fontSize: 15,
             color: QUIZ.INK,
@@ -327,10 +342,11 @@ function LabelText({
     <span
       style={{
         display: 'block',
-        marginBottom: 6,
-        fontSize: 13,
+        marginBottom: 8,
+        fontSize: 15,
         fontWeight: 600,
         color: QUIZ.INK,
+        lineHeight: 1.3,
       }}
     >
       {children}
