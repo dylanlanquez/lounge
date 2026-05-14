@@ -1468,6 +1468,11 @@ function SmilePhotosCard({ appointmentId }: { appointmentId: string }) {
           icon={<Camera size={15} aria-hidden />}
           title="Pre-visit smile photos"
           trailing={trailing}
+          // When closed there is no body to push away from the
+          // header. Without this, theme.space[4] hangs off the
+          // bottom of the header and pushes the title off-centre
+          // inside the card's symmetric padding.
+          bottomGap={0}
         />
       </button>
       {/* Grid-rows 0fr/1fr trick — same pattern as CollapsibleCard.
@@ -1483,25 +1488,31 @@ function SmilePhotosCard({ appointmentId }: { appointmentId: string }) {
         }}
       >
         <div style={{ overflow: 'hidden' }}>
-          {error ? (
-            <p style={{ margin: '8px 0 0', fontSize: theme.type.size.sm, color: theme.color.alert }}>
-              Couldn't load photos: {error}
-            </p>
-          ) : null}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              gap: 12,
-              marginTop: 4,
-            }}
-          >
-            {slots.map((s) => {
-              const row = byKind.get(s.kind) ?? null;
-              return (
-                <SmilePhotoTile key={s.kind} label={s.label} row={row} loading={loading} />
-              );
-            })}
+          {/* paddingTop replaces the DetailSectionHeader's old
+              marginBottom — it only contributes vertical space when
+              the panel is actually open, so the closed-state card
+              stays compact. */}
+          <div style={{ paddingTop: theme.space[4] }}>
+            {error ? (
+              <p style={{ margin: '8px 0 0', fontSize: theme.type.size.sm, color: theme.color.alert }}>
+                Couldn't load photos: {error}
+              </p>
+            ) : null}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                gap: 12,
+                marginTop: 4,
+              }}
+            >
+              {slots.map((s) => {
+                const row = byKind.get(s.kind) ?? null;
+                return (
+                  <SmilePhotoTile key={s.kind} label={s.label} row={row} loading={loading} />
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
@@ -2190,12 +2201,21 @@ function DetailSectionHeader({
   trailing,
   iconBg,
   iconFg,
+  bottomGap,
 }: {
   icon: ReactNode;
   title: string;
   trailing?: ReactNode;
   iconBg?: string;
   iconFg?: string;
+  /**
+   * Override the gap below the header. Defaults to theme.space[4] —
+   * the natural separation between the header and the body content
+   * that follows. Collapsible cards pass `0` when the body is hidden
+   * so the closed-state card doesn't carry a leftover gap that
+   * pushes its contents off-centre.
+   */
+  bottomGap?: number;
 }) {
   return (
     <div
@@ -2204,7 +2224,7 @@ function DetailSectionHeader({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: theme.space[3],
-        marginBottom: theme.space[4],
+        marginBottom: bottomGap ?? theme.space[4],
       }}
     >
       <span
