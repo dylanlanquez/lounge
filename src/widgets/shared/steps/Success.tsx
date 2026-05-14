@@ -148,7 +148,13 @@ export function SuccessScreen({
           </div>
 
           {appointmentRef ? (
-            <div style={{ marginTop: 24 }}>
+            <div
+              style={{
+                marginTop: 24,
+                paddingBottom: 20,
+                borderBottom: `1px solid ${QUIZ.BORDER_SOFT}`,
+              }}
+            >
               <ReferencePill value={appointmentRef} accent={accent} />
             </div>
           ) : null}
@@ -290,7 +296,7 @@ function ReferencePill({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         gap: 6,
       }}
     >

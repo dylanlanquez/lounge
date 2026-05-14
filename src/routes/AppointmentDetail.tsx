@@ -696,7 +696,20 @@ function Hero({
   tone: StatusTone;
 }) {
   const navigate = useNavigate();
-  const sourceLabel = humaniseLedgerSource(appt.source);
+  // Source label — "Native" reads as developer jargon to the
+  // reception team. For widget-originated bookings we know which
+  // storefront the patient booked through (brand_id is written by
+  // widget-create-appointment), so swap in the storefront URL
+  // instead. Calendly / manual / unknown brand keep their
+  // existing labels.
+  const sourceLabel =
+    appt.source === 'native'
+      ? appt.brand_id === 'denture'
+        ? 'denture-services.co.uk'
+        : appt.brand_id === 'venneir'
+          ? 'venneir.com'
+          : 'Booking widget'
+      : humaniseLedgerSource(appt.source);
   const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
   // Native widget bookings store axis pins (arch + product_key +
   // service_type) on the row directly, so compose the title from
