@@ -166,6 +166,41 @@ export function useClinicSettings(): ReadResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Pick the OpeningHoursDay for a YYYY-MM-DD string and normalise to
+ *  the booking-sheet's internal shape ({ open, close, break }) where
+ *  break is either an object or null. Null return means the clinic
+ *  is closed (or the date string was malformed). The break tuple in
+ *  storage is [start, end]; here it becomes { start, end } for
+ *  symmetric reads with the conflict-check JS that uses object shape. */
+export function dayHoursForDate(
+  week: OpeningHoursWeek,
+  isoDate: string,
+): {
+  open: string;
+  close: string;
+  break: { start: string; end: string } | null;
+} | null {
+  const d = new Date(isoDate + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return null;
+  // Date#getUTCDay returns 0=Sun..6=Sat. Storage is Mon=0..Sun=6.
+  const monFirst = (d.getUTCDay() + 6) % 7;
+  const entry = week[monFirst];
+  if (!entry || entry.closed === true) return null;
+  if (!entry.open || !entry.close) return null;
+  const br = entry.break;
+  return {
+    open: entry.open,
+    close: entry.close,
+    break: br && br.length === 2 && br[1] > br[0]
+      ? { start: br[0], end: br[1] }
+      : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Write
 // ─────────────────────────────────────────────────────────────────────────────
 

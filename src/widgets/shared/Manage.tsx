@@ -578,6 +578,7 @@ function ReschedulePanel({
         selectedIso={pickedIso}
         onPick={(iso) => setPickedIso(iso)}
         showFirstAvailableBanner={false}
+        excludeAppointmentId={booking.id || null}
       />
 
       {error ? (

@@ -10,6 +10,9 @@ import { supabase } from '../../lib/supabase.ts';
 // internal status, or any other patient's row.
 
 export interface ManagedBooking {
+  /** UUID — used as the exclude target for the reschedule slot
+   *  picker so the patient's own current slot stays bookable. */
+  id: string;
   appointmentRef: string | null;
   status: string;
   serviceType: string | null;
@@ -81,6 +84,7 @@ export function useManagedBooking(token: string | null): LookupResult {
       }
       const r = row as Record<string, unknown>;
       setData({
+        id: (r.id as string) ?? '',
         appointmentRef: (r.appointment_ref as string | null) ?? null,
         status: (r.status as string) ?? '',
         serviceType: (r.service_type as string | null) ?? null,

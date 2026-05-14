@@ -4,7 +4,6 @@ import {
   BottomSheet,
   Button,
   Card,
-  Checkbox,
   DropdownSelect,
   Input,
   PatientFacingDurationEditor,
@@ -13,7 +12,6 @@ import {
   type PhaseEditorValues,
   PhaseRibbon,
   type PhaseRibbonPhase,
-  SegmentedControl,
   Skeleton,
   Toast,
 } from '../components/index.ts';
@@ -22,12 +20,8 @@ import {
   type BookingServiceType,
   type BookingTypeConfigRow,
   type BookingTypePhaseRow,
-  type DayHours,
-  type DayOfWeek,
   type ResourcePoolRow,
-  type WorkingHours,
   BOOKING_SERVICE_TYPES,
-  DAYS_OF_WEEK,
   bookingTypeRowDerivedLabel,
   bookingTypeRowLabel,
   deleteBookingTypeChildOverride,
@@ -79,17 +73,6 @@ const SERVICE_DOT_COLOUR: Record<BookingServiceType, string> = {
 // Hours / durations on a child are *per-field nullable* — leaving a
 // field empty means "inherit from parent". The editor surfaces this
 // with a "Use parent default" toggle next to each section.
-
-// Day-of-week display labels in the UI's order (Mon first).
-const DAY_LABELS: Record<DayOfWeek, string> = {
-  mon: 'Monday',
-  tue: 'Tuesday',
-  wed: 'Wednesday',
-  thu: 'Thursday',
-  fri: 'Friday',
-  sat: 'Saturday',
-  sun: 'Sunday',
-};
 
 // What's being edited in the dialog. A row from the DB (parent or
 // child), or a new child row being authored — in which case the
@@ -225,11 +208,6 @@ export function AdminBookingTypesTab() {
       {editTarget ? (
         <BookingTypeEditorDialog
           target={editTarget}
-          parent={
-            editTarget.kind === 'parent'
-              ? null
-              : grouped.get(serviceOfTarget(editTarget))?.parent ?? null
-          }
           onClose={() => setEditTarget(null)}
           onSaved={() => {
             setEditTarget(null);
@@ -273,11 +251,6 @@ function groupByService(rows: BookingTypeConfigRow[]): Map<BookingServiceType, S
     else group.children.push(r);
   }
   return out;
-}
-
-function serviceOfTarget(t: EditTarget): BookingServiceType {
-  if (t.kind === 'parent' || t.kind === 'child') return t.row.service_type;
-  return t.service_type;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -828,7 +801,6 @@ function ChildRow({
   onChanged: () => void;
   onError: (msg: string) => void;
 }) {
-  const inheritsHours = row.working_hours == null;
   const childPhases = useBookingTypePhases(row.id);
   const [phaseEditorTarget, setPhaseEditorTarget] = useState<PhaseEditorTarget | null>(null);
   const [patientFacingOpen, setPatientFacingOpen] = useState(false);
@@ -968,22 +940,6 @@ function ChildRow({
           >
             {bookingTypeRowLabel(row)}
           </span>
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              display: 'flex',
-              gap: theme.space[2],
-              flexWrap: 'wrap',
-              alignItems: 'center',
-            }}
-          >
-            <InheritChip
-              inherits={inheritsHours}
-              label="Hours"
-              override={summariseHours(row.working_hours)}
-            />
-          </span>
         </div>
         <IconAction
           ariaLabel={`Configure ${bookingTypeRowLabel(row)}`}
@@ -1043,37 +999,6 @@ function ChildRow({
         onSave={handleChildPatientFacingSave}
       />
     </li>
-  );
-}
-
-// Inline chip showing per-section status: "inherits" (muted) or
-// the section's actual value (regular). Sits in the child row's
-// summary line.
-function InheritChip({
-  inherits,
-  label,
-  override,
-}: {
-  inherits: boolean;
-  label: string;
-  override: string;
-}) {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        fontSize: 11,
-        fontWeight: theme.type.weight.medium,
-        color: inherits ? theme.color.inkSubtle : theme.color.ink,
-      }}
-    >
-      <span style={{ color: theme.color.inkSubtle, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide, fontSize: 10 }}>
-        {label}
-      </span>
-      <span>{inherits ? 'inherits' : override}</span>
-    </span>
   );
 }
 
@@ -1349,13 +1274,11 @@ function candidatePinsToRow(pins: AxisPin[]): {
 
 function BookingTypeEditorDialog({
   target,
-  parent,
   onClose,
   onSaved,
   onError,
 }: {
   target: EditTarget;
-  parent: BookingTypeConfigRow | null;
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
@@ -1366,15 +1289,6 @@ function BookingTypeEditorDialog({
   const isParent = target.kind === 'parent';
   const row = isNew ? null : (target as { row: BookingTypeConfigRow }).row;
 
-  const [hours, setHours] = useState<WorkingHours>(() => {
-    if (row?.working_hours) return cloneHours(row.working_hours);
-    return defaultParentHours();
-  });
-  const [hoursInherits, setHoursInherits] = useState<boolean>(() => {
-    if (isParent) return false;
-    return !row?.working_hours;
-  });
-
   // Editable display label — admin can rename any override row.
   // Empty / whitespace = clear, falls back to the catalogue / arch /
   // service-derived label. Only shown for non-parent rows; the
@@ -1383,16 +1297,6 @@ function BookingTypeEditorDialog({
 
   const [notes, setNotes] = useState<string>(row?.notes ?? '');
   const [busy, setBusy] = useState(false);
-
-  // When a child toggles "inherit" on or off, prefill from the
-  // parent so the user can adjust from a reasonable starting point
-  // rather than typing into empty fields.
-  const fillFromParent = (which: 'hours') => {
-    if (!parent) return;
-    if (which === 'hours' && parent.working_hours) {
-      setHours(cloneHours(parent.working_hours));
-    }
-  };
 
   // Title for the editor sheet. For new multi-axis children, the
   // axes are joined into the same "Whitening Tray · Upper" chain
@@ -1416,20 +1320,7 @@ function BookingTypeEditorDialog({
     return target.pins.find((p) => p.key === axisKey)?.value ?? null;
   };
 
-  // Any day with a lunch break whose end isn't after the start is
-  // an unsaveable state — would write a zero-length or inverted
-  // window to JSONB and silently allow lunch-time bookings.
-  const hoursHaveInvalidLunch = (() => {
-    if (hoursInherits) return false;
-    return DAYS_OF_WEEK.some((d) => {
-      const day = hours[d];
-      if (!day || !day.break) return false;
-      return day.break.end <= day.break.start;
-    });
-  })();
-
   const save = async () => {
-    if (hoursHaveInvalidLunch) return;
     setBusy(true);
     try {
       const trimmedLabel = displayLabel.trim();
@@ -1450,7 +1341,10 @@ function BookingTypeEditorDialog({
           target.kind === 'new-child'
             ? (newChildPinValue('arch') as 'upper' | 'lower' | 'both' | null)
             : ((target as { row: BookingTypeConfigRow }).row.arch),
-        working_hours: hoursInherits ? null : hours,
+        // working_hours is no longer per-service. The column stays
+        // in the table for legacy reads but new writes never set it
+        // — clinic-wide hours live in lng_settings.clinic.opening_hours
+        // and drive both staff and widget availability.
         // display_label only meaningful for non-parent rows; the
         // parent's label is the service name and shouldn't be
         // overridden from this dialog.
@@ -1459,11 +1353,6 @@ function BookingTypeEditorDialog({
           : { display_label: trimmedLabel === '' ? null : trimmedLabel }),
         notes: notes.trim() === '' ? null : notes.trim(),
       };
-
-      // Parent rows still must have non-null hours.
-      if (isParent && hoursInherits) {
-        throw new Error("Parent rows can't inherit; set the working hours.");
-      }
 
       // Duration columns are vestigial — the phase ribbon owns
       // duration now. We don't include them in the payload so
@@ -1500,12 +1389,7 @@ function BookingTypeEditorDialog({
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button
-            variant="primary"
-            onClick={save}
-            loading={busy}
-            disabled={hoursHaveInvalidLunch}
-          >
+          <Button variant="primary" onClick={save} loading={busy}>
             {busy ? 'Saving…' : 'Save'}
           </Button>
         </div>
@@ -1535,34 +1419,9 @@ function BookingTypeEditorDialog({
 
         <DialogSection
           title="Working hours"
-          sub={
-            isParent
-              ? "When this service is bookable. Patients can't pick a time outside these hours."
-              : hoursInherits
-                ? `Inheriting from parent: ${parent ? summariseHours(parent.working_hours) : ''}.`
-                : 'Custom hours just for this variant.'
-          }
-          action={
-            !isParent ? (
-              <SegmentedControl
-                size="sm"
-                value={hoursInherits ? 'inherit' : 'custom'}
-                onChange={(v) => {
-                  const next = v === 'inherit';
-                  if (!next && parent) fillFromParent('hours');
-                  setHoursInherits(next);
-                }}
-                options={[
-                  { value: 'inherit', label: 'Inherit' },
-                  { value: 'custom', label: 'Custom' },
-                ]}
-              />
-            ) : null
-          }
+          sub="Clinic-wide. Edit in Admin → Branding → Opening times. The same hours drive both this service's availability and the customer booking widget."
         >
-          {!hoursInherits ? (
-            <WorkingHoursEditor value={hours} onChange={setHours} />
-          ) : null}
+          {null}
         </DialogSection>
 
         <DialogSection
@@ -1675,392 +1534,10 @@ function ResetLink({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Working-hours grid (Mon-Sun).
+// Working-hours grid (Mon-Sun).  [removed: now sourced from
+// lng_settings.clinic.opening_hours via Admin → Branding → Opening times.]
 // ─────────────────────────────────────────────────────────────────────────────
 
-// WorkingHoursEditor — Calendly / Shopify-admin pattern.
-//
-//   • One 44px row per day, hairline separators between rows.
-//   • Day name + checkbox on the left (96px column for alignment).
-//   • Time pair on the right: `start — end`. No repeating "Open" /
-//     "Close" labels above each day; the relationship is read from
-//     the dash separator like a range.
-//   • Closed days collapse the time control to muted "Closed" text.
-//   • "Apply Mon to weekdays" ghost button surfaces only when
-//     Monday's hours differ from at least one of Tue–Fri (so it's
-//     not visual noise when nothing's actionable).
-function WorkingHoursEditor({
-  value,
-  onChange,
-}: {
-  value: WorkingHours;
-  onChange: (next: WorkingHours) => void;
-}) {
-  const setDay = (day: DayOfWeek, hours: DayHours | null) => {
-    onChange({ ...value, [day]: hours });
-  };
-
-  // Apply-to-weekdays affordance — Calendly-style. Detect whether
-  // Monday's hours are unique vs Tue–Fri before showing the button,
-  // so it only appears when there's actually something to do.
-  const monday = value.mon ?? null;
-  const weekdays: DayOfWeek[] = ['tue', 'wed', 'thu', 'fri'];
-  const sameBreak = (a: DayHours['break'], b: DayHours['break']) => {
-    if (!a && !b) return true;
-    if (!a || !b) return false;
-    return a.start === b.start && a.end === b.end;
-  };
-  const canApplyMonday =
-    monday !== null &&
-    weekdays.some((d) => {
-      const v = value[d];
-      if (!v) return true;
-      return (
-        v.open !== monday.open ||
-        v.close !== monday.close ||
-        !sameBreak(v.break ?? null, monday.break ?? null)
-      );
-    });
-  const applyMondayToWeekdays = () => {
-    if (!monday) return;
-    const next: WorkingHours = { ...value };
-    for (const d of weekdays) {
-      next[d] = {
-        open: monday.open,
-        close: monday.close,
-        break: monday.break ?? null,
-      };
-    }
-    onChange(next);
-  };
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        overflow: 'hidden',
-      }}
-    >
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-        {DAYS_OF_WEEK.map((day, i) => {
-          const v = value[day] ?? null;
-          const closed = v === null;
-          const lunch = v?.break ?? null;
-          const lunchInvalid =
-            !!lunch && lunch.end <= lunch.start;
-          const toggleBreak = (next: boolean) => {
-            if (!v) return;
-            setDay(day, {
-              open: v.open,
-              close: v.close,
-              break: next ? { start: '12:00', end: '13:00' } : null,
-            });
-          };
-          const setBreakStart = (t: string) => {
-            if (!v || !lunch) return;
-            setDay(day, {
-              open: v.open,
-              close: v.close,
-              break: { start: t, end: lunch.end },
-            });
-          };
-          const setBreakEnd = (t: string) => {
-            if (!v || !lunch) return;
-            setDay(day, {
-              open: v.open,
-              close: v.close,
-              break: { start: lunch.start, end: t },
-            });
-          };
-          return (
-            <li
-              key={day}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                padding: `${theme.space[2]}px ${theme.space[3]}px`,
-                borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}`,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[3],
-                  minHeight: 44,
-                }}
-              >
-                <Checkbox
-                  checked={!closed}
-                  onChange={(c) =>
-                    setDay(day, c ? { open: '09:00', close: '18:00' } : null)
-                  }
-                  size={18}
-                  ariaLabel={`${DAY_LABELS[day]} open`}
-                />
-                <span
-                  style={{
-                    width: 96,
-                    fontSize: theme.type.size.sm,
-                    fontWeight: theme.type.weight.medium,
-                    color: closed ? theme.color.inkMuted : theme.color.ink,
-                  }}
-                >
-                  {DAY_LABELS[day]}
-                </span>
-                <div
-                  style={{
-                    marginLeft: 'auto',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: theme.space[2],
-                  }}
-                >
-                  {closed ? (
-                    <span
-                      style={{
-                        fontSize: theme.type.size.sm,
-                        color: theme.color.inkSubtle,
-                        fontStyle: 'italic',
-                      }}
-                    >
-                      Closed
-                    </span>
-                  ) : (
-                    <>
-                      <TimeField
-                        value={v.open}
-                        onChange={(t) =>
-                          setDay(day, { open: t, close: v.close, break: v.break ?? null })
-                        }
-                        ariaLabel={`${DAY_LABELS[day]} open time`}
-                      />
-                      <span
-                        aria-hidden
-                        style={{
-                          fontSize: theme.type.size.sm,
-                          color: theme.color.inkSubtle,
-                        }}
-                      >
-                        —
-                      </span>
-                      <TimeField
-                        value={v.close}
-                        onChange={(t) =>
-                          setDay(day, { open: v.open, close: t, break: v.break ?? null })
-                        }
-                        ariaLabel={`${DAY_LABELS[day]} close time`}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
-              {!closed ? (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: theme.space[2],
-                    marginTop: theme.space[2],
-                    paddingLeft: 28 + theme.space[3],
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 96 - (28 + theme.space[3]) + 96,
-                      fontSize: theme.type.size.xs,
-                      color: theme.color.inkMuted,
-                    }}
-                  >
-                    Lunch
-                  </span>
-                  <div
-                    style={{
-                      marginLeft: 'auto',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: theme.space[2],
-                    }}
-                  >
-                    {lunch ? (
-                      <>
-                        <TimeField
-                          value={lunch.start}
-                          onChange={setBreakStart}
-                          ariaLabel={`${DAY_LABELS[day]} lunch start`}
-                        />
-                        <span
-                          aria-hidden
-                          style={{
-                            fontSize: theme.type.size.sm,
-                            color: theme.color.inkSubtle,
-                          }}
-                        >
-                          —
-                        </span>
-                        <TimeField
-                          value={lunch.end}
-                          onChange={setBreakEnd}
-                          ariaLabel={`${DAY_LABELS[day]} lunch end`}
-                        />
-                      </>
-                    ) : null}
-                    <Checkbox
-                      checked={!!lunch}
-                      onChange={toggleBreak}
-                      size={16}
-                      ariaLabel={`${DAY_LABELS[day]} has break`}
-                      label={
-                        <span
-                          style={{
-                            fontSize: theme.type.size.xs,
-                            color: theme.color.inkMuted,
-                          }}
-                        >
-                          Has break
-                        </span>
-                      }
-                    />
-                  </div>
-                </div>
-              ) : null}
-              {lunchInvalid ? (
-                <p
-                  role="alert"
-                  style={{
-                    margin: `${theme.space[1]}px 0 0`,
-                    paddingLeft: 28 + theme.space[3],
-                    fontSize: theme.type.size.xs,
-                    color: theme.color.alert,
-                  }}
-                >
-                  Lunch end must be after lunch start.
-                </p>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      {canApplyMonday ? (
-        <div
-          style={{
-            borderTop: `1px solid ${theme.color.border}`,
-            background: theme.color.bg,
-            padding: `${theme.space[2]}px ${theme.space[3]}px`,
-            display: 'flex',
-            justifyContent: 'flex-end',
-          }}
-        >
-          <button
-            type="button"
-            onClick={applyMondayToWeekdays}
-            style={{
-              appearance: 'none',
-              border: 'none',
-              background: 'transparent',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.medium,
-              color: theme.color.accent,
-              padding: `${theme.space[1]}px ${theme.space[2]}px`,
-              borderRadius: theme.radius.input,
-              WebkitTapHighlightColor: 'transparent',
-            }}
-          >
-            Apply Monday's hours to all weekdays
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// DurationRangeEditor — three numeric fields in one strip.
-//
-//   Min  ─  Default (emphasised)  ─  Max
-//   minutes                          minutes
-//
-// Default is the most-used value (it's what the receptionist sees
-// Compact native time input. Native `<input type="time">` keeps the
-// keyboard / picker behaviour the OS provides (sensible on iPad
-// kiosks and Mac admins alike); we just style the chrome to match
-// the rest of the form so it doesn't look like a default browser
-// control.
-function TimeField({
-  value,
-  onChange,
-  ariaLabel,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  ariaLabel?: string;
-}) {
-  return (
-    <input
-      type="time"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      aria-label={ariaLabel}
-      style={{
-        appearance: 'none',
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.surface,
-        borderRadius: theme.radius.input,
-        padding: `6px ${theme.space[2]}px`,
-        fontSize: theme.type.size.sm,
-        color: theme.color.ink,
-        fontFamily: 'inherit',
-        fontVariantNumeric: 'tabular-nums',
-        width: 96,
-        minWidth: 0,
-        outline: 'none',
-      }}
-    />
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function cloneHours(h: WorkingHours): WorkingHours {
-  const out: WorkingHours = {};
-  for (const d of DAYS_OF_WEEK) {
-    const v = h[d];
-    out[d] = v == null ? null : { open: v.open, close: v.close };
-  }
-  return out;
-}
-
-function defaultParentHours(): WorkingHours {
-  return {
-    mon: { open: '09:00', close: '18:00' },
-    tue: { open: '09:00', close: '18:00' },
-    wed: { open: '09:00', close: '18:00' },
-    thu: { open: '09:00', close: '18:00' },
-    fri: { open: '09:00', close: '18:00' },
-    sat: { open: '10:00', close: '16:00' },
-    sun: null,
-  };
-}
-
-function summariseHours(h: WorkingHours | null | undefined): string {
-  if (!h) return 'inherits';
-  const open = DAYS_OF_WEEK.filter((d) => h[d] != null);
-  if (open.length === 0) return 'closed';
-  const earliest = open.reduce(
-    (acc, d) => (acc === null || (h[d]!.open < acc) ? h[d]!.open : acc),
-    null as string | null,
-  );
-  const latest = open.reduce(
-    (acc, d) => (acc === null || (h[d]!.close > acc) ? h[d]!.close : acc),
-    null as string | null,
-  );
-  return `${open.length}d · ${earliest}–${latest}`;
-}
 
 function labelOfService(s: BookingServiceType): string {
   return BOOKING_SERVICE_TYPES.find((x) => x.value === s)?.label ?? s;

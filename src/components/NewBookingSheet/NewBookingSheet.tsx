@@ -25,7 +25,6 @@ import { PatientSearch } from '../PatientSearch/PatientSearch.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   type BookingServiceType,
-  type DayOfWeek,
   type ResolvedBookingTypeConfig,
   BOOKING_SERVICE_TYPES,
   resolveBookingTypeConfig,
@@ -45,6 +44,7 @@ import {
   checkBookingConflict,
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
+import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
@@ -522,12 +522,14 @@ export function NewBookingSheet({
   ]);
 
   // ── Working-hours check ────────────────────────────────────────
+  // Single source of truth: lng_settings.clinic.opening_hours
+  // (edited in Admin → Branding → Opening times). Per-service
+  // working_hours is no longer read.
+  const clinic = useClinicSettings();
   const hoursForDate = useMemo(() => {
-    if (!date || !config) return null;
-    const dow = dayOfWeekFromIsoDate(date);
-    if (!dow) return null;
-    return config.working_hours[dow] ?? null;
-  }, [date, config]);
+    if (!date) return null;
+    return dayHoursForDate(clinic.data.openingHours, date);
+  }, [date, clinic.data.openingHours]);
 
   const inWorkingHours = useMemo(() => {
     if (!hoursForDate || !time) return false;
@@ -1499,22 +1501,6 @@ function composeIso(date: string, time: string): string | null {
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
-
-function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
-  const d = new Date(`${isoDate}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  const map: Record<number, DayOfWeek> = {
-    0: 'sun',
-    1: 'mon',
-    2: 'tue',
-    3: 'wed',
-    4: 'thu',
-    5: 'fri',
-    6: 'sat',
-  };
-  return map[d.getDay()] ?? null;
-}
-
 
 // Working hours come back as 'HH:MM' strings; bound them to whole
 // hours for the TimePicker's startHour / endHour scrollable range.

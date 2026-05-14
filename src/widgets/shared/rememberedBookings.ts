@@ -148,6 +148,7 @@ export function useRememberedBookings(): RememberedBookingsResult {
         }
         active.push({
           token,
+          id: (r.id as string) ?? '',
           appointmentRef: (r.appointment_ref as string | null) ?? null,
           status,
           serviceType: (r.service_type as string | null) ?? null,

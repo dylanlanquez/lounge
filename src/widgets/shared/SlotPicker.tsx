@@ -45,6 +45,11 @@ export interface SlotPickerProps {
    *  and probably doesn't want to be nudged at the soonest slot
    *  on the system. */
   showFirstAvailableBanner?: boolean;
+  /** When set the availability lookup excludes this appointment
+   *  from its conflict count. The reschedule flow passes the
+   *  patient's current booking so the slot they're sitting on
+   *  remains pickable (no self-conflict). */
+  excludeAppointmentId?: string | null;
 }
 
 export function SlotPicker({
@@ -57,6 +62,7 @@ export function SlotPicker({
   selectedIso,
   onPick,
   showFirstAvailableBanner = true,
+  excludeAppointmentId = null,
 }: SlotPickerProps) {
   const isMobile = useIsMobile(CALENDAR_BREAKPOINT);
 
@@ -87,6 +93,7 @@ export function SlotPicker({
     repairVariant,
     productKey,
     arch,
+    excludeAppointmentId,
   });
   const slots = availability.data ?? [];
 

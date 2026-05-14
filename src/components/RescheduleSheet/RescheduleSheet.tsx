@@ -17,7 +17,6 @@ import {
 import { theme } from '../../theme/index.ts';
 import {
   type BookingServiceType,
-  type DayOfWeek,
   type ResolvedBookingTypeConfig,
   resolveBookingTypeConfig,
 } from '../../lib/queries/bookingTypes.ts';
@@ -28,6 +27,7 @@ import {
   rescheduleAppointment,
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
+import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 
 // RescheduleSheet — bottom-sheet UI for moving a native (manual /
 // native-source) Lounge appointment to a different slot.
@@ -221,12 +221,14 @@ export function RescheduleSheet({
   }, [open, config, date, appointment.id, appointment.location_id, serviceType]);
 
   // ── Working-hours derivation for the chosen date ───────────────
+  // Single source of truth lives in lng_settings.clinic.opening_hours
+  // (Admin → Branding → Opening times). Per-service working_hours is
+  // no longer consulted.
+  const clinic = useClinicSettings();
   const hoursForDate = useMemo(() => {
-    if (!date || !config) return null;
-    const dow = dayOfWeekFromIsoDate(date);
-    if (!dow) return null;
-    return config.working_hours[dow] ?? null;
-  }, [date, config]);
+    if (!date) return null;
+    return dayHoursForDate(clinic.data.openingHours, date);
+  }, [date, clinic.data.openingHours]);
 
   const inWorkingHours = useMemo(() => {
     if (!hoursForDate || !time) return false;
@@ -567,10 +569,10 @@ function CurrentSlotSummary({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
-// (The ISO splitters and dayOfWeekFromIsoDate are duplicated in
-// NewBookingSheet — a deliberate choice given they're 5-line pure
-// functions and extracting them would force both sheets to evolve
-// in lockstep on what is otherwise unrelated date work.)
+// (The ISO splitters are duplicated in NewBookingSheet — a
+// deliberate choice given they're tiny pure functions and
+// extracting them would force both sheets to evolve in lockstep on
+// what is otherwise unrelated date work.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function splitIso(iso: string): { date: string; time: string } {
@@ -591,21 +593,6 @@ function composeIso(date: string, time: string): string | null {
   return d.toISOString();
 }
 
-
-function dayOfWeekFromIsoDate(isoDate: string): DayOfWeek | null {
-  const d = new Date(`${isoDate}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  const map: Record<number, DayOfWeek> = {
-    0: 'sun',
-    1: 'mon',
-    2: 'tue',
-    3: 'wed',
-    4: 'thu',
-    5: 'fri',
-    6: 'sat',
-  };
-  return map[d.getDay()] ?? null;
-}
 
 function formatLongDate(d: Date): string {
   return d.toLocaleDateString('en-GB', {

@@ -358,6 +358,12 @@ interface AvailableSlotsInput {
   repairVariant: string | null;
   productKey: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
+  // When set the RPC excludes this appointment from its conflict
+  // count. The widget's reschedule flow passes the patient's
+  // current appointment id so their existing slot still shows as
+  // available (it doesn't conflict with itself). Omit for the new-
+  // booking flow.
+  excludeAppointmentId?: string | null;
 }
 
 interface AvailableSlotsResult {
@@ -396,6 +402,7 @@ export function useWidgetAvailableSlots(input: AvailableSlotsInput): AvailableSl
         p_repair_variant: input.repairVariant,
         p_product_key: input.productKey,
         p_arch: input.arch,
+        p_exclude_appointment_id: input.excludeAppointmentId ?? null,
       });
       if (cancelled) return;
       if (err) {
@@ -423,6 +430,7 @@ export function useWidgetAvailableSlots(input: AvailableSlotsInput): AvailableSl
     input.repairVariant,
     input.productKey,
     input.arch,
+    input.excludeAppointmentId,
   ]);
 
   return { data, loading, error };
