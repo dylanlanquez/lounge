@@ -24,13 +24,15 @@ import {
 // is the sole navigation control (no auto-advance).
 
 const AXIS_HELPER: Record<AxisKey, string> = {
-  repair_variant: "We'll match you to the right specialist.",
+  // repair_variant intentionally has NO helper paragraph — the
+  // title ("What needs fixing?") is unambiguous and the options
+  // themselves are the answer. The no-helper marginTop branch
+  // below keeps the title → grid spacing consistent.
+  repair_variant: '',
   product_key:
     "Pick the option that fits — we'll confirm any details when you arrive.",
-  // Arch step intentionally has NO helper paragraph — the step
-  // title is descriptive enough ("Which teeth would you like to
-  // cover?" / "Which retainer do you need?") and the options
-  // themselves carry no sub-copy.
+  // Arch step also skips the helper — title is descriptive enough
+  // and the option cards carry no sub-copy.
   arch: '',
 };
 
