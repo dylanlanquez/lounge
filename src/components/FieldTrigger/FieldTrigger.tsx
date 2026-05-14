@@ -15,7 +15,10 @@ import { theme } from '../../theme/index.ts';
 
 export interface FieldTriggerProps {
   ref: Ref<HTMLButtonElement>;
-  label: string;
+  // Omit to hide the eyebrow above the trigger entirely. Useful when
+  // the surrounding section title + icon already convey what the
+  // field is for and the label would just be visual noise.
+  label?: string;
   // Leading icon — usually a Lucide glyph at size 16. Inherits
   // colour from the wrapper; pass aria-hidden inside the icon so
   // assistive tech doesn't double-announce.
@@ -42,7 +45,7 @@ export function FieldTrigger({
   const wrapper: CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
-    gap: theme.space[1],
+    gap: label ? theme.space[1] : 0,
   };
   const labelStyle: CSSProperties = {
     fontSize: theme.type.size.sm,
@@ -75,7 +78,7 @@ export function FieldTrigger({
   };
   return (
     <div style={wrapper}>
-      <span style={labelStyle}>{label}</span>
+      {label ? <span style={labelStyle}>{label}</span> : null}
       <button
         ref={ref}
         type="button"

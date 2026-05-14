@@ -341,6 +341,7 @@ export function RescheduleSheet({
             </StatusBanner>
           ) : null}
 
+          {config ? (
           <Section
             title="New slot"
             required
@@ -349,7 +350,6 @@ export function RescheduleSheet({
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
               <FieldTrigger
                 ref={dateTriggerRef}
-                label="Date"
                 icon={<CalendarClock size={16} aria-hidden />}
                 value={date ? formatDateLong(date) : ''}
                 placeholder="Pick a date"
@@ -361,7 +361,6 @@ export function RescheduleSheet({
               />
               <FieldTrigger
                 ref={timeTriggerRef}
-                label="Start time"
                 icon={<Clock size={16} aria-hidden />}
                 value={time}
                 placeholder="Pick a time"
@@ -431,6 +430,7 @@ export function RescheduleSheet({
               />
             </div>
           </Section>
+          ) : null}
 
           <Section
             title="Reason"

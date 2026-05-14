@@ -644,17 +644,37 @@ export function NewBookingSheet({
           <div
             style={{
               display: 'flex',
-              justifyContent: 'flex-end',
+              justifyContent: 'space-between',
               alignItems: 'center',
-              gap: theme.space[2],
+              gap: theme.space[3],
             }}
           >
-            <Button variant="tertiary" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={onSave} disabled={!canSave} loading={saving}>
-              {saving ? 'Saving…' : 'Book it'}
-            </Button>
+            <div style={{ minWidth: 0 }}>
+              {patient ? (
+                <ConfirmationToggle
+                  patient={patient}
+                  checked={sendEmail}
+                  onChange={(v) => {
+                    setSendEmail(v);
+                    setSendEmailUserOverride(true);
+                  }}
+                />
+              ) : null}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[2],
+              }}
+            >
+              <Button variant="tertiary" onClick={onClose} disabled={saving}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={onSave} disabled={!canSave} loading={saving}>
+                {saving ? 'Saving…' : 'Book it'}
+              </Button>
+            </div>
           </div>
         }
       >
@@ -930,6 +950,7 @@ export function NewBookingSheet({
             </Section>
           ) : null}
 
+          {config ? (
           <Section
             title="When"
             info="The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the slot is in hours and conflict-free."
@@ -937,7 +958,6 @@ export function NewBookingSheet({
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
               <FieldTrigger
                 ref={dateTriggerRef}
-                label="Date"
                 icon={<CalendarClock size={16} aria-hidden />}
                 value={date ? formatDateLong(date) : ''}
                 placeholder="Pick a date"
@@ -949,7 +969,6 @@ export function NewBookingSheet({
               />
               <FieldTrigger
                 ref={timeTriggerRef}
-                label="Start time"
                 icon={<Clock size={16} aria-hidden />}
                 value={time}
                 placeholder="Pick a time"
@@ -1021,6 +1040,7 @@ export function NewBookingSheet({
               />
             </div>
           </Section>
+          ) : null}
 
           <Section
             title="Notes"
@@ -1034,30 +1054,6 @@ export function NewBookingSheet({
             />
           </Section>
 
-          <Section
-            title="Confirmation email"
-            info="Sends a Lounge-branded confirmation with a calendar invite (.ics) attached. Reschedules send a CANCEL for the old slot too so calendars update instead of duplicating."
-          >
-            <ConfirmationToggle
-              patient={patient}
-              checked={sendEmail}
-              onChange={(v) => {
-                setSendEmail(v);
-                setSendEmailUserOverride(true);
-              }}
-            />
-            {patient ? (
-              patient.email ? (
-                <InlineHint>Goes to {patient.email}.</InlineHint>
-              ) : (
-                <InlineHint>
-                  {patientFullName(patient)} has no email on file. Add one on the patient profile to enable confirmations.
-                </InlineHint>
-              )
-            ) : (
-              <InlineHint>Pick a patient first to see the email status.</InlineHint>
-            )}
-          </Section>
         </div>
       </BottomSheet>
       {toast ? (
