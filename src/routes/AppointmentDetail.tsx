@@ -9,6 +9,7 @@ import {
   CalendarClock,
   Camera,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleSlash,
   ClipboardList,
@@ -1376,31 +1377,120 @@ function SmilePhotosCard({ appointmentId }: { appointmentId: string }) {
     { kind: 'left', label: 'Left side' },
     { kind: 'right', label: 'Right side' },
   ];
+  // Uploaded count drives both the trailing counter pill and the
+  // panel-id'd region. Photos are optional intake (patient uploads
+  // from the success screen), so the card spends most of its life
+  // empty — collapsed-by-default keeps the appointment page short.
+  const uploadedCount = rows.length;
+  const [open, setOpen] = useState(false);
+  const panelId = `lng-smile-photos-${appointmentId}`;
+
+  const counterPill =
+    uploadedCount > 0 ? (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          padding: '2px 9px',
+          minWidth: 22,
+          height: 22,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.tight,
+          fontVariantNumeric: 'tabular-nums',
+          lineHeight: 1,
+        }}
+        aria-label={`${uploadedCount} of ${slots.length} uploaded`}
+      >
+        {uploadedCount}
+      </span>
+    ) : null;
+
+  const trailing = (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+      }}
+    >
+      {counterPill}
+      <ChevronDown
+        size={18}
+        color={theme.color.inkSubtle}
+        aria-hidden
+        style={{
+          transition: `transform ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+        }}
+      />
+    </span>
+  );
+
   return (
     <Card padding="lg">
-      <DetailSectionHeader
-        icon={<Camera size={15} aria-hidden />}
-        title="Pre-visit smile photos"
-      />
-      {error ? (
-        <p style={{ margin: '8px 0 0', fontSize: theme.type.size.sm, color: theme.color.alert }}>
-          Couldn't load photos: {error}
-        </p>
-      ) : null}
-      <div
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((o) => !o)}
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-          gap: 12,
-          marginTop: 4,
+          appearance: 'none',
+          width: '100%',
+          padding: 0,
+          margin: 0,
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          color: 'inherit',
+          WebkitTapHighlightColor: 'transparent',
         }}
       >
-        {slots.map((s) => {
-          const row = byKind.get(s.kind) ?? null;
-          return (
-            <SmilePhotoTile key={s.kind} label={s.label} row={row} loading={loading} />
-          );
-        })}
+        <DetailSectionHeader
+          icon={<Camera size={15} aria-hidden />}
+          title="Pre-visit smile photos"
+          trailing={trailing}
+        />
+      </button>
+      {/* Grid-rows 0fr/1fr trick — same pattern as CollapsibleCard.
+          Keeps the body mounted across toggles so the signed-URL
+          fetches don't restart on every expand. */}
+      <div
+        id={panelId}
+        role="region"
+        style={{
+          display: 'grid',
+          gridTemplateRows: open ? '1fr' : '0fr',
+          transition: `grid-template-rows ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
+        }}
+      >
+        <div style={{ overflow: 'hidden' }}>
+          {error ? (
+            <p style={{ margin: '8px 0 0', fontSize: theme.type.size.sm, color: theme.color.alert }}>
+              Couldn't load photos: {error}
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+              gap: 12,
+              marginTop: 4,
+            }}
+          >
+            {slots.map((s) => {
+              const row = byKind.get(s.kind) ?? null;
+              return (
+                <SmilePhotoTile key={s.kind} label={s.label} row={row} loading={loading} />
+              );
+            })}
+          </div>
+        </div>
       </div>
     </Card>
   );

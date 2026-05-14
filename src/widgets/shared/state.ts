@@ -577,6 +577,73 @@ function productLabelFor(productKey: string | undefined): string | null {
   }
 }
 
+// Title-case appliance nouns for headline contexts (success card,
+// future confirmation email subject). Differs from productLabelFor
+// above which serves running-prose ("Which retainer do you need?").
+// Keep both — switching productLabelFor to title case would break
+// the question copy.
+const APPLIANCE_TITLE: Record<string, string> = {
+  retainer: 'Retainer',
+  night_guard: 'Night Guard',
+  day_guard: 'Day Guard',
+  click_in_veneers: 'Click-in Veneers',
+  missing_tooth: 'Missing-tooth Appliance',
+};
+
+const ARCH_TITLE: Record<string, string> = {
+  upper: 'Upper',
+  lower: 'Lower',
+  both: 'Both',
+};
+
+/**
+ * Compose the headline service title shown on the success card.
+ * Same-day services (click_in_veneers + same_day_appliance) get a
+ * "Same-day" prefix; arch + appliance follow. Everything else falls
+ * back to the booking type's display label with arch prefixed when
+ * present.
+ *
+ * Examples:
+ *   click_in_veneers + arch=upper                  → "Same-day Upper Click-in Veneers"
+ *   same_day_appliance + product=retainer + lower  → "Same-day Lower Retainer"
+ *   denture_repair + arch=upper                    → "Upper Denture repair"
+ *   whitening_kit (no axes)                        → "Whitening kit"
+ *
+ * Strips any HTML tags from the booking-type label before composing
+ * — `lng_widget_booking_types.display_label` is rendered with
+ * dangerouslySetInnerHTML elsewhere but the headline context wants
+ * plain text only.
+ */
+export function formatBookingSuccessTitle(state: WidgetState): string {
+  const svc = state.service;
+  if (!svc) return '';
+  const type = svc.serviceType;
+  const archKey = state.axes.arch;
+  const arch = archKey ? ARCH_TITLE[archKey] : null;
+
+  if (type === 'click_in_veneers') {
+    const parts = ['Same-day'];
+    if (arch) parts.push(arch);
+    parts.push('Click-in Veneers');
+    return parts.join(' ');
+  }
+
+  if (type === 'same_day_appliance') {
+    const appliance = state.axes.product_key
+      ? (APPLIANCE_TITLE[state.axes.product_key] ?? 'Appliance')
+      : 'Appliance';
+    const parts = ['Same-day'];
+    if (arch) parts.push(arch);
+    parts.push(appliance);
+    return parts.join(' ');
+  }
+
+  // Everything else: strip HTML, prefix arch when set.
+  const cleanLabel = svc.label.replace(/<[^>]*>/g, '').trim();
+  if (arch) return `${arch} ${cleanLabel}`;
+  return cleanLabel;
+}
+
 const GBP_FORMATTER = new Intl.NumberFormat('en-GB', {
   style: 'currency',
   currency: 'GBP',

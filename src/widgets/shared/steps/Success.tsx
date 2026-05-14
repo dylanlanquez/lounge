@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { Calendar, Check, ImageIcon, Loader2, MapPin } from 'lucide-react';
-import type { WidgetState } from '../state.ts';
+import { Calendar, Check, CheckCircle2, Copy, ImageIcon, Loader2, MapPin } from 'lucide-react';
+import { formatBookingSuccessTitle, type WidgetState } from '../state.ts';
 import type { WidgetBrand } from '../Widget.tsx';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
@@ -107,7 +107,7 @@ export function SuccessScreen({
             You're booked in
           </h2>
 
-          {state.service?.label ? (
+          {state.service ? (
             <p
               style={{
                 margin: '6px 0 0',
@@ -116,8 +116,9 @@ export function SuccessScreen({
                 textAlign: 'center',
                 lineHeight: 1.45,
               }}
-              dangerouslySetInnerHTML={{ __html: state.service.label }}
-            />
+            >
+              {formatBookingSuccessTitle(state)}
+            </p>
           ) : null}
 
           <div
@@ -147,20 +148,9 @@ export function SuccessScreen({
           </div>
 
           {appointmentRef ? (
-            <p
-              style={{
-                margin: '20px 0 0',
-                fontSize: 11,
-                color: QUIZ.SUBTLE,
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                fontVariantNumeric: 'tabular-nums',
-                textAlign: 'center',
-              }}
-            >
-              Reference {appointmentRef}
-            </p>
+            <div style={{ marginTop: 24 }}>
+              <ReferencePill value={appointmentRef} accent={accent} />
+            </div>
           ) : null}
 
           <p
@@ -256,6 +246,155 @@ function SuccessGlyph({ accent }: { accent: string }) {
       </svg>
     </div>
   );
+}
+
+// Branded reference pill — mirrors the staff app's meeting-link
+// copy card (full-width bordered row, value left, copy-state right,
+// hover lifts the tint). Tinted with the booking's brand accent and
+// labelled "Booking reference" so the patient knows what it is. Tap
+// to copy; the right-hand state flips to "Copied" for ~2.2s.
+function ReferencePill({
+  value,
+  accent,
+}: {
+  value: string;
+  accent: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // Older Safari / WebViews — fall back to the textarea+execCommand
+      // trick. Same recipe the staff-app MeetingLinkCard uses.
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // ignore — last-resort path; if both clipboard APIs are
+        // blocked the patient still sees the reference in the pill.
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2200);
+  };
+
+  return (
+    <div>
+      <span
+        style={{
+          display: 'block',
+          fontSize: 11,
+          color: QUIZ.SUBTLE,
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          textAlign: 'center',
+          marginBottom: 8,
+        }}
+      >
+        Booking reference
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
+        style={{
+          appearance: 'none',
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          background: hovered ? hexWithAlpha(accent, 0.1) : hexWithAlpha(accent, 0.06),
+          border: `1px solid ${hexWithAlpha(accent, hovered ? 0.28 : 0.14)}`,
+          borderRadius: 10,
+          padding: '10px 14px',
+          cursor: 'pointer',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          transition: 'background 0.15s ease, border-color 0.15s ease',
+          userSelect: 'none',
+        }}
+      >
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 14,
+            color: accent,
+            fontWeight: 600,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: '0.02em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {value}
+        </span>
+        <span
+          aria-hidden
+          style={{
+            width: 1,
+            height: 16,
+            background: hexWithAlpha(accent, 0.18),
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: 12,
+            fontWeight: 600,
+            color: accent,
+            flexShrink: 0,
+            minWidth: 72,
+            justifyContent: 'flex-end',
+            transition: 'color 0.15s ease',
+          }}
+        >
+          {copied ? (
+            <>
+              <CheckCircle2 size={13} aria-hidden /> Copied
+            </>
+          ) : (
+            <>
+              <Copy size={13} aria-hidden /> Copy
+            </>
+          )}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+// Convert a hex colour (#RRGGBB or #RGB) to an rgba() string with
+// the supplied alpha. Used by ReferencePill so the brand accent
+// tints the tile background + border without baking per-brand
+// rgba constants into QUIZ. Returns the original hex (alpha
+// ignored) on parse failure — defensive, since accent values can
+// arrive from per-brand bundles.
+function hexWithAlpha(hex: string, alpha: number): string {
+  let h = hex.trim();
+  if (h.startsWith('#')) h = h.slice(1);
+  if (h.length === 3) {
+    h = h.split('').map((c) => c + c).join('');
+  }
+  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return hex;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function DetailRow({
