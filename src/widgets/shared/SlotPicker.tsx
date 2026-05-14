@@ -121,7 +121,26 @@ export function SlotPicker({
     arch,
     excludeAppointmentId,
   });
-  const slots = availability.data ?? [];
+  // Past-time filter — when the selected day is today, the server's
+  // candidate grid contains every opening from clinic-open to
+  // clinic-close. Anything already in the past has to be hidden so
+  // a 4pm patient can't tap an 11am pill. Comparing on a fresh
+  // `Date.now()` per render is enough; we don't need to tick every
+  // second (the patient either clicks within a minute or two, or
+  // the server's past-slot guard rejects on submit). When ALL of
+  // today's openings have passed, the slot list collapses to an
+  // empty state with a more specific copy line.
+  const filteredAvailability = useMemo(() => {
+    const raw = availability.data ?? [];
+    const nowMs = Date.now();
+    const filtered = raw.filter((s) => new Date(s.iso).getTime() > nowMs);
+    return {
+      slots: filtered,
+      allTodaysSlotsPassed: raw.length > 0 && filtered.length === 0,
+    };
+  }, [availability.data]);
+  const slots = filteredAvailability.slots;
+  const allTodaysSlotsPassed = filteredAvailability.allTodaysSlotsPassed;
 
   return (
     <div
@@ -219,6 +238,7 @@ export function SlotPicker({
         error={availability.error}
         selectedIso={selectedIso}
         onPick={onPick}
+        allTodaysSlotsPassed={allTodaysSlotsPassed}
       />
     </div>
   );
@@ -441,12 +461,18 @@ function SlotList({
   error,
   selectedIso,
   onPick,
+  allTodaysSlotsPassed,
 }: {
   slots: WidgetSlot[];
   loading: boolean;
   error: string | null;
   selectedIso: string | null;
   onPick: (iso: string | null) => void;
+  /** True when the server returned slots for this date but every
+   *  one is in the past (selected date is today, current time is
+   *  past the last opening). Used to swap the empty-state copy from
+   *  the generic "Nothing free" line to a more specific message. */
+  allTodaysSlotsPassed: boolean;
 }) {
   const [, forceRerender] = useState(0);
   useEffect(() => {
@@ -474,6 +500,11 @@ function SlotList({
   }
 
   if (slots.length === 0) {
+    const emptyMessage = loading
+      ? 'Checking availability…'
+      : allTodaysSlotsPassed
+        ? "Today's slots have all passed. Pick another date."
+        : 'Nothing free on this day. Pick another date.';
     return (
       <div
         style={{
@@ -486,7 +517,7 @@ function SlotList({
           fontSize: 14,
         }}
       >
-        {loading ? 'Checking availability…' : 'Nothing free on this day. Pick another date.'}
+        {emptyMessage}
       </div>
     );
   }

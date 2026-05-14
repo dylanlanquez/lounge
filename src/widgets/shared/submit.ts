@@ -40,6 +40,16 @@ export async function submitBooking(
   if (!state.service) throw new SubmitError('no_service', null);
   if (!state.slotIso) throw new SubmitError('no_slot', null);
 
+  // Pre-flight past-slot check. If the patient sat on the time step
+  // (or the payment step) long enough that their picked slot is now
+  // in the past, throw the same `startAt_in_past` code the server
+  // returns. Saves a round-trip and gives the same UX (bounce back
+  // to the time step) without exposing the user to a backend error
+  // they didn't cause.
+  if (new Date(state.slotIso).getTime() <= Date.now()) {
+    throw new SubmitError('startAt_in_past', null);
+  }
+
   const body = {
     locationId: state.location.id,
     serviceType: state.service.serviceType,

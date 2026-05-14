@@ -167,6 +167,14 @@ Deno.serve(async (req) => {
   if (Number.isNaN(startAt.getTime())) {
     return jsonResponse(400, { error: 'invalid_start_at' });
   }
+  // Past-time guard — refuse to book a slot at or before the current
+  // server clock. Mirrors widget-reschedule-booking. Defence-in-depth:
+  // the client also filters past slots out of the picker, but a
+  // crafted request shouldn't be able to land an appointment in the
+  // past (corrupting reports, double-booking the "next" 9am, etc).
+  if (startAt.getTime() <= Date.now()) {
+    return jsonResponse(400, { error: 'startAt_in_past' });
+  }
   const endAt = new Date(startAt.getTime() + durationMin * 60_000);
 
   // ── Conflict check ──────────────────────────────────────────────

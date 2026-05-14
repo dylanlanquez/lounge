@@ -274,7 +274,24 @@ function WidgetReady({
           appointmentRef: null,
           appointmentId: null,
           manageToken: null,
-          error: 'That slot was just taken — pick another time.',
+          error: 'That slot was just taken, pick another time.',
+        });
+        api.goTo('time');
+        return;
+      }
+      if (err.code === 'startAt_in_past') {
+        // Slot has aged past `now` between the patient picking it and
+        // hitting submit (long pause on the details/payment step).
+        // Clear the stale slotIso and bounce back to the time step
+        // so they can pick a current one. Same UX shape as the slot-
+        // unavailable branch.
+        api.setState((prev) => ({ ...prev, slotIso: null }));
+        setSubmission({
+          state: 'idle',
+          appointmentRef: null,
+          appointmentId: null,
+          manageToken: null,
+          error: 'That time has just passed, pick another slot.',
         });
         api.goTo('time');
         return;
