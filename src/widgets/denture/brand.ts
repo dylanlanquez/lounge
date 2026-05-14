@@ -18,11 +18,12 @@ export const brand = {
   // visual language family stays recognisable.
   accent: '#1F4D3A',
   accentBg: 'rgba(31, 77, 58, 0.08)',
-  // Logo for the modal header. Replace with denture-services
-  // branding once the assets land — currently falls back to the
-  // shared venneir mark so the bundle compiles before the brand
-  // assets arrive.
-  logoSrc: '/black-venneir-logo.png',
+  // Logo for the modal header. Absolute URL because the bundle
+  // runs on the host page (denture-services.co.uk) — relative
+  // path would 404 against the wrong origin. Replace with a
+  // denture-services-branded asset once it lands; for now we
+  // share the Venneir mark so the bundle has something to render.
+  logoSrc: 'https://lounge.venneir.com/black-venneir-logo.png',
   logoAlt: 'Denture Services',
 };
 

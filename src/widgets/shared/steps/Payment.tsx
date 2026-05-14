@@ -299,19 +299,44 @@ export function PaymentStep({
         },
       }}
     >
-      <PaymentForm onPaid={onPaid} submitting={submitting} deposit={deposit} />
+      <PaymentForm
+        onPaid={onPaid}
+        submitting={submitting}
+        deposit={deposit}
+        billingDetails={{
+          // PaymentElement hides billing fields (it's a deposit on a
+          // booking, not a shop-checkout), so we provide them at
+          // confirm time from what the patient already entered on the
+          // Details step. Country falls back to GB — every Lounge
+          // service runs in the UK so it's the right default.
+          name: [api.state.details.firstName, api.state.details.lastName]
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .join(' '),
+          email: api.state.details.email,
+          country: api.state.details.phoneCountry || 'GB',
+        }}
+      />
     </Elements>
   );
+}
+
+interface BillingDetails {
+  name: string;
+  email: string;
+  country: string;
 }
 
 function PaymentForm({
   onPaid,
   submitting,
   deposit,
+  billingDetails,
 }: {
   onPaid: (paymentIntentId: string) => void;
   submitting: boolean;
   deposit: number;
+  billingDetails: BillingDetails;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -331,6 +356,12 @@ function PaymentForm({
     if (!stripe || !elements) return;
     setPayError(null);
     setPaying(true);
+    // PaymentElement is configured with `fields.billingDetails.address.country: 'never'`
+    // so Stripe doesn't render a country picker (this is a deposit on a
+    // booking, not a shop-checkout — we don't need a billing address).
+    // Stripe still requires the country at confirm time though, so we
+    // ship it from the patient's already-entered phone country (parent
+    // step computes the value; we just forward it).
     const result = await stripe.confirmPayment({
       elements,
       redirect: 'if_required',
@@ -340,6 +371,15 @@ function PaymentForm({
         // can re-enter the booking. v2 of the widget can persist
         // step state in URL params if 3DS is common.
         return_url: window.location.href,
+        payment_method_data: {
+          billing_details: {
+            name: billingDetails.name || undefined,
+            email: billingDetails.email || undefined,
+            address: {
+              country: billingDetails.country,
+            },
+          },
+        },
       },
     });
     if (result.error) {

@@ -20,10 +20,13 @@ export const brand = {
   // continuous with the rest of the Lounge surfaces.
   accent: '#1F4D3A',
   accentBg: 'rgba(31, 77, 58, 0.08)',
-  // Logo for the modal header. Served from the lounge.venneir.com
-  // public folder so the customer's browser caches it across all
-  // venneir.com landing pages they bounce between.
-  logoSrc: '/black-venneir-logo.png',
+  // Logo for the modal header. Must be an absolute URL — the bundle
+  // runs on the host page (venneir.com or denture-services.co.uk),
+  // so a relative path resolves against THAT origin and 404s. The
+  // staff-app build serves /black-venneir-logo.png from
+  // lounge.venneir.com (public/ → dist/) and the brand bundle
+  // points back at it so the asset is shared with the in-app UI.
+  logoSrc: 'https://lounge.venneir.com/black-venneir-logo.png',
   logoAlt: 'Venneir',
 };
 
