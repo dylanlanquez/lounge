@@ -83,23 +83,24 @@ export function DetailsStep({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 36,
-        maxWidth: 1100,
+        // Single shared column for both the form and the booking
+        // review. 720px keeps form pairs readable on desktop and
+        // collapses cleanly to single-column on mobile via the
+        // inner Row's auto-fit grid.
+        maxWidth: 720,
         margin: '0 auto',
         width: '100%',
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >
-      {/* Form block — narrower, individually-bordered fields on the
-          modal's #f4f4f4 surface (no outer card; the section title
-          above the form is enough chrome). */}
+      {/* Form block — individually-bordered fields on the modal's
+          #f4f4f4 surface (no outer card; the step title already
+          frames the form). */}
       <div
         style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 16,
-          maxWidth: 560,
-          margin: '0 auto',
           width: '100%',
         }}
       >
@@ -172,8 +173,22 @@ export function DetailsStep({
         />
       </div>
 
-      {/* Booking review — appointment summary + price card. The
-          customer fills the form above and reviews the booking
+      {/* Subtle hairline divider between the form and the booking
+          review. No section header — the small-caps labels inside
+          BookingReview ("Your booking", "Total") are enough to
+          announce the new context. */}
+      <hr
+        aria-hidden
+        style={{
+          margin: '36px 0 32px',
+          border: 'none',
+          height: 1,
+          background: 'rgba(0, 0, 0, 0.08)',
+        }}
+      />
+
+      {/* Booking review — appointment summary + price breakdown.
+          The customer fills the form above and reviews the booking
           below before ticking terms in the footer and committing.
           Single screen, no extra step. */}
       <BookingReview api={api} copy={copy} accent={accent} />

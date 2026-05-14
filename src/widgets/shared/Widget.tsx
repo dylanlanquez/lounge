@@ -5,7 +5,7 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, CreditCard, Loader2, Stethoscope } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, Loader2 } from 'lucide-react';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
@@ -656,10 +656,9 @@ function Footer({
       }}
     >
       {showPrice ? (
-        <PricePreview
+        <FooterPrice
           depositPence={depositPence}
           onTheDayPence={onTheDayPence}
-          accent={accent}
         />
       ) : null}
 
@@ -755,125 +754,105 @@ function Footer({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Price preview — Today + On the day, side by side
+// Footer price — Today / On the day as plain typography
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Two pill-blocks in the footer above the Back / Next row. "Today"
-// is what the customer pays now (deposit); "On the day" is the
-// remaining balance settled at the appointment. The latter is
-// rendered at lower opacity since it's a future obligation, not a
-// payment they're about to make. Either block hides if its amount
-// is zero.
+// Pure typography, no boxes, no icons. Small-caps label on top,
+// large bold number below. On-the-day faded to ~55% opacity so the
+// eye lands on the deposit first. Pair is centred with a hair-line
+// divider between on screens wide enough; stacks vertically on
+// narrow viewports (≤ 480px effective width). Either block hides
+// if its amount is zero.
 
-function PricePreview({
+function FooterPrice({
   depositPence,
   onTheDayPence,
-  accent,
 }: {
   depositPence: number;
   onTheDayPence: number;
-  accent: string;
 }) {
+  const showDeposit = depositPence > 0;
+  const showOnTheDay = onTheDayPence > 0;
+  if (!showDeposit && !showOnTheDay) return null;
   return (
     <div
+      className="vlounge-footer-price"
       style={{
         display: 'flex',
-        alignItems: 'stretch',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
         justifyContent: 'center',
-        gap: 8,
+        gap: 20,
         width: '100%',
-        maxWidth: 600,
-        animation: `vlounge-fadeIn 0.3s ease`,
+        animation: `vlounge-fadeIn 0.25s ease`,
       }}
     >
-      {depositPence > 0 ? (
-        <PricePill
-          icon={<CreditCard size={16} aria-hidden />}
-          label="Today"
-          valuePence={depositPence}
-          accent={accent}
+      {showDeposit ? (
+        <FooterPriceBlock label="Today" valuePence={depositPence} muted={false} />
+      ) : null}
+      {showDeposit && showOnTheDay ? (
+        <span
+          aria-hidden
+          className="vlounge-footer-price-divider"
+          style={{
+            width: 1,
+            height: 32,
+            background: 'rgba(0, 0, 0, 0.10)',
+            flexShrink: 0,
+          }}
         />
       ) : null}
-      {onTheDayPence > 0 ? (
-        <PricePill
-          icon={<Stethoscope size={16} aria-hidden />}
-          label="On the day"
-          valuePence={onTheDayPence}
-          accent={accent}
-          muted
-        />
+      {showOnTheDay ? (
+        <FooterPriceBlock label="On the day" valuePence={onTheDayPence} muted />
       ) : null}
     </div>
   );
 }
 
-function PricePill({
-  icon,
+function FooterPriceBlock({
   label,
   valuePence,
-  accent,
-  muted = false,
+  muted,
 }: {
-  icon: React.ReactNode;
   label: string;
   valuePence: number;
-  accent: string;
-  muted?: boolean;
+  muted: boolean;
 }) {
-  const ink = muted ? QUIZ.SUBTLE : QUIZ.INK;
-  const tint = muted ? QUIZ.SUBTLE : accent;
   return (
     <div
       style={{
-        flex: 1,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: 10,
-        padding: '8px 12px',
-        background: muted ? 'transparent' : QUIZ.SURFACE,
-        border: `1px solid ${muted ? 'transparent' : QUIZ.BORDER}`,
-        borderRadius: QUIZ.R_INPUT,
-        opacity: muted ? 0.7 : 1,
-        minWidth: 0,
+        lineHeight: 1.1,
+        opacity: muted ? 0.55 : 1,
       }}
     >
       <span
-        aria-hidden
         style={{
-          color: tint,
-          flexShrink: 0,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          fontSize: 10,
+          fontWeight: 600,
+          color: QUIZ.MUTED_2,
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+          whiteSpace: 'nowrap',
         }}
       >
-        {icon}
+        {label}
       </span>
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 600,
-            color: tint,
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            fontSize: 16,
-            fontWeight: 700,
-            color: ink,
-            fontVariantNumeric: 'tabular-nums',
-            marginTop: 2,
-          }}
-        >
-          {formatPrice(valuePence)}
-        </span>
-      </div>
+      <span
+        style={{
+          fontSize: 22,
+          fontWeight: 700,
+          color: QUIZ.INK,
+          fontVariantNumeric: 'tabular-nums',
+          marginTop: 4,
+          letterSpacing: '-0.01em',
+        }}
+      >
+        {formatPrice(valuePence)}
+      </span>
     </div>
   );
 }

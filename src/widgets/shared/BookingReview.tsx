@@ -1,4 +1,4 @@
-import { Calendar, MapPin, Shield, Lock, Award } from 'lucide-react';
+import { Calendar, MapPin, Award, ShieldCheck, Sparkles } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -10,15 +10,14 @@ import { formatPrice } from './state.ts';
 import type { WidgetCopy } from './copy.ts';
 import { QUIZ } from './quizTokens.ts';
 
-// Booking review — the summary card block. Previously lived as its
-// own step (SummaryStep) but the customer was wading through one
-// click too many. Now embedded inside DetailsStep beneath the form
-// so the customer fills + reviews + commits on one screen.
+// Booking review — appointment recap + price breakdown shown
+// inside the combined Details step. Single column, no card chrome
+// on this screen at all (the inputs above this carry the only
+// borders). Sections are separated by 1px hairlines, not boxes.
 //
-// 2-column grid at 900px+ wraps to single column below. Left card:
-// appointment-details (location, service, axes chain, time,
-// selected upgrades). Right card: price breakdown + payment
-// options + trust signals.
+// 2026 reference set: Stripe Checkout, Calendly, Apple Pay sheet.
+// All four use plain typography for prices, right-aligned amounts,
+// and zero card backgrounds around money. We follow that here.
 
 export function BookingReview({
   api,
@@ -33,11 +32,6 @@ export function BookingReview({
   const selectedUpgrades = upgrades.filter((u) =>
     state.upgradeIds.includes(u.id),
   );
-  const total =
-    priceBreakdown.depositPence > 0
-      ? priceBreakdown.depositPence
-      : priceBreakdown.subtotalPence;
-  const showPayLater = priceBreakdown.payAtAppointmentPence > 0;
   const archIsBoth = state.axes.arch === 'both';
   const upgradePrice = (upgradeId: string): number => {
     const u = upgrades.find((x) => x.id === upgradeId);
@@ -47,145 +41,124 @@ export function BookingReview({
       : u.unitPricePence;
   };
 
+  // The "Total" row is the full price (service + extras), before
+  // splitting into deposit-today vs balance-on-the-day below.
+  const total = priceBreakdown.subtotalPence;
+  const deposit = priceBreakdown.depositPence;
+  const onTheDay = priceBreakdown.payAtAppointmentPence;
+  void copy;
+
   return (
     <div
-      className="vlounge-stagger"
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        gap: 16,
-        maxWidth: 1100,
-        margin: '0 auto',
-        alignItems: 'start',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 32,
+        width: '100%',
       }}
     >
-      {/* Left column — appointment details */}
-      <SummaryCard>
-        <SectionTitle accent={accent}>{copy.summaryTitle}</SectionTitle>
+      {/* ── Your booking ────────────────────────────────────────── */}
+      <section>
+        <SectionLabel>Your booking</SectionLabel>
+        <ItemList>
+          {state.location ? (
+            <Item
+              icon={<MapPin size={16} aria-hidden style={{ color: accent }} />}
+              label={state.location.name}
+              sub={state.location.addressLine}
+            />
+          ) : null}
+          {state.service ? (
+            <Item
+              icon={<Award size={16} aria-hidden style={{ color: accent }} />}
+              label={state.service.label.replace(/<[^>]*>/g, '')}
+              sub={axisChainLabel(state) ?? undefined}
+            />
+          ) : null}
+          {state.slotIso ? (
+            <Item
+              icon={<Calendar size={16} aria-hidden style={{ color: accent }} />}
+              label={formatSlotLong(state.slotIso)}
+            />
+          ) : null}
+          {selectedUpgrades.map((u) => (
+            <Item
+              key={u.id}
+              icon={<Sparkles size={16} aria-hidden style={{ color: QUIZ.LAVENDER }} />}
+              label={u.name}
+              right={
+                <span
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: QUIZ.LAVENDER,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  +{formatPrice(upgradePrice(u.id))}
+                </span>
+              }
+            />
+          ))}
+        </ItemList>
+      </section>
 
-        {state.location ? (
-          <SummaryRow
-            icon={<MapPin size={16} aria-hidden style={{ color: accent }} />}
-            label={state.location.name}
-            sub={state.location.addressLine}
-          />
-        ) : null}
+      {/* ── Total ───────────────────────────────────────────────── */}
+      <section>
+        <SectionLabel>Total</SectionLabel>
+        <PriceTable>
+          {priceBreakdown.serviceLinePence > 0 ? (
+            <PriceRow
+              label="Service"
+              amount={formatPrice(priceBreakdown.serviceLinePence)}
+            />
+          ) : null}
+          {priceBreakdown.upgradesLinePence > 0 ? (
+            <PriceRow
+              label="Extras"
+              amount={`+${formatPrice(priceBreakdown.upgradesLinePence)}`}
+              amountColour={QUIZ.LAVENDER}
+            />
+          ) : null}
+          {total > 0 ? (
+            <PriceRow label="Total" amount={formatPrice(total)} emphasised />
+          ) : null}
+          {deposit > 0 ? (
+            <PriceRow
+              label="Deposit today"
+              amount={formatPrice(deposit)}
+            />
+          ) : null}
+          {onTheDay > 0 ? (
+            <PriceRow
+              label="Balance on the day"
+              amount={formatPrice(onTheDay)}
+              muted
+            />
+          ) : null}
+        </PriceTable>
+      </section>
 
-        {state.service ? (
-          <SummaryRow
-            icon={<Award size={16} aria-hidden style={{ color: accent }} />}
-            label={state.service.label.replace(/<[^>]*>/g, '')}
-            sub={axisChainLabel(state) ?? undefined}
-          />
-        ) : null}
-
-        {state.slotIso ? (
-          <SummaryRow
-            icon={<Calendar size={16} aria-hidden style={{ color: accent }} />}
-            label={formatSlotLong(state.slotIso)}
-          />
-        ) : null}
-
-        {selectedUpgrades.length > 0 ? (
-          <>
-            <Divider />
-            <SectionTitle accent={accent}>Optional extras</SectionTitle>
-            {selectedUpgrades.map((u) => (
-              <PriceRow
-                key={u.id}
-                label={u.name}
-                amount={`+${formatPrice(upgradePrice(u.id))}`}
-                amountColour={QUIZ.LAVENDER}
-              />
-            ))}
-          </>
-        ) : null}
-      </SummaryCard>
-
-      {/* Right column — price + payment + trust */}
-      <SummaryCard>
-        <SectionTitle accent={accent}>Total</SectionTitle>
-
-        {priceBreakdown.serviceLinePence > 0 ? (
-          <PriceRow
-            label="Service"
-            amount={formatPrice(priceBreakdown.serviceLinePence)}
-          />
-        ) : null}
-        {priceBreakdown.upgradesLinePence > 0 ? (
-          <PriceRow
-            label="Extras"
-            amount={formatPrice(priceBreakdown.upgradesLinePence)}
-            amountColour={QUIZ.LAVENDER}
-          />
-        ) : null}
-
-        <Divider />
-
-        <TotalRow
-          accent={accent}
-          label={copy.summaryTotalLabel}
-          amount={formatPrice(total)}
-        />
-
-        {showPayLater ? (
-          <p
-            style={{
-              margin: '8px 0 0',
-              fontSize: 12,
-              color: QUIZ.MUTED_2,
-              fontStyle: 'italic',
-              textAlign: 'right',
-            }}
-          >
-            {copy.summaryPayLaterLabel}{' '}
-            {formatPrice(priceBreakdown.payAtAppointmentPence)}
-          </p>
-        ) : null}
-
-        {total >= 3000 ? <PaymentOptions total={total} /> : null}
-
-        <TrustSignals accent={accent} />
-      </SummaryCard>
+      {/* ── Trust signals ───────────────────────────────────────── */}
+      <TrustSignals accent={accent} />
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Building blocks
+// Section primitives
 // ─────────────────────────────────────────────────────────────────
 
-function SummaryCard({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        background: QUIZ.SURFACE,
-        border: `2px solid ${QUIZ.BORDER}`,
-        borderRadius: QUIZ.R_CARD,
-        padding: 20,
-        animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function SectionTitle({
-  children,
-  accent,
-}: {
-  children: React.ReactNode;
-  accent: string;
-}) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <h3
       style={{
-        margin: '0 0 14px',
-        fontSize: 17,
+        margin: '0 0 12px',
+        fontSize: 11,
         fontWeight: 600,
-        color: accent,
-        letterSpacing: '-0.01em',
+        color: QUIZ.MUTED_2,
+        textTransform: 'uppercase',
+        letterSpacing: '0.1em',
       }}
     >
       {children}
@@ -193,26 +166,43 @@ function SectionTitle({
   );
 }
 
-function SummaryRow({
+function ItemList({ children }: { children: React.ReactNode }) {
+  return (
+    <ul
+      style={{
+        listStyle: 'none',
+        margin: 0,
+        padding: 0,
+      }}
+    >
+      {children}
+    </ul>
+  );
+}
+
+function Item({
   icon,
   label,
   sub,
+  right,
 }: {
   icon: React.ReactNode;
   label: string;
   sub?: string;
+  right?: React.ReactNode;
 }) {
   return (
-    <div
+    <li
       style={{
         display: 'flex',
         alignItems: 'flex-start',
         gap: 12,
-        padding: '10px 0',
-        borderBottom: `1px solid ${QUIZ.BORDER_SOFT}`,
+        padding: '12px 0',
+        borderBottom: '1px solid rgba(0, 0, 0, 0.06)',
       }}
     >
       <span
+        aria-hidden
         style={{
           flexShrink: 0,
           marginTop: 2,
@@ -223,14 +213,14 @@ function SummaryRow({
       >
         {icon}
       </span>
-      <div style={{ minWidth: 0, flex: 1 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <p
           style={{
             margin: 0,
             fontSize: 15,
-            fontWeight: 600,
+            fontWeight: 500,
             color: QUIZ.INK,
-            lineHeight: 1.3,
+            lineHeight: 1.35,
           }}
         >
           {label}
@@ -238,7 +228,7 @@ function SummaryRow({
         {sub ? (
           <p
             style={{
-              margin: '4px 0 0',
+              margin: '2px 0 0',
               fontSize: 13,
               color: QUIZ.MUTED_2,
               lineHeight: 1.4,
@@ -248,7 +238,16 @@ function SummaryRow({
           </p>
         ) : null}
       </div>
-    </div>
+      {right ? (
+        <span style={{ flexShrink: 0, marginTop: 2 }}>{right}</span>
+      ) : null}
+    </li>
+  );
+}
+
+function PriceTable({ children }: { children: React.ReactNode }) {
+  return (
+    <div role="table">{children}</div>
   );
 }
 
@@ -256,27 +255,36 @@ function PriceRow({
   label,
   amount,
   amountColour,
+  emphasised = false,
+  muted = false,
 }: {
   label: string;
   amount: string;
   amountColour?: string;
+  emphasised?: boolean;
+  muted?: boolean;
 }) {
   return (
     <div
+      role="row"
       style={{
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '8px 0',
-        fontSize: 14,
-        color: QUIZ.INK,
+        alignItems: 'baseline',
+        padding: emphasised ? '12px 0 10px' : '8px 0',
+        borderTop: emphasised ? '1px solid rgba(0, 0, 0, 0.10)' : 'none',
+        marginTop: emphasised ? 4 : 0,
+        fontSize: emphasised ? 16 : 14,
+        color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
+        opacity: muted ? 0.7 : 1,
       }}
     >
-      <span>{label}</span>
+      <span role="cell">{label}</span>
       <span
+        role="cell"
         style={{
-          fontWeight: 600,
-          color: amountColour ?? QUIZ.INK,
+          fontWeight: emphasised ? 700 : 600,
+          color: amountColour ?? (muted ? QUIZ.MUTED_2 : QUIZ.INK),
           fontVariantNumeric: 'tabular-nums',
         }}
       >
@@ -286,126 +294,28 @@ function PriceRow({
   );
 }
 
-function TotalRow({
-  label,
-  amount,
-  accent,
-}: {
-  label: string;
-  amount: string;
-  accent: string;
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '10px 0',
-        fontSize: 18,
-        fontWeight: 700,
-        color: accent,
-      }}
-    >
-      <span>{label}</span>
-      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{amount}</span>
-    </div>
-  );
-}
-
-function Divider() {
-  return (
-    <div
-      aria-hidden
-      style={{
-        height: 2,
-        background: QUIZ.BORDER,
-        margin: '10px 0',
-      }}
-    />
-  );
-}
-
-function PaymentOptions({ total }: { total: number }) {
-  // Surface Klarna + Clearpay only when the total clears each
-  // provider's typical minimum. Both providers actually accept much
-  // smaller amounts than this threshold; the £30 cutoff is a UX
-  // judgement to avoid showing 'Pay £1.50 / month' which reads as
-  // gimmicky on a deposit.
-  const klarnaPerMonth = Math.ceil(total / 3 / 100); // pence → whole £
-  const clearpayPerWeek = Math.ceil(total / 4 / 100);
-  return (
-    <div
-      style={{
-        marginTop: 18,
-        paddingTop: 16,
-        borderTop: `2px solid ${QUIZ.BORDER_SOFT}`,
-      }}
-    >
-      <p
-        style={{
-          margin: '0 0 12px',
-          fontSize: 12,
-          color: QUIZ.MUTED_2,
-          textAlign: 'center',
-        }}
-      >
-        Or pay over time:
-      </p>
-      <PaymentOption label="Klarna" detail={`3 × £${klarnaPerMonth}`} />
-      <PaymentOption
-        label="Clearpay"
-        detail={`4 × £${clearpayPerWeek} fortnightly`}
-      />
-    </div>
-  );
-}
-
-function PaymentOption({ label, detail }: { label: string; detail: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '10px 14px',
-        background: QUIZ.SOFT_BG,
-        border: `1px solid ${QUIZ.BORDER}`,
-        borderRadius: QUIZ.R_INPUT,
-        marginBottom: 8,
-        fontSize: 13,
-        color: QUIZ.INK,
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>{label}</span>
-      <span>{detail}</span>
-    </div>
-  );
-}
-
 function TrustSignals({ accent }: { accent: string }) {
   return (
     <div
       style={{
         display: 'flex',
-        justifyContent: 'space-around',
-        marginTop: 18,
-        paddingTop: 16,
-        borderTop: `1px solid ${QUIZ.BORDER}`,
-        gap: 12,
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        gap: 20,
+        paddingTop: 8,
       }}
     >
       <TrustItem
-        icon={<Shield size={18} aria-hidden style={{ color: accent }} />}
-        label="UK GDC registered"
+        icon={<ShieldCheck size={14} aria-hidden style={{ color: accent }} />}
+        label="GDC registered"
       />
       <TrustItem
-        icon={<Lock size={18} aria-hidden style={{ color: accent }} />}
-        label="Secure payments"
+        icon={<Award size={14} aria-hidden style={{ color: accent }} />}
+        label="UK lab"
       />
       <TrustItem
-        icon={<Award size={18} aria-hidden style={{ color: accent }} />}
-        label="MHRA approved labs"
+        icon={<ShieldCheck size={14} aria-hidden style={{ color: accent }} />}
+        label="14-day warranty"
       />
     </div>
   );
@@ -419,21 +329,19 @@ function TrustItem({
   label: string;
 }) {
   return (
-    <div
+    <span
       style={{
-        display: 'flex',
-        flexDirection: 'column',
+        display: 'inline-flex',
         alignItems: 'center',
-        gap: 4,
-        fontSize: 11,
+        gap: 6,
+        fontSize: 12,
         color: QUIZ.MUTED_2,
-        textAlign: 'center',
         lineHeight: 1.3,
       }}
     >
       {icon}
-      <span>{label}</span>
-    </div>
+      {label}
+    </span>
   );
 }
 

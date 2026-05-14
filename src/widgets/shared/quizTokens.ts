@@ -176,6 +176,20 @@ export function ensureQuizKeyframes(): void {
     .vlounge-stagger > *:nth-child(5) { animation-delay: 0.25s; }
     .vlounge-stagger > *:nth-child(6) { animation-delay: 0.30s; }
 
+    /* Footer Today / On-the-day pair stacks on narrow viewports so
+       neither label clips on a 360px-wide phone. Divider hides in
+       the stack since vertical alignment makes the separator
+       redundant. */
+    @media (max-width: 480px) {
+      .vlounge-footer-price {
+        flex-direction: column !important;
+        gap: 10px !important;
+      }
+      .vlounge-footer-price-divider {
+        display: none !important;
+      }
+    }
+
     /* Thin neutral scrollbar — applied to any scrollable area in
        the widget (step body, popup body, etc) via the
        .vlounge-scroll class. The default OS scrollbar in macOS /
