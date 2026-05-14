@@ -106,7 +106,7 @@ export function DetailsStep({
         style={{
           display: 'flex',
           flexDirection: 'column',
-          gap: 16,
+          gap: 24,
           width: '100%',
         }}
       >
