@@ -142,6 +142,17 @@ export function ensureQuizKeyframes(): void {
       to   { opacity: 1; transform: translateY(0); }
     }
 
+    /* Success ring + tick — stroke-dashoffset draw-in for the
+       booking-confirmation glyph. Ring draws clockwise from the top,
+       tick draws after a short delay. Combined feel: ~0.85s motion,
+       reads as "completed" without a heavy filled-circle treatment. */
+    @keyframes vlounge-success-ring {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes vlounge-success-tick {
+      to { stroke-dashoffset: 0; }
+    }
+
     /* Progress fill shimmer overlay — ::after pseudo isn't reachable
        from inline styles, so we declare it on the .vlounge-progress-fill
        class and toggle it through className. Gradient uses the

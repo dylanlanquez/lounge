@@ -1,5 +1,5 @@
-import { useId, useRef, useState } from 'react';
-import { Calendar, Check, Upload, ImageIcon, Loader2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Calendar, Check, ImageIcon, Loader2, MapPin } from 'lucide-react';
 import type { WidgetState } from '../state.ts';
 import type { WidgetBrand } from '../Widget.tsx';
 import { QUIZ } from '../quizTokens.ts';
@@ -7,8 +7,12 @@ import { env } from '../../../lib/env.ts';
 
 // Confirmation screen — shown after a successful submission.
 // Lives outside the chrome (replaces the whole shell when booking
-// completes). White card on the modal's #f4f4f4 surface, brand logo
-// on top, navy check tick, appointment summary lines.
+// completes). White card on the modal's #f4f4f4 surface with a
+// thin animated accent ring + check (see SuccessGlyph), a centred
+// "You're booked in" heading, the service label as a subhead, and a
+// divider-separated detail block listing date/time and the clinic
+// name + address. Booking reference + confirmation-email line sit
+// at the foot.
 //
 // Click-in veneers bookings ALSO render a PhotoIntakeCard below
 // the confirmation block. The patient can upload up to three
@@ -31,147 +35,148 @@ export function SuccessScreen({
   brand?: WidgetBrand;
 }) {
   const slot = state.slotIso ? new Date(state.slotIso) : null;
-  const slotLabel = slot
+  const dateLabel = slot
     ? slot.toLocaleDateString('en-GB', {
         weekday: 'long',
         day: 'numeric',
         month: 'long',
         year: 'numeric',
-      }) +
-      ', ' +
-      formatHourMinute(slot)
-    : '—';
+      })
+    : null;
+  const timeLabel = slot ? formatHourMinute(slot) : null;
   const accent = brand?.accent ?? QUIZ.ACCENT;
   const showPhotoIntake =
     state.service?.serviceType === 'click_in_veneers' &&
     !!appointmentId &&
     !!manageToken;
+  const locationName = state.location?.name?.trim() || null;
+  const locationAddress = state.location?.addressLine?.trim() || null;
 
+  // Top-aligned scrollable column. The previous layout used
+  // `alignItems: flex-start` + `margin: 'auto 0'` on the inner card
+  // which tried to vertically-center via flex auto-margins; when the
+  // content grew (photo intake card visible) the auto margins +
+  // scroll container interacted badly and clipped the bottom of the
+  // card. Plain top-aligned scrolling is predictable on every host
+  // (standalone /book route + Shopify embed modal + iOS Safari).
   return (
     <div
+      className="vlounge-scroll"
       style={{
-        minHeight: '100%',
         height: '100%',
         background: QUIZ.BG,
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        padding: 24,
         overflowY: 'auto',
+        overflowX: 'hidden',
+        overscrollBehavior: 'none',
+        WebkitOverflowScrolling: 'touch',
       }}
     >
       <div
         style={{
+          maxWidth: showPhotoIntake ? 620 : 480,
+          width: '100%',
+          margin: '0 auto',
+          padding: '32px 20px 40px',
           display: 'flex',
           flexDirection: 'column',
           gap: 16,
-          maxWidth: showPhotoIntake ? 640 : 480,
-          width: '100%',
-          margin: 'auto 0',
         }}
       >
         <div
           style={{
             background: QUIZ.SURFACE,
-            border: `2px solid ${QUIZ.BORDER}`,
+            border: `1px solid ${QUIZ.BORDER}`,
             borderRadius: QUIZ.R_CARD,
-            padding: 32,
-            textAlign: 'center',
+            padding: '32px 28px 28px',
             animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
           }}
         >
-          {brand ? (
-            <img
-              src={brand.logoSrc}
-              alt={brand.logoAlt}
-              style={{
-                height: 28,
-                width: 'auto',
-                display: 'block',
-                margin: '0 auto 20px',
-              }}
-            />
-          ) : null}
-          <div
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: '50%',
-              background: accent,
-              color: '#fff',
-              margin: '0 auto 16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Check size={28} strokeWidth={2.5} aria-hidden />
-          </div>
+          <SuccessGlyph accent={accent} />
+
           <h2
             style={{
-              margin: 0,
+              margin: '20px 0 0',
               fontSize: 24,
               fontWeight: 700,
               color: QUIZ.INK,
-              letterSpacing: '-0.01em',
+              letterSpacing: '-0.015em',
+              textAlign: 'center',
+              lineHeight: 1.2,
             }}
           >
             You're booked in
           </h2>
-          <p
+
+          {state.service?.label ? (
+            <p
+              style={{
+                margin: '6px 0 0',
+                fontSize: 15,
+                color: QUIZ.MUTED_2,
+                textAlign: 'center',
+                lineHeight: 1.45,
+              }}
+              dangerouslySetInnerHTML={{ __html: state.service.label }}
+            />
+          ) : null}
+
+          <div
             style={{
-              margin: '12px 0 0',
-              fontSize: 16,
-              color: QUIZ.INK,
-              lineHeight: 1.45,
+              marginTop: 24,
+              padding: '16px 0 4px',
+              borderTop: `1px solid ${QUIZ.BORDER_SOFT}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
             }}
           >
-            <span
-              dangerouslySetInnerHTML={{ __html: state.service?.label ?? '' }}
-            />{' '}
-            at {state.location?.name}
-          </p>
-          <p
-            style={{
-              margin: '8px 0 0',
-              fontSize: 16,
-              color: QUIZ.MUTED_2,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <Calendar size={14} aria-hidden />
-            {slotLabel}
-          </p>
+            {dateLabel || timeLabel ? (
+              <DetailRow
+                icon={<Calendar size={16} strokeWidth={1.75} aria-hidden />}
+                primary={dateLabel ?? ''}
+                secondary={timeLabel ?? undefined}
+              />
+            ) : null}
+            {locationName ? (
+              <DetailRow
+                icon={<MapPin size={16} strokeWidth={1.75} aria-hidden />}
+                primary={locationName}
+                secondary={locationAddress ?? undefined}
+              />
+            ) : null}
+          </div>
+
           {appointmentRef ? (
             <p
               style={{
                 margin: '20px 0 0',
                 fontSize: 11,
-                color: QUIZ.MUTED_2,
+                color: QUIZ.SUBTLE,
                 fontWeight: 600,
                 textTransform: 'uppercase',
-                letterSpacing: '0.06em',
+                letterSpacing: '0.08em',
                 fontVariantNumeric: 'tabular-nums',
+                textAlign: 'center',
               }}
             >
-              Booking reference {appointmentRef}
+              Reference {appointmentRef}
             </p>
           ) : null}
+
           <p
             style={{
-              margin: '24px 0 0',
-              fontSize: 14,
+              margin: '20px 0 0',
+              fontSize: 13.5,
               color: QUIZ.MUTED_2,
-              lineHeight: 1.45,
+              lineHeight: 1.5,
+              textAlign: 'center',
             }}
           >
-            A confirmation has gone to{' '}
-            <strong style={{ color: QUIZ.INK }}>
+            Confirmation sent to{' '}
+            <strong style={{ color: QUIZ.INK, fontWeight: 600 }}>
               {state.details.email || 'your inbox'}
-            </strong>{' '}
-            with a calendar invite. We'll send a reminder a day before.
+            </strong>
+            . We'll send a reminder a day before.
           </p>
         </div>
 
@@ -183,6 +188,121 @@ export function SuccessScreen({
           />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Visual primitives
+// ─────────────────────────────────────────────────────────────────
+
+// Animated success glyph — thin accent ring + drawn-in check.
+// Stroke-dashoffset draws each path from a hidden state to its full
+// length; the ring fires first, the tick follows after a 0.4s delay
+// so the eye reads ring → check rather than both at once. Total
+// motion ~0.85s. Replaces the previous heavy filled navy circle.
+function SuccessGlyph({ accent }: { accent: string }) {
+  const SIZE = 64;
+  const RING_DASH = 188; // 2π × 30 (radius)
+  const TICK_DASH = 42;
+  return (
+    <div
+      style={{
+        width: SIZE,
+        height: SIZE,
+        margin: '0 auto',
+        position: 'relative',
+      }}
+      aria-hidden
+    >
+      <svg
+        width={SIZE}
+        height={SIZE}
+        viewBox="0 0 64 64"
+        fill="none"
+        style={{ display: 'block', transform: 'rotate(-90deg)' }}
+      >
+        <circle
+          cx="32"
+          cy="32"
+          r="30"
+          stroke={accent}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          fill="none"
+          style={{
+            strokeDasharray: RING_DASH,
+            strokeDashoffset: RING_DASH,
+            animation: `vlounge-success-ring 0.55s ${QUIZ.EASE_CARD} forwards`,
+          }}
+        />
+        <path
+          d="M20 32 L28.5 40.5 L44 25"
+          stroke={accent}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+          // The parent svg is rotated -90deg so the ring draws from
+          // the top; counter-rotate the tick so it reads upright.
+          style={{
+            transform: 'rotate(90deg)',
+            transformOrigin: '32px 32px',
+            strokeDasharray: TICK_DASH,
+            strokeDashoffset: TICK_DASH,
+            animation: `vlounge-success-tick 0.35s ${QUIZ.EASE_CARD} 0.4s forwards`,
+          }}
+        />
+      </svg>
+    </div>
+  );
+}
+
+function DetailRow({
+  icon,
+  primary,
+  secondary,
+}: {
+  icon: React.ReactNode;
+  primary: string;
+  secondary?: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 12,
+      }}
+    >
+      <span
+        style={{
+          flexShrink: 0,
+          width: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: QUIZ.MUTED_2,
+          paddingTop: 2,
+        }}
+      >
+        {icon}
+      </span>
+      <span
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+          fontSize: 14,
+          lineHeight: 1.4,
+          minWidth: 0,
+        }}
+      >
+        <span style={{ color: QUIZ.INK, fontWeight: 500 }}>{primary}</span>
+        {secondary ? (
+          <span style={{ color: QUIZ.MUTED_2, fontSize: 13 }}>{secondary}</span>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -316,12 +436,6 @@ function PhotoSlot({
 }) {
   const [slot, setSlot] = useState<SlotState>({ stage: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const inputId = useId();
-
-  const openPicker = () => {
-    if (slot.stage === 'uploading') return;
-    inputRef.current?.click();
-  };
 
   const onFile = async (file: File) => {
     const previewUrl = URL.createObjectURL(file);
@@ -359,9 +473,16 @@ function PhotoSlot({
   const preview =
     (slot.stage === 'uploading' || slot.stage === 'done') ? slot.previewUrl : null;
 
+  // Whole tile is the file-picker affordance — a single <label>
+  // wrapping a nested <input type="file"> is enough for native
+  // click→picker forwarding. The previous version ALSO set
+  // `htmlFor` on the label AND an extra `onClick={openPicker}` on
+  // the inner div that called `inputRef.click()`. That stack fired
+  // the picker twice in some browsers (first via the label's
+  // native forwarding, then via the manual click). Just nesting +
+  // no manual onClick gives a single, reliable trigger.
   return (
     <label
-      htmlFor={inputId}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -370,7 +491,6 @@ function PhotoSlot({
       }}
     >
       <div
-        onClick={openPicker}
         style={{
           position: 'relative',
           aspectRatio: '4 / 5',
@@ -489,10 +609,10 @@ function PhotoSlot({
       </div>
       <input
         ref={inputRef}
-        id={inputId}
         type="file"
         accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
         capture="environment"
+        disabled={isUploading}
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) void onFile(file);
@@ -507,28 +627,6 @@ function PhotoSlot({
           height: 1,
         }}
       />
-      {!isUploading && !isDone ? (
-        <button
-          type="button"
-          onClick={openPicker}
-          style={{
-            appearance: 'none',
-            border: 'none',
-            background: 'transparent',
-            color: accent,
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-            padding: 0,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            alignSelf: 'flex-start',
-          }}
-        >
-          <Upload size={13} aria-hidden /> Upload
-        </button>
-      ) : null}
     </label>
   );
 }
