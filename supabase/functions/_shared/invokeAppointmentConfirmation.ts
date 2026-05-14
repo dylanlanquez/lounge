@@ -62,13 +62,14 @@ export async function invokeAppointmentConfirmation(
   args: ConfirmationInvocation,
 ): Promise<ConfirmationResult> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceRoleKey) {
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     return {
       ok: false,
       status: 0,
       body: null,
-      error: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env unset',
+      error: 'SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY env unset',
     };
   }
 
@@ -88,15 +89,23 @@ export async function invokeAppointmentConfirmation(
     res = await fetch(url, {
       method: 'POST',
       headers: {
-        // Standard Supabase headers so the platform's verify_jwt
-        // check passes. The platform may translate or re-issue the
-        // Bearer between functions on the new key system, which is
-        // why the actual internal check below uses a separate
-        // custom header it can trust verbatim.
-        Authorization: `Bearer ${serviceRoleKey}`,
-        apikey: serviceRoleKey,
-        // Custom internal-auth channel — receiver compares against
-        // its own SUPABASE_SERVICE_ROLE_KEY env var.
+        // Use the anon JWT for Authorization. This satisfies the
+        // platform's `verify_jwt = true` (legacy anon is a valid
+        // signed JWT). The earlier revision sent the service-role
+        // key here, but on projects that have moved to the new
+        // sb_publishable_*/sb_secret_* key model the platform-
+        // injected SUPABASE_SERVICE_ROLE_KEY is an opaque token,
+        // NOT a JWT — so the gateway rejected it with
+        // `UNAUTHORIZED_INVALID_JWT_FORMAT` before the receiver
+        // function ever ran.
+        Authorization: `Bearer ${anonKey}`,
+        apikey: anonKey,
+        // The actual internal-auth channel — the receiver compares
+        // this against its own SUPABASE_SERVICE_ROLE_KEY env var,
+        // which both functions get from the same Supabase project
+        // and therefore always match. Custom headers aren't
+        // subject to the platform's JWT-format check, so the
+        // service-role-secret value flows through untouched.
         [INTERNAL_TOKEN_HEADER]: serviceRoleKey,
         'Content-Type': 'application/json',
       },
