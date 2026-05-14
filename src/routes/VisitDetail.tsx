@@ -58,6 +58,7 @@ import {
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { DiscountIcon } from '../components/Icons/DiscountIcon.tsx';
+import { ShopifyIcon } from '../components/Icons/ShopifyIcon.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -1110,6 +1111,18 @@ export function VisitDetail() {
                 }
               />
             </div>
+
+            {/* Online-order banner — only renders for visits where the
+                appointment was created from a venneir.com Shopify
+                order. Loud, branded, clickable through to the admin
+                order so staff can verify the credit independently of
+                what the patient says they paid. Sits directly under
+                the hero so it lands in the first scan of the page. */}
+            {shopifyOrder ? (
+              <div style={{ marginBottom: theme.space[6] }}>
+                <ShopifyOrderCard order={shopifyOrder} />
+              </div>
+            ) : null}
 
             {/* Whole banner dims when the visit is unsuitable so it
                 reads as terminated alongside the cart. The View
@@ -3300,6 +3313,127 @@ function formatPaidAtDate(iso: string): string {
     d.getDate() === today.getDate();
   if (sameDay) return 'today';
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function ShopifyOrderCard({
+  order,
+}: {
+  order: { id: string; name: string; pence: number; currency: string };
+}) {
+  // Loud, branded callout for visits that originated from a
+  // venneir.com Shopify order. Anti-fraud guard rail — staff have
+  // a one-click verification path (opens the order in Shopify
+  // admin) so a claim like "they already paid £X online" can't
+  // be taken on trust. Visual mirrors the MeetingLinkCard idiom
+  // on AppointmentDetail (left-edge brand stripe + brand icon +
+  // copy-style action row) so the two anchor surfaces read as
+  // one family.
+  const shopifyForest = '#5E8E3E';
+  // shopify_order_id is the raw Shopify numeric id stored on
+  // lng_appointments at booking time; admin.shopify.com routes
+  // /store/venneir/orders/<id> straight to the order page once
+  // the operator is signed into the admin.
+  const adminUrl = `https://admin.shopify.com/store/venneir/orders/${order.id}`;
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        boxShadow: theme.shadow.card,
+        border: `1px solid ${theme.color.border}`,
+        borderLeft: `3px solid ${shopifyForest}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[3] }}>
+        <ShopifyIcon size={18} title="Shopify" />
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          Online order from venneir.com
+        </span>
+      </div>
+
+      <a
+        href={adminUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          background: hovered ? 'rgba(94,142,62,0.10)' : 'rgba(94,142,62,0.06)',
+          border: `1px solid rgba(94,142,62,${hovered ? '0.32' : '0.16'})`,
+          borderRadius: 10,
+          padding: `${theme.space[2] + 2}px ${theme.space[3]}px`,
+          textDecoration: 'none',
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, gap: 2 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: shopifyForest,
+              fontVariantNumeric: 'tabular-nums',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {order.name}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            Paid online · {formatPence(order.pence)} credited against the bill
+          </span>
+        </div>
+
+        <div style={{ width: 1, height: 28, background: 'rgba(94,142,62,0.22)', flexShrink: 0 }} aria-hidden />
+
+        <span
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.semibold,
+            color: shopifyForest,
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <ExternalLink size={13} aria-hidden />
+          View in Shopify
+        </span>
+      </a>
+
+      <p
+        style={{
+          margin: `${theme.space[2]}px 0 0`,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkSubtle,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        Open the order in Shopify to confirm the patient paid {formatPence(order.pence)} {order.currency} online. The same amount is automatically credited against the cart below.
+      </p>
+    </div>
+  );
 }
 
 function ApplyDiscountLink({ onClick }: { onClick: () => void }) {
