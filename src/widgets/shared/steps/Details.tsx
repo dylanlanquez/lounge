@@ -196,7 +196,7 @@ function Row({ children }: { children: React.ReactNode }) {
       style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-        gap: 12,
+        gap: 24,
       }}
     >
       {children}
@@ -352,7 +352,7 @@ function LabelText({
         display: 'block',
         marginBottom: 8,
         fontSize: 15,
-        fontWeight: 600,
+        fontWeight: 400,
         color: QUIZ.INK,
         lineHeight: 1.3,
       }}
