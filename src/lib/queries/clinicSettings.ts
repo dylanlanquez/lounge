@@ -141,7 +141,7 @@ export function useClinicSettings(): ReadResult {
       const { data: rows, error: err } = await supabase
         .from('lng_settings')
         .select('key, value')
-        .or('key.like.email.%,key.like.clinic.%,key.like.legal.%,key.like.virtual.%')
+        .or('key.like.email.%,key.like.clinic.%,key.like.legal.%,key.like.virtual.%,key.like.stripe.%')
         .is('location_id', null);
       if (cancelled) return;
       if (err) {
