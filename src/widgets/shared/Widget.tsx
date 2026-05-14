@@ -1114,6 +1114,7 @@ function FooterPriceBlock({
   // softer presence so the eye lands on Today first.
   return (
     <div
+      aria-label={label}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -1125,22 +1126,9 @@ function FooterPriceBlock({
     >
       <span
         style={{
-          fontSize: 10,
-          fontWeight: 600,
-          color: accent,
-          textTransform: 'uppercase',
-          letterSpacing: '0.1em',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
           display: 'inline-flex',
           alignItems: 'center',
           gap: 8,
-          marginTop: 4,
           // Muted block (On the day) drops to 500 weight + 18px so
           // the eye still lands on Today first — the deposit is the
           // hero moment, the balance is supporting context.
@@ -1148,9 +1136,6 @@ function FooterPriceBlock({
           fontWeight: muted ? 500 : 700,
           color: accent,
           fontVariantNumeric: 'tabular-nums',
-          // Slight positive tracking on currency so "£25.00" breathes
-          // — tabular-nums sets each digit on a fixed advance but
-          // the £ glyph hugs the digits without it.
           letterSpacing: '0.01em',
         }}
       >
