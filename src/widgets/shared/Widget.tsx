@@ -394,24 +394,28 @@ function ChromeShell({
           gap: 10,
         }}
       >
-        {/* Subtle "Your Appointment" eyebrow so the flow reads as
-            booking, not e-commerce. Calendar tick icon + small navy
-            tracking-wide label, top-left of the modal. */}
-        <div
+        {/* "Your appointment" badge — soft navy pill so the flow
+            reads as booking, not e-commerce. Title case (no
+            uppercase, no letter-spacing — that small-caps treatment
+            felt dated against the rest of the polished form). */}
+        <span
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 8,
-            fontSize: 12,
-            fontWeight: 600,
+            gap: 6,
+            alignSelf: 'flex-start',
+            padding: '6px 12px',
+            borderRadius: 999,
+            background: 'rgba(8, 55, 88, 0.06)',
             color: accent,
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: 1,
           }}
         >
           <CalendarCheck size={14} aria-hidden />
-          <span>Your appointment</span>
-        </div>
+          Your appointment
+        </span>
         <ProgressBar
           value={api.visibleCurrentIdx + 1}
           total={api.visibleTotalSteps}
