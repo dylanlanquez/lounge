@@ -221,6 +221,11 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   let closed = false;
   function close() {
     if (closed) return;
+    // React sets data-locked="true" on the root while a Stripe
+    // confirmation or booking submission is in flight. Swallow
+    // every close path (X button, backdrop click, Esc) so a
+    // mistimed click can't unmount a half-completed payment.
+    if (root.dataset.locked === 'true') return;
     closed = true;
 
     if (!reducedMotion) {
@@ -262,6 +267,14 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') {
+      if (root.dataset.locked === 'true') {
+        // While locked we still consume the keystroke so it doesn't
+        // bubble to the host page's own Esc handlers (which might
+        // close a parent drawer and rip the iframe out from under
+        // the Stripe confirmation).
+        e.stopPropagation();
+        return;
+      }
       e.stopPropagation();
       close();
       return;
@@ -388,6 +401,15 @@ function ensureResetStyles() {
     #${MODAL_ID} svg {
       display: block;
       max-width: 100%;
+    }
+    /* Locked state — React flips data-locked="true" on the root
+       while a payment is being confirmed or the booking is being
+       submitted. We fade the X close button so the customer reads
+       "this isn't interactive right now" without an explicit
+       toast; the click handler is already no-op'd in close(). */
+    #${MODAL_ID}[data-locked="true"] button[aria-label="Close booking"] {
+      opacity: 0.35;
+      cursor: not-allowed;
     }
   `;
   document.head.appendChild(style);

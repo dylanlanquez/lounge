@@ -245,6 +245,41 @@ function WidgetReady({
   const [paymentReady, setPaymentReady] = useState(false);
   const [paymentPaying, setPaymentPaying] = useState(false);
 
+  // Lock the modal + the browser tab while a payment is being
+  // confirmed or the booking is being submitted server-side. Two
+  // separate threats to a mid-flight payment:
+  //   1. Modal close paths (X button, backdrop click, Esc) — we
+  //      flip data-locked="true" on the embed root; embedHost.ts
+  //      reads that flag and swallows every close path so a
+  //      mistimed click can't unmount the Stripe confirmation.
+  //   2. Tab close / refresh / back-button — we install a
+  //      beforeunload handler so the browser shows its native
+  //      "Leave site?" prompt before tearing the page down.
+  const busy =
+    paymentPaying || submission.state === 'submitting';
+  useEffect(() => {
+    if (!busy) return;
+    const modalRoot =
+      typeof document !== 'undefined'
+        ? document.getElementById('vlounge-embed-modal')
+        : null;
+    if (modalRoot) modalRoot.dataset.locked = 'true';
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Chrome / Safari require BOTH preventDefault + a non-empty
+      // returnValue to trigger the dialog. The actual string is
+      // ignored on modern browsers (they show their own generic
+      // copy), but it has to be set.
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      if (modalRoot) delete modalRoot.dataset.locked;
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [busy]);
+
   // Single submission entry-point. Called from the footer Next
   // button on the summary step (free booking) or from the Payment
   // step's onPaid handler after Stripe confirms.
