@@ -457,7 +457,13 @@ function ActiveVisitCard({
         ) : (
           <>
             <WaiverPill status={visit.waiver_status} />
-            <PaymentPill done={visit.payment_done} status={visit.paid_status} />
+            <PaymentPill
+              done={visit.payment_done}
+              status={visit.paid_status}
+              amountPaidPence={visit.amount_paid_pence}
+              depositPence={visit.deposit_pence}
+              depositStatus={visit.deposit_status}
+            />
           </>
         )}
       </div>
@@ -600,9 +606,15 @@ function WaiverPill({ status }: { status: EnrichedActiveVisit['waiver_status'] }
 function PaymentPill({
   done,
   status,
+  amountPaidPence,
+  depositPence,
+  depositStatus,
 }: {
   done: boolean;
   status: EnrichedActiveVisit['paid_status'];
+  amountPaidPence: number;
+  depositPence: number | null;
+  depositStatus: EnrichedActiveVisit['deposit_status'];
 }) {
   if (status === 'free_visit') {
     return (
@@ -625,14 +637,21 @@ function PaymentPill({
     );
   }
   if (status === 'partially_paid') {
-    // Outlined pending pill — same chrome as "Payment pending" so the
-    // visual stays "money in, not all the way" until the cart is
-    // settled. Filled green is reserved for the done branch above.
+    // Distinguish "deposit only" (the booking-time deposit is the
+    // sole payment on the cart) from genuine partial payment (the
+    // customer has paid extra toward the bill on top of, or instead
+    // of, a deposit). Both keep the outlined pending tone — filled
+    // green is reserved for `done`.
+    const depositOnly =
+      depositStatus === 'paid' &&
+      depositPence != null &&
+      depositPence > 0 &&
+      amountPaidPence === depositPence;
     return (
       <StatusPill tone="pending" size="sm">
         <span style={pillInnerStyle}>
-          <DepositGlyph size={14} />
-          Deposit paid
+          {depositOnly ? <DepositGlyph size={14} /> : <CreditCard size={12} aria-hidden />}
+          {depositOnly ? 'Deposit paid' : 'Part paid'}
         </span>
       </StatusPill>
     );

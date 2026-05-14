@@ -258,6 +258,8 @@ function makeVisit(overrides: Partial<EnrichedActiveVisit> = {}): EnrichedActive
     amount_paid_pence: 0,
     paid_status: 'free_visit',
     payment_done: true,
+    deposit_pence: null,
+    deposit_status: null,
     waiver_status: 'not_required',
     sla_target_minutes: null,
     ...overrides,

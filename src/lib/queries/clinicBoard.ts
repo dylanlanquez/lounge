@@ -107,6 +107,14 @@ export interface EnrichedActiveVisit {
   amount_paid_pence: number;
   paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
   payment_done: boolean;
+  // Booking-time deposit from the parent appointment. Walk-ins (no
+  // appointment) and appointments with no deposit configured both
+  // surface as null. Used by the InClinic PaymentPill to tell
+  // "deposit only" apart from "deposit + extra" / "partial without
+  // a deposit", so the customer-facing label reflects what's
+  // actually happened on the cart.
+  deposit_pence: number | null;
+  deposit_status: 'paid' | 'failed' | null;
   // Waiver
   waiver_status: WaiverDisplayStatus;
   // SLA target in minutes — max(catalogue.sla_target_minutes) across
@@ -269,6 +277,8 @@ interface AppointmentJoin {
   intake: Array<{ question: string; answer: string }> | null;
   appointment_ref: string | null;
   jb_ref: string | null;
+  deposit_pence: number | null;
+  deposit_status: 'paid' | 'failed' | null;
 }
 
 interface WalkInJoin {
@@ -365,7 +375,8 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
              internal_ref, avatar_data
            ),
            appointment:lng_appointments (
-             event_type_label, intake, appointment_ref, jb_ref
+             event_type_label, intake, appointment_ref, jb_ref,
+             deposit_pence, deposit_status
            ),
            walk_in:lng_walk_ins (
              service_type, appliance_type, appointment_ref, jb_ref
@@ -576,6 +587,8 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           payment_done:
             (paid?.paid_status ?? 'free_visit') === 'paid' ||
             (paid?.paid_status ?? 'free_visit') === 'free_visit',
+          deposit_pence: a?.deposit_pence ?? null,
+          deposit_status: a?.deposit_status ?? null,
           waiver_status: waiverStatus,
           // SLA doesn't apply to dispatch-pending visits — the patient
           // is gone; we're just waiting on a label.
