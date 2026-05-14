@@ -508,24 +508,23 @@ function Bucket({
   if (slots.length === 0) return null;
   return (
     <div>
-      <p
+      <h4
         style={{
           margin: 0,
-          marginBottom: 8,
-          fontSize: 12,
-          fontWeight: 600,
-          color: SUBTLE,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
+          marginBottom: 12,
+          fontSize: 15,
+          fontWeight: 700,
+          color: INK,
+          letterSpacing: '-0.01em',
         }}
       >
         {label}
-      </p>
+      </h4>
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))',
-          gap: 8,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))',
+          gap: 10,
         }}
       >
         {slots.map((s) => {
@@ -542,26 +541,33 @@ function Bucket({
                 fontSize: 14,
                 fontWeight: 600,
                 fontVariantNumeric: 'tabular-nums',
-                padding: '10px 12px',
+                height: 44,
+                padding: '0 12px',
                 borderRadius: 10,
-                border: `2px solid ${selected ? ACCENT : BORDER}`,
+                border: `1px solid ${selected ? ACCENT : '#dde3e7'}`,
                 background: selected ? ACCENT : SURFACE,
                 color: selected ? '#FFFFFF' : INK,
                 cursor: 'pointer',
                 textAlign: 'center',
-                transition: `all 0.18s ${EASE_CARD}`,
+                boxSizing: 'border-box',
+                boxShadow: selected
+                  ? '0 2px 6px rgba(8, 55, 88, 0.22)'
+                  : '0 1px 2px rgba(15, 23, 42, 0.04)',
+                transition: `border-color 0.15s ${EASE_CARD}, background 0.15s ${EASE_CARD}, color 0.15s ${EASE_CARD}, box-shadow 0.15s ${EASE_CARD}, transform 0.15s ${EASE_CARD}`,
               }}
               onMouseEnter={(e) => {
                 if (selected) return;
                 e.currentTarget.style.borderColor = ACCENT;
+                e.currentTarget.style.color = ACCENT;
+                e.currentTarget.style.boxShadow = '0 4px 10px rgba(15, 23, 42, 0.08)';
                 e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = SHADOW_LIFT;
               }}
               onMouseLeave={(e) => {
                 if (selected) return;
-                e.currentTarget.style.borderColor = BORDER;
+                e.currentTarget.style.borderColor = '#dde3e7';
+                e.currentTarget.style.color = INK;
+                e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.04)';
                 e.currentTarget.style.transform = 'none';
-                e.currentTarget.style.boxShadow = 'none';
               }}
             >
               {s.label}
