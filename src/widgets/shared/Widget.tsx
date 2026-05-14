@@ -481,7 +481,11 @@ export function StepTitle({ children }: { children: React.ReactNode }) {
         textAlign: 'center',
         fontSize: 28,
         lineHeight: 1.2,
-        fontWeight: 700,
+        // 600 (semibold) instead of 700 (bold). 700 was reading too
+        // heavy on top of the storefront's inherited font — matches
+        // .info-popup-title-vt and the rest of the retainer-cart's
+        // mid-emphasis headings.
+        fontWeight: 600,
         color: QUIZ.INK,
         letterSpacing: '-0.01em',
         animation: `vlounge-fadeInDown 0.3s ${QUIZ.EASE_BOUNCE}`,

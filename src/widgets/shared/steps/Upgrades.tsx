@@ -582,7 +582,14 @@ function PopupShell({
           maxWidth: 540,
           width: '100%',
           maxHeight: '85vh',
-          overflowY: 'auto',
+          // Outer card is a flex column with overflow hidden; the
+          // header is a flex-shrink:0 sibling and the body owns the
+          // scroll. Stops the elastic over-scroll bounce Dylan
+          // flagged where content peeks underneath the header on
+          // trackpad rubber-band.
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
           boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           animation: `vlounge-popupSlideIn 0.3s ${QUIZ.EASE_BOUNCE}`,
           position: 'relative',
@@ -591,6 +598,7 @@ function PopupShell({
       >
         <header
           style={{
+            flexShrink: 0,
             padding: '28px 28px 20px',
             borderBottom: `2px solid ${QUIZ.BORDER_SOFT}`,
             position: 'relative',
@@ -645,7 +653,19 @@ function PopupShell({
             <X size={20} aria-hidden />
           </button>
         </header>
-        <div style={{ padding: '24px 28px 28px' }}>{children}</div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            overscrollBehavior: 'contain',
+            WebkitOverflowScrolling: 'touch',
+            padding: '24px 28px 28px',
+          }}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );
