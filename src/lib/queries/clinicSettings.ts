@@ -137,7 +137,13 @@ export function useClinicSettings(): ReadResult {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
+      // Only flip to `loading` on the very first fetch. Subsequent
+      // refresh() calls (triggered after every save) keep the
+      // existing data visible while the new copy arrives in the
+      // background — flashing the Skeleton on every save collapsed
+      // the whole admin tab to one card briefly, which pushed the
+      // user's scroll position back to the top.
+      if (tick === 0) setLoading(true);
       const { data: rows, error: err } = await supabase
         .from('lng_settings')
         .select('key, value')

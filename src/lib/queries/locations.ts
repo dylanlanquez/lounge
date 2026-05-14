@@ -82,7 +82,12 @@ export function useEditableLocation(): EditableResult {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
+      // Only flag `loading` on the very first fetch. Refresh()
+      // calls after a save keep existing data on screen so the
+      // admin tab doesn't collapse to a Skeleton briefly — that
+      // layout shift was bumping the user's scroll back to the
+      // top after every save.
+      if (tick === 0) setLoading(true);
       const { data: rows, error: err } = await supabase
         .from('locations')
         .select('id, name, type, city, address, phone')
