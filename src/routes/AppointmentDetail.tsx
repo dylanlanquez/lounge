@@ -1323,23 +1323,28 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
   const { data: clinicSettings } = useClinicSettings();
   const isVirtual = !!appt.join_url;
 
-  // In-person bookings now surface the full deliverable address —
-  // clinic name, street address, city, then postcode on the next
-  // line — sourced from the locations table (which the Branding tab
-  // writes to). City + postcode share a line so the postcode reads
-  // alongside its city rather than dangling on its own.
+  // In-person bookings show the deliverable address only — staff
+  // already know which clinic they're at, repeating the clinic name
+  // here would be noise. Street address goes on line 1, city +
+  // postcode share line 2 so the postcode reads next to its city.
+  // Source is the locations row that the Branding admin tab writes
+  // to (now including the postcode added by the 20260514 migration).
   const locationLine: ReactNode = isVirtual
     ? platformLabel(appt.meeting_platform, appt.join_url)
     : (() => {
         const l = appt.location;
-        if (!l?.name) return null;
+        if (!l) return null;
         const street = l.address?.trim() || null;
         const cityPostcode = [l.city?.trim(), l.postcode?.trim()]
           .filter(Boolean)
           .join(', ');
-        const lines = [l.name, street, cityPostcode || null].filter(
+        const lines = [street, cityPostcode || null].filter(
           (s): s is string => Boolean(s),
         );
+        // Single source: fall back to the location name if neither
+        // address nor city is filled in — better than rendering
+        // empty.
+        if (lines.length === 0) return l.name ?? null;
         if (lines.length === 1) return lines[0];
         return (
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -2335,13 +2340,26 @@ function KeyValueRow({
           ? `14px minmax(0, 130px) minmax(0, 1fr)`
           : `minmax(0, 140px) minmax(0, 1fr)`,
         gap: theme.space[3],
-        alignItems: 'baseline',
+        // Top-align so multi-line values (address rows) keep the
+        // icon + label on the same line as the value's first row.
+        // Baseline alignment looked fine on single-line rows but
+        // left the icon centred between lines on multi-line values.
+        alignItems: 'start',
         padding: `${theme.space[3]}px 0`,
         borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
       }}
     >
       {useIconColumn ? (
-        <span style={{ color: theme.color.inkSubtle, display: 'inline-flex', alignSelf: 'center' }}>
+        <span
+          style={{
+            color: theme.color.inkSubtle,
+            display: 'inline-flex',
+            // 2px nudge so the icon's optical centre lines up with
+            // the cap height of the 14px text rather than sitting
+            // flush with the top of the row.
+            paddingTop: 2,
+          }}
+        >
           {icon}
         </span>
       ) : null}
