@@ -1,4 +1,4 @@
-import { Box, Clock, Disc, ShieldCheck, Truck } from 'lucide-react';
+import { Box, Clock, Disc, Palette, ShieldCheck, Truck } from 'lucide-react';
 import type { ComponentType } from 'react';
 
 // Per-service "Included at no extra cost" lists. Mirrors the
@@ -39,6 +39,7 @@ export const INCLUDED_PERKS: Record<string, IncludedPerk[]> = {
     { icon: ShieldCheck, title: '14-day warranty' },
   ],
   click_in_veneers: [
+    { icon: Palette, title: 'Shade matched on the day' },
     { icon: Clock, title: 'Same-day fit and adjust' },
     { icon: Disc,  title: 'Storage case' },
     { icon: ShieldCheck, title: '14-day warranty' },
