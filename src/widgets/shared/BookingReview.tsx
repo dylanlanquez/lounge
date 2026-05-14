@@ -1,4 +1,4 @@
-import { MapPin, Award, Calendar, Sparkles } from 'lucide-react';
+import { MapPin, Award, Calendar, Sparkles, CreditCard, Clock } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -54,6 +54,12 @@ export function BookingReview({
 
   // Build the row set in order so we can render hairlines between
   // rows but never after the final row (mirrors IncludedPerksCard).
+  // Three row kinds:
+  //   item  — full-size icon row (location / service / when / extra)
+  //   total — emphasised summary row with heavier top hairline
+  //   split — smaller payment-split row (deposit today / balance)
+  //           that sits after the Total to break the headline into
+  //           how much is paid now vs at the appointment.
   type Row =
     | {
         kind: 'item';
@@ -69,6 +75,14 @@ export function BookingReview({
         key: string;
         label: string;
         amount: string;
+      }
+    | {
+        kind: 'split';
+        key: string;
+        icon: React.ReactNode;
+        label: string;
+        amount: string;
+        muted?: boolean;
       };
 
   const rows: Row[] = [];
@@ -120,6 +134,25 @@ export function BookingReview({
       amount: formatPrice(total),
     });
   }
+  if (priceBreakdown.depositPence > 0) {
+    rows.push({
+      kind: 'split',
+      key: 'deposit',
+      icon: <CreditCard size={18} aria-hidden style={{ color: QUIZ.MUTED_2 }} />,
+      label: 'Deposit today',
+      amount: formatPrice(priceBreakdown.depositPence),
+    });
+  }
+  if (priceBreakdown.payAtAppointmentPence > 0) {
+    rows.push({
+      kind: 'split',
+      key: 'balance',
+      icon: <Clock size={18} aria-hidden style={{ color: QUIZ.MUTED_2 }} />,
+      label: 'Balance on the day',
+      amount: formatPrice(priceBreakdown.payAtAppointmentPence),
+      muted: true,
+    });
+  }
 
   return (
     <div
@@ -166,11 +199,23 @@ export function BookingReview({
             />
           );
         }
+        if (row.kind === 'total') {
+          return (
+            <TotalRow
+              key={row.key}
+              label={row.label}
+              amount={row.amount}
+              isLast={isLast}
+            />
+          );
+        }
         return (
-          <TotalRow
+          <SplitRow
             key={row.key}
+            icon={row.icon}
             label={row.label}
             amount={row.amount}
+            muted={row.muted}
             isLast={isLast}
           />
         );
@@ -325,6 +370,83 @@ function TotalRow({
       >
         {amount}
       </span>
+    </div>
+  );
+}
+
+function SplitRow({
+  icon,
+  label,
+  amount,
+  muted,
+  isLast,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  amount: string;
+  muted?: boolean;
+  isLast: boolean;
+}) {
+  // Smaller scale than ItemRow — these rows are a sub-breakdown of
+  // the Total above them, not standalone facts. Icon is muted grey,
+  // label is regular weight, amount keeps tabular-nums for clean
+  // right-edge alignment when stacked.
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        padding: '12px 0',
+        borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 22,
+          height: 22,
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 12,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 500,
+            color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
+            lineHeight: 1.3,
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
+            fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          {amount}
+        </span>
+      </div>
     </div>
   );
 }
