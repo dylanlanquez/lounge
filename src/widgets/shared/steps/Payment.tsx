@@ -474,6 +474,20 @@ function PaymentForm({
                 },
               },
             },
+            // Hide the Stripe Link "Save my information for faster
+            // checkout" prompt. Link as a payment method is already
+            // excluded server-side (the PaymentIntent declares
+            // `payment_method_types[]=card` only), but the Link
+            // autofill save offer is a separate Wallet surface that
+            // PaymentElement renders by default — `link: 'never'`
+            // suppresses it without affecting Apple Pay / Google Pay,
+            // which still pop into the card tab on supported
+            // devices.
+            wallets: {
+              applePay: 'auto',
+              googlePay: 'auto',
+              link: 'never',
+            },
           }}
         />
       </div>

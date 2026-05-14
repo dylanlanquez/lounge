@@ -11,6 +11,7 @@ import type { BookingStateApi } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
 import {
   OptionCard,
+  OptionDescription,
   OptionGrid,
   OptionTitle,
 } from '../OptionCard.tsx';
@@ -135,6 +136,21 @@ function AxisOptions({
             const label = axis.key === 'arch'
               ? labelForArchOption(opt.key, api.state.service?.serviceType ?? '')
               : opt.label;
+            // Arch step carries a one-line subtitle per option so
+            // patients understand exactly what each choice means
+            // ("I only need an upper retainer" etc). Wording is
+            // tailored to the service + product (a click-in veneer
+            // "Top" reads differently from a retainer "Top"). Other
+            // axes (product, repair_variant) rely on the option's
+            // own DB label and don't get a subtitle.
+            const description =
+              axis.key === 'arch'
+                ? describeArchOption(
+                    opt.key,
+                    api.state.service?.serviceType ?? '',
+                    api.state.axes.product_key,
+                  )
+                : null;
             return (
               <OptionCard
                 key={opt.key}
@@ -147,6 +163,9 @@ function AxisOptions({
                 ariaLabel={label}
               >
                 <OptionTitle>{label}</OptionTitle>
+                {description ? (
+                  <OptionDescription>{description}</OptionDescription>
+                ) : null}
               </OptionCard>
             );
           })}
@@ -169,6 +188,57 @@ function labelForArchOption(optKey: string, serviceType: string): string {
     return serviceType === 'click_in_veneers' ? 'Top & Bottom' : 'Both';
   }
   return optKey;
+}
+
+// Per-option subtitle on the arch step. Click-in veneers reads
+// in terms of cosmetic coverage ("cover my top teeth"); same-day
+// appliances read in terms of the appliance the patient needs
+// ("I only need an upper retainer"). Returns null when the
+// combination doesn't have a tailored line, so the option card
+// falls back to title-only.
+function describeArchOption(
+  optKey: string,
+  serviceType: string,
+  productKey: string | undefined,
+): string | null {
+  if (serviceType === 'click_in_veneers') {
+    if (optKey === 'upper') return 'I only want to cover my top teeth';
+    if (optKey === 'lower') return 'I only want to cover my bottom teeth';
+    if (optKey === 'both') return 'I want to cover my top & bottom teeth';
+    return null;
+  }
+  if (serviceType === 'same_day_appliance') {
+    const noun = applianceNoun(productKey);
+    if (!noun) return null;
+    if (optKey === 'upper') return `I only need an upper ${noun}`;
+    if (optKey === 'lower') return `I only need a lower ${noun}`;
+    if (optKey === 'both') return `I need both upper & lower ${pluraliseNoun(noun)}`;
+    return null;
+  }
+  return null;
+}
+
+function applianceNoun(productKey: string | undefined): string | null {
+  switch (productKey) {
+    case 'retainer':
+      return 'retainer';
+    case 'night_guard':
+      return 'night guard';
+    case 'day_guard':
+      return 'day guard';
+    case 'missing_tooth':
+      return 'missing-tooth appliance';
+    default:
+      return null;
+  }
+}
+
+function pluraliseNoun(noun: string): string {
+  // Compound nouns ("missing-tooth appliance") still pluralise on
+  // the head word, which is the last whitespace-separated token.
+  // "retainer" → "retainers", "night guard" → "night guards",
+  // "missing-tooth appliance" → "missing-tooth appliances".
+  return noun + 's';
 }
 
 function SkeletonGrid() {

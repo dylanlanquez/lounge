@@ -145,14 +145,25 @@ export function SuccessScreen({
                 secondary={locationAddress ?? undefined}
               />
             ) : null}
-            {appointmentRef ? (
-              <BookingReferenceRow value={appointmentRef} accent={accent} />
-            ) : null}
           </div>
+
+          {appointmentRef ? (
+            <div
+              style={{
+                marginTop: 24,
+                paddingTop: 20,
+                paddingBottom: 24,
+                borderTop: `1px solid ${QUIZ.BORDER_SOFT}`,
+                borderBottom: `1px solid ${QUIZ.BORDER_SOFT}`,
+              }}
+            >
+              <BookingReferenceRow value={appointmentRef} accent={accent} />
+            </div>
+          ) : null}
 
           <p
             style={{
-              margin: '20px 0 0',
+              margin: '24px 0 0',
               fontSize: 13.5,
               color: QUIZ.MUTED_2,
               lineHeight: 1.5,
@@ -245,11 +256,12 @@ function SuccessGlyph({ accent }: { accent: string }) {
   );
 }
 
-// Booking-reference row — shares the icon + content shape with
-// DetailRow above (16px icon column, 14px text body) so the row
-// reads as a continuation of the Date / Location list rather than
-// a separate surface. The value sits next to a small accent-
-// coloured copy button; tap to copy, ~2.2s flip to "Copied".
+// Booking-reference row — shares the leading icon column with the
+// DetailRow above (Hash glyph in the same 20px column the Calendar
+// and MapPin icons sit in) so the row aligns visually with the
+// date and location entries. The value + copy state are wrapped in
+// a brand-accent-tinted bordered pill that the customer reads as
+// "tappable to copy"; tap flips it to "Copied" for ~2.2s.
 function BookingReferenceRow({
   value,
   accent,
@@ -258,6 +270,7 @@ function BookingReferenceRow({
   accent: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
 
   const handleCopy = async () => {
     try {
@@ -285,7 +298,7 @@ function BookingReferenceRow({
     <div
       style={{
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         gap: 12,
       }}
     >
@@ -297,55 +310,64 @@ function BookingReferenceRow({
           alignItems: 'center',
           justifyContent: 'center',
           color: QUIZ.MUTED_2,
-          paddingTop: 2,
         }}
       >
         <Hash size={16} strokeWidth={1.75} aria-hidden />
       </span>
-      <span
+      <button
+        type="button"
+        onClick={handleCopy}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
         style={{
+          appearance: 'none',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 10,
-          minWidth: 0,
+          background: hovered
+            ? hexWithAlpha(accent, 0.1)
+            : hexWithAlpha(accent, 0.06),
+          border: `1px solid ${hexWithAlpha(accent, hovered ? 0.28 : 0.14)}`,
+          borderRadius: 10,
+          padding: '8px 12px',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          transition: 'background 0.15s ease, border-color 0.15s ease',
+          userSelect: 'none',
         }}
       >
         <span
           style={{
             fontSize: 14,
-            color: QUIZ.INK,
-            fontWeight: 500,
+            color: accent,
+            fontWeight: 600,
             fontVariantNumeric: 'tabular-nums',
             letterSpacing: '0.02em',
-            lineHeight: 1.4,
+            whiteSpace: 'nowrap',
           }}
         >
           {value}
         </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
+        <span
+          aria-hidden
           style={{
-            appearance: 'none',
-            border: 'none',
-            background: 'transparent',
-            padding: 0,
-            cursor: 'pointer',
-            fontFamily: 'inherit',
+            width: 1,
+            height: 14,
+            background: hexWithAlpha(accent, 0.18),
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 5,
             fontSize: 12,
             fontWeight: 600,
             color: accent,
-            transition: 'opacity 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.opacity = '0.8';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.opacity = '1';
+            flexShrink: 0,
+            transition: 'color 0.15s ease',
           }}
         >
           {copied ? (
@@ -357,10 +379,29 @@ function BookingReferenceRow({
               <Copy size={13} aria-hidden /> Copy
             </>
           )}
-        </button>
-      </span>
+        </span>
+      </button>
     </div>
   );
+}
+
+// Convert a hex colour (#RRGGBB or #RGB) to an rgba() string with
+// the supplied alpha. Used by BookingReferenceRow so the brand
+// accent tints the tile background + border without baking per-
+// brand rgba constants into QUIZ. Returns the original hex
+// unchanged on parse failure — defensive, since accent values
+// arrive from per-brand bundles.
+function hexWithAlpha(hex: string, alpha: number): string {
+  let h = hex.trim();
+  if (h.startsWith('#')) h = h.slice(1);
+  if (h.length === 3) {
+    h = h.split('').map((c) => c + c).join('');
+  }
+  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return hex;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function DetailRow({
