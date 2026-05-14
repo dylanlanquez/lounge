@@ -504,9 +504,16 @@ function initialLockedIdxFor(
 // Display helpers used across multiple steps
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function stepTitle(key: StepKey, copy: WidgetCopy = DEFAULT_COPY): string {
+export function stepTitle(
+  key: StepKey,
+  copy: WidgetCopy = DEFAULT_COPY,
+  state?: WidgetState,
+): string {
   if (key.startsWith('axis:')) {
     const axisKey = key.slice(5) as AxisKey;
+    if (axisKey === 'arch' && state?.service) {
+      return archStepTitleFor(state.service.serviceType, state.axes.product_key);
+    }
     return AXIS_QUESTION[axisKey];
   }
   switch (key) {
@@ -536,6 +543,39 @@ export const AXIS_QUESTION: Record<AxisKey, string> = {
   product_key: 'Which retainer do you need?',
   arch: 'Which teeth?',
 };
+
+// Context-aware title for the arch step. Click-in veneers asks
+// "Which teeth would you like to cover?" because the metaphor is
+// cosmetic coverage; everything else asks "Which <appliance>
+// do you need?" with the appliance interpolated from the product
+// pin where present.
+function archStepTitleFor(
+  serviceType: string,
+  productKey: string | undefined,
+): string {
+  if (serviceType === 'click_in_veneers') {
+    return 'Which teeth would you like to cover?';
+  }
+  const appliance = productLabelFor(productKey);
+  return appliance ? `Which ${appliance} do you need?` : 'Which teeth?';
+}
+
+function productLabelFor(productKey: string | undefined): string | null {
+  switch (productKey) {
+    case 'retainer':
+      return 'retainer';
+    case 'night_guard':
+      return 'night guard';
+    case 'day_guard':
+      return 'day guard';
+    case 'click_in_veneers':
+      return 'click-in veneers';
+    case 'missing_tooth':
+      return 'missing-tooth appliance';
+    default:
+      return null;
+  }
+}
 
 const GBP_FORMATTER = new Intl.NumberFormat('en-GB', {
   style: 'currency',

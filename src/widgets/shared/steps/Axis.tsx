@@ -11,7 +11,6 @@ import type { BookingStateApi } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
 import {
   OptionCard,
-  OptionDescription,
   OptionGrid,
   OptionTitle,
 } from '../OptionCard.tsx';
@@ -27,7 +26,11 @@ const AXIS_HELPER: Record<AxisKey, string> = {
   repair_variant: "We'll match you to the right specialist.",
   product_key:
     "Pick the option that fits — we'll confirm any details when you arrive.",
-  arch: 'The top teeth, the bottom teeth, or both. Pick whichever applies.',
+  // Arch step intentionally has NO helper paragraph — the step
+  // title is descriptive enough ("Which teeth would you like to
+  // cover?" / "Which retainer do you need?") and the options
+  // themselves carry no sub-copy.
+  arch: '',
 };
 
 export function AxisStep({
@@ -86,22 +89,27 @@ function AxisOptions({
           ? api.state.axes.arch
           : undefined;
 
+  // The arch step skips the helper paragraph so the title sits
+  // directly above the option cards. Other axis steps keep theirs.
+  const helper = AXIS_HELPER[axis.key];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-      <p
-        style={{
-          margin: 0,
-          fontSize: 14,
-          color: QUIZ.MUTED_2,
-          lineHeight: 1.45,
-          maxWidth: 600,
-          textAlign: 'center',
-          marginLeft: 'auto',
-          marginRight: 'auto',
-        }}
-      >
-        {AXIS_HELPER[axis.key]}
-      </p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: helper ? 32 : 0 }}>
+      {helper ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 14,
+            color: QUIZ.MUTED_2,
+            lineHeight: 1.45,
+            maxWidth: 600,
+            textAlign: 'center',
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          {helper}
+        </p>
+      ) : null}
 
       {error ? (
         <ErrorCard message={error} />
@@ -113,6 +121,9 @@ function AxisOptions({
         <OptionGrid>
           {options.map((opt) => {
             const selected = currentValue === opt.key;
+            const label = axis.key === 'arch'
+              ? labelForArchOption(opt.key, api.state.service?.serviceType ?? '')
+              : opt.label;
             return (
               <OptionCard
                 key={opt.key}
@@ -122,18 +133,9 @@ function AxisOptions({
                   api.setAxisPin(axis.key, opt.key, opt.archMatch)
                 }
                 accent={accent}
-                ariaLabel={opt.label}
+                ariaLabel={label}
               >
-                <OptionTitle>{opt.label}</OptionTitle>
-                {axis.key === 'arch' ? (
-                  <OptionDescription>
-                    {opt.key === 'upper'
-                      ? 'The top row of teeth.'
-                      : opt.key === 'lower'
-                        ? 'The bottom row of teeth.'
-                        : 'Both top and bottom together.'}
-                  </OptionDescription>
-                ) : null}
+                <OptionTitle>{label}</OptionTitle>
               </OptionCard>
             );
           })}
@@ -141,6 +143,21 @@ function AxisOptions({
       )}
     </div>
   );
+}
+
+// Arch-option label rewrite, scoped per service so the strings
+// match the question wording above the grid. Click-in veneers
+// asks about "teeth" so the upper/lower/both keys read as
+// "Top / Bottom / Top & Bottom"; everything else reads as
+// "Top / Bottom / Both" because the question is "Which retainer
+// do you need?" — "Top & Bottom" doesn't fit that grammar.
+function labelForArchOption(optKey: string, serviceType: string): string {
+  if (optKey === 'upper') return 'Top';
+  if (optKey === 'lower') return 'Bottom';
+  if (optKey === 'both') {
+    return serviceType === 'click_in_veneers' ? 'Top & Bottom' : 'Both';
+  }
+  return optKey;
 }
 
 function SkeletonGrid() {

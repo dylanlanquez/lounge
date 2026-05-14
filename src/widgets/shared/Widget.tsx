@@ -419,19 +419,15 @@ function ChromeShell({
           gap: 10,
         }}
       >
-        {/* "Your appointment" badge — soft navy pill so the flow
-            reads as booking, not e-commerce. Title case (no
-            uppercase, no letter-spacing — that small-caps treatment
-            felt dated against the rest of the polished form). */}
+        {/* "Your appointment" label — plain icon + title-case text,
+            no pill background. The flow reads as booking by virtue
+            of the wording; the soft-navy pill was decorative noise. */}
         <span
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
             alignSelf: 'flex-start',
-            padding: '6px 12px',
-            borderRadius: 999,
-            background: 'rgba(8, 55, 88, 0.06)',
             color: accent,
             fontSize: 13,
             fontWeight: 600,
@@ -633,7 +629,7 @@ function StepBody({
     api.stepKey === 'details' || api.stepKey === 'payment' ? 'left' : 'center';
   return (
     <>
-      <StepTitle align={titleAlign}>{stepTitle(api.stepKey, copy)}</StepTitle>
+      <StepTitle align={titleAlign}>{stepTitle(api.stepKey, copy, api.state)}</StepTitle>
       {submissionError ? (
         <ErrorBanner message={submissionError} onDismiss={onDismissError} />
       ) : null}
