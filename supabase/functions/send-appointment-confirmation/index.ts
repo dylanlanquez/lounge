@@ -33,6 +33,7 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { LNG_INTERNAL_TOKEN_HEADER } from '../_shared/invokeAppointmentConfirmation.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -79,13 +80,25 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // Two callers: a signed-in user (the staff Lounge app) or another
-  // edge function on this same project (widget-create-appointment).
-  // The internal path is recognised by a Bearer token equal to the
-  // service-role key — only callers that already hold the service-
-  // role secret can construct that, which keeps the bypass safe.
-  // For internal calls there's no caller account to attribute
+  // edge function on this same project (widget-create-appointment,
+  // widget-reschedule-booking, widget-cancel-booking).
+  //
+  // The internal path is now recognised by a custom header
+  // (`x-lng-internal-token`) carrying the project's service-role
+  // key. Previous implementation compared the Authorization Bearer
+  // string against `SUPABASE_SERVICE_ROLE_KEY` directly, but that
+  // broke after the project migrated to the sb_secret_* key model:
+  // the platform appears to translate the Bearer between functions
+  // on the new system, so the literal string equality fails even
+  // when both callers and receiver hold the same env var. Custom
+  // non-Supabase headers aren't subject to that translation, so the
+  // check below is stable. Only callers that already hold the
+  // service-role secret can construct it, which keeps the bypass
+  // safe. For internal calls there's no caller account to attribute
   // failure rows to; the logger downgrades to user_id=null.
-  const isInternal = userJwt === `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+  const internalTokenHeader = req.headers.get(LNG_INTERNAL_TOKEN_HEADER) ?? '';
+  const isInternal =
+    !!internalTokenHeader && internalTokenHeader === SUPABASE_SERVICE_ROLE_KEY;
   let callerAccountAuthId: string | null = null;
   if (!isInternal) {
     const userClient = createClient(SUPABASE_URL, ANON_KEY, {

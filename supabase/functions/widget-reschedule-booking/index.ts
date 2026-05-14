@@ -27,6 +27,7 @@ import {
   deleteMeetEvent,
   getGoogleAccessToken,
 } from '../_shared/googleCalendar.ts';
+import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -295,22 +296,25 @@ Deno.serve(async (req) => {
   // The email function understands oldAppointmentIdToCancel and
   // emits both .ics attachments in one message so most calendars
   // (Apple, Outlook, Google) update the existing event in place.
+  // Goes through the shared helper so the internal-auth contract
+  // matches the create + cancel paths.
   try {
-    const { error: emailErr } = await supabase.functions.invoke(
-      'send-appointment-confirmation',
-      {
-        body: {
-          appointmentId: newRow.id,
-          oldAppointmentIdToCancel: existing.id,
+    const emailResult = await invokeAppointmentConfirmation({
+      appointmentId: newRow.id,
+      oldAppointmentIdToCancel: existing.id,
+    });
+    if (!emailResult.ok) {
+      await logFailure(
+        'reschedule_email_invoke_failed',
+        {
+          newAppointmentId: newRow.id,
+          oldAppointmentId: existing.id,
+          status: emailResult.status,
+          response: emailResult.body,
+          error: emailResult.error,
         },
-      },
-    );
-    if (emailErr) {
-      await logFailure('reschedule_email_invoke_failed', {
-        newAppointmentId: newRow.id,
-        oldAppointmentId: existing.id,
-        error: emailErr.message,
-      }, 'warning');
+        'warning',
+      );
     }
   } catch (e) {
     await logFailure('reschedule_email_threw', {

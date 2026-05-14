@@ -38,6 +38,7 @@ import {
   createMeetEvent,
   getGoogleAccessToken,
 } from '../_shared/googleCalendar.ts';
+import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -428,31 +429,34 @@ Deno.serve(async (req) => {
   }
 
   // ── Confirmation email ─────────────────────────────────────────
-  // Fire-and-forget invoke of send-appointment-confirmation. The
-  // function recognises our service-role Bearer token and skips the
-  // user-auth check it normally enforces for staff callers. Email
-  // failures (paused template, missing RESEND_API_KEY, etc) are
-  // logged to lng_system_failures by the email function itself; we
-  // additionally log here if the invoke transport fails so the
-  // booking still succeeds even if the email pipe is down.
+  // Fire-and-forget invocation of send-appointment-confirmation via
+  // the shared helper. The helper sends the service-role key both
+  // as the standard Bearer (so the platform's verify_jwt check
+  // passes) AND as a custom `X-Lng-Internal-Token` header which the
+  // receiver compares against its own SUPABASE_SERVICE_ROLE_KEY env
+  // var. Going through the custom header avoids the Bearer-string
+  // translation the platform now performs on the new key model,
+  // which silently broke the previous supabase.functions.invoke
+  // path. Email failures (paused template, missing RESEND_API_KEY,
+  // etc) are logged to lng_system_failures by the email function
+  // itself; we additionally log here if the invoke transport fails
+  // so the booking still succeeds even if the email pipe is down.
+  // We log the actual HTTP status + body on failure so future
+  // regressions are diagnosable from lng_system_failures alone,
+  // without re-deploying with debug code.
   try {
-    const { data: emailResult, error: emailErr } = await supabase.functions.invoke(
-      'send-appointment-confirmation',
-      { body: { appointmentId } },
-    );
-    if (emailErr) {
-      await logFailure('confirmation_invoke_failed', {
-        appointmentId,
-        error: emailErr.message,
-      }, 'warning');
-    } else if (emailResult && typeof emailResult === 'object' && 'ok' in emailResult && !emailResult.ok) {
-      // The function ran but reported a delivery failure (e.g.
-      // template paused, no email on patient). Still a warning, not
-      // a booking failure.
-      await logFailure('confirmation_delivery_failed', {
-        appointmentId,
-        result: emailResult,
-      }, 'warning');
+    const emailResult = await invokeAppointmentConfirmation({ appointmentId });
+    if (!emailResult.ok) {
+      await logFailure(
+        'confirmation_invoke_failed',
+        {
+          appointmentId,
+          status: emailResult.status,
+          response: emailResult.body,
+          error: emailResult.error,
+        },
+        'warning',
+      );
     }
   } catch (e) {
     await logFailure('confirmation_invoke_threw', {

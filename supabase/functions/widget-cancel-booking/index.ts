@@ -28,6 +28,7 @@ import {
   deleteMeetEvent,
   getGoogleAccessToken,
 } from '../_shared/googleCalendar.ts';
+import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -163,20 +164,30 @@ Deno.serve(async (req) => {
     },
   });
 
-  // Fire-and-forget cancellation email. Recognises the service-
-  // role Bearer and skips the user-auth check the staff app
-  // normally requires (per the bypass added in the widget
-  // confirmation-email work).
+  // Fire-and-forget cancellation email. Goes through the shared
+  // helper which carries the service-role secret in a custom
+  // `X-Lng-Internal-Token` header — receivers compare it to their
+  // own SUPABASE_SERVICE_ROLE_KEY env var. Custom headers aren't
+  // subject to the Bearer-translation the Supabase platform now
+  // applies between functions on the new sb_secret_* key system,
+  // which is what silently broke the previous supabase.functions
+  // .invoke path.
   try {
-    const { error: emailErr } = await supabase.functions.invoke(
-      'send-appointment-confirmation',
-      { body: { appointmentId: appointment.id, intent: 'cancellation' } },
-    );
-    if (emailErr) {
-      await logFailure('cancellation_email_invoke_failed', {
-        appointmentId: appointment.id,
-        error: emailErr.message,
-      }, 'warning');
+    const emailResult = await invokeAppointmentConfirmation({
+      appointmentId: appointment.id,
+      intent: 'cancellation',
+    });
+    if (!emailResult.ok) {
+      await logFailure(
+        'cancellation_email_invoke_failed',
+        {
+          appointmentId: appointment.id,
+          status: emailResult.status,
+          response: emailResult.body,
+          error: emailResult.error,
+        },
+        'warning',
+      );
     }
   } catch (e) {
     await logFailure('cancellation_email_threw', {

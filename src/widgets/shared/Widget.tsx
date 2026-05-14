@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Lock } from 'lucide-react';
+import { ArrowLeft, Lock } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -443,24 +443,6 @@ function ChromeShell({
           gap: 10,
         }}
       >
-        {/* "Your appointment" label — plain icon + title-case text,
-            no pill background. The flow reads as booking by virtue
-            of the wording; the soft-navy pill was decorative noise. */}
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            alignSelf: 'flex-start',
-            color: accent,
-            fontSize: 14,
-            fontWeight: 600,
-            lineHeight: 1,
-          }}
-        >
-          <CalendarCheck size={14} aria-hidden />
-          Your same day appointment
-        </span>
         <ProgressBar
           value={api.visibleCurrentIdx + 1}
           total={api.visibleTotalSteps}
