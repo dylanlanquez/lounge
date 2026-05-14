@@ -619,6 +619,37 @@ function PhotoSlot({
           e.currentTarget.style.borderColor = 'rgba(0, 0, 0, 0.12)';
         }}
       >
+        {/* File input lives INSIDE the photo tile pinned to its
+            top-left corner, not at the bottom of the label. When
+            the click fires the input, the browser's scroll-into-
+            view behaviour on the focused element would otherwise
+            scroll the modal so the input (at the end of the label
+            flow) sits at the bottom of the viewport, which cropped
+            the rest of the photo grid below the fold. Pinning the
+            input to top:0/left:0 of the tile means any auto-scroll
+            brings the TOP of the tile into view, keeping the rest
+            of the grid below it on screen. */}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+          disabled={isUploading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void onFile(file);
+            // Reset so picking the same file again still fires onChange.
+            if (inputRef.current) inputRef.current.value = '';
+          }}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: 1,
+            height: 1,
+            opacity: 0,
+            pointerEvents: 'none',
+          }}
+        />
         {preview ? (
           <img
             src={preview}
@@ -712,33 +743,6 @@ function PhotoSlot({
           )}
         </span>
       </div>
-      {/* No `capture` attribute — that flag forces iOS Safari to
-          open the rear camera directly and skips the "Photo Library
-          / Take Photo / Choose Files" menu most patients expect.
-          With it gone, iOS shows the standard action sheet,
-          Android Chrome shows the system chooser, and desktop
-          gets the OS file picker. `accept` keeps the list to the
-          image types the server accepts so the picker filters
-          out PDFs / videos. */}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-        disabled={isUploading}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void onFile(file);
-          // Reset so picking the same file again still fires onChange.
-          if (inputRef.current) inputRef.current.value = '';
-        }}
-        style={{
-          position: 'absolute',
-          opacity: 0,
-          pointerEvents: 'none',
-          width: 1,
-          height: 1,
-        }}
-      />
     </label>
   );
 }
