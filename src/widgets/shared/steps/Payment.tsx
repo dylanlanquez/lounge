@@ -156,7 +156,15 @@ export const PaymentStep = forwardRef<
           appearance: {
             theme: 'flat',
             variables: {
-              fontFamily: QUIZ.FONT_STACK,
+              // Stripe renders inputs inside cross-origin iframes,
+              // so font-family: inherit can't reach across — the
+              // placeholders fall back to the browser default (often
+              // a serif on macOS) and look out of place against the
+              // sans-serif storefront font. Pin to a system stack
+              // that lines up visually with what most modern
+              // storefronts use.
+              fontFamily:
+                'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
               fontSizeBase: '15px',
               fontLineHeight: '1.4',
               fontWeightNormal: '500',
@@ -169,7 +177,10 @@ export const PaymentStep = forwardRef<
               colorDanger: QUIZ.ALERT,
               colorSuccess: QUIZ.ACCENT,
               colorTextSecondary: 'rgba(14, 20, 20, 0.6)',
-              colorTextPlaceholder: 'rgba(14, 20, 20, 0.4)',
+              // Lighter placeholder so "1234 1234 1234 1234" /
+              // "MM / YY" / "CVC" read as quiet hints rather than
+              // dark labels competing with the actual input value.
+              colorTextPlaceholder: 'rgba(14, 20, 20, 0.28)',
               colorIconTab: QUIZ.INK,
               colorIconTabSelected: QUIZ.ACCENT,
 
