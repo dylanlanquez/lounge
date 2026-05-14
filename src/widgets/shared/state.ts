@@ -537,10 +537,19 @@ export const AXIS_QUESTION: Record<AxisKey, string> = {
   arch: 'Which teeth?',
 };
 
+const GBP_FORMATTER = new Intl.NumberFormat('en-GB', {
+  style: 'currency',
+  currency: 'GBP',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 export function formatPrice(pence: number): string {
   if (pence === 0) return 'Free';
-  if (pence % 100 === 0) return `£${pence / 100}`;
-  return `£${(pence / 100).toFixed(2)}`;
+  // Always show 2 decimals + thousand separators so big-ticket
+  // services read as e.g. £1,248.00 instead of £1248. Per Dylan's
+  // rule: every non-phone financial number gets Intl.NumberFormat.
+  return GBP_FORMATTER.format(pence / 100);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
