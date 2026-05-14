@@ -89,11 +89,22 @@ function AxisOptions({
           ? api.state.axes.arch
           : undefined;
 
-  // The arch step skips the helper paragraph so the title sits
-  // directly above the option cards. Other axis steps keep theirs.
+  // Helper paragraph only when the axis has one (arch axis skips
+  // it; product / repair-variant keep theirs). When there's no
+  // helper we add a `marginTop` to the wrapper so the option grid
+  // sits the same distance under the title as on steps with a
+  // helper (32px gap == helper-bottom-to-grid-top), matching the
+  // Time / Details / Payment / Service screens.
   const helper = AXIS_HELPER[axis.key];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: helper ? 32 : 0 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: helper ? 32 : 0,
+        marginTop: helper ? 0 : 32,
+      }}
+    >
       {helper ? (
         <p
           style={{
