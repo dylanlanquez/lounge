@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react';
-import { Avatar, Card, EmptyState, Skeleton, StatusPill, StickyPageHeader } from '../components/index.ts';
+import { Avatar, Card, DepositGlyph, EmptyState, Skeleton, StatusPill, StickyPageHeader } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { ToothIcon } from '../components/Icons/ToothIcon.tsx';
@@ -625,11 +625,14 @@ function PaymentPill({
     );
   }
   if (status === 'partially_paid') {
+    // Outlined pending pill — same chrome as "Payment pending" so the
+    // visual stays "money in, not all the way" until the cart is
+    // settled. Filled green is reserved for the done branch above.
     return (
       <StatusPill tone="pending" size="sm">
         <span style={pillInnerStyle}>
-          <CreditCard size={12} aria-hidden />
-          Part paid
+          <DepositGlyph size={14} />
+          Deposit paid
         </span>
       </StatusPill>
     );
