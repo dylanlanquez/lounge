@@ -281,7 +281,7 @@ function PhotoTile({
         rel="noopener noreferrer"
         style={{
           position: 'relative',
-          aspectRatio: '4 / 5',
+          aspectRatio: '1 / 1',
           borderRadius: 10,
           background: theme.color.bg,
           border: `1px solid ${theme.color.border}`,
