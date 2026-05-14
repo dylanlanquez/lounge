@@ -1,0 +1,27 @@
+# Supabase project config for the Lounge edge functions.
+#
+# Per-function overrides only. The platform defaults
+# (verify_jwt = true for every function) are correct for everything
+# else; we list exceptions here so the CLI's deploy step picks them
+# up without needing a one-off `--no-verify-jwt` flag each time.
+#
+# send-appointment-confirmation
+#   The receiver of the widget-create / widget-reschedule /
+#   widget-cancel email-invoke chain. Function-to-function calls
+#   from those three widgets carry the project's service-role
+#   secret in a custom `X-Lng-Internal-Token` header (compared
+#   against the receiver's own SUPABASE_SERVICE_ROLE_KEY env var),
+#   and that's the actual auth boundary. The platform's
+#   `verify_jwt = true` was rejecting these calls with
+#   `UNAUTHORIZED_INVALID_JWT_FORMAT` because the platform-injected
+#   SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY env vars on
+#   this project are opaque `sb_publishable_* / sb_secret_*`
+#   tokens (post key-system migration), not JWTs — so no Bearer
+#   value the caller could compose would pass the format check.
+#   Turning verify_jwt off here means the function's own auth
+#   (custom internal-token header for widget callers, user JWT
+#   getUser() check for staff callers) is the sole gate. Same
+#   effective security, just no redundant platform-level filter
+#   that's now broken on the new key model.
+[functions.send-appointment-confirmation]
+verify_jwt = false
