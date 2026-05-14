@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Clock, Image as ImageIcon, Mail, Scale, Trash2, Upload, Video } from 'lucide-react';
+import {
+  Building2,
+  Clock,
+  CreditCard,
+  Image as ImageIcon,
+  Mail,
+  Scale,
+  TestTube2,
+  Trash2,
+  Upload,
+  Video,
+} from 'lucide-react';
 import { Button, Card, Checkbox, Input, Skeleton, Toast } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import {
@@ -89,6 +100,7 @@ export function AdminBrandingTab() {
           />
           <LegalCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
           <VirtualMeetingCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
+          <StripeModeCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
         </>
       )}
 
@@ -1072,6 +1084,187 @@ function VirtualMeetingCard({
       </FieldGroup>
       <SaveRow dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />
     </Section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stripe mode card — live vs test toggle (no key fields here; the
+// API keys themselves live in env vars / function secrets so they
+// stay out of the database. This card only flips which set is
+// active).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function StripeModeCard({
+  data,
+  onRefresh,
+  onToast,
+}: {
+  data: ClinicSettings;
+  onRefresh: () => void;
+  onToast: (t: Toast) => void;
+}) {
+  const isTest = data.stripeMode === 'test';
+  const [saving, setSaving] = useState(false);
+
+  const onToggle = async (nextTest: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await saveClinicSetting('stripeMode', nextTest ? 'test' : 'live');
+      onRefresh();
+      onToast({
+        tone: 'success',
+        title: nextTest ? 'Switched to Stripe test mode' : 'Switched to Stripe live mode',
+        description: nextTest
+          ? 'New bookings now use sandbox cards. No real money will move.'
+          : 'New bookings now charge live cards.',
+      });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not change Stripe mode',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section
+      icon={<CreditCard size={16} aria-hidden />}
+      title="Stripe payments mode"
+      description="Flip the booking widget between live charges and Stripe's sandbox. API keys live in env vars; this toggle just picks which set is active. Edge functions + the widget bundle read this on every new booking, so the change is live the moment you save."
+    >
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[3],
+            padding: theme.space[3],
+            borderRadius: theme.radius.card,
+            border: `1px solid ${isTest ? '#d97706' : theme.color.border}`,
+            background: isTest ? 'rgba(245, 158, 11, 0.08)' : theme.color.bg,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              background: isTest ? '#d97706' : theme.color.accent,
+              color: '#fff',
+              flexShrink: 0,
+            }}
+          >
+            {isTest ? <TestTube2 size={18} aria-hidden /> : <CreditCard size={18} aria-hidden />}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.md,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              {isTest ? 'Test mode (sandbox)' : 'Live mode'}
+            </p>
+            <p
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                lineHeight: theme.type.leading.snug,
+              }}
+            >
+              {isTest
+                ? 'Bookings use Stripe sandbox cards (4242 4242 4242 4242 etc). No real money moves. Switch back to Live before paying customers test the flow.'
+                : 'Bookings take real card payments. Real cards, real charges.'}
+            </p>
+          </div>
+          <Toggle checked={isTest} disabled={saving} onChange={onToggle} />
+        </div>
+        {isTest ? (
+          <p
+            style={{
+              margin: 0,
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              fontSize: theme.type.size.xs,
+              color: '#92400e',
+              background: 'rgba(245, 158, 11, 0.12)',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              borderRadius: theme.radius.input,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            ⚠ The live storefront is currently routing every new booking through Stripe's sandbox.
+            Real cards will fail. Remember to flip back to Live mode when you're done testing.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function Toggle({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        padding: 0,
+        width: 48,
+        height: 28,
+        borderRadius: 999,
+        background: checked ? '#d97706' : theme.color.border,
+        cursor: disabled ? 'wait' : 'pointer',
+        position: 'relative',
+        transition: 'background 0.15s ease',
+        flexShrink: 0,
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: 2,
+          left: checked ? 22 : 2,
+          width: 24,
+          height: 24,
+          borderRadius: '50%',
+          background: '#fff',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.18)',
+          transition: 'left 0.18s ease',
+        }}
+      />
+    </button>
   );
 }
 
