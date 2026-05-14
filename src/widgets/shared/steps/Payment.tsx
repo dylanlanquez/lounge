@@ -6,8 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AlertCircle, CalendarClock, Mail, MapPin } from 'lucide-react';
-import type { StripeError } from '@stripe/stripe-js';
+import { CalendarClock, Mail, MapPin } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import type { BookingStateApi } from '../state.ts';
