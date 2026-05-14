@@ -2,6 +2,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -115,6 +116,29 @@ export const PaymentStep = forwardRef<
 
   const deposit = api.state.service?.depositPence ?? 0;
 
+  // Read the storefront's actual body font and forward it to
+  // Stripe's iframe. Stripe inputs render inside cross-origin
+  // iframes, so neither `font-family: inherit` nor a
+  // system-ui fallback ever pick up the venneir.com brand font —
+  // the placeholder ("1234 1234 1234 1234" etc) rendered in a
+  // visibly different typeface to the rest of the form. Sampling
+  // getComputedStyle on document.body here gives us the actual
+  // string (e.g. "Inter, sans-serif") to feed straight into
+  // Stripe.appearance.variables.fontFamily.
+  const stripeFontFamily = useMemo(() => {
+    const fallback =
+      'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return fallback;
+    }
+    try {
+      const computed = window.getComputedStyle(document.body).fontFamily;
+      return computed && computed.trim().length > 0 ? computed : fallback;
+    } catch {
+      return fallback;
+    }
+  }, []);
+
   if (!stripePromise) {
     return (
       <Shell maxWidth={720}>
@@ -156,15 +180,13 @@ export const PaymentStep = forwardRef<
           appearance: {
             theme: 'flat',
             variables: {
-              // Stripe renders inputs inside cross-origin iframes,
-              // so font-family: inherit can't reach across — the
-              // placeholders fall back to the browser default (often
-              // a serif on macOS) and look out of place against the
-              // sans-serif storefront font. Pin to a system stack
-              // that lines up visually with what most modern
-              // storefronts use.
-              fontFamily:
-                'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+              // Stripe iframes are cross-origin sandboxed so neither
+              // `inherit` nor a system-ui fallback ever picks up the
+              // storefront's actual brand font. `stripeFontFamily`
+              // is sampled from document.body.fontFamily at mount,
+              // so the placeholders and value text now match the
+              // exact typeface the rest of the form is rendered in.
+              fontFamily: stripeFontFamily,
               fontSizeBase: '15px',
               fontLineHeight: '1.4',
               fontWeightNormal: '500',
