@@ -182,7 +182,7 @@ export function OptionTitle({ children }: { children: ReactNode }) {
   return (
     <h3
       style={{
-        margin: '0 0 6px',
+        margin: 0,
         fontSize: 19,
         fontWeight: 600,
         color: QUIZ.INK,
@@ -199,10 +199,10 @@ export function OptionDescription({ children }: { children: ReactNode }) {
   return (
     <p
       style={{
-        // 8px top margin matches `.meta-vt p { margin: 8px 0 0 }`
-        // (retainer-cart line 30). 14px / #555 also from the same
-        // rule — keeping these in lock-step with the template.
-        margin: '8px 0 0',
+        // 2px above (was 8 from the retainer-cart template) so the
+        // description reads as a direct continuation of the option
+        // title rather than a separate paragraph block.
+        margin: '2px 0 0',
         fontSize: 14,
         color: QUIZ.MUTED,
         lineHeight: 1.45,

@@ -525,13 +525,12 @@ export function StepTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2
       style={{
-        // Tight title/subtitle pair — title gets 30px breathing
-        // room above the body content and only 10px below so the
-        // step's intro paragraph sits as a natural continuation
-        // rather than a separate region. (Was 0 auto 35px which
-        // mirrored retainer-cart but read as too-far-apart in
-        // Dylan's tests.)
-        margin: '30px auto 10px',
+        // Tight title/subtitle pair. Title pulls up 7.5px from the
+        // earlier 30px top so the heading sits closer to the
+        // progress bar; bottom drops to 6px so the step's intro
+        // paragraph reads as a direct continuation rather than a
+        // separate region.
+        margin: '22px auto 6px',
         textAlign: 'center',
         fontSize: 28,
         lineHeight: 1.2,
