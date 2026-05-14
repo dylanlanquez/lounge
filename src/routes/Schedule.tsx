@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  CircleDashed,
   List,
   Mail,
   Monitor,
@@ -25,7 +24,7 @@ import {
   Button,
   Card,
   DatePicker,
-
+  DepositGlyph,
   EmptyState,
   Input,
   NewBookingSheet,
@@ -1951,28 +1950,29 @@ function DepositLine({
         fontWeight: labelWeight,
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 20,
-          height: 20,
-          borderRadius: 999,
-          // CircleDashed reads as "partial" rather than the solid Check
-          // (which implies "all done"). On a paid deposit the badge is
-          // a light-green outlined ring so the visual screams partial,
-          // not finished. Failed keeps the solid red X for the loud
-          // chase-the-patient signal.
-          background: isPaid ? 'transparent' : badgeColor,
-          color: isPaid ? badgeColor : theme.color.surface,
-          border: isPaid ? `1.5px solid ${badgeColor}` : 'none',
-          flexShrink: 0,
-        }}
-      >
-        {isPaid ? <CircleDashed size={13} strokeWidth={2.5} /> : <X size={13} strokeWidth={3} />}
-      </span>
+      {isPaid ? (
+        <span aria-hidden style={{ color: badgeColor, display: 'inline-flex', flexShrink: 0 }}>
+          <DepositGlyph size={16} />
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 20,
+            height: 20,
+            borderRadius: 999,
+            // Solid red X for the loud chase-the-patient signal.
+            background: badgeColor,
+            color: theme.color.surface,
+            flexShrink: 0,
+          }}
+        >
+          <X size={13} strokeWidth={3} />
+        </span>
+      )}
       <span>{text}</span>
     </div>
   );
