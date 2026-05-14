@@ -286,17 +286,20 @@ function ReferencePill({
   };
 
   return (
-    <div>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
       <span
         style={{
-          display: 'block',
-          fontSize: 11,
-          color: QUIZ.SUBTLE,
-          fontWeight: 600,
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-          textAlign: 'center',
-          marginBottom: 8,
+          fontSize: 13,
+          color: accent,
+          fontWeight: 500,
+          lineHeight: 1.3,
         }}
       >
         Booking reference
@@ -309,14 +312,13 @@ function ReferencePill({
         aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
         style={{
           appearance: 'none',
-          width: '100%',
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
-          gap: 12,
+          gap: 10,
           background: hovered ? hexWithAlpha(accent, 0.1) : hexWithAlpha(accent, 0.06),
           border: `1px solid ${hexWithAlpha(accent, hovered ? 0.28 : 0.14)}`,
           borderRadius: 10,
-          padding: '10px 14px',
+          padding: '8px 12px',
           cursor: 'pointer',
           textAlign: 'left',
           fontFamily: 'inherit',
@@ -326,15 +328,11 @@ function ReferencePill({
       >
         <span
           style={{
-            flex: 1,
-            minWidth: 0,
             fontSize: 14,
             color: accent,
             fontWeight: 600,
             fontVariantNumeric: 'tabular-nums',
             letterSpacing: '0.02em',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
         >
@@ -344,7 +342,7 @@ function ReferencePill({
           aria-hidden
           style={{
             width: 1,
-            height: 16,
+            height: 14,
             background: hexWithAlpha(accent, 0.18),
             flexShrink: 0,
           }}
@@ -358,8 +356,6 @@ function ReferencePill({
             fontWeight: 600,
             color: accent,
             flexShrink: 0,
-            minWidth: 72,
-            justifyContent: 'flex-end',
             transition: 'color 0.15s ease',
           }}
         >
@@ -746,11 +742,18 @@ function PhotoSlot({
           )}
         </span>
       </div>
+      {/* No `capture` attribute — that flag forces iOS Safari to
+          open the rear camera directly and skips the "Photo Library
+          / Take Photo / Choose Files" menu most patients expect.
+          With it gone, iOS shows the standard action sheet,
+          Android Chrome shows the system chooser, and desktop
+          gets the OS file picker. `accept` keeps the list to the
+          image types the server accepts so the picker filters
+          out PDFs / videos. */}
       <input
         ref={inputRef}
         type="file"
         accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-        capture="environment"
         disabled={isUploading}
         onChange={(e) => {
           const file = e.target.files?.[0];
