@@ -2235,3 +2235,232 @@ export function useReportsOverview(range: DateRange): OverviewResult {
 
   return { data, loading, error };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Online (Shopify) orders
+//
+// Backs Reports → Online orders. Mines every appointment in the date
+// range that came in via a venneir.com Shopify order so leadership can
+// (a) spot trends in which products are driving the online-redemption
+// queue and (b) cross-check staff claims of "they paid £X online"
+// against the actual Shopify totals. Repeat patients within the
+// window are surfaced as a separate slice because that's the abuse
+// pattern most likely to "fill up the diary".
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OnlineOrderApptRow {
+  id: string;
+  appointment_ref: string | null;
+  start_at: string;
+  status: string;
+  event_type_label: string | null;
+  service_type: string | null;
+  product_key: string | null;
+  arch: string | null;
+  shopify_order_id: string;
+  shopify_order_name: string;
+  shopify_order_total_pence: number | null;
+  shopify_order_currency: string | null;
+  patient_id: string;
+  patient:
+    | {
+        first_name: string | null;
+        last_name: string | null;
+        internal_ref: string | null;
+      }
+    | {
+        first_name: string | null;
+        last_name: string | null;
+        internal_ref: string | null;
+      }[]
+    | null;
+}
+
+export interface OnlineOrderTableRow {
+  appointment_id: string;
+  appointment_ref: string | null;
+  start_at: string;
+  status: string;
+  patient_id: string;
+  patient_name: string;
+  patient_internal_ref: string | null;
+  product_label: string;
+  shopify_order_id: string;
+  shopify_order_name: string;
+  credit_pence: number;
+}
+
+export interface OnlineOrderProductBucket {
+  key: string;
+  label: string;
+  count: number;
+  total_credit_pence: number;
+}
+
+export interface OnlineOrderRepeatRow {
+  patient_id: string;
+  patient_name: string;
+  patient_internal_ref: string | null;
+  order_count: number;
+  total_credit_pence: number;
+}
+
+export interface OnlineOrdersData {
+  total_orders: number;
+  total_credit_pence: number;
+  unique_patients: number;
+  repeat_patients: number;
+  by_product: OnlineOrderProductBucket[];
+  repeats: OnlineOrderRepeatRow[];
+  rows: OnlineOrderTableRow[];
+}
+
+interface OnlineOrdersResult {
+  data: OnlineOrdersData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+function onlineOrderProductLabel(r: OnlineOrderApptRow): { key: string; label: string } {
+  if (r.event_type_label) {
+    return { key: r.event_type_label, label: r.event_type_label };
+  }
+  const productPart = r.product_key ? properCase(r.product_key.replaceAll('_', ' ')) : null;
+  const archPart = r.arch ? `${properCase(r.arch)} ` : '';
+  const composed = productPart
+    ? `${archPart}${productPart}`
+    : r.service_type
+      ? properCase(r.service_type.replaceAll('_', ' '))
+      : 'Unknown product';
+  return { key: composed, label: composed };
+}
+
+export function aggregateOnlineOrders(rows: OnlineOrderApptRow[]): OnlineOrdersData {
+  const byProduct = new Map<string, OnlineOrderProductBucket>();
+  const byPatient = new Map<string, OnlineOrderRepeatRow>();
+  const table: OnlineOrderTableRow[] = [];
+  let totalCredit = 0;
+
+  for (const r of rows) {
+    const p = pickOne(r.patient);
+    const firstName = p?.first_name ?? '';
+    const lastName = p?.last_name ?? '';
+    const fullName = `${firstName} ${lastName}`.trim() || 'Unnamed patient';
+    const credit = r.shopify_order_total_pence ?? 0;
+    totalCredit += credit;
+
+    const { key: productKey, label: productLabel } = onlineOrderProductLabel(r);
+    const bucket = byProduct.get(productKey);
+    if (bucket) {
+      bucket.count += 1;
+      bucket.total_credit_pence += credit;
+    } else {
+      byProduct.set(productKey, {
+        key: productKey,
+        label: productLabel,
+        count: 1,
+        total_credit_pence: credit,
+      });
+    }
+
+    const patientRow = byPatient.get(r.patient_id);
+    if (patientRow) {
+      patientRow.order_count += 1;
+      patientRow.total_credit_pence += credit;
+    } else {
+      byPatient.set(r.patient_id, {
+        patient_id: r.patient_id,
+        patient_name: fullName,
+        patient_internal_ref: p?.internal_ref ?? null,
+        order_count: 1,
+        total_credit_pence: credit,
+      });
+    }
+
+    table.push({
+      appointment_id: r.id,
+      appointment_ref: r.appointment_ref,
+      start_at: r.start_at,
+      status: r.status,
+      patient_id: r.patient_id,
+      patient_name: fullName,
+      patient_internal_ref: p?.internal_ref ?? null,
+      product_label: productLabel,
+      shopify_order_id: r.shopify_order_id,
+      shopify_order_name: r.shopify_order_name,
+      credit_pence: credit,
+    });
+  }
+
+  // Newest first — leadership scans recent activity from the top.
+  table.sort((a, b) => (a.start_at < b.start_at ? 1 : -1));
+
+  const repeats = Array.from(byPatient.values())
+    .filter((p) => p.order_count > 1)
+    .sort((a, b) => b.order_count - a.order_count);
+
+  const byProductSorted = Array.from(byProduct.values()).sort(
+    (a, b) => b.count - a.count,
+  );
+
+  return {
+    total_orders: rows.length,
+    total_credit_pence: totalCredit,
+    unique_patients: byPatient.size,
+    repeat_patients: repeats.length,
+    by_product: byProductSorted,
+    repeats,
+    rows: table,
+  };
+}
+
+export function useReportsOnlineOrders(range: DateRange): OnlineOrdersResult {
+  const [data, setData] = useState<OnlineOrdersData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const { data: rows, error: err } = await supabase
+          .from('lng_appointments')
+          .select(
+            `id, appointment_ref, start_at, status, event_type_label, service_type, product_key, arch,
+             shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency,
+             patient_id,
+             patient:patients ( first_name, last_name, internal_ref )`,
+          )
+          .not('shopify_order_id', 'is', null)
+          .gte('start_at', fromIso)
+          .lte('start_at', toIso);
+        if (cancelled) return;
+        if (err) throw new Error(err.message);
+        const raw = (rows ?? []) as OnlineOrderApptRow[];
+        const out = aggregateOnlineOrders(raw);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load online orders';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'reports.online_orders',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
