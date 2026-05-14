@@ -175,6 +175,31 @@ export function ensureQuizKeyframes(): void {
     .vlounge-stagger > *:nth-child(4) { animation-delay: 0.20s; }
     .vlounge-stagger > *:nth-child(5) { animation-delay: 0.25s; }
     .vlounge-stagger > *:nth-child(6) { animation-delay: 0.30s; }
+
+    /* Thin neutral scrollbar — applied to any scrollable area in
+       the widget (step body, popup body, etc) via the
+       .vlounge-scroll class. The default OS scrollbar in macOS /
+       Windows Chrome is too dark + thick against the modal's
+       light surfaces. */
+    .vlounge-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+    }
+    .vlounge-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .vlounge-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .vlounge-scroll::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.12);
+      border-radius: 3px;
+      transition: background 0.15s ease;
+    }
+    .vlounge-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 0, 0, 0.22);
+    }
   `;
   document.head.appendChild(style);
 }

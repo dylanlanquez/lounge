@@ -180,7 +180,10 @@ export function OptionDescription({ children }: { children: ReactNode }) {
   return (
     <p
       style={{
-        margin: '0',
+        // 8px top margin matches `.meta-vt p { margin: 8px 0 0 }`
+        // (retainer-cart line 30). 14px / #555 also from the same
+        // rule — keeping these in lock-step with the template.
+        margin: '8px 0 0',
         fontSize: 14,
         color: QUIZ.MUTED,
         lineHeight: 1.45,

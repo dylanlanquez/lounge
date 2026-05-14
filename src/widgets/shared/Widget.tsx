@@ -389,6 +389,7 @@ function ChromeShell({
 
       <div
         key={api.stepKey}
+        className="vlounge-scroll"
         style={{
           flex: 1,
           minHeight: 0,
@@ -477,15 +478,17 @@ export function StepTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2
       style={{
-        margin: '0 auto 28px',
+        // 35px bottom margin matches the template `.step-title-vt`
+        // exactly (line 15 of retainer-cart.liquid).
+        margin: '0 auto 35px',
         textAlign: 'center',
         fontSize: 28,
         lineHeight: 1.2,
-        // 600 (semibold) instead of 700 (bold). 700 was reading too
-        // heavy on top of the storefront's inherited font — matches
-        // .info-popup-title-vt and the rest of the retainer-cart's
-        // mid-emphasis headings.
-        fontWeight: 600,
+        // .step-title-vt in the template declares no font-weight at
+        // all — the storefront's body inheritance carries through.
+        // 500 (medium) is a deliberately light register that reads
+        // as a section header rather than a marketing headline.
+        fontWeight: 500,
         color: QUIZ.INK,
         letterSpacing: '-0.01em',
         animation: `vlounge-fadeInDown 0.3s ${QUIZ.EASE_BOUNCE}`,

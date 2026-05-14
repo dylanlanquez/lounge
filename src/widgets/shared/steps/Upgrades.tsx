@@ -190,7 +190,10 @@ function UpgradeCard({
           <h3
             style={{
               margin: 0,
-              fontSize: 19,
+              // 16px / 600 / #333 mirrors `.addon-title-vt` (line 69
+              // of retainer-cart.liquid). The earlier 19px was the
+              // option-card spec — wrong rule for addons.
+              fontSize: 16,
               fontWeight: 600,
               color: QUIZ.INK,
               letterSpacing: '-0.005em',
@@ -654,6 +657,7 @@ function PopupShell({
           </button>
         </header>
         <div
+          className="vlounge-scroll"
           style={{
             flex: 1,
             minHeight: 0,
