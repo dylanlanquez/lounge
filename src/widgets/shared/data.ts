@@ -490,16 +490,27 @@ export function useResolvedCatalogueRow(input: ResolverInput): ResolverResult {
     let cancelled = false;
     setLoading(true);
     (async () => {
+      // Resolve the catalogue row that drives the customer-facing
+      // price. We filter on whichever axes the customer has pinned;
+      // we do NOT impose `IS NULL` on the unpinned axes. The earlier
+      // implementation tightened on `IS NULL` and missed services
+      // like Click-in veneers whose single catalogue row has a
+      // non-null product_key matching the service name. Result: no
+      // service-line price → no "On the day" pill.
+      //
+      // limit(1) keeps the result single-row even when the filter
+      // would otherwise return several (eg. same_day_appliance with
+      // no product pinned). Once axes are pinned at booking time
+      // this is always a single row in practice.
       let q = supabase
         .from('lwo_catalogue')
         .select('id, name, unit_price, both_arches_price, arch_match')
         .eq('service_type', input.serviceType)
         .eq('active', true);
       if (input.productKey) q = q.eq('product_key', input.productKey);
-      else q = q.is('product_key', null);
       if (input.repairVariant) q = q.eq('repair_variant', input.repairVariant);
-      else q = q.is('repair_variant', null);
-      const { data: row, error: err } = await q.maybeSingle();
+      const { data: rows, error: err } = await q.limit(1);
+      const row = rows && rows.length > 0 ? rows[0] : null;
       if (cancelled) return;
       if (err) {
         setError(err.message);
