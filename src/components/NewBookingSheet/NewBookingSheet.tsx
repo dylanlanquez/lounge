@@ -485,7 +485,19 @@ export function NewBookingSheet({
           productKey: axisValues.product_key,
           arch: axisValues.arch,
         });
-        if (!cancelled) setAvailableSlots(slots);
+        if (cancelled) return;
+        setAvailableSlots(slots);
+        // Auto-snap the pre-filled time to the first available slot
+        // when the current one isn't in the allow-list. Operator
+        // taps an empty grid cell at, say, 08:00; the service runs
+        // 09:00–18:00; without this, the form sits on 08:00 with an
+        // "outside working hours" banner. Skip when slots are empty
+        // (closed day / fully booked) — there's nothing to snap to
+        // and the empty-state copy explains why.
+        const first = slots[0];
+        if (first && !slots.includes(time)) {
+          setTime(first);
+        }
       } catch {
         // Soft fall back to the full grid on a fetch error rather
         // than locking the receptionist out — the live conflict
@@ -752,35 +764,53 @@ export function NewBookingSheet({
             ) : null}
           </Section>
 
-          {effectiveAxes.map((axis) => {
-            const options = axisOptions[axis.key] ?? [];
-            const value = axisValues[axis.key] ?? '';
-            return (
-              <Section
-                key={axis.key}
-                title={axis.label}
-                required
-                info={infoForAxis(axis.key)}
-              >
-                <DropdownSelect<string>
-                  ariaLabel={axis.label}
-                  value={value}
-                  onChange={(v) => {
-                    setAxisValues((prev) => ({
-                      ...prev,
-                      [axis.key]: axis.key === 'arch' ? (v as ArchValue) : v,
-                    }));
+          {pairAxesForLayout(effectiveAxes).map((row) => {
+            const renderAxis = (axis: AxisDef) => {
+              const options = axisOptions[axis.key] ?? [];
+              const value = axisValues[axis.key] ?? '';
+              return (
+                <Section
+                  key={axis.key}
+                  title={axis.label}
+                  required
+                  info={infoForAxis(axis.key)}
+                >
+                  <DropdownSelect<string>
+                    ariaLabel={axis.label}
+                    value={value}
+                    onChange={(v) => {
+                      setAxisValues((prev) => ({
+                        ...prev,
+                        [axis.key]: axis.key === 'arch' ? (v as ArchValue) : v,
+                      }));
+                    }}
+                    options={options.map((o) => ({ value: o.key, label: o.label }))}
+                    placeholder={
+                      axisOptionsLoading && options.length === 0
+                        ? 'Loading…'
+                        : placeholderForAxis(axis.key)
+                    }
+                    disabled={axisOptionsLoading && options.length === 0}
+                  />
+                </Section>
+              );
+            };
+            if (row.length === 2) {
+              return (
+                <div
+                  key={`${row[0]!.key}+${row[1]!.key}`}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: theme.space[5],
                   }}
-                  options={options.map((o) => ({ value: o.key, label: o.label }))}
-                  placeholder={
-                    axisOptionsLoading && options.length === 0
-                      ? 'Loading…'
-                      : placeholderForAxis(axis.key)
-                  }
-                  disabled={axisOptionsLoading && options.length === 0}
-                />
-              </Section>
-            );
+                >
+                  {renderAxis(row[0]!)}
+                  {renderAxis(row[1]!)}
+                </div>
+              );
+            }
+            return renderAxis(row[0]!);
           })}
 
           {isVirtualService ? (
@@ -1486,6 +1516,25 @@ function placeholderForAxis(key: AxisKey): string {
   if (key === 'repair_variant') return 'Choose a repair type';
   if (key === 'product_key') return 'Choose a product';
   return 'Choose an arch';
+}
+
+// Group product_key + arch into a single 2-up row when both are
+// active (same-day appliance + virtual impression today; in-person
+// impression will join once its product axis is added). Every other
+// axis renders on its own row.
+function pairAxesForLayout(axes: readonly AxisDef[]): AxisDef[][] {
+  const rows: AxisDef[][] = [];
+  for (let i = 0; i < axes.length; i++) {
+    const a = axes[i]!;
+    const b = axes[i + 1];
+    if (a.key === 'product_key' && b && b.key === 'arch') {
+      rows.push([a, b]);
+      i++;
+      continue;
+    }
+    rows.push([a]);
+  }
+  return rows;
 }
 
 function clampHour(hhmm: string, endRoundUp = false): number {

@@ -199,7 +199,16 @@ export function RescheduleSheet({
           date,
           excludeAppointmentId: appointment.id,
         });
-        if (!cancelled) setAvailableSlots(slots);
+        if (cancelled) return;
+        setAvailableSlots(slots);
+        // If the operator moves the date to one where the current
+        // time is no longer free (or out of hours), snap to the
+        // first available slot rather than leaving the form on a
+        // banner-warning state.
+        const first = slots[0];
+        if (first && !slots.includes(time)) {
+          setTime(first);
+        }
       } catch {
         if (!cancelled) setAvailableSlots(null);
       } finally {
