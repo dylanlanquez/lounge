@@ -100,6 +100,13 @@ function RadioIndicator({
   selected: boolean;
   accent: string;
 }) {
+  // The previous version drew the inner dot with a `radial-gradient
+  // (accent 55%, transparent 56%)` and scaled the whole ring by 1.1
+  // when selected. Both produced visibly fuzzy edges: the radial
+  // gradient anti-aliases the 55→56% boundary, and a 1.1× transform
+  // on a 20px element renders at 22px which never lands cleanly on
+  // a device-pixel grid. Replaced with a nested solid-fill <span>
+  // and a no-transform swap so every edge is sharp.
   return (
     <span
       aria-hidden
@@ -109,15 +116,27 @@ function RadioIndicator({
         right: 16,
         width: 20,
         height: 20,
+        boxSizing: 'border-box',
         borderRadius: '50%',
         border: `2px solid ${selected ? accent : QUIZ.SUBTLE_2}`,
-        background: selected
-          ? `radial-gradient(${accent} 55%, transparent 56%)`
-          : QUIZ.SURFACE,
-        transform: selected ? 'scale(1.1)' : 'scale(1)',
-        transition: `all 0.2s ${QUIZ.EASE_CARD}`,
+        background: QUIZ.SURFACE,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: `border-color 0.2s ${QUIZ.EASE_CARD}`,
       }}
-    />
+    >
+      <span
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          background: accent,
+          transform: selected ? 'scale(1)' : 'scale(0)',
+          transition: `transform 0.18s ${QUIZ.EASE_CARD}`,
+        }}
+      />
+    </span>
   );
 }
 
