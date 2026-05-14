@@ -87,18 +87,27 @@ export function SlotPicker({
   showFirstAvailableBanner = true,
   excludeAppointmentId = null,
 }: SlotPickerProps) {
-  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+  // selectedDate is nullable on purpose. Earlier revisions seeded it
+  // synchronously from a stub generator and then "auto-jumped" to
+  // the live first-available date once the RPC resolved — the
+  // patient saw the dot leap from today to tomorrow (and sometimes
+  // back, when intermediate state updates interleaved). The picker
+  // now refuses to commit to a starting date until the server has
+  // told us where the first real opening is; while waiting, the
+  // body renders a single calm loading card with no calendar dot
+  // to bounce around. One paint, one final position.
+  const [selectedDate, setSelectedDate] = useState<Date | null>(() => {
     if (selectedIso) return startOfDay(new Date(selectedIso));
-    const next = firstAvailable(durationMinutes);
-    return next?.date ?? startOfDay(new Date());
+    return null;
   });
-  const [monthCursor, setMonthCursor] = useState<Date>(() => startOfMonth(selectedDate));
-  // Tracks whether the patient has manually picked a date (calendar
-  // cell click or "Our first opening" banner). While false, the
-  // selected date is still the stub-based initial guess and we're
-  // allowed to override it with live data as soon as the server
-  // responds. Once true, the patient's choice sticks even if the
-  // live first-available query later returns a different day.
+  const [monthCursor, setMonthCursor] = useState<Date>(() => {
+    if (selectedIso) return startOfMonth(new Date(selectedIso));
+    return startOfMonth(new Date());
+  });
+  // Once the patient manually picks a date (calendar cell click or
+  // "Our first opening" banner tap) their choice is authoritative
+  // even if the live first-available query later resolves to a
+  // different day. The init-pin effect below checks this ref.
   const userPickedRef = useRef(false);
 
   // Clinic opening hours from lng_settings — single source of truth
@@ -120,28 +129,34 @@ export function SlotPicker({
   });
   const earliest = liveFirstAvailable.data ?? stubEarliest;
 
-  // Auto-jump: when the live first-available RPC resolves, switch
-  // selectedDate to that day IF the patient hasn't manually picked
-  // something else and IF it differs from where we are. The stub
-  // firstAvailable() that seeds the initial selectedDate only knows
-  // clinic opening hours — it can't tell that a given day is fully
-  // booked, so the initial pick can land on a day with zero slots
-  // and the patient sees "Nothing free on this day. Pick another
-  // date." instead of being walked to the next real opening. The
-  // live RPC has the conflict data; this effect closes that gap.
-  // Disabled when the parent passed a `selectedIso` (reschedule
-  // flow), where the previously-booked slot is the authoritative
-  // starting point.
+  // Init-pin: the FIRST time the live first-available RPC settles,
+  // commit selectedDate to whatever the server says. Only runs while
+  // selectedDate is still null (unset) and the patient hasn't picked
+  // — both conditions prevent a second jump.
+  //
+  // We additionally guard against the (rare) case where the RPC
+  // returns a slot whose timestamp is already in the past — a stale
+  // result from a race between the patient opening the page and the
+  // server's window rolling forward. In that case we still want to
+  // commit *something* so the loading state doesn't hang; today is
+  // the sensible fallback and the slot list's empty-state copy
+  // explains the situation.
   useEffect(() => {
     if (userPickedRef.current) return;
-    if (selectedIso) return;
+    if (selectedDate !== null) return;
+    if (liveFirstAvailable.loading) return;
     const live = liveFirstAvailable.data;
-    if (!live) return;
-    if (sameDay(live.date, selectedDate)) return;
-    setSelectedDate(startOfDay(live.date));
-    setMonthCursor(startOfMonth(live.date));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveFirstAvailable.data]);
+    const liveIsFuture =
+      !!live && new Date(live.slot.iso).getTime() > Date.now();
+    if (liveIsFuture) {
+      setSelectedDate(startOfDay(live!.date));
+      setMonthCursor(startOfMonth(live!.date));
+      return;
+    }
+    const today = startOfDay(new Date());
+    setSelectedDate(today);
+    setMonthCursor(startOfMonth(today));
+  }, [liveFirstAvailable.loading, liveFirstAvailable.data, selectedDate]);
 
   const availability = useWidgetAvailableSlots({
     locationId,
@@ -240,40 +255,80 @@ export function SlotPicker({
         </button>
       ) : null}
 
-      <CalendarGrid
-        monthCursor={monthCursor}
-        selectedDate={selectedDate}
-        openingHours={openingHours}
-        durationMinutes={durationMinutes}
-        onSelectDate={(d) => {
-          userPickedRef.current = true;
-          setSelectedDate(d);
-          // If the patient had already locked in a time on a
-          // different day, clear it so they're forced to pick one
-          // on the new day. Without this, state.slotIso silently
-          // stays on the previous date's slot and Continue
-          // advances with a stale ISO that doesn't match the
-          // calendar choice on screen. (No-op when there's no
-          // selection, or when they re-tap the same day.)
-          if (selectedIso && !sameDay(new Date(selectedIso), d)) {
-            onPick(null);
-          }
-        }}
-        onShiftMonth={(delta) => {
-          const next = new Date(monthCursor);
-          next.setMonth(next.getMonth() + delta);
-          setMonthCursor(next);
-        }}
-      />
+      {selectedDate ? (
+        <>
+          <CalendarGrid
+            monthCursor={monthCursor}
+            selectedDate={selectedDate}
+            openingHours={openingHours}
+            durationMinutes={durationMinutes}
+            onSelectDate={(d) => {
+              userPickedRef.current = true;
+              setSelectedDate(d);
+              // If the patient had already locked in a time on a
+              // different day, clear it so they're forced to pick
+              // one on the new day. Without this, state.slotIso
+              // silently stays on the previous date's slot and
+              // Continue advances with a stale ISO that doesn't
+              // match the calendar choice on screen. (No-op when
+              // there's no selection, or when they re-tap the same
+              // day.)
+              if (selectedIso && !sameDay(new Date(selectedIso), d)) {
+                onPick(null);
+              }
+            }}
+            onShiftMonth={(delta) => {
+              const next = new Date(monthCursor);
+              next.setMonth(next.getMonth() + delta);
+              setMonthCursor(next);
+            }}
+          />
 
-      <SlotList
-        slots={slots}
-        loading={availability.loading}
-        error={availability.error}
-        selectedIso={selectedIso}
-        onPick={onPick}
-        allTodaysSlotsPassed={allTodaysSlotsPassed}
-      />
+          <SlotList
+            slots={slots}
+            loading={availability.loading}
+            error={availability.error}
+            selectedIso={selectedIso}
+            onPick={onPick}
+            allTodaysSlotsPassed={allTodaysSlotsPassed}
+          />
+        </>
+      ) : (
+        // Loading state — shown until liveFirstAvailable resolves
+        // and the init-pin effect commits selectedDate. By gating
+        // the calendar entirely here we guarantee the first paint
+        // with a date selected IS the correct one; the dot never
+        // shifts on screen because there was no dot to shift from.
+        <SlotPickerLoading />
+      )}
+    </div>
+  );
+}
+
+function SlotPickerLoading() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        background: SURFACE,
+        border: `1px solid ${BORDER}`,
+        borderRadius: 12,
+        padding: 32,
+        textAlign: 'center',
+        color: MUTED,
+        fontSize: 14,
+        boxShadow: SHADOW_CARD,
+        // Minimum height so the layout doesn't pop when the real
+        // calendar lands — the Time step's footer position should
+        // not shift between the loading state and the loaded one.
+        minHeight: 320,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      Finding our next opening…
     </div>
   );
 }
