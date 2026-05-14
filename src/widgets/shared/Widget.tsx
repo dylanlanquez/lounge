@@ -521,7 +521,13 @@ function ProgressBar({ value, total }: { value: number; total: number }) {
 // Step title — centred 28px header at the top of each step
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function StepTitle({ children }: { children: React.ReactNode }) {
+export function StepTitle({
+  children,
+  align = 'center',
+}: {
+  children: React.ReactNode;
+  align?: 'center' | 'left';
+}) {
   return (
     <h2
       style={{
@@ -530,8 +536,13 @@ export function StepTitle({ children }: { children: React.ReactNode }) {
         // progress bar; bottom drops to 6px so the step's intro
         // paragraph reads as a direct continuation rather than a
         // separate region.
+        // `align='left'` keeps the same 720px centred column the
+        // form below uses but flushes the text to the left so the
+        // h2 sits over the first input — used on Details + Payment
+        // where the body is form/card-like rather than option-grid.
         margin: '22px auto 6px',
-        textAlign: 'center',
+        maxWidth: 720,
+        textAlign: align,
         fontSize: 28,
         lineHeight: 1.2,
         // .step-title-vt in the template declares no font-weight at
@@ -542,7 +553,6 @@ export function StepTitle({ children }: { children: React.ReactNode }) {
         color: QUIZ.INK,
         letterSpacing: '-0.01em',
         animation: `vlounge-fadeInDown 0.3s ${QUIZ.EASE_BOUNCE}`,
-        maxWidth: 720,
       }}
     >
       {children}
@@ -579,9 +589,14 @@ function StepBody({
   onPaymentReadyChange: (ready: boolean) => void;
   onPaymentPayingChange: (paying: boolean) => void;
 }) {
+  // Details + Payment use a left-aligned title because their body
+  // is a single-column form/card rather than an option grid —
+  // left-flush reads better above an input than centred does.
+  const titleAlign: 'center' | 'left' =
+    api.stepKey === 'details' || api.stepKey === 'payment' ? 'left' : 'center';
   return (
     <>
-      <StepTitle>{stepTitle(api.stepKey, copy)}</StepTitle>
+      <StepTitle align={titleAlign}>{stepTitle(api.stepKey, copy)}</StepTitle>
       {submissionError ? (
         <ErrorBanner message={submissionError} onDismiss={onDismissError} />
       ) : null}
