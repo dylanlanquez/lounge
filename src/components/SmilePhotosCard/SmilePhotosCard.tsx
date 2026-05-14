@@ -273,24 +273,46 @@ function PhotoTile({
       cancelled = true;
     };
   }, [row]);
+
+  // Tile chrome matches PhotoGallery.tsx's UploadTile precisely:
+  // square aspect, theme.radius.card corners, 1.5px dashed border in
+  // theme.color.border, theme.color.surface fill. The empty state
+  // mirrors the Add-before / Add-after layout: a 44x44 pill-radius
+  // icon well on theme.color.bg with a 20px Camera glyph, then a
+  // semibold sm label under it. Only difference, since this card is
+  // read-only (uploads happen on the customer success screen), is
+  // the inside label says "Not uploaded" instead of "Add …".
+  //
+  // Slot identification (Front smile / Left side / Right side)
+  // stays as a caption below the tile — Before & After cards don't
+  // need this because the bold inside-label IS the affordance text;
+  // here the inside text is a state ("Not uploaded"), so the
+  // outside caption answers "which view is this".
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <a
         href={signedUrl ?? undefined}
         target="_blank"
         rel="noopener noreferrer"
+        aria-label={signedUrl ? `Open ${label} photo` : `${label} — not uploaded`}
         style={{
           position: 'relative',
           aspectRatio: '1 / 1',
-          borderRadius: 10,
-          background: theme.color.bg,
-          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.card,
+          background: theme.color.surface,
+          border: signedUrl
+            ? `1px solid ${theme.color.border}`
+            : `1.5px dashed ${theme.color.border}`,
           overflow: 'hidden',
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
+          gap: theme.space[2],
+          color: theme.color.inkMuted,
           cursor: signedUrl ? 'zoom-in' : 'default',
           textDecoration: 'none',
+          boxSizing: 'border-box',
         }}
       >
         {signedUrl ? (
@@ -306,16 +328,30 @@ function PhotoTile({
             }}
           />
         ) : (
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkSubtle,
-              textAlign: 'center',
-              padding: 8,
-            }}
-          >
-            {loading ? 'Loading…' : 'Not uploaded'}
-          </span>
+          <>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 44,
+                height: 44,
+                borderRadius: theme.radius.pill,
+                background: theme.color.bg,
+              }}
+            >
+              <Camera size={20} aria-hidden />
+            </span>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                textAlign: 'center',
+              }}
+            >
+              {loading ? 'Loading…' : 'Not uploaded'}
+            </span>
+          </>
         )}
       </a>
       <span
