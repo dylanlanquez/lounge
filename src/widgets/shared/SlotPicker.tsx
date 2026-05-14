@@ -3,6 +3,8 @@ import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   firstAvailable,
   generateSlots,
+  toIsoDate,
+  useWidgetAvailableDates,
   useWidgetAvailableSlots,
   useWidgetFirstAvailable,
   type WidgetSlot,
@@ -128,6 +130,33 @@ export function SlotPicker({
     arch,
   });
   const earliest = liveFirstAvailable.data ?? stubEarliest;
+
+  // Per-day availability window for the visible 42-cell grid.
+  // Calls lng_widget_available_dates which loops the slot scanner
+  // server-side and returns the subset of dates in [from, to] that
+  // have at least one bookable slot. The calendar uses this to
+  // disable cells whose date has no slots, so the patient can't tap
+  // a day and then see the "Nothing free on this day" empty state.
+  const visibleWindow = useMemo(() => {
+    const first = startOfMonth(monthCursor);
+    const lead = (first.getDay() + 6) % 7;
+    const fromDate = new Date(first);
+    fromDate.setDate(first.getDate() - lead);
+    fromDate.setHours(0, 0, 0, 0);
+    const toDate = new Date(fromDate);
+    toDate.setDate(fromDate.getDate() + 41);
+    toDate.setHours(0, 0, 0, 0);
+    return { fromDate, toDate };
+  }, [monthCursor]);
+  const availableDates = useWidgetAvailableDates({
+    locationId,
+    serviceType,
+    repairVariant,
+    productKey,
+    arch,
+    fromDate: visibleWindow.fromDate,
+    toDate: visibleWindow.toDate,
+  });
 
   // Init-pin: the FIRST time the live first-available RPC settles,
   // commit selectedDate. Only runs while selectedDate is still null
@@ -272,6 +301,8 @@ export function SlotPicker({
             selectedDate={selectedDate}
             openingHours={openingHours}
             durationMinutes={durationMinutes}
+            availableDates={availableDates.dates}
+            availableDatesLoading={availableDates.loading}
             onSelectDate={(d) => {
               userPickedRef.current = true;
               setSelectedDate(d);
@@ -352,6 +383,8 @@ function CalendarGrid({
   selectedDate,
   openingHours,
   durationMinutes,
+  availableDates,
+  availableDatesLoading,
   onSelectDate,
   onShiftMonth,
 }: {
@@ -359,6 +392,17 @@ function CalendarGrid({
   selectedDate: Date;
   openingHours: OpeningHoursWeek;
   durationMinutes: number;
+  /** Server-resolved set of YYYY-MM-DD strings that have at least
+   *  one bookable slot. Cells whose date isn't in the set get the
+   *  disabled treatment. While loading the set is empty — see
+   *  `availableDatesLoading` for that case. */
+  availableDates: ReadonlySet<string>;
+  /** True while the per-day availability scan is still in flight.
+   *  During this window the grid stays optimistic — cells default
+   *  to enabled rather than disabled — so the patient never sees
+   *  a "everything looks closed" flash before the data lands. Once
+   *  loading flips false the set is authoritative. */
+  availableDatesLoading: boolean;
   onSelectDate: (d: Date) => void;
   onShiftMonth: (delta: -1 | 1) => void;
 }) {
@@ -399,6 +443,8 @@ function CalendarGrid({
         selectedDate={selectedDate}
         openingHours={openingHours}
         durationMinutes={durationMinutes}
+        availableDates={availableDates}
+        availableDatesLoading={availableDatesLoading}
         onSelectDate={onSelectDate}
       />
     </div>
@@ -410,12 +456,16 @@ function Month({
   selectedDate,
   openingHours,
   durationMinutes,
+  availableDates,
+  availableDatesLoading,
   onSelectDate,
 }: {
   monthDate: Date;
   selectedDate: Date;
   openingHours: OpeningHoursWeek;
   durationMinutes: number;
+  availableDates: ReadonlySet<string>;
+  availableDatesLoading: boolean;
   onSelectDate: (d: Date) => void;
 }) {
   const cells = useMemo(() => buildMonthCells(monthDate), [monthDate]);
@@ -470,7 +520,26 @@ function Month({
           // can no longer fit a slot of this duration before
           // clinic close.
           const todayExhausted = isToday && !todayHasOpening;
-          const disabled = isPast || todayExhausted || closed || !inMonth;
+          // Per-day live availability: once the scan has resolved,
+          // cells whose date isn't in the returned set have no
+          // bookable slot (fully booked, pool exhausted, or the
+          // catalogue row doesn't apply). Disable them so the
+          // patient can't tap a day and then see the empty state.
+          // While the scan is still loading we treat every
+          // otherwise-valid day as enabled — the optimistic state
+          // is fine because the init-pin already anchors the
+          // selectedDate to the first genuinely-bookable day, so
+          // the *initial* click target is correct even before the
+          // grid-wide disable refines.
+          const hasNoLiveSlots =
+            !availableDatesLoading &&
+            inMonth &&
+            !isPast &&
+            !todayExhausted &&
+            !closed &&
+            !availableDates.has(toIsoDate(c.date));
+          const disabled =
+            isPast || todayExhausted || closed || !inMonth || hasNoLiveSlots;
           const selected = sameDay(c.date, selectedDate);
           return (
             <button

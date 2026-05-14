@@ -460,7 +460,7 @@ export function useWidgetAvailableSlots(input: AvailableSlotsInput): AvailableSl
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function toIsoDate(d: Date): string {
+export function toIsoDate(d: Date): string {
   // Local-date YYYY-MM-DD — matches what the RPC's `date` parameter
   // expects when treated as Europe/London civil time.
   const year = d.getFullYear();
@@ -468,6 +468,112 @@ function toIsoDate(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live "which dates have any availability" scan
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Powers the calendar grid's per-day enabled state. Calls
+// public.lng_widget_available_dates which loops the same slot
+// scanner used by the slot list (so the same past-time filter,
+// conflict check, lunch-break skip, and post-block extent rules
+// apply). The result is a set of YYYY-MM-DD strings — the
+// calendar treats anything NOT in the set as "no slots, can't
+// click".
+
+interface AvailableDatesInput {
+  locationId: string | null;
+  serviceType: string | null;
+  repairVariant: string | null;
+  productKey: string | null;
+  arch: 'upper' | 'lower' | 'both' | null;
+  /** Inclusive window start (local YYYY-MM-DD). The RPC caps the
+   *  range at 60 days; pass the visible calendar's first cell. */
+  fromDate: Date | null;
+  /** Inclusive window end. Pass the visible calendar's last cell. */
+  toDate: Date | null;
+}
+
+interface AvailableDatesResult {
+  /** Set of YYYY-MM-DD strings the calendar can enable as
+   *  clickable. Empty Set while loading or when nothing in the
+   *  window is bookable. */
+  dates: ReadonlySet<string>;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useWidgetAvailableDates(
+  input: AvailableDatesInput,
+): AvailableDatesResult {
+  const [dates, setDates] = useState<ReadonlySet<string>>(EMPTY_DATE_SET);
+  // Same initial-loading-true rationale as useWidgetFirstAvailable
+  // (see comment there). Consumers distinguish "we haven't asked
+  // yet" from "we asked and got nothing back" by the loading flag.
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const fromKey = input.fromDate ? toIsoDate(input.fromDate) : null;
+  const toKey = input.toDate ? toIsoDate(input.toDate) : null;
+
+  useEffect(() => {
+    if (!input.serviceType || !fromKey || !toKey) {
+      setDates(EMPTY_DATE_SET);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const realLocationId = UUID_RE.test(input.locationId ?? '')
+        ? input.locationId
+        : null;
+      const { data: rows, error: err } = await supabase.rpc(
+        'lng_widget_available_dates',
+        {
+          p_location_id: realLocationId,
+          p_service_type: input.serviceType,
+          p_repair_variant: input.repairVariant,
+          p_product_key: input.productKey,
+          p_arch: input.arch,
+          p_from: fromKey,
+          p_to: toKey,
+        },
+      );
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      const set = new Set<string>();
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          const d = (r as { date?: string }).date;
+          if (typeof d === 'string') set.add(d);
+        }
+      }
+      setDates(set);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    input.locationId,
+    input.serviceType,
+    input.repairVariant,
+    input.productKey,
+    input.arch,
+    fromKey,
+    toKey,
+  ]);
+
+  return { dates, loading, error };
+}
+
+const EMPTY_DATE_SET: ReadonlySet<string> = new Set();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Live catalogue resolver
