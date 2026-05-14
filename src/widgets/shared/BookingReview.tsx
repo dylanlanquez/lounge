@@ -3,28 +3,24 @@ import {
   axesForService,
   axisValueLabel,
   type AxisKey,
-} from '../../../lib/queries/bookingTypeAxes.ts';
-import type { BookingServiceType } from '../../../lib/queries/bookingTypes.ts';
-import type { BookingStateApi, WidgetState } from '../state.ts';
-import { formatPrice } from '../state.ts';
-import type { WidgetCopy } from '../copy.ts';
-import { QUIZ } from '../quizTokens.ts';
+} from '../../lib/queries/bookingTypeAxes.ts';
+import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
+import type { BookingStateApi, WidgetState } from './state.ts';
+import { formatPrice } from './state.ts';
+import type { WidgetCopy } from './copy.ts';
+import { QUIZ } from './quizTokens.ts';
 
-// Summary step — final review before commit. Mirrors step 6 of the
-// venneir.com retainer-cart quiz: a 2-column grid (single-column on
-// narrow widths) with appointment-details on the left and price +
-// payment-options + trust signals on the right.
+// Booking review — the summary card block. Previously lived as its
+// own step (SummaryStep) but the customer was wading through one
+// click too many. Now embedded inside DetailsStep beneath the form
+// so the customer fills + reviews + commits on one screen.
 //
-// Terms checkbox does NOT live here — it's owned by the sticky
-// footer (Widget.tsx Footer component) so it sits next to the Next
-// button the way the storefront does it.
-//
-// Klarna / Clearpay placeholders show when the priced amount is at
-// least £30 (BNPL providers typically don't accept smaller orders).
-// They render as visual options only — the actual BNPL flow lands
-// on Stripe's Payment step where the methods are configured.
+// 2-column grid at 900px+ wraps to single column below. Left card:
+// appointment-details (location, service, axes chain, time,
+// selected upgrades). Right card: price breakdown + payment
+// options + trust signals.
 
-export function SummaryStep({
+export function BookingReview({
   api,
   copy,
   accent = QUIZ.ACCENT,

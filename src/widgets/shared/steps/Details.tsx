@@ -9,6 +9,8 @@ import {
 } from '../validation.ts';
 import { CountryPicker } from '../CountryPicker.tsx';
 import { QUIZ } from '../quizTokens.ts';
+import { BookingReview } from '../BookingReview.tsx';
+import type { WidgetCopy } from '../copy.ts';
 
 // Details step — first name, last name, email, phone, notes,
 // Remember me checkbox. Terms checkbox has moved to the footer on
@@ -34,7 +36,15 @@ const ALL_UNTOUCHED: TouchedMap = {
   phoneNumber: false,
 };
 
-export function DetailsStep({ api }: { api: BookingStateApi }) {
+export function DetailsStep({
+  api,
+  copy,
+  accent = QUIZ.ACCENT,
+}: {
+  api: BookingStateApi;
+  copy: WidgetCopy;
+  accent?: string;
+}) {
   const d = api.state.details;
   const [touched, setTouched] = useState<TouchedMap>(ALL_UNTOUCHED);
 
@@ -71,86 +81,102 @@ export function DetailsStep({ api }: { api: BookingStateApi }) {
   return (
     <div
       style={{
-        // No outer card — individual fields carry their own border,
-        // and the section title above this already frames the form.
-        // Wrapping the whole thing in another bordered card was
-        // double-chrome on the modal's #f4f4f4 surface.
         display: 'flex',
         flexDirection: 'column',
-        gap: 16,
-        maxWidth: 560,
+        gap: 36,
+        maxWidth: 1100,
         margin: '0 auto',
         width: '100%',
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >
-      <Row>
-        <Field
-          label="First name"
-          required
-          value={d.firstName}
-          onChange={(v) => update('firstName', v)}
-          onBlur={() => markTouched('firstName')}
-          autoComplete="given-name"
-          error={errors.firstName}
-        />
-        <Field
-          label="Last name"
-          required
-          value={d.lastName}
-          onChange={(v) => update('lastName', v)}
-          onBlur={() => markTouched('lastName')}
-          autoComplete="family-name"
-          error={errors.lastName}
-        />
-      </Row>
+      {/* Form block — narrower, individually-bordered fields on the
+          modal's #f4f4f4 surface (no outer card; the section title
+          above the form is enough chrome). */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          maxWidth: 560,
+          margin: '0 auto',
+          width: '100%',
+        }}
+      >
+        <Row>
+          <Field
+            label="First name"
+            required
+            value={d.firstName}
+            onChange={(v) => update('firstName', v)}
+            onBlur={() => markTouched('firstName')}
+            autoComplete="given-name"
+            error={errors.firstName}
+          />
+          <Field
+            label="Last name"
+            required
+            value={d.lastName}
+            onChange={(v) => update('lastName', v)}
+            onBlur={() => markTouched('lastName')}
+            autoComplete="family-name"
+            error={errors.lastName}
+          />
+        </Row>
 
-      <Row>
-        <Field
-          label="Email"
-          required
-          type="email"
-          value={d.email}
-          onChange={(v) => update('email', v)}
-          onBlur={() => markTouched('email')}
-          autoComplete="email"
-          placeholder="you@example.com"
-          error={errors.email}
-        />
-        <PhoneField
-          countryCode={d.phoneCountry}
-          number={d.phoneNumber}
-          onCountryChange={(c) => update('phoneCountry', c)}
-          onNumberChange={(v) => update('phoneNumber', v)}
-          onBlur={() => markTouched('phoneNumber')}
-          error={errors.phoneNumber}
-        />
-      </Row>
+        <Row>
+          <Field
+            label="Email"
+            required
+            type="email"
+            value={d.email}
+            onChange={(v) => update('email', v)}
+            onBlur={() => markTouched('email')}
+            autoComplete="email"
+            placeholder="you@example.com"
+            error={errors.email}
+          />
+          <PhoneField
+            countryCode={d.phoneCountry}
+            number={d.phoneNumber}
+            onCountryChange={(c) => update('phoneCountry', c)}
+            onNumberChange={(v) => update('phoneNumber', v)}
+            onBlur={() => markTouched('phoneNumber')}
+            error={errors.phoneNumber}
+          />
+        </Row>
 
-      <label style={{ display: 'block' }}>
-        <LabelText>Notes or comments (optional)</LabelText>
-        <textarea
-          value={d.notes}
-          onChange={(e) => update('notes', e.target.value)}
-          rows={3}
-          placeholder="Anything we should know about beforehand?"
-          style={{
-            ...textareaStyle,
-            borderColor: QUIZ.BORDER,
-          }}
-          onFocus={(e) => {
-            e.currentTarget.style.borderColor = QUIZ.ACCENT;
-          }}
-          onBlur={(e) => {
-            e.currentTarget.style.borderColor = QUIZ.BORDER;
-          }}
-        />
-      </label>
+        <label style={{ display: 'block' }}>
+          <LabelText>Notes or comments (optional)</LabelText>
+          <textarea
+            value={d.notes}
+            onChange={(e) => update('notes', e.target.value)}
+            rows={3}
+            placeholder="Anything we should know about beforehand?"
+            style={{
+              ...textareaStyle,
+              borderColor: QUIZ.BORDER,
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = QUIZ.ACCENT;
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = QUIZ.BORDER;
+            }}
+          />
+        </label>
 
-      <RememberCheckbox
-        checked={d.rememberMe}
-        onChange={(c) => update('rememberMe', c)}
-      />
+        <RememberCheckbox
+          checked={d.rememberMe}
+          onChange={(c) => update('rememberMe', c)}
+        />
+      </div>
+
+      {/* Booking review — appointment summary + price card. The
+          customer fills the form above and reviews the booking
+          below before ticking terms in the footer and committing.
+          Single screen, no extra step. */}
+      <BookingReview api={api} copy={copy} accent={accent} />
     </div>
   );
 }

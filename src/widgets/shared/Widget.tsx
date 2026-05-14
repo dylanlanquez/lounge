@@ -5,7 +5,7 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Loader2 } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, CreditCard, Loader2, Stethoscope } from 'lucide-react';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
@@ -27,7 +27,6 @@ import { AxisStep } from './steps/Axis.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
-import { SummaryStep } from './steps/SummaryStep.tsx';
 // PaymentStep is lazy-loaded so @stripe/stripe-js (~80 KB) and
 // @stripe/react-stripe-js only download when a paid booking actually
 // reaches the deposit screen. Free-service bookings never fetch Stripe.
@@ -271,13 +270,13 @@ function WidgetReady({
   }
 
   // Determine what the Next button does on this step.
-  // - 'summary' + no payment next → submit (free booking)
-  // - 'summary' + payment next → goNext (advance to Stripe)
+  // - 'details' + no payment next → submit (free booking)
+  // - 'details' + payment next → goNext (advance to Stripe)
   // - other steps → goNext
   const nextStepKey = api.activeSteps[api.currentIdx + 1] ?? null;
   const isPaymentNext = nextStepKey === 'payment';
   const onFooterNext = () => {
-    if (api.stepKey === 'summary' && !isPaymentNext) {
+    if (api.stepKey === 'details' && !isPaymentNext) {
       submit(null);
       return;
     }
@@ -575,10 +574,8 @@ function StepRouter({
       );
     case 'time':
       return <TimeStep api={api} />;
-    case 'summary':
-      return <SummaryStep api={api} copy={copy} accent={accent} />;
     case 'details':
-      return <DetailsStep api={api} />;
+      return <DetailsStep api={api} copy={copy} accent={accent} />;
     case 'payment':
       return (
         <Suspense fallback={<PaymentLoadingFallback />}>
@@ -614,20 +611,26 @@ function Footer({
   submitting: boolean;
   isPaymentNext: boolean;
 }) {
-  const showTerms = api.stepKey === 'summary';
-  // Running price preview on every step where there's a service +
-  // price to render. Matches the retainer-cart pattern (the
-  // .price-preview-vt sits in the footer above the Next button on
-  // every step from step 1 onward). Hidden on Payment because
-  // Stripe's own "Pay £xx" button inside the form is the
-  // authoritative display there.
-  const total = priceTotalFor(api);
-  const showPrice = total > 0 && api.stepKey !== 'payment';
+  // Terms checkbox lives in the footer on the combined Details
+  // step — the form + summary are above; the customer ticks terms
+  // and hits Next once everything reads right.
+  const showTerms = api.stepKey === 'details';
+  // Today / On-the-day split is rendered as two pill blocks side
+  // by side. Hidden on Payment (Stripe's own button shows the
+  // amount), but visible on every other priced step so the
+  // customer always knows what they're paying now vs at the
+  // appointment, even as upgrades change the breakdown live.
+  const breakdown = api.priceBreakdown;
+  const depositPence = breakdown.depositPence;
+  const onTheDayPence = breakdown.payAtAppointmentPence;
+  const showPrice =
+    api.stepKey !== 'payment' &&
+    (depositPence > 0 || onTheDayPence > 0);
   const nextDisabled = !isNextEnabled(api) || submitting;
 
   const nextLabel = (() => {
     if (submitting) return 'Booking…';
-    if (api.stepKey === 'summary') {
+    if (api.stepKey === 'details') {
       return isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook;
     }
     return 'Continue';
@@ -653,20 +656,11 @@ function Footer({
       }}
     >
       {showPrice ? (
-        <p
-          style={{
-            margin: 0,
-            fontSize: 22,
-            fontWeight: 700,
-            color: QUIZ.INK,
-            animation: `vlounge-fadeIn 0.3s ease`,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: '-0.01em',
-            lineHeight: 1.2,
-          }}
-        >
-          {formatPrice(total)}
-        </p>
+        <PricePreview
+          depositPence={depositPence}
+          onTheDayPence={onTheDayPence}
+          accent={accent}
+        />
       ) : null}
 
       {showTerms ? (
@@ -757,6 +751,130 @@ function Footer({
         )}
       </div>
     </footer>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Price preview — Today + On the day, side by side
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Two pill-blocks in the footer above the Back / Next row. "Today"
+// is what the customer pays now (deposit); "On the day" is the
+// remaining balance settled at the appointment. The latter is
+// rendered at lower opacity since it's a future obligation, not a
+// payment they're about to make. Either block hides if its amount
+// is zero.
+
+function PricePreview({
+  depositPence,
+  onTheDayPence,
+  accent,
+}: {
+  depositPence: number;
+  onTheDayPence: number;
+  accent: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        justifyContent: 'center',
+        gap: 8,
+        width: '100%',
+        maxWidth: 600,
+        animation: `vlounge-fadeIn 0.3s ease`,
+      }}
+    >
+      {depositPence > 0 ? (
+        <PricePill
+          icon={<CreditCard size={16} aria-hidden />}
+          label="Today"
+          valuePence={depositPence}
+          accent={accent}
+        />
+      ) : null}
+      {onTheDayPence > 0 ? (
+        <PricePill
+          icon={<Stethoscope size={16} aria-hidden />}
+          label="On the day"
+          valuePence={onTheDayPence}
+          accent={accent}
+          muted
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function PricePill({
+  icon,
+  label,
+  valuePence,
+  accent,
+  muted = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  valuePence: number;
+  accent: string;
+  muted?: boolean;
+}) {
+  const ink = muted ? QUIZ.SUBTLE : QUIZ.INK;
+  const tint = muted ? QUIZ.SUBTLE : accent;
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 12px',
+        background: muted ? 'transparent' : QUIZ.SURFACE,
+        border: `1px solid ${muted ? 'transparent' : QUIZ.BORDER}`,
+        borderRadius: QUIZ.R_INPUT,
+        opacity: muted ? 0.7 : 1,
+        minWidth: 0,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          color: tint,
+          flexShrink: 0,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {icon}
+      </span>
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            color: tint,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            color: ink,
+            fontVariantNumeric: 'tabular-nums',
+            marginTop: 2,
+          }}
+        >
+          {formatPrice(valuePence)}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -856,11 +974,6 @@ function NextButton({
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-function priceTotalFor(api: BookingStateApi): number {
-  const b = api.priceBreakdown;
-  return b.depositPence > 0 ? b.depositPence : b.subtotalPence;
-}
 
 function PaymentLoadingFallback() {
   return (

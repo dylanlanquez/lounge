@@ -180,7 +180,18 @@ function bundleConfig(brand: 'venneir' | 'denture'): UserConfig {
 
 // ── Per-brand embed opener (tiny IIFE loaded on every Shopify page) ──
 function embedConfig(brand: 'venneir' | 'denture'): UserConfig {
-  const bundleUrl = `${BUNDLE_BASE}/widgets/${brand}/main.js`;
+  // Stamp a build-time version on the bundle URL so a fresh
+  // deploy auto-busts any browser/CDN cache holding the old
+  // `main.js` entry stub. Without this, the entry stub's URL is
+  // stable (`/widgets/<brand>/main.js`) and the browser keeps
+  // serving the cached copy whose chunk hashes no longer exist —
+  // that's the "Failed to fetch dynamically imported module" error
+  // Dylan saw. Prefer the git commit SHA (stable per commit) when
+  // available; fall back to Date.now() per invocation.
+  const buildVersion =
+    process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) ??
+    Date.now().toString(36);
+  const bundleUrl = `${BUNDLE_BASE}/widgets/${brand}/main.js?v=${buildVersion}`;
   const bundleConst = brand === 'venneir' ? '__VLOUNGE_BUNDLE_URL__' : '__DLOUNGE_BUNDLE_URL__';
   return {
     plugins: [],

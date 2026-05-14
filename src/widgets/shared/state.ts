@@ -48,11 +48,11 @@ export type StepKey =
   | 'service'
   | 'upgrades'
   | 'time'
-  // Dedicated review step. Shows the appointment summary (location,
-  // service, upgrades, time), the price card, and the terms checkbox
-  // before the customer commits. Matches step 6 of the venneir.com
-  // retainer-cart quiz modal.
-  | 'summary'
+  // Combined details + summary step. The form fields sit on top,
+  // the booking-summary cards below, and the footer hosts the
+  // terms checkbox + Today / On-the-day price preview. Avoids
+  // the extra click the previous standalone summary step
+  // demanded — customer fills + reviews on one screen.
   | 'details'
   | 'payment'
   | `axis:${AxisKey}`;
@@ -201,10 +201,10 @@ export function activeStepsFor(
   }
   if (hasUpgrades) out.push('upgrades');
   out.push('time');
+  // Details now also hosts the booking summary + price card + terms
+  // checkbox (via the footer) — one screen the customer reviews
+  // and commits on. Previous standalone 'summary' step removed.
   out.push('details');
-  // Dedicated review step. Holds the price card + terms checkbox
-  // (via the footer) — the customer commits AFTER reading it.
-  out.push('summary');
   if (state.service && state.service.depositPence > 0) out.push('payment');
   return out;
 }
@@ -659,21 +659,19 @@ export function isNextEnabled(api: BookingStateApi): boolean {
     case 'time':
       return !!api.state.slotIso;
     case 'details': {
+      // Combined details + summary step. The customer must have
+      // filled all identity fields AND ticked the terms checkbox
+      // (rendered in the footer on this step) before they can
+      // advance to payment / commit a free booking.
       const d = api.state.details;
-      // Terms-checkbox is no longer part of the Details form (it
-      // moved to the Summary step footer), so we only check the
-      // identity fields here.
       return (
         !validateFirstName(d.firstName) &&
         !validateLastName(d.lastName) &&
         !validateEmail(d.email) &&
-        !validatePhone(d.phoneNumber, d.phoneCountry)
+        !validatePhone(d.phoneNumber, d.phoneCountry) &&
+        d.agreeTerms
       );
     }
-    case 'summary':
-      // Final review. Customer must have ticked the terms checkbox
-      // before they can advance to payment (or commit a free booking).
-      return api.state.details.agreeTerms;
     case 'payment':
       // Stripe owns submission via its own button inside the iframe.
       // The footer's Next button is hidden on this step.

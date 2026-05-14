@@ -316,9 +316,10 @@ export function useWidgetFirstAvailable(input: FirstAvailableInput): FirstAvaila
  *  is closed on Sundays — the rest of the dimming (no free slots
  *  for this duration on a given day) reads from the live RPC once
  *  the patient picks a date. */
-export function isClosedDay(date: Date): boolean {
-  return date.getDay() === 0;
-}
+// Removed — was hardcoded to "Sundays closed" and ignored the
+// admin-configured clinic.opening_hours. SlotPicker now reads the
+// live opening_hours via useClinicSettings and uses an inline
+// isClinicClosedOn() helper. Single source of truth.
 
 /** Build a WidgetSlot from a raw ISO 8601 timestamptz returned by
  *  lng_widget_available_slots. Reads in the patient's local

@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   firstAvailable,
-  isClosedDay,
   useWidgetAvailableSlots,
   useWidgetFirstAvailable,
   type WidgetSlot,
 } from './data.ts';
+import {
+  useClinicSettings,
+  type OpeningHoursWeek,
+} from '../../lib/queries/clinicSettings.ts';
 
 // Reusable date+time picker for the booking flow AND the
 // patient-side reschedule flow on /widget/manage.
@@ -89,6 +92,15 @@ export function SlotPicker({
     return next?.date ?? startOfDay(new Date());
   });
   const [monthCursor, setMonthCursor] = useState<Date>(() => startOfMonth(selectedDate));
+
+  // Clinic opening hours from lng_settings — single source of truth
+  // for which days of the week are closed. The calendar reads this
+  // to dim + disable closed days (Saturdays, Sundays, whatever the
+  // admin has configured) without needing one availability RPC per
+  // cell. Live conflict-driven dimming still happens via the slot
+  // list once a date is picked.
+  const clinic = useClinicSettings();
+  const openingHours = clinic.data.openingHours;
 
   const stubEarliest = useMemo(() => firstAvailable(durationMinutes), [durationMinutes]);
   const liveFirstAvailable = useWidgetFirstAvailable({
@@ -176,6 +188,7 @@ export function SlotPicker({
       <CalendarGrid
         monthCursor={monthCursor}
         selectedDate={selectedDate}
+        openingHours={openingHours}
         onSelectDate={(d) => setSelectedDate(d)}
         onShiftMonth={(delta) => {
           const next = new Date(monthCursor);
@@ -202,11 +215,13 @@ export function SlotPicker({
 function CalendarGrid({
   monthCursor,
   selectedDate,
+  openingHours,
   onSelectDate,
   onShiftMonth,
 }: {
   monthCursor: Date;
   selectedDate: Date;
+  openingHours: OpeningHoursWeek;
   onSelectDate: (d: Date) => void;
   onShiftMonth: (delta: -1 | 1) => void;
 }) {
@@ -242,7 +257,12 @@ function CalendarGrid({
         </span>
         <ArrowButton dir="next" onClick={() => onShiftMonth(1)} />
       </div>
-      <Month monthDate={monthCursor} selectedDate={selectedDate} onSelectDate={onSelectDate} />
+      <Month
+        monthDate={monthCursor}
+        selectedDate={selectedDate}
+        openingHours={openingHours}
+        onSelectDate={onSelectDate}
+      />
     </div>
   );
 }
@@ -250,10 +270,12 @@ function CalendarGrid({
 function Month({
   monthDate,
   selectedDate,
+  openingHours,
   onSelectDate,
 }: {
   monthDate: Date;
   selectedDate: Date;
+  openingHours: OpeningHoursWeek;
   onSelectDate: (d: Date) => void;
 }) {
   const cells = useMemo(() => buildMonthCells(monthDate), [monthDate]);
@@ -289,7 +311,7 @@ function Month({
         {cells.map((c, i) => {
           const inMonth = c.date.getMonth() === monthDate.getMonth();
           const isPast = c.date < today;
-          const closed = isClosedDay(c.date);
+          const closed = isClinicClosedOn(c.date, openingHours);
           const disabled = isPast || closed || !inMonth;
           const selected = sameDay(c.date, selectedDate);
           return (
@@ -588,6 +610,21 @@ function formatLong(d: Date): string {
 
 interface MonthCell {
   date: Date;
+}
+
+// Closed-day predicate keyed on the live clinic.opening_hours
+// shape. The opening-hours array is Mon-first (Mon=0..Sun=6); the
+// JS Date.getDay() is Sun-first (Sun=0..Sat=6). Convert and read
+// the `closed: true` flag set by the admin in Settings → Opening
+// times. Replaces the old hardcoded "Sunday only" rule.
+function isClinicClosedOn(date: Date, week: OpeningHoursWeek): boolean {
+  const monFirst = (date.getDay() + 6) % 7;
+  const entry = week[monFirst];
+  if (!entry) return true;
+  if (entry.closed === true) return true;
+  // Defensive — a day with no open/close also reads as closed.
+  if (!entry.open || !entry.close) return true;
+  return false;
 }
 
 function buildMonthCells(monthDate: Date): MonthCell[] {
