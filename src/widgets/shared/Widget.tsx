@@ -453,13 +453,13 @@ function ChromeShell({
             gap: 6,
             alignSelf: 'flex-start',
             color: accent,
-            fontSize: 13,
+            fontSize: 14,
             fontWeight: 600,
             lineHeight: 1,
           }}
         >
           <CalendarCheck size={14} aria-hidden />
-          Your appointment
+          Your same day appointment
         </span>
         <ProgressBar
           value={api.visibleCurrentIdx + 1}
