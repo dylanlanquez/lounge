@@ -966,7 +966,10 @@ function FooterPriceBlock({
           fontWeight: muted ? 500 : 700,
           color: QUIZ.INK,
           fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.01em',
+          // Slight positive tracking on currency so "£25.00" breathes
+          // — tabular-nums sets each digit on a fixed advance but
+          // the £ glyph hugs the digits without it.
+          letterSpacing: '0.01em',
         }}
       >
         {icon ? (

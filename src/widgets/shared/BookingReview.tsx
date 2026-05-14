@@ -313,6 +313,7 @@ function ItemRow({
               whiteSpace: 'nowrap',
               flexShrink: 0,
               fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.02em',
             }}
           >
             {rightAmount}
@@ -366,7 +367,7 @@ function TotalRow({
           fontVariantNumeric: 'tabular-nums',
           whiteSpace: 'nowrap',
           flexShrink: 0,
-          letterSpacing: '-0.01em',
+          letterSpacing: '0.01em',
         }}
       >
         {amount}
@@ -443,6 +444,7 @@ function SplitRow({
             fontVariantNumeric: 'tabular-nums',
             whiteSpace: 'nowrap',
             flexShrink: 0,
+            letterSpacing: '0.02em',
           }}
         >
           {amount}

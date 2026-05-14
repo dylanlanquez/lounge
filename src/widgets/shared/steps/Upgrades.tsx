@@ -181,6 +181,7 @@ function UpgradeCard({
               color: QUIZ.LAVENDER,
               fontWeight: 700,
               fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.02em',
             }}
           >
             +{formatPrice(price)}
