@@ -41,8 +41,26 @@ import {
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+// Legacy un-suffixed key used as the live-mode fallback so
+// deployments configured before the stripe.mode toggle landed
+// keep working without a secrets rename.
+const STRIPE_SECRET_KEY_LEGACY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+const STRIPE_SECRET_KEY_LIVE = Deno.env.get('STRIPE_SECRET_KEY_LIVE') ?? STRIPE_SECRET_KEY_LEGACY;
+const STRIPE_SECRET_KEY_TEST = Deno.env.get('STRIPE_SECRET_KEY_TEST') ?? '';
 const STRIPE_BASE = 'https://api.stripe.com/v1';
+
+async function resolveStripeSecret(
+  supabase: ReturnType<typeof createClient>,
+): Promise<string> {
+  const { data } = await supabase
+    .from('lng_settings')
+    .select('value')
+    .eq('key', 'stripe.mode')
+    .is('location_id', null)
+    .maybeSingle();
+  const mode = (data?.value as string | undefined) === 'test' ? 'test' : 'live';
+  return mode === 'test' ? STRIPE_SECRET_KEY_TEST : STRIPE_SECRET_KEY_LIVE;
+}
 const GOOGLE_CALENDAR_SA_EMAIL = Deno.env.get('GOOGLE_CALENDAR_SA_EMAIL') ?? '';
 const GOOGLE_CALENDAR_SA_PRIVATE_KEY = Deno.env.get('GOOGLE_CALENDAR_SA_PRIVATE_KEY') ?? '';
 const GOOGLE_CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? '';
@@ -190,11 +208,12 @@ Deno.serve(async (req) => {
     if (!body.paymentIntentId) {
       return jsonResponse(400, { error: 'payment_intent_required' });
     }
-    if (!STRIPE_SECRET_KEY) {
+    const stripeSecret = await resolveStripeSecret(supabase);
+    if (!stripeSecret) {
       await logFailure('stripe_secret_key_missing', { paymentIntentId: body.paymentIntentId });
       return jsonResponse(500, { error: 'stripe_not_configured' });
     }
-    const verify = await verifyPaymentIntent(body.paymentIntentId, expectedDepositPence);
+    const verify = await verifyPaymentIntent(stripeSecret, body.paymentIntentId, expectedDepositPence);
     if (!verify.ok) {
       await logFailure('payment_intent_verify_failed', {
         paymentIntentId: body.paymentIntentId,
@@ -564,12 +583,13 @@ type VerifyResult =
     };
 
 async function verifyPaymentIntent(
+  stripeSecret: string,
   paymentIntentId: string,
   expectedAmount: number,
 ): Promise<VerifyResult> {
   const r = await fetch(`${STRIPE_BASE}/payment_intents/${encodeURIComponent(paymentIntentId)}`, {
     headers: {
-      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+      Authorization: `Bearer ${stripeSecret}`,
       'Stripe-Version': '2024-10-28.acacia',
     },
   });
