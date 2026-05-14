@@ -997,7 +997,7 @@ function Footer({
             textUnderlineOffset: 3,
           }}
         >
-          Paying on the day · Change
+          Change to pay now instead
         </button>
       ) : null}
     </footer>
