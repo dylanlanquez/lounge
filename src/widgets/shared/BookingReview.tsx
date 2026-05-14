@@ -1,3 +1,4 @@
+import { MapPin, Award, Calendar, Sparkles } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -10,20 +11,17 @@ import type { WidgetCopy } from './copy.ts';
 import { QUIZ } from './quizTokens.ts';
 
 // Booking review — appointment recap + price total shown inside
-// the combined Details step. Single column, zero card chrome on
-// this screen (the form inputs above carry the only borders).
+// the combined Details step. Mirrors the IncludedPerksCard chrome
+// (soft-bg card, 2px #dee9ec border, 12px radius, accent-coloured
+// icons in 24px wrappers, 1px hairlines between rows) so the two
+// surfaces feel like a matched set.
 //
-// Rules learned the hard way on this screen:
-//   1. NEVER repeat the deposit / balance split here. The sticky
-//      footer already shows TODAY / ON THE DAY. Duplicating those
-//      figures (Deposit today, Balance on the day) makes the screen
-//      a wall of numbers and confuses non-technical customers.
-//   2. NEVER mix icon weights/colours in the booking list. The pin,
-//      ribbon, calendar, sparkle quartet looked busy and the
-//      vertical centres didn't line up. Typography-only is calmer
-//      and more premium.
-//   3. Right-aligned amounts MUST have `flex-shrink: 0` so they
-//      can't clip off the right edge of narrow viewports.
+// Prices appear INLINE with the thing they're for — Service line
+// carries the service price, each extra carries its own +£X. The
+// Total row at the bottom is the only standalone summary. This
+// keeps the card a single receipt rather than two stacked summary
+// blocks and removes the prior duplication with the sticky
+// footer's TODAY / ON THE DAY split.
 
 export function BookingReview({
   api,
@@ -48,212 +46,239 @@ export function BookingReview({
   };
 
   const total = priceBreakdown.subtotalPence;
-  const showExtras = priceBreakdown.upgradesLinePence > 0;
   void copy;
-  void accent;
 
   const serviceLine = state.service
     ? buildServiceLine(state, state.service.label)
     : null;
 
+  // Build the row set in order so we can render hairlines between
+  // rows but never after the final row (mirrors IncludedPerksCard).
+  type Row =
+    | {
+        kind: 'item';
+        key: string;
+        icon: React.ReactNode;
+        title: string;
+        subtitle?: string;
+        rightAmount?: string;
+        rightAmountColour?: string;
+      }
+    | {
+        kind: 'total';
+        key: string;
+        label: string;
+        amount: string;
+      };
+
+  const rows: Row[] = [];
+
+  if (state.location) {
+    rows.push({
+      kind: 'item',
+      key: 'location',
+      icon: <MapPin size={20} aria-hidden style={{ color: accent }} />,
+      title: state.location.name,
+      subtitle: state.location.addressLine,
+    });
+  }
+  if (state.service && serviceLine) {
+    rows.push({
+      kind: 'item',
+      key: 'service',
+      icon: <Award size={20} aria-hidden style={{ color: accent }} />,
+      title: serviceLine,
+      rightAmount:
+        priceBreakdown.serviceLinePence > 0
+          ? formatPrice(priceBreakdown.serviceLinePence)
+          : undefined,
+    });
+  }
+  if (state.slotIso) {
+    rows.push({
+      kind: 'item',
+      key: 'slot',
+      icon: <Calendar size={20} aria-hidden style={{ color: accent }} />,
+      title: formatSlotLong(state.slotIso),
+    });
+  }
+  for (const u of selectedUpgrades) {
+    rows.push({
+      kind: 'item',
+      key: `upgrade-${u.id}`,
+      icon: <Sparkles size={20} aria-hidden style={{ color: QUIZ.LAVENDER }} />,
+      title: u.name,
+      rightAmount: `+${formatPrice(upgradePrice(u.id))}`,
+      rightAmountColour: QUIZ.LAVENDER,
+    });
+  }
+  if (total > 0) {
+    rows.push({
+      kind: 'total',
+      key: 'total',
+      label: 'Total',
+      amount: formatPrice(total),
+    });
+  }
+
   return (
     <div
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 28,
+        background: QUIZ.SOFT_BG,
+        border: `2px solid #dee9ec`,
+        borderRadius: QUIZ.R_CARD,
+        padding: '20px 20px 8px',
+        maxWidth: 700,
+        margin: '0 auto',
         width: '100%',
+        animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >
-      {/* ── Your booking ─────────────────────────────────────────
-          Label-content rows. No icons, no card. Each row is
-          self-titled by a small-caps label on the left (desktop)
-          or above (mobile, via the .vlounge-review-row class). */}
-      <section>
-        <SectionLabel>Your booking</SectionLabel>
-        <ul
-          style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-            borderTop: '1px solid rgba(0, 0, 0, 0.08)',
-          }}
-        >
-          {state.location ? (
-            <ReviewRow
-              label="Location"
-              primary={state.location.name}
-              secondary={state.location.addressLine}
+      <h3
+        style={{
+          margin: '0 0 6px',
+          fontSize: 17,
+          fontWeight: 700,
+          color: accent,
+          letterSpacing: '-0.01em',
+        }}
+      >
+        Your booking
+      </h3>
+      {rows.map((row, i) => {
+        const isLast = i === rows.length - 1;
+        if (row.kind === 'item') {
+          return (
+            <ItemRow
+              key={row.key}
+              icon={row.icon}
+              title={row.title}
+              subtitle={row.subtitle}
+              rightAmount={row.rightAmount}
+              rightAmountColour={row.rightAmountColour}
+              isLast={isLast}
             />
-          ) : null}
-          {serviceLine ? (
-            <ReviewRow label="Service" primary={serviceLine} />
-          ) : null}
-          {state.slotIso ? (
-            <ReviewRow label="When" primary={formatSlotLong(state.slotIso)} />
-          ) : null}
-          {selectedUpgrades.map((u) => (
-            <ReviewRow
-              key={u.id}
-              label="Extra"
-              primary={u.name}
-              rightAmount={`+${formatPrice(upgradePrice(u.id))}`}
-              rightAmountColour={QUIZ.LAVENDER}
-            />
-          ))}
-        </ul>
-      </section>
-
-      {/* ── Total ────────────────────────────────────────────────
-          Three lines max: Service · Extras (if any) · Total.
-          Deposit/Balance split lives in the sticky footer only —
-          showing it twice was the headline complaint on the
-          previous pass. */}
-      <section>
-        <SectionLabel>Total</SectionLabel>
-        <div
-          style={{
-            borderTop: '1px solid rgba(0, 0, 0, 0.08)',
-          }}
-        >
-          {priceBreakdown.serviceLinePence > 0 ? (
-            <PriceRow
-              label="Service"
-              amount={formatPrice(priceBreakdown.serviceLinePence)}
-            />
-          ) : null}
-          {showExtras ? (
-            <PriceRow
-              label="Extras"
-              amount={`+${formatPrice(priceBreakdown.upgradesLinePence)}`}
-              amountColour={QUIZ.LAVENDER}
-            />
-          ) : null}
-          {total > 0 ? (
-            <PriceRow label="Total" amount={formatPrice(total)} emphasised />
-          ) : null}
-        </div>
-      </section>
+          );
+        }
+        return (
+          <TotalRow
+            key={row.key}
+            label={row.label}
+            amount={row.amount}
+            isLast={isLast}
+          />
+        );
+      })}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Section primitives
+// Row primitives — chrome matches IncludedPerksCard exactly
 // ─────────────────────────────────────────────────────────────────
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h3
-      style={{
-        margin: '0 0 10px',
-        fontSize: 11,
-        fontWeight: 600,
-        color: QUIZ.MUTED_2,
-        textTransform: 'uppercase',
-        letterSpacing: '0.1em',
-      }}
-    >
-      {children}
-    </h3>
-  );
-}
-
-function ReviewRow({
-  label,
-  primary,
-  secondary,
+function ItemRow({
+  icon,
+  title,
+  subtitle,
   rightAmount,
   rightAmountColour,
+  isLast,
 }: {
-  label: string;
-  primary: string;
-  secondary?: string;
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
   rightAmount?: string;
   rightAmountColour?: string;
+  isLast: boolean;
 }) {
   return (
-    <li
-      className="vlounge-review-row"
+    <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: '110px 1fr auto',
-        columnGap: 16,
-        rowGap: 2,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
         padding: '14px 0',
-        borderBottom: '1px solid rgba(0, 0, 0, 0.06)',
-        alignItems: 'baseline',
+        borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
       <span
+        aria-hidden
         style={{
-          fontSize: 11,
-          fontWeight: 600,
-          color: QUIZ.MUTED_2,
-          textTransform: 'uppercase',
-          letterSpacing: '0.1em',
-          lineHeight: 1.4,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 24,
+          height: 24,
+          flexShrink: 0,
         }}
       >
-        {label}
+        {icon}
       </span>
-      <div style={{ minWidth: 0 }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: 15,
-            fontWeight: 500,
-            color: QUIZ.INK,
-            lineHeight: 1.4,
-            wordBreak: 'break-word',
-          }}
-        >
-          {primary}
-        </p>
-        {secondary ? (
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
           <p
             style={{
-              margin: '2px 0 0',
-              fontSize: 13,
-              color: QUIZ.MUTED_2,
-              lineHeight: 1.4,
+              margin: 0,
+              fontSize: 15,
+              fontWeight: 600,
+              color: QUIZ.INK,
+              lineHeight: 1.3,
               wordBreak: 'break-word',
             }}
           >
-            {secondary}
+            {title}
           </p>
+          {subtitle ? (
+            <p
+              style={{
+                margin: '4px 0 0',
+                fontSize: 13,
+                color: QUIZ.SUBTLE,
+                lineHeight: 1.3,
+                wordBreak: 'break-word',
+              }}
+            >
+              {subtitle}
+            </p>
+          ) : null}
+        </div>
+        {rightAmount ? (
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: rightAmountColour ?? QUIZ.INK,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {rightAmount}
+          </span>
         ) : null}
       </div>
-      {rightAmount ? (
-        <span
-          style={{
-            flexShrink: 0,
-            fontSize: 14,
-            fontWeight: 600,
-            color: rightAmountColour ?? QUIZ.INK,
-            fontVariantNumeric: 'tabular-nums',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {rightAmount}
-        </span>
-      ) : (
-        <span aria-hidden />
-      )}
-    </li>
+    </div>
   );
 }
 
-function PriceRow({
+function TotalRow({
   label,
   amount,
-  amountColour,
-  emphasised = false,
+  isLast,
 }: {
   label: string;
   amount: string;
-  amountColour?: string;
-  emphasised?: boolean;
+  isLast: boolean;
 }) {
   return (
     <div
@@ -262,23 +287,34 @@ function PriceRow({
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'baseline',
-        gap: 16,
-        padding: emphasised ? '14px 0 4px' : '12px 0',
-        borderTop: emphasised ? '1px solid rgba(0, 0, 0, 0.10)' : 'none',
-        marginTop: emphasised ? 6 : 0,
-        fontSize: emphasised ? 16 : 14,
-        color: QUIZ.INK,
+        gap: 12,
+        padding: '16px 0 14px',
+        borderTop: `1px solid #d6dde0`,
+        marginTop: 4,
+        borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
-      <span role="cell">{label}</span>
       <span
         role="cell"
         style={{
-          flexShrink: 0,
-          fontWeight: emphasised ? 700 : 600,
-          color: amountColour ?? QUIZ.INK,
+          fontSize: 16,
+          fontWeight: 700,
+          color: QUIZ.INK,
+          letterSpacing: '-0.01em',
+        }}
+      >
+        {label}
+      </span>
+      <span
+        role="cell"
+        style={{
+          fontSize: 18,
+          fontWeight: 700,
+          color: QUIZ.INK,
           fontVariantNumeric: 'tabular-nums',
           whiteSpace: 'nowrap',
+          flexShrink: 0,
+          letterSpacing: '-0.01em',
         }}
       >
         {amount}
