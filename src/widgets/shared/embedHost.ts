@@ -24,6 +24,7 @@
 const MODAL_ID = 'vlounge-embed-modal';
 const MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 const SPIN_STYLE_ID = 'vlounge-embed-keyframes';
+const RESET_STYLE_ID = 'vlounge-embed-reset';
 
 export interface ModalOpenOptions {
   /** Accessible name announced to screen readers. */
@@ -53,6 +54,7 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   }
 
   ensureKeyframes();
+  ensureResetStyles();
 
   const reducedMotion = window.matchMedia?.(MOTION_QUERY).matches ?? false;
   const root = document.createElement('div');
@@ -283,6 +285,81 @@ function ensureKeyframes() {
   const style = document.createElement('style');
   style.id = SPIN_STYLE_ID;
   style.textContent = `@keyframes vlounge-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+  document.head.appendChild(style);
+}
+
+// Defensive CSS reset scoped to the modal. Stops Shopify themes from
+// reaching into the widget via global selectors like `button { ... }`
+// or `body { font-family: ... }`. ID-prefixed so each rule has
+// specificity 1-1-1 (ID + class/attr + tag) — wins against the class-
+// based selectors most themes use, without resorting to !important.
+//
+// We deliberately do NOT do `all: initial` (it nukes inherited styles
+// React relies on). Instead we lock the small set of properties
+// themes most commonly leak: typography, box-sizing, default heading
+// margins, list bullets, link colour.
+function ensureResetStyles() {
+  if (document.getElementById(RESET_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = RESET_STYLE_ID;
+  style.textContent = `
+    #${MODAL_ID} {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      color: #0E1414;
+    }
+    #${MODAL_ID} *,
+    #${MODAL_ID} *::before,
+    #${MODAL_ID} *::after {
+      box-sizing: border-box;
+    }
+    #${MODAL_ID} button,
+    #${MODAL_ID} input,
+    #${MODAL_ID} select,
+    #${MODAL_ID} textarea {
+      font-family: inherit;
+      font-size: inherit;
+      font-weight: inherit;
+      line-height: inherit;
+      letter-spacing: normal;
+      color: inherit;
+      text-transform: none;
+    }
+    #${MODAL_ID} button {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }
+    #${MODAL_ID} a {
+      color: inherit;
+      text-decoration: none;
+    }
+    #${MODAL_ID} h1,
+    #${MODAL_ID} h2,
+    #${MODAL_ID} h3,
+    #${MODAL_ID} h4,
+    #${MODAL_ID} h5,
+    #${MODAL_ID} h6,
+    #${MODAL_ID} p,
+    #${MODAL_ID} figure,
+    #${MODAL_ID} blockquote {
+      margin: 0;
+      font: inherit;
+      letter-spacing: inherit;
+      color: inherit;
+    }
+    #${MODAL_ID} ul,
+    #${MODAL_ID} ol {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    #${MODAL_ID} img,
+    #${MODAL_ID} svg {
+      display: block;
+      max-width: 100%;
+    }
+  `;
   document.head.appendChild(style);
 }
 
