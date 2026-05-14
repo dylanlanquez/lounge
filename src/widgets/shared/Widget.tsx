@@ -361,8 +361,8 @@ function WidgetReady({
     >
       <Header
         title={stepTitle(api.stepKey, copy)}
-        currentIdx={api.currentIdx}
-        totalSteps={api.totalSteps}
+        currentIdx={api.visibleCurrentIdx}
+        totalSteps={api.visibleTotalSteps}
         canGoBack={api.canGoBack}
         onBack={api.goBack}
       />

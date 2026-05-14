@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarRange } from 'lucide-react';
+import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import {
   firstAvailable,
@@ -8,27 +8,50 @@ import {
   useWidgetFirstAvailable,
   type WidgetSlot,
 } from './data.ts';
-import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 // Reusable date+time picker for the booking flow AND the
 // patient-side reschedule flow on /widget/manage.
 //
-// Layout:
+// Layout (post-2026-05-14 redesign):
 //   • Optional "first availability" banner at the top (default on
-//     for booking; the manage page can switch it off when it's
-//     just clutter).
-//   • Calendar grid: two months side-by-side on desktop, single
-//     month on mobile. Past dates and clinic-closed days dim.
-//   • Time list grouped morning / afternoon / evening, populated
-//     once a date is selected — driven by lng_widget_available_slots.
+//     for booking; the manage page can switch it off).
+//   • Single-month calendar — the modal column is too narrow to
+//     show two months without horizontal clipping, and the
+//     "← / →" chevrons are right there for the patient who needs
+//     next month.
+//   • Time list grouped morning / afternoon / evening as pills.
 //
-// Inputs flow in via props rather than the BookingStateApi so this
-// component can be used from any context. The reschedule flow on
-// /widget/manage doesn't have a BookingStateApi at all — it gets
-// its location/service/axes from the lookup RPC and passes them
-// through here.
+// Visual tokens line up with the venneir.com retainer-cart quiz
+// modal so the embed reads as continuous with the storefront the
+// patient just came from: white surface, 2px transparent border
+// going to navy on hover / select, 12px radius, cubic-bezier(0.4,0,
+// 0.2,1) transitions, soft (0,0,0,0.08) shadow on lift.
 
-const CALENDAR_BREAKPOINT = 720;
+// ─────────────────────────────────────────────────────────────────────────────
+// Visual tokens
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Hard-coded rather than threaded via brand props because both the
+// venneir.com and (eventually) denture-services.co.uk pages use the
+// same navy-on-white card system. If denture diverges visually,
+// these become props on SlotPicker and the per-brand bundles pass
+// their own values.
+
+const ACCENT = '#083758';
+const BORDER = '#e5e5e5';
+const BORDER_STRONG = '#cfd4d8';
+const INK = '#1F2937';
+const MUTED = '#555';
+const SUBTLE = '#9CA3AF';
+const SURFACE = '#FFFFFF';
+const BG_SUBTLE = '#F8F9FA';
+const SHADOW_LIFT = '0 4px 12px rgba(0,0,0,0.08)';
+const SHADOW_CARD = '0 1px 3px rgba(0,0,0,0.04)';
+const EASE_CARD = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface SlotPickerProps {
   locationId: string | null;
@@ -64,8 +87,6 @@ export function SlotPicker({
   showFirstAvailableBanner = true,
   excludeAppointmentId = null,
 }: SlotPickerProps) {
-  const isMobile = useIsMobile(CALENDAR_BREAKPOINT);
-
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     if (selectedIso) return startOfDay(new Date(selectedIso));
     const next = firstAvailable(durationMinutes);
@@ -73,9 +94,6 @@ export function SlotPicker({
   });
   const [monthCursor, setMonthCursor] = useState<Date>(() => startOfMonth(selectedDate));
 
-  // First-availability banner: stub generator first (renders
-  // immediately), live RPC takes over once it resolves so the
-  // banner shows real availability.
   const stubEarliest = useMemo(() => firstAvailable(durationMinutes), [durationMinutes]);
   const liveFirstAvailable = useWidgetFirstAvailable({
     locationId,
@@ -98,7 +116,7 @@ export function SlotPicker({
   const slots = availability.data ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {showFirstAvailableBanner && earliest ? (
         <button
           type="button"
@@ -112,28 +130,36 @@ export function SlotPicker({
             textAlign: 'left',
             fontFamily: 'inherit',
             cursor: 'pointer',
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
-            borderRadius: theme.radius.card,
-            background: theme.color.accentBg,
-            border: `1px solid ${theme.color.accent}`,
+            padding: '14px 18px',
+            borderRadius: 12,
+            background: SURFACE,
+            border: `2px solid ${ACCENT}`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: theme.space[3],
-            color: theme.color.ink,
+            gap: 12,
+            color: INK,
+            boxShadow: SHADOW_CARD,
+            transition: `all 0.2s ${EASE_CARD}`,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = SHADOW_LIFT;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = SHADOW_CARD;
           }}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-            <CalendarRange size={16} aria-hidden style={{ color: theme.color.accent }} />
-            <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold }}>
-              Our first opening
-            </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+            <CalendarRange size={18} aria-hidden style={{ color: ACCENT }} />
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Our first opening</span>
           </span>
           <span
             style={{
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.accent,
+              fontSize: 14,
+              fontWeight: 700,
+              color: ACCENT,
               fontVariantNumeric: 'tabular-nums',
             }}
           >
@@ -151,7 +177,6 @@ export function SlotPicker({
           next.setMonth(next.getMonth() + delta);
           setMonthCursor(next);
         }}
-        twoMonths={!isMobile}
       />
 
       <SlotList
@@ -174,29 +199,20 @@ function CalendarGrid({
   selectedDate,
   onSelectDate,
   onShiftMonth,
-  twoMonths,
 }: {
   monthCursor: Date;
   selectedDate: Date;
   onSelectDate: (d: Date) => void;
   onShiftMonth: (delta: -1 | 1) => void;
-  twoMonths: boolean;
 }) {
-  const monthA = monthCursor;
-  const monthB = useMemo(() => {
-    const m = new Date(monthCursor);
-    m.setMonth(m.getMonth() + 1);
-    return m;
-  }, [monthCursor]);
-
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
-        boxShadow: theme.shadow.card,
+        background: SURFACE,
+        border: `1px solid ${BORDER}`,
+        borderRadius: 12,
+        padding: 16,
+        boxShadow: SHADOW_CARD,
       }}
     >
       <div
@@ -204,38 +220,24 @@ function CalendarGrid({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: theme.space[3],
-          marginBottom: theme.space[4],
+          gap: 12,
+          marginBottom: 12,
         }}
       >
         <ArrowButton dir="prev" onClick={() => onShiftMonth(-1)} />
         <span
           style={{
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkMuted,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
+            fontSize: 16,
+            fontWeight: 600,
+            color: INK,
+            letterSpacing: '-0.01em',
           }}
         >
-          {monthName(monthA)}
-          {twoMonths ? ` and ${monthName(monthB)}` : ''}
+          {monthName(monthCursor)}
         </span>
         <ArrowButton dir="next" onClick={() => onShiftMonth(1)} />
       </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: twoMonths ? '1fr 1fr' : '1fr',
-          gap: theme.space[5],
-        }}
-      >
-        <Month monthDate={monthA} selectedDate={selectedDate} onSelectDate={onSelectDate} />
-        {twoMonths ? (
-          <Month monthDate={monthB} selectedDate={selectedDate} onSelectDate={onSelectDate} />
-        ) : null}
-      </div>
+      <Month monthDate={monthCursor} selectedDate={selectedDate} onSelectDate={onSelectDate} />
     </div>
   );
 }
@@ -254,24 +256,12 @@ function Month({
 
   return (
     <div>
-      <p
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
-          marginBottom: theme.space[3],
-        }}
-      >
-        {monthName(monthDate)}
-      </p>
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(7, 1fr)',
           gap: 2,
-          marginBottom: theme.space[2],
+          marginBottom: 6,
         }}
       >
         {DOW_LABELS.map((d) => (
@@ -279,11 +269,11 @@ function Month({
             key={d}
             style={{
               fontSize: 11,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
+              fontWeight: 600,
+              color: SUBTLE,
               textAlign: 'center',
               textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
+              letterSpacing: '0.05em',
             }}
           >
             {d}
@@ -295,7 +285,7 @@ function Month({
           const inMonth = c.date.getMonth() === monthDate.getMonth();
           const isPast = c.date < today;
           const closed = isClosedDay(c.date);
-          const disabled = isPast || closed;
+          const disabled = isPast || closed || !inMonth;
           const selected = sameDay(c.date, selectedDate);
           return (
             <button
@@ -311,31 +301,37 @@ function Month({
               })}
               style={{
                 appearance: 'none',
-                border: 'none',
-                background: selected ? theme.color.accent : 'transparent',
+                border: `2px solid ${selected ? ACCENT : 'transparent'}`,
+                background: selected ? ACCENT : 'transparent',
                 color: selected
-                  ? theme.color.surface
-                  : disabled || !inMonth
-                    ? theme.color.inkSubtle
-                    : theme.color.ink,
+                  ? '#FFFFFF'
+                  : disabled
+                    ? SUBTLE
+                    : INK,
                 aspectRatio: '1 / 1',
                 width: '100%',
                 fontFamily: 'inherit',
-                fontSize: theme.type.size.sm,
-                fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
+                fontSize: 14,
+                fontWeight: selected ? 600 : 500,
                 fontVariantNumeric: 'tabular-nums',
-                borderRadius: '50%',
+                borderRadius: 12,
                 cursor: disabled ? 'default' : 'pointer',
-                opacity: !inMonth || disabled ? 0.5 : 1,
-                transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                opacity: disabled ? 0.4 : 1,
+                transition: `all 0.18s ${EASE_CARD}`,
               }}
               onMouseEnter={(e) => {
                 if (selected || disabled) return;
-                e.currentTarget.style.background = theme.color.bg;
+                e.currentTarget.style.borderColor = ACCENT;
+                e.currentTarget.style.background = SURFACE;
+                e.currentTarget.style.boxShadow = SHADOW_LIFT;
+                e.currentTarget.style.transform = 'translateY(-1px)';
               }}
               onMouseLeave={(e) => {
                 if (selected || disabled) return;
+                e.currentTarget.style.borderColor = 'transparent';
                 e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.boxShadow = 'none';
+                e.currentTarget.style.transform = 'none';
               }}
             >
               {c.date.getDate()}
@@ -355,22 +351,29 @@ function ArrowButton({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => vo
       aria-label={dir === 'prev' ? 'Previous month' : 'Next month'}
       style={{
         appearance: 'none',
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.bg,
-        width: 32,
-        height: 32,
-        borderRadius: theme.radius.pill,
+        border: `1px solid ${BORDER}`,
+        background: SURFACE,
+        width: 36,
+        height: 36,
+        borderRadius: 999,
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
-        color: theme.color.ink,
+        color: INK,
         fontFamily: 'inherit',
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
+        transition: `all 0.15s ${EASE_CARD}`,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = ACCENT;
+        e.currentTarget.style.color = ACCENT;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = BORDER;
+        e.currentTarget.style.color = INK;
       }}
     >
-      {dir === 'prev' ? '‹' : '›'}
+      {dir === 'prev' ? <ChevronLeft size={18} aria-hidden /> : <ChevronRight size={18} aria-hidden />}
     </button>
   );
 }
@@ -400,15 +403,16 @@ function SlotList({
   if (error) {
     return (
       <div
+        role="alert"
         style={{
-          background: theme.color.surface,
+          background: SURFACE,
           border: `1px solid ${theme.color.alert}`,
-          borderRadius: theme.radius.card,
-          padding: theme.space[5],
+          borderRadius: 12,
+          padding: 18,
           textAlign: 'center',
           color: theme.color.alert,
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
+          fontSize: 14,
+          fontWeight: 600,
         }}
       >
         Couldn't load availability. Try refreshing the page.
@@ -420,13 +424,13 @@ function SlotList({
     return (
       <div
         style={{
-          background: theme.color.surface,
-          border: `1px dashed ${theme.color.border}`,
-          borderRadius: theme.radius.card,
-          padding: theme.space[5],
+          background: BG_SUBTLE,
+          border: `1px dashed ${BORDER_STRONG}`,
+          borderRadius: 12,
+          padding: 24,
           textAlign: 'center',
-          color: theme.color.inkMuted,
-          fontSize: theme.type.size.sm,
+          color: MUTED,
+          fontSize: 14,
         }}
       >
         {loading ? 'Checking availability…' : 'Nothing free on this day. Pick another date.'}
@@ -443,16 +447,16 @@ function SlotList({
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
+        background: SURFACE,
+        border: `1px solid ${BORDER}`,
+        borderRadius: 12,
+        padding: 16,
         display: 'flex',
         flexDirection: 'column',
-        gap: theme.space[4],
-        boxShadow: theme.shadow.card,
+        gap: 16,
+        boxShadow: SHADOW_CARD,
         opacity: loading ? 0.5 : 1,
-        transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        transition: `opacity 0.15s ${EASE_CARD}`,
       }}
     >
       <Bucket label="Morning" slots={buckets.morning} selectedIso={selectedIso} onPick={onPick} />
@@ -479,20 +483,21 @@ function Bucket({
       <p
         style={{
           margin: 0,
-          marginBottom: theme.space[2],
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
+          marginBottom: 8,
+          fontSize: 12,
+          fontWeight: 600,
+          color: SUBTLE,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
         }}
       >
         {label}
       </p>
       <div
         style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: theme.space[2],
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))',
+          gap: 8,
         }}
       >
         {slots.map((s) => {
@@ -506,24 +511,29 @@ function Bucket({
               style={{
                 appearance: 'none',
                 fontFamily: 'inherit',
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.semibold,
+                fontSize: 14,
+                fontWeight: 600,
                 fontVariantNumeric: 'tabular-nums',
-                padding: `${theme.space[2]}px ${theme.space[4]}px`,
-                borderRadius: theme.radius.pill,
-                border: `1px solid ${selected ? theme.color.accent : theme.color.border}`,
-                background: selected ? theme.color.accent : theme.color.surface,
-                color: selected ? theme.color.surface : theme.color.ink,
+                padding: '10px 12px',
+                borderRadius: 10,
+                border: `2px solid ${selected ? ACCENT : BORDER}`,
+                background: selected ? ACCENT : SURFACE,
+                color: selected ? '#FFFFFF' : INK,
                 cursor: 'pointer',
-                transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                textAlign: 'center',
+                transition: `all 0.18s ${EASE_CARD}`,
               }}
               onMouseEnter={(e) => {
                 if (selected) return;
-                e.currentTarget.style.borderColor = theme.color.ink;
+                e.currentTarget.style.borderColor = ACCENT;
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = SHADOW_LIFT;
               }}
               onMouseLeave={(e) => {
                 if (selected) return;
-                e.currentTarget.style.borderColor = theme.color.border;
+                e.currentTarget.style.borderColor = BORDER;
+                e.currentTarget.style.transform = 'none';
+                e.currentTarget.style.boxShadow = 'none';
               }}
             >
               {s.label}

@@ -16,10 +16,11 @@ export const brand = {
   // via lng_widget_copy at runtime; this is the fallback.
   tagline: 'Book your appointment',
   // Accent colour for primary CTAs, focus rings, the on-brand chrome.
-  // Mirrors theme.color.accent (#1F4D3A) so the modal contents feel
-  // continuous with the rest of the Lounge surfaces.
-  accent: '#1F4D3A',
-  accentBg: 'rgba(31, 77, 58, 0.08)',
+  // Pulled from the venneir.com retainer-cart quiz modal (navy blue
+  // #083758) so the widget reads as continuous with the storefront
+  // the customer just came from — not the Lounge admin's green.
+  accent: '#083758',
+  accentBg: 'rgba(8, 55, 88, 0.08)',
   // Logo for the modal header. Must be an absolute URL — the bundle
   // runs on the host page (venneir.com or denture-services.co.uk),
   // so a relative path resolves against THAT origin and 404s. The

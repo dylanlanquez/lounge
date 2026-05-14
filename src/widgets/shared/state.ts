@@ -293,6 +293,17 @@ export function useBookingState(
   const currentIdx = activeSteps.indexOf(stepKey);
   const totalSteps = activeSteps.length;
 
+  // The customer-facing progress only counts the steps they're
+  // actually asked to answer. When a Shopify trigger pins service +
+  // product, the locked prefix is invisible to the customer — the
+  // counter must read "Step 1 of N" where N is just the remaining
+  // steps. Anything else leaks the existence of options they were
+  // never offered (e.g. someone clicking "Essix Retainers" should
+  // never see the widget hint at a Service step before theirs).
+  const visibleSteps = activeSteps.slice(lockedStepIdx);
+  const visibleCurrentIdx = Math.max(0, currentIdx - lockedStepIdx);
+  const visibleTotalSteps = visibleSteps.length;
+
   const goNext = () => {
     const nextIdx = currentIdx + 1;
     if (nextIdx < activeSteps.length) {
@@ -415,6 +426,8 @@ export function useBookingState(
     activeSteps,
     currentIdx,
     totalSteps,
+    visibleCurrentIdx,
+    visibleTotalSteps,
     canGoBack,
     goNext,
     goBack,
