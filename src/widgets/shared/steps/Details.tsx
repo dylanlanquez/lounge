@@ -71,14 +71,14 @@ export function DetailsStep({ api }: { api: BookingStateApi }) {
   return (
     <div
       style={{
-        background: QUIZ.SURFACE,
-        border: `2px solid ${QUIZ.BORDER}`,
-        borderRadius: QUIZ.R_CARD,
-        padding: 24,
+        // No outer card — individual fields carry their own border,
+        // and the section title above this already frames the form.
+        // Wrapping the whole thing in another bordered card was
+        // double-chrome on the modal's #f4f4f4 surface.
         display: 'flex',
         flexDirection: 'column',
         gap: 16,
-        maxWidth: 720,
+        maxWidth: 560,
         margin: '0 auto',
         width: '100%',
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
