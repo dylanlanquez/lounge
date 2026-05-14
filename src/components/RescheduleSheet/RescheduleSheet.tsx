@@ -27,6 +27,7 @@ import {
   checkBookingConflict,
   rescheduleAppointment,
 } from '../../lib/queries/rescheduleAppointment.ts';
+import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 
 // RescheduleSheet — bottom-sheet UI for moving a native (manual /
 // native-source) Lounge appointment to a different slot.
@@ -173,6 +174,42 @@ export function RescheduleSheet({
       clearTimeout(t);
     };
   }, [open, config, date, time, appointment.id, appointment.location_id, serviceType]);
+
+  // ── Available slots for the picked day ─────────────────────────
+  // Same flow as NewBookingSheet: the TimePicker only renders
+  // HH:MM slots that pass the conflict check, so the operator
+  // can't land on a busy time. excludeAppointmentId lets the
+  // current slot still appear (the row being moved doesn't count
+  // against itself).
+  const [availableSlots, setAvailableSlots] = useState<string[] | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState<boolean>(false);
+  useEffect(() => {
+    if (!open || !config || !date) {
+      setAvailableSlots(null);
+      setAvailabilityLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAvailabilityLoading(true);
+    (async () => {
+      try {
+        const slots = await loadAvailableSlots({
+          locationId: appointment.location_id,
+          serviceType: serviceType as BookingServiceType,
+          date,
+          excludeAppointmentId: appointment.id,
+        });
+        if (!cancelled) setAvailableSlots(slots);
+      } catch {
+        if (!cancelled) setAvailableSlots(null);
+      } finally {
+        if (!cancelled) setAvailabilityLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, config, date, appointment.id, appointment.location_id, serviceType]);
 
   // ── Working-hours derivation for the chosen date ───────────────
   const hoursForDate = useMemo(() => {
@@ -352,6 +389,13 @@ export function RescheduleSheet({
               title="Pick the new start time"
               startHour={hoursForDate ? clampHour(hoursForDate.open) : 6}
               endHour={hoursForDate ? clampHour(hoursForDate.close, true) : 22}
+              availableSlots={availableSlots ?? undefined}
+              availabilityLoading={availabilityLoading}
+              emptyMessage={
+                hoursForDate
+                  ? 'No free times that day.'
+                  : 'Closed on this day.'
+              }
             />
             {config ? (
               <InlineHint tone={hoursForDate || !date ? 'muted' : 'alert'}>

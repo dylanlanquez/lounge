@@ -44,6 +44,7 @@ import {
   RescheduleConflictError,
   checkBookingConflict,
 } from '../../lib/queries/rescheduleAppointment.ts';
+import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
@@ -447,6 +448,60 @@ export function NewBookingSheet({
     config,
     date,
     time,
+    locationId,
+    serviceType,
+    axisValues.repair_variant,
+    axisValues.product_key,
+    axisValues.arch,
+  ]);
+
+  // ── Available slots for the picked day/service ─────────────────
+  // The TimePicker is fed an explicit allow-list of HH:MM strings
+  // so the operator can only land on slots that pass the same
+  // conflict check the Save button runs. Refetched when any input
+  // that changes the answer changes: date, location, service, the
+  // service's resolved duration, and the axis pins that select a
+  // child override. Until the fetch returns the picker renders a
+  // soft "Checking availability..." placeholder rather than the
+  // full grid, so we don't flash unavailable slots in then yank
+  // them out.
+  const [availableSlots, setAvailableSlots] = useState<string[] | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState<boolean>(false);
+  useEffect(() => {
+    if (!open || !config || !serviceType || !date) {
+      setAvailableSlots(null);
+      setAvailabilityLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAvailabilityLoading(true);
+    (async () => {
+      try {
+        const slots = await loadAvailableSlots({
+          locationId,
+          serviceType: serviceType as BookingServiceType,
+          date,
+          repairVariant: axisValues.repair_variant,
+          productKey: axisValues.product_key,
+          arch: axisValues.arch,
+        });
+        if (!cancelled) setAvailableSlots(slots);
+      } catch {
+        // Soft fall back to the full grid on a fetch error rather
+        // than locking the receptionist out — the live conflict
+        // banner still catches a bad pick on Save.
+        if (!cancelled) setAvailableSlots(null);
+      } finally {
+        if (!cancelled) setAvailabilityLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    config,
+    date,
     locationId,
     serviceType,
     axisValues.repair_variant,
@@ -922,6 +977,13 @@ export function NewBookingSheet({
               title="Pick the start time"
               startHour={hoursForDate ? clampHour(hoursForDate.open) : 6}
               endHour={hoursForDate ? clampHour(hoursForDate.close, true) : 22}
+              availableSlots={availableSlots ?? undefined}
+              availabilityLoading={availabilityLoading}
+              emptyMessage={
+                hoursForDate
+                  ? 'No free times that day.'
+                  : 'Closed on this day.'
+              }
             />
             {config ? (
               <InlineHint

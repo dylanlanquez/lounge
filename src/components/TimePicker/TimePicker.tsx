@@ -56,6 +56,21 @@ export interface TimePickerProps {
   // selected time as its header instead, matching the iOS-style
   // reference design.
   title?: string;
+  // When provided, the slot list is filtered to ONLY these HH:MM
+  // strings — used by the Schedule sheets to hide times that already
+  // conflict with another booking. Pass undefined to render every
+  // slot in [startHour, endHour) as before.
+  availableSlots?: string[];
+  // True while the caller is fetching availableSlots. Renders a soft
+  // "Checking availability..." state in place of the slot list so
+  // the user doesn't see all slots flash in and then disappear once
+  // the conflict check returns.
+  availabilityLoading?: boolean;
+  // Message shown when availableSlots is provided but empty. Picker
+  // is in a fully-booked / closed-day state. Default phrasing is
+  // generic; callers can override (eg. "No times match this
+  // service on Sundays").
+  emptyMessage?: string;
 }
 
 const POPOVER_PAD = 16;
@@ -73,11 +88,19 @@ export function TimePicker({
   startHour = 6,
   endHour = 22,
   title = 'Pick a time',
+  availableSlots,
+  availabilityLoading = false,
+  emptyMessage = 'No free times that day.',
 }: TimePickerProps) {
   const isMobile = useIsMobile(720);
   const slots = useMemo(
-    () => buildSlots(startHour, endHour, step),
-    [startHour, endHour, step],
+    () => {
+      const grid = buildSlots(startHour, endHour, step);
+      if (!availableSlots) return grid;
+      const allow = new Set(availableSlots);
+      return grid.filter((s) => allow.has(s));
+    },
+    [startHour, endHour, step, availableSlots],
   );
   const animId = useId().replace(/:/g, '');
 
@@ -238,6 +261,8 @@ export function TimePicker({
             value={value}
             onPick={handlePick}
             maxHeight={popoverPos.listMaxHeight}
+            loading={availabilityLoading}
+            emptyMessage={emptyMessage}
           />
           <style>{`
             @keyframes lng-time-pop-${animId} {
@@ -294,6 +319,8 @@ export function TimePicker({
           value={value}
           onPick={handlePick}
           maxHeight={undefined}
+          loading={availabilityLoading}
+          emptyMessage={emptyMessage}
         />
       </div>
     </>,
@@ -467,12 +494,16 @@ const SlotList = ({
   value,
   onPick,
   maxHeight,
+  loading,
+  emptyMessage,
 }: {
   ref: React.RefObject<HTMLDivElement | null>;
   slots: string[];
   value: string;
   onPick: (slot: string) => void;
   maxHeight: number | undefined;
+  loading: boolean;
+  emptyMessage: string;
 }) => {
   return (
     <div
@@ -488,14 +519,20 @@ const SlotList = ({
         scrollBehavior: 'smooth',
       }}
     >
-      {slots.map((slot) => (
-        <SlotRow
-          key={slot}
-          slot={slot}
-          isSelected={slot === value}
-          onPick={onPick}
-        />
-      ))}
+      {loading ? (
+        <SlotListMessage label="Checking availability..." />
+      ) : slots.length === 0 ? (
+        <SlotListMessage label={emptyMessage} />
+      ) : (
+        slots.map((slot) => (
+          <SlotRow
+            key={slot}
+            slot={slot}
+            isSelected={slot === value}
+            onPick={onPick}
+          />
+        ))
+      )}
       <style>{`
         .lng-time-list::-webkit-scrollbar {
           width: 6px;
@@ -573,6 +610,23 @@ function SlotRow({
     >
       {slot}
     </button>
+  );
+}
+
+function SlotListMessage({ label }: { label: string }) {
+  return (
+    <div
+      role="status"
+      style={{
+        padding: `${theme.space[6]}px ${theme.space[4]}px`,
+        textAlign: 'center',
+        color: theme.color.inkMuted,
+        fontSize: theme.type.size.sm,
+        lineHeight: 1.4,
+      }}
+    >
+      {label}
+    </div>
   );
 }
 
