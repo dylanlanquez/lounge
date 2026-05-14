@@ -1,4 +1,4 @@
-import { Box, Clock, Disc, Palette, ShieldCheck, Truck } from 'lucide-react';
+import { Box, Clock, Disc, Palette, ShieldCheck, Smile, Truck } from 'lucide-react';
 import type { ComponentType } from 'react';
 
 // Per-service "Included at no extra cost" lists. Mirrors the
@@ -22,7 +22,7 @@ export interface IncludedPerk {
 export const INCLUDED_PERKS: Record<string, IncludedPerk[]> = {
   same_day_appliance: [
     { icon: Clock, title: 'Same-day production' },
-    { icon: Box,   title: 'On-site impressions or scans' },
+    { icon: Smile, title: 'On-site impressions or scans' },
     { icon: Disc,  title: 'Storage case' },
     { icon: ShieldCheck, title: '14-day warranty' },
   ],
