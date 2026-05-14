@@ -39,7 +39,7 @@ import { DetailsStep } from './steps/Details.tsx';
 // via loadStripe(), so the heavy ~80 KB bundle this comment used
 // to worry about is NOT in our bundle either way.)
 import { SuccessScreen } from './steps/Success.tsx';
-import { submitBooking, SubmitError } from './submit.ts';
+import { submitBooking, type SubmitError } from './submit.ts';
 import { loadRememberedIdentity } from './state.ts';
 import { rememberBookingToken, useRememberedBookings } from './rememberedBookings.ts';
 import { WelcomeBack } from './WelcomeBack.tsx';
@@ -227,6 +227,23 @@ function WidgetReady({
     error: null,
   });
 
+  // Payment step plumbing — the Pay button lives in the sticky
+  // footer (not in the Payment step) so the layout matches the
+  // rest of the form. PaymentStep exposes a `pay()` method via
+  // ref so the footer can trigger stripe.confirmPayment without
+  // losing the Elements context, and the footer's
+  // disabled/label state reads `paymentReady` + `paymentPaying`.
+  //
+  // These hooks MUST sit above the early returns below — React's
+  // rules of hooks require the same hook count every render, and
+  // returning <SuccessScreen> or <WelcomeBack> early would otherwise
+  // drop these three hook slots on the render where the branch
+  // changes, throwing React error #300 ("Rendered fewer hooks
+  // than expected") and blanking the page right after booking.
+  const paymentRef = useRef<PaymentApi | null>(null);
+  const [paymentReady, setPaymentReady] = useState(false);
+  const [paymentPaying, setPaymentPaying] = useState(false);
+
   // Single submission entry-point. Called from the footer Next
   // button on the summary step (free booking) or from the Payment
   // step's onPaid handler after Stripe confirms.
@@ -295,16 +312,6 @@ function WidgetReady({
       />
     );
   }
-
-  // Payment step plumbing — the Pay button lives in the sticky
-  // footer (not in the Payment step) so the layout matches the
-  // rest of the form. PaymentStep exposes a `pay()` method via
-  // ref so the footer can trigger stripe.confirmPayment without
-  // losing the Elements context, and the footer's
-  // disabled/label state reads `paymentReady` + `paymentPaying`.
-  const paymentRef = useRef<PaymentApi | null>(null);
-  const [paymentReady, setPaymentReady] = useState(false);
-  const [paymentPaying, setPaymentPaying] = useState(false);
 
   // Determine what the Next button does on this step.
   // - 'details' + no payment next → submit (free booking)
