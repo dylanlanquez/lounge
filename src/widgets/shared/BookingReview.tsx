@@ -161,9 +161,10 @@ export function BookingReview({
         border: `2px solid #dee9ec`,
         borderRadius: QUIZ.R_CARD,
         padding: '20px 20px 8px',
-        maxWidth: 700,
-        margin: '0 auto',
         width: '100%',
+        // No maxWidth here — the parent (DetailsStep wrapper) caps
+        // width at 720px, so letting the card fill its parent makes
+        // it line up flush with the form fields above it.
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >

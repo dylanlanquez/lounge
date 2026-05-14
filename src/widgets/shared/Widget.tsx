@@ -666,7 +666,7 @@ function Footer({
         <label
           style={{
             display: 'flex',
-            alignItems: 'flex-start',
+            alignItems: 'center',
             justifyContent: 'center',
             gap: 8,
             cursor: 'pointer',
@@ -684,7 +684,6 @@ function Footer({
               }))
             }
             style={{
-              marginTop: 3,
               width: 16,
               height: 16,
               cursor: 'pointer',

@@ -12,9 +12,10 @@ import { QUIZ } from '../quizTokens.ts';
 import { BookingReview } from '../BookingReview.tsx';
 import type { WidgetCopy } from '../copy.ts';
 
-// Details step — first name, last name, email, phone, notes,
-// Remember me checkbox. Terms checkbox has moved to the footer on
-// the Summary step.
+// Details step — first name, last name, email, phone, notes.
+// Identity is always persisted to localStorage (rememberMe default
+// is true; the opt-out checkbox was removed for simplicity).
+// Terms checkbox lives in the footer.
 //
 // Visual language matches the retainer-cart inputs: 2px borders at
 // 8px radius, focus border switches to the brand accent, error
@@ -167,10 +168,6 @@ export function DetailsStep({
           />
         </label>
 
-        <RememberCheckbox
-          checked={d.rememberMe}
-          onChange={(c) => update('rememberMe', c)}
-        />
       </div>
 
       {/* Booking review — appointment summary + price total.
@@ -382,43 +379,6 @@ function ErrorLine({
     >
       {children}
     </p>
-  );
-}
-
-function RememberCheckbox({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <label
-      style={{
-        display: 'inline-flex',
-        alignItems: 'flex-start',
-        gap: 8,
-        cursor: 'pointer',
-        fontSize: 13,
-        color: QUIZ.MUTED_2,
-        lineHeight: 1.45,
-      }}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{
-          width: 16,
-          height: 16,
-          marginTop: 2,
-          accentColor: QUIZ.ACCENT,
-          cursor: 'pointer',
-          flexShrink: 0,
-        }}
-      />
-      <span>Remember me on this device. Untick if you're on a public computer.</span>
-    </label>
   );
 }
 
