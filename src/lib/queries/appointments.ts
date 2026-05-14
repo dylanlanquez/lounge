@@ -309,6 +309,65 @@ function joinMultiSelect(answer: string | undefined | null): string | undefined 
   return parts.join(', ');
 }
 
+// Per-product noun map used by formatNativeBookingSummary. Native
+// widget bookings store the product as a stable enum key
+// (lng_widget_booking_types.product_key) so we don't have to
+// regex-parse a human label like the Calendly path does.
+const NATIVE_PRODUCT_NOUN: Record<string, string> = {
+  retainer: 'retainer',
+  night_guard: 'night guard',
+  day_guard: 'day guard',
+  click_in_veneers: 'click-in veneers',
+  missing_tooth: 'missing-tooth appliance',
+};
+
+// Short arch label for the hero title — Upper / Lower / Both. The
+// existing archToAnatomy() returns "Upper and Lower" for the both
+// case which reads clunkily as a sentence prefix ("Upper and Lower
+// Click-in veneers"). For the hero we want a single tight word.
+function archShort(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const v = raw.toLowerCase().trim();
+  if (v === 'upper' || v === 'top') return 'Upper';
+  if (v === 'lower' || v === 'bottom') return 'Lower';
+  if (v === 'both' || v === 'full' || /upper.*lower|top.*bottom/.test(v)) return 'Both';
+  return undefined;
+}
+
+/**
+ * Compose a hero title for native widget bookings using the axis
+ * columns stored on the row directly (arch + product_key +
+ * service_type / event_type_label). Skips the Calendly intake-
+ * parsing path entirely — those rows pre-date the axis columns
+ * and need formatBookingSummary's heuristics.
+ *
+ * Examples:
+ *   click_in_veneers + arch=upper                → "Upper Click-in veneers"
+ *   same_day_appliance + product=retainer + lower → "Lower retainer"
+ *   denture_repair (no arch)                     → "Denture repair"
+ *
+ * Both-arches case reads with the short "Both" prefix so the
+ * sentence stays tight ("Both Click-in veneers") rather than the
+ * full anatomy phrasing.
+ */
+export function formatNativeBookingSummary(row: {
+  service_type: string | null;
+  event_type_label: string | null;
+  arch: string | null;
+  product_key: string | null;
+}): string {
+  const arch = archShort(row.arch);
+  // Services that wrap a product (same-day appliance, impression
+  // appointments) prefer the product noun. Services that ARE the
+  // appliance (click-in veneers, denture repair) fall back to the
+  // event_type_label since that's already the right word.
+  const productNoun = row.product_key ? NATIVE_PRODUCT_NOUN[row.product_key] : undefined;
+  const fallbackNoun = row.event_type_label?.trim() || null;
+  const noun = productNoun ?? fallbackNoun ?? 'Appointment';
+  if (arch) return `${arch} ${noun}`;
+  return noun;
+}
+
 // Accepts the two fields actually needed — works with both AppointmentRow
 // and AppointmentDetailRow without requiring a full type cast.
 export function formatBookingSummary(row: {

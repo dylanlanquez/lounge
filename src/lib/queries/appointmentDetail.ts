@@ -46,6 +46,19 @@ export interface AppointmentDetailRow {
   // person, fulfilment, etc.). Surfaced here so the Generate Meet
   // link retry knows when to offer itself.
   service_type: string | null;
+  /** Catalogue axis pins captured at booking time. Together with
+   *  service_type they describe the appliance + arch the patient
+   *  booked. Used by formatNativeBookingSummary to compose the
+   *  hero title (e.g. "Upper Click-in veneers"). Calendly-imported
+   *  rows leave these null; the legacy event_type_label path
+   *  handles those. */
+  product_key: string | null;
+  repair_variant: string | null;
+  arch: string | null;
+  /** Which storefront the booking came from — 'venneir' or
+   *  'denture'. Drives the source badge icon + per-brand chrome
+   *  on the appointment hero. */
+  brand_id: string | null;
   join_url: string | null;
   meeting_platform: string | null;
   // Per-host Meet integration fields. Populated when the appointment
@@ -157,6 +170,18 @@ interface RawAppointment {
   location_id: string;
   patient_id: string;
   service_type: string | null;
+  /** Catalogue axis pins captured at booking time. Used to compose
+   *  a human-readable summary like "Upper Click-in veneers" or
+   *  "Lower retainer" on the appointment hero. Native widget rows
+   *  populate these; Calendly-imported rows leave them null. */
+  product_key: string | null;
+  repair_variant: string | null;
+  arch: string | null;
+  /** Which storefront the booking came from — 'venneir' or
+   *  'denture'. Drives the source badge icon + transactional
+   *  email chrome. Defaults to 'venneir' on rows older than the
+   *  brand-id column. */
+  brand_id: string | null;
   join_url: string | null;
   meeting_platform: string | null;
   meet_host_id: string | null;
@@ -204,7 +229,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_name, shopify_order_total_pence, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -355,6 +380,10 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           location_id: appt.location_id,
           patient_id: appt.patient_id,
           service_type: (appt as RawAppointment & { service_type?: string | null }).service_type ?? null,
+          product_key: (appt as RawAppointment & { product_key?: string | null }).product_key ?? null,
+          repair_variant: (appt as RawAppointment & { repair_variant?: string | null }).repair_variant ?? null,
+          arch: (appt as RawAppointment & { arch?: string | null }).arch ?? null,
+          brand_id: (appt as RawAppointment & { brand_id?: string | null }).brand_id ?? null,
           join_url: appt.join_url,
           meeting_platform: appt.meeting_platform,
           meet_host_id: (appt as RawAppointment & { meet_host_id?: string | null }).meet_host_id ?? null,
