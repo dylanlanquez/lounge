@@ -92,6 +92,16 @@ interface SubmitBody {
    *  to 'venneir' for legacy callers (the standalone /book route)
    *  that don't pass a brand. */
   brandId?: 'venneir' | 'denture' | null;
+  /** Customer-facing payment path picked at the summary step.
+   *    'full'        → PI was created at the resolved catalogue
+   *                    price; this endpoint verifies against THAT
+   *                    amount and flips paid_in_full_at_booking.
+   *    'on_the_day'  → nothing taken via the widget; cart settles
+   *                    at the till.
+   *    null / unset  → legacy deposit path: verify against
+   *                    widget_deposit_pence (back-compat for any
+   *                    older client still in the wild). */
+  paymentMode?: 'full' | 'on_the_day' | null;
   details: {
     firstName: string;
     lastName: string;
@@ -130,9 +140,6 @@ Deno.serve(async (req) => {
 
   const validation = validate(body);
   if (validation) return jsonResponse(400, { error: 'invalid', detail: validation });
-  if (!body.details.agreeTerms) {
-    return jsonResponse(400, { error: 'terms_not_accepted' });
-  }
 
   const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -197,40 +204,58 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable', conflicts: conflictRows });
   }
 
-  // ── Deposit verification ────────────────────────────────────────
-  // Read the expected deposit server-side so a malicious client
-  // can't claim "0" for a service that costs £25 to hold a slot.
-  // When the service has a deposit configured, paymentIntentId is
-  // required AND must verify against Stripe — status=succeeded,
-  // amount matches expected deposit, currency=gbp, metadata.source=
-  // widget (so a PI from another flow can't be replayed).
+  // ── Payment verification ────────────────────────────────────────
+  // Three modes the client can ask for. All flows resolve the
+  // expected amount server-side first so a tampered client body
+  // can't claim "£0 paid" on a £399 booking.
+  //
+  //   paymentMode === 'full'        → verify PI against the
+  //     resolved catalogue price (unit_price or both_arches_price);
+  //     write paid_in_full_at_booking=true.
+  //   paymentMode === 'on_the_day'  → nothing collected at
+  //     booking. We still take the lookup for completeness but
+  //     never expect a paymentIntentId.
+  //   paymentMode is null / unset   → legacy deposit path. Read
+  //     widget_deposit_pence, require PI when > 0, write the
+  //     deposit fields (paid_in_full_at_booking stays false).
+  const paymentMode: 'full' | 'on_the_day' | 'deposit' =
+    body.paymentMode === 'full'
+      ? 'full'
+      : body.paymentMode === 'on_the_day'
+        ? 'on_the_day'
+        : 'deposit';
   let depositFields: DepositFields | null = null;
-  const { data: depositRow } = await supabase
-    .from('lng_widget_booking_types')
-    .select('deposit_pence')
-    .eq('service_type', body.serviceType)
-    .maybeSingle();
-  const expectedDepositPence =
-    (depositRow as { deposit_pence: number } | null)?.deposit_pence ?? 0;
+  let paidInFullAtBooking = false;
 
-  if (expectedDepositPence > 0) {
+  if (paymentMode === 'full') {
     if (!body.paymentIntentId) {
       return jsonResponse(400, { error: 'payment_intent_required' });
+    }
+    const fullPrice = await resolveFullPricePence(supabase, body);
+    if (!fullPrice.ok) {
+      await logFailure('full_price_resolve_failed', { code: fullPrice.code, body });
+      return jsonResponse(400, { error: fullPrice.code });
     }
     const stripeSecret = await resolveStripeSecret(supabase);
     if (!stripeSecret) {
       await logFailure('stripe_secret_key_missing', { paymentIntentId: body.paymentIntentId });
       return jsonResponse(500, { error: 'stripe_not_configured' });
     }
-    const verify = await verifyPaymentIntent(stripeSecret, body.paymentIntentId, expectedDepositPence);
+    const verify = await verifyPaymentIntent(stripeSecret, body.paymentIntentId, fullPrice.pence);
     if (!verify.ok) {
       await logFailure('payment_intent_verify_failed', {
         paymentIntentId: body.paymentIntentId,
         reason: verify.reason,
+        expectedPence: fullPrice.pence,
         body,
       });
       return jsonResponse(verify.status, { error: verify.reason });
     }
+    // We still populate deposit_* columns so the existing visit
+    // cart credit logic (Cart subtotal − deposit_pence) reads the
+    // full amount as already-collected without a parallel code path.
+    // paid_in_full_at_booking is the flag that switches staff
+    // surfaces from "Deposit paid £X" to "Paid in full".
     depositFields = {
       deposit_status: 'paid',
       deposit_pence: verify.amount,
@@ -239,7 +264,47 @@ Deno.serve(async (req) => {
       deposit_external_id: body.paymentIntentId,
       deposit_paid_at: verify.paidAt,
     };
+    paidInFullAtBooking = true;
+  } else if (paymentMode === 'deposit') {
+    // Legacy path. Read widget_deposit_pence; require + verify a PI
+    // when one is configured, no-op when the service is free.
+    const { data: depositRow } = await supabase
+      .from('lng_widget_booking_types')
+      .select('deposit_pence')
+      .eq('service_type', body.serviceType)
+      .maybeSingle();
+    const expectedDepositPence =
+      (depositRow as { deposit_pence: number } | null)?.deposit_pence ?? 0;
+    if (expectedDepositPence > 0) {
+      if (!body.paymentIntentId) {
+        return jsonResponse(400, { error: 'payment_intent_required' });
+      }
+      const stripeSecret = await resolveStripeSecret(supabase);
+      if (!stripeSecret) {
+        await logFailure('stripe_secret_key_missing', { paymentIntentId: body.paymentIntentId });
+        return jsonResponse(500, { error: 'stripe_not_configured' });
+      }
+      const verify = await verifyPaymentIntent(stripeSecret, body.paymentIntentId, expectedDepositPence);
+      if (!verify.ok) {
+        await logFailure('payment_intent_verify_failed', {
+          paymentIntentId: body.paymentIntentId,
+          reason: verify.reason,
+          body,
+        });
+        return jsonResponse(verify.status, { error: verify.reason });
+      }
+      depositFields = {
+        deposit_status: 'paid',
+        deposit_pence: verify.amount,
+        deposit_currency: verify.currency,
+        deposit_provider: 'stripe',
+        deposit_external_id: body.paymentIntentId,
+        deposit_paid_at: verify.paidAt,
+      };
+    }
   }
+  // paymentMode === 'on_the_day' falls through with no depositFields
+  // and paidInFullAtBooking=false. Nothing collected by the widget.
 
   // ── Patient identity ────────────────────────────────────────────
   const email = body.details.email.toLowerCase().trim();
@@ -344,6 +409,7 @@ Deno.serve(async (req) => {
       // falls back to 'venneir' so emails still send rather than
       // 500-ing the booking write.
       brand_id: body.brandId === 'denture' ? 'denture' : 'venneir',
+      paid_in_full_at_booking: paidInFullAtBooking,
       ...(depositFields ?? {}),
     })
     .select('id, appointment_ref, manage_token')
@@ -593,6 +659,47 @@ type VerifyResult =
       status: number;
       reason: string;
     };
+
+// Mirror of resolveFullPricePence in widget-create-payment-intent —
+// both endpoints must agree on the expected amount, so this
+// function is duplicated rather than imported (Deno function bundles
+// don't share modules across function dirs in the deploy pipeline).
+async function resolveFullPricePence(
+  supabase: SupabaseClient,
+  body: SubmitBody,
+): Promise<{ ok: true; pence: number } | { ok: false; code: string }> {
+  let q = supabase
+    .from('lwo_catalogue')
+    .select('unit_price, both_arches_price, arch_match')
+    .eq('service_type', body.serviceType)
+    .eq('active', true);
+  if (body.productKey) q = q.eq('product_key', body.productKey);
+  if (body.repairVariant) q = q.eq('repair_variant', body.repairVariant);
+  const { data, error } = await q.limit(1);
+  if (error) return { ok: false, code: 'catalogue_lookup_failed' };
+  const row = (data && data.length > 0 ? data[0] : null) as
+    | {
+        unit_price: number | string | null;
+        both_arches_price: number | string | null;
+        arch_match: 'any' | 'single' | 'both' | null;
+      }
+    | null;
+  if (!row) return { ok: false, code: 'no_catalogue_row' };
+  const archMatch = row.arch_match ?? 'any';
+  const useBoth =
+    archMatch === 'single' &&
+    body.arch === 'both' &&
+    row.both_arches_price !== null;
+  const decimal = useBoth ? row.both_arches_price : row.unit_price;
+  if (decimal === null || decimal === undefined) {
+    return { ok: false, code: 'no_price_resolved' };
+  }
+  const pence = Math.round(Number(decimal) * 100);
+  if (!Number.isFinite(pence) || pence <= 0) {
+    return { ok: false, code: 'no_price_resolved' };
+  }
+  return { ok: true, pence };
+}
 
 async function verifyPaymentIntent(
   stripeSecret: string,

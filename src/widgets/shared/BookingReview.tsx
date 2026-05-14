@@ -1,5 +1,4 @@
-import { MapPin, Award, Calendar, Sparkles, Clock } from 'lucide-react';
-import { DepositGlyph } from './DepositGlyph.tsx';
+import { MapPin, Award, Calendar, Sparkles } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -136,36 +135,10 @@ export function BookingReview({
       amount: formatPrice(total),
     });
   }
-  if (priceBreakdown.depositPence > 0) {
-    rows.push({
-      kind: 'split',
-      key: 'deposit',
-      icon: (
-        <span aria-hidden style={{ color: QUIZ.MUTED_2, display: 'inline-flex' }}>
-          <DepositGlyph size={18} />
-        </span>
-      ),
-      label: 'Deposit today',
-      // Minus prefix so the row reads as a deduction from Total
-      // rather than a separate fee — the patient should see the
-      // arithmetic Total − Deposit = Balance at a glance.
-      amount: `−${formatPrice(priceBreakdown.depositPence)}`,
-      muted: true,
-    });
-  }
-  if (priceBreakdown.payAtAppointmentPence > 0) {
-    rows.push({
-      kind: 'split',
-      key: 'balance',
-      icon: <Clock size={18} aria-hidden style={{ color: accent }} />,
-      label: 'Balance on the day',
-      amount: formatPrice(priceBreakdown.payAtAppointmentPence),
-      // The actual takeaway: this is what they pay on the day.
-      // Render bigger + bolder + accent so the eye lands here
-      // after scanning Total and the deposit deduction.
-      emphasized: true,
-    });
-  }
+  // Pay-now vs pay-on-the-day is now chosen via the two CTAs in
+  // the footer, not surfaced as deduction rows here. The summary
+  // card just owns the line items + Total; the buttons below own
+  // the timing.
 
   return (
     <div

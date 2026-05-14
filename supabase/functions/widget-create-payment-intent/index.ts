@@ -69,6 +69,12 @@ interface Body {
   repairVariant?: string | null;
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
+  /** 'full' charges the resolved catalogue price (unit_price or
+   *  both_arches_price). 'deposit' is the legacy path — charges the
+   *  widget_deposit_pence configured on lng_widget_booking_types.
+   *  Defaults to 'deposit' so any older client that hasn't been
+   *  redeployed yet keeps working. */
+  paymentMode?: 'full' | 'deposit';
 }
 
 Deno.serve(async (req) => {
@@ -97,32 +103,50 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { error: 'no_location_resolved' });
   }
 
-  // Server-resolved deposit: never trust the client. The deposit
-  // amount sits on lng_booking_type_config.widget_deposit_pence —
-  // exposed via lng_widget_booking_types — and the same column
-  // widget-create-appointment reads when verifying a PaymentIntent
-  // landed on the right number. (lng_booking_type_resolve covers
-  // duration / phases / pools but doesn't project the widget
-  // deposit; querying the view directly keeps the two endpoints
-  // in lockstep.)
-  const { data: depositRow, error: depositErr } = await supabase
-    .from('lng_widget_booking_types')
-    .select('deposit_pence')
-    .eq('service_type', body.serviceType)
-    .maybeSingle();
-  if (depositErr) {
-    await logFailure('deposit_lookup_failed', { error: depositErr.message, body });
-    return jsonResponse(500, { error: 'resolve_failed' });
-  }
-  const depositPence =
-    (depositRow as { deposit_pence: number } | null)?.deposit_pence ?? 0;
-  if (depositPence <= 0) {
-    return jsonResponse(400, { error: 'no_deposit_configured' });
+  // Server-resolved amount: never trust the client. Two paths:
+  //
+  //   • paymentMode 'full' (new default for redeployed widget) —
+  //     charge the resolved catalogue price the same way the client
+  //     computes it: filter lwo_catalogue by (service_type, optional
+  //     product_key, optional repair_variant, active=true), take the
+  //     first row, use unit_price OR both_arches_price when the
+  //     patient picked arch='both' on a single-arch row.
+  //
+  //   • paymentMode 'deposit' (legacy) — fall back to
+  //     widget_deposit_pence on lng_widget_booking_types. Kept so an
+  //     in-cache older bundle on a partner page doesn't break mid
+  //     deploy.
+  const paymentMode: 'full' | 'deposit' = body.paymentMode === 'full' ? 'full' : 'deposit';
+  let amountPence = 0;
+  if (paymentMode === 'full') {
+    const fullPrice = await resolveFullPricePence(supabase, body);
+    if (!fullPrice.ok) {
+      return jsonResponse(400, { error: fullPrice.code });
+    }
+    amountPence = fullPrice.pence;
+  } else {
+    const { data: depositRow, error: depositErr } = await supabase
+      .from('lng_widget_booking_types')
+      .select('deposit_pence')
+      .eq('service_type', body.serviceType)
+      .maybeSingle();
+    if (depositErr) {
+      await logFailure('deposit_lookup_failed', { error: depositErr.message, body });
+      return jsonResponse(500, { error: 'resolve_failed' });
+    }
+    amountPence =
+      (depositRow as { deposit_pence: number } | null)?.deposit_pence ?? 0;
+    if (amountPence <= 0) {
+      return jsonResponse(400, { error: 'no_deposit_configured' });
+    }
   }
 
-  // Idempotency: same (patient, slot, service, axes) within Stripe's
-  // 24h window returns the same PaymentIntent. Avoids accidental
-  // double-charges if the client retries the call.
+  // Idempotency: same (patient, slot, service, axes, mode) within
+  // Stripe's 24h window returns the same PaymentIntent. paymentMode
+  // is part of the hash so a customer who clicks Pay-now, backs out,
+  // and re-enters the flow as Pay-now again gets the same PI — but
+  // a future flow that mixes deposit + full on the same booking
+  // would correctly produce two distinct PIs.
   const idemKey = await sha256Hex(
     [
       body.email.toLowerCase().trim(),
@@ -131,6 +155,7 @@ Deno.serve(async (req) => {
       body.repairVariant ?? '',
       body.productKey ?? '',
       body.arch ?? '',
+      paymentMode,
     ].join('|'),
   );
 
@@ -157,7 +182,7 @@ Deno.serve(async (req) => {
     'POST',
     '/payment_intents',
     {
-      amount: String(depositPence),
+      amount: String(amountPence),
       currency: 'gbp',
       'payment_method_types[]': 'card',
       receipt_email: body.email,
@@ -168,6 +193,7 @@ Deno.serve(async (req) => {
       'metadata[repair_variant]': body.repairVariant ?? '',
       'metadata[product_key]': body.productKey ?? '',
       'metadata[arch]': body.arch ?? '',
+      'metadata[payment_mode]': paymentMode,
     },
     idemKey,
   );
@@ -185,10 +211,61 @@ Deno.serve(async (req) => {
   return jsonResponse(200, {
     clientSecret: pi.client_secret,
     paymentIntentId: pi.id,
+    // New canonical key. Legacy clients read depositPence, so keep
+    // that alias populated even when paymentMode === 'full' so an
+    // older cached bundle on a partner page doesn't blow up trying
+    // to read undefined.amount.
+    amountPence: pi.amount,
     depositPence: pi.amount,
     currency: pi.currency,
+    paymentMode,
   });
 });
+
+// Compute the resolved catalogue price the same way the widget
+// client does: pick the lwo_catalogue row matching the pinned axes,
+// then use unit_price OR both_arches_price when archMatch ===
+// 'single' AND arch === 'both' AND a both_arches_price is set.
+// Returns pounds × 100 (catalogue stores decimals).
+async function resolveFullPricePence(
+  supabase: SupabaseClient,
+  body: Body,
+): Promise<{ ok: true; pence: number } | { ok: false; code: string }> {
+  let q = supabase
+    .from('lwo_catalogue')
+    .select('unit_price, both_arches_price, arch_match')
+    .eq('service_type', body.serviceType)
+    .eq('active', true);
+  if (body.productKey) q = q.eq('product_key', body.productKey);
+  if (body.repairVariant) q = q.eq('repair_variant', body.repairVariant);
+  const { data, error } = await q.limit(1);
+  if (error) {
+    await logFailure('catalogue_resolve_failed', { error: error.message, body });
+    return { ok: false, code: 'catalogue_lookup_failed' };
+  }
+  const row = (data && data.length > 0 ? data[0] : null) as
+    | {
+        unit_price: number | string | null;
+        both_arches_price: number | string | null;
+        arch_match: 'any' | 'single' | 'both' | null;
+      }
+    | null;
+  if (!row) return { ok: false, code: 'no_catalogue_row' };
+  const archMatch = row.arch_match ?? 'any';
+  const useBoth =
+    archMatch === 'single' &&
+    body.arch === 'both' &&
+    row.both_arches_price !== null;
+  const decimal = useBoth ? row.both_arches_price : row.unit_price;
+  if (decimal === null || decimal === undefined) {
+    return { ok: false, code: 'no_price_resolved' };
+  }
+  const pence = Math.round(Number(decimal) * 100);
+  if (!Number.isFinite(pence) || pence <= 0) {
+    return { ok: false, code: 'no_price_resolved' };
+  }
+  return { ok: true, pence };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

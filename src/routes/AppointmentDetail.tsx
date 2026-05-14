@@ -766,10 +766,17 @@ function Hero({
     { tone, label: humaniseAppointmentStatus(appt.status) },
   ];
   if (appt.deposit_status === 'paid' && (appt.deposit_pence ?? 0) > 0) {
+    // Same money fact, two labels: paid_in_full_at_booking flips
+    // the read from "partial up-front" to "the whole bill is
+    // settled". Keep the deposit_paid tone so the visual family
+    // (soft accent fill) stays consistent on the hero, but swap
+    // the copy + glyph so the receptionist doesn't go chasing a
+    // balance that doesn't exist.
+    const fullyPaid = appt.paid_in_full_at_booking;
     pills.push({
       tone: 'deposit_paid',
-      label: 'Deposit paid',
-      icon: <DepositGlyph size={14} />,
+      label: fullyPaid ? 'Paid in full' : 'Deposit paid',
+      icon: fullyPaid ? <BadgeCheck size={14} aria-hidden /> : <DepositGlyph size={14} />,
     });
   }
 
@@ -1591,13 +1598,16 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   const paid = appt.deposit_status === 'paid';
   const failed = appt.deposit_status === 'failed';
 
-  // Paid: a soft accent-tinted card with the DepositGlyph mark and
-  // a "Deposit paid" headline. Crucially NOT "Paid in full" — that
-  // implies the whole bill is settled, which a booking deposit
-  // never guarantees. The dashed glyph (vs. the solid BadgeCheck
-  // used by "Paid in full" on VisitDetail) reads as "partial / not
-  // all the way".
+  // Paid: a soft accent-tinted card. Two read-states, same chrome:
+  //   • Deposit only — dashed DepositGlyph + "Deposit paid" + copy
+  //     mentioning the balance still due on the day.
+  //   • Paid in full — solid BadgeCheck + "Paid in full" + copy
+  //     making clear there's nothing left to collect.
+  // The flag swap saves the receptionist from chasing a balance
+  // that doesn't exist (and the BadgeCheck/Deposit-glyph contrast
+  // means a glance is enough).
   if (paid) {
+    const fullyPaid = appt.paid_in_full_at_booking;
     return (
       <Card
         padding="lg"
@@ -1607,8 +1617,8 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
         }}
       >
         <DetailSectionHeader
-          icon={<DepositGlyph size={20} />}
-          title="Deposit paid"
+          icon={fullyPaid ? <BadgeCheck size={20} aria-hidden /> : <DepositGlyph size={20} />}
+          title={fullyPaid ? 'Paid in full' : 'Deposit paid'}
         />
         <div
           style={{
@@ -1637,8 +1647,9 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
               color: theme.color.inkMuted,
             }}
           >
-            received via {provider} at booking. The remaining bill is
-            settled at the visit.
+            {fullyPaid
+              ? `received via ${provider} at booking. Nothing further to collect at the visit.`
+              : `received via ${provider} at booking. The remaining bill is settled at the visit.`}
           </span>
         </div>
       </Card>

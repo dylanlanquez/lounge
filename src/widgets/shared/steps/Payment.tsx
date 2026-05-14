@@ -104,7 +104,7 @@ export const PaymentStep = forwardRef<
     (async () => {
       const { data, error: invokeErr } = await supabase.functions.invoke<{
         clientSecret?: string;
-        depositPence?: number;
+        amountPence?: number;
         error?: string;
       }>('widget-create-payment-intent', {
         body: {
@@ -115,6 +115,12 @@ export const PaymentStep = forwardRef<
           repairVariant,
           productKey,
           arch,
+          // New flow: the widget always collects the full price now.
+          // Server resolves the catalogue row's unit_price (or
+          // both_arches_price when arch === 'both') and charges that;
+          // the legacy 'deposit' path stays on the server for any
+          // older client that hasn't been redeployed yet.
+          paymentMode: 'full',
         },
       });
       if (cancelled) return;
@@ -158,7 +164,12 @@ export const PaymentStep = forwardRef<
     [],
   );
 
-  const deposit = api.state.service?.depositPence ?? 0;
+  // Full-bill mode: we now collect the resolved service price up
+  // front when the patient picked "Pay now" on the summary footer,
+  // not the legacy deposit_pence. The price breakdown is the same
+  // one the summary card renders, so the headline + Pay button
+  // amount line up exactly with what the patient just committed to.
+  const fullAmount = api.priceBreakdown.subtotalPence;
 
   // Read the storefront's actual body font and forward it to
   // Stripe's iframe. Stripe inputs render inside cross-origin
@@ -197,7 +208,7 @@ export const PaymentStep = forwardRef<
   if (error) {
     return (
       <Shell maxWidth={720}>
-        <PayHeader deposit={deposit} />
+        <PayHeader fullAmount={fullAmount} />
         <p style={{ margin: 0, color: QUIZ.ALERT, fontSize: 14, fontWeight: 600 }}>
           {error}
         </p>
@@ -208,7 +219,7 @@ export const PaymentStep = forwardRef<
   if (loading || !clientSecret) {
     return (
       <Shell maxWidth={720}>
-        <PayHeader deposit={deposit} />
+        <PayHeader fullAmount={fullAmount} />
         <p style={{ margin: 0, color: QUIZ.MUTED_2, fontSize: 14 }}>Preparing payment…</p>
       </Shell>
     );
@@ -216,7 +227,7 @@ export const PaymentStep = forwardRef<
 
   return (
     <Shell maxWidth={720}>
-      <PayHeader deposit={deposit} />
+      <PayHeader fullAmount={fullAmount} />
       <Elements
         stripe={stripePromise}
         options={{
@@ -596,7 +607,7 @@ function AfterYouPayCard() {
   );
 }
 
-function PayHeader({ deposit }: { deposit: number }) {
+function PayHeader({ fullAmount }: { fullAmount: number }) {
   // Plain headline + sub. No uppercase eyebrow — the surrounding
   // step is already framed by the "Your appointment" banner at
   // the top of the modal, so an additional small-caps label here
@@ -613,7 +624,7 @@ function PayHeader({ deposit }: { deposit: number }) {
           letterSpacing: '-0.01em',
         }}
       >
-        Pay {formatPrice(deposit)} to secure the appointment
+        Pay {formatPrice(fullAmount)} to book
       </h2>
       <p
         style={{
@@ -623,8 +634,8 @@ function PayHeader({ deposit }: { deposit: number }) {
           lineHeight: 1.45,
         }}
       >
-        Refundable per our cancellation policy. The remaining balance is paid at your
-        appointment, and we'll send a confirmation email with everything you need.
+        Your appointment is paid in full once the card clears. Nothing extra to pay
+        at the clinic. We'll send a confirmation email with everything you need.
       </p>
     </div>
   );

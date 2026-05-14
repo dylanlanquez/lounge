@@ -5,7 +5,6 @@ import {
   useState,
 } from 'react';
 import { ArrowLeft, Lock } from 'lucide-react';
-import { DepositGlyph } from './DepositGlyph.tsx';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -283,7 +282,10 @@ function WidgetReady({
   // Single submission entry-point. Called from the footer Next
   // button on the summary step (free booking) or from the Payment
   // step's onPaid handler after Stripe confirms.
-  const submit = async (paymentIntentId: string | null = null) => {
+  const submit = async (
+    paymentIntentId: string | null = null,
+    paymentMode: 'full' | 'on_the_day' | null = null,
+  ) => {
     if (submission.state === 'submitting') return;
     setSubmission({
       state: 'submitting',
@@ -293,7 +295,25 @@ function WidgetReady({
       error: null,
     });
     try {
-      const result = await submitBooking(api.state, paymentIntentId, brand?.id);
+      // paymentMode is explicit because the two-button summary footer
+      // sets api.state.paymentChoice and calls submit in the same
+      // handler — React hasn't committed the state update yet, so
+      // we'd read the stale value off api.state. Passing it through
+      // sidesteps that race; falls back to api.state for legacy
+      // callers (free-service path).
+      const resolvedMode =
+        paymentMode ??
+        (api.state.paymentChoice === 'now'
+          ? 'full'
+          : api.state.paymentChoice === 'on_the_day'
+            ? 'on_the_day'
+            : null);
+      const result = await submitBooking(
+        api.state,
+        paymentIntentId,
+        brand?.id,
+        resolvedMode,
+      );
       if (result.manageToken) rememberBookingToken(result.manageToken);
       setSubmission({
         state: 'done',
@@ -367,22 +387,36 @@ function WidgetReady({
   }
 
   // Determine what the Next button does on this step.
-  // - 'details' + no payment next → submit (free booking)
-  // - 'details' + payment next → goNext (advance to Stripe)
   // - 'payment' → call paymentRef.current.pay()
+  // - 'details' → handled inline by the two-button summary footer
+  //   (Pay now / Pay on the day); for free services the footer
+  //   falls back to a single Book button that submits directly.
   // - other steps → goNext
-  const nextStepKey = api.activeSteps[api.currentIdx + 1] ?? null;
-  const isPaymentNext = nextStepKey === 'payment';
   const onFooterNext = () => {
     if (api.stepKey === 'payment') {
       paymentRef.current?.pay();
       return;
     }
-    if (api.stepKey === 'details' && !isPaymentNext) {
-      submit(null);
+    if (api.stepKey === 'details') {
+      // Free-service path. Paid services route through onPayNow /
+      // onPayOnTheDay below, never through this branch.
+      submit(null, null);
       return;
     }
     api.goNext();
+  };
+
+  // The two summary-footer CTAs. Both must set api.state.paymentChoice
+  // (so activeSteps recalcs and the back-arrow knows where to land)
+  // and either advance to the Payment step or fire submit straight
+  // away. paymentMode is passed to submit explicitly because the
+  // setState above hasn't propagated by the time we call it.
+  const onPayNow = () => {
+    api.choosePayment('now');
+  };
+  const onPayOnTheDay = () => {
+    api.choosePayment('on_the_day');
+    submit(null, 'on_the_day');
   };
   const submitting = submission.state === 'submitting';
 
@@ -393,13 +427,14 @@ function WidgetReady({
       brand={brand}
       locations={locations}
       onNext={onFooterNext}
+      onPayNow={onPayNow}
+      onPayOnTheDay={onPayOnTheDay}
       onSubmit={submit}
       submitting={submitting}
       submissionError={submission.error}
       onDismissError={() =>
         setSubmission((s) => ({ ...s, error: null }))
       }
-      isPaymentNext={isPaymentNext}
       paymentRef={paymentRef}
       paymentReady={paymentReady}
       paymentPaying={paymentPaying}
@@ -419,11 +454,12 @@ function ChromeShell({
   brand,
   locations,
   onNext,
+  onPayNow,
+  onPayOnTheDay,
   onSubmit,
   submitting,
   submissionError,
   onDismissError,
-  isPaymentNext,
   paymentRef,
   paymentReady,
   paymentPaying,
@@ -435,11 +471,12 @@ function ChromeShell({
   brand?: WidgetBrand;
   locations: WidgetLocation[];
   onNext: () => void;
+  onPayNow: () => void;
+  onPayOnTheDay: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
   submissionError: string | null;
   onDismissError: () => void;
-  isPaymentNext: boolean;
   paymentRef: React.MutableRefObject<PaymentApi | null>;
   paymentReady: boolean;
   paymentPaying: boolean;
@@ -538,8 +575,9 @@ function ChromeShell({
         accent={accent}
         onNext={onNext}
         onBack={api.goBack}
+        onPayNow={onPayNow}
+        onPayOnTheDay={onPayOnTheDay}
         submitting={submitting}
-        isPaymentNext={isPaymentNext}
         paymentReady={paymentReady}
         paymentPaying={paymentPaying}
       />
@@ -753,8 +791,9 @@ function Footer({
   accent,
   onNext,
   onBack,
+  onPayNow,
+  onPayOnTheDay,
   submitting,
-  isPaymentNext,
   paymentReady,
   paymentPaying,
 }: {
@@ -763,51 +802,40 @@ function Footer({
   accent: string;
   onNext: () => void;
   onBack: () => void;
+  onPayNow: () => void;
+  onPayOnTheDay: () => void;
   submitting: boolean;
-  isPaymentNext: boolean;
   paymentReady: boolean;
   paymentPaying: boolean;
 }) {
-  // Terms checkbox lives in the footer on the combined Details
-  // step — the form + summary are above; the customer ticks terms
-  // and hits Next once everything reads right.
-  const showTerms = api.stepKey === 'details';
   const isPaymentStep = api.stepKey === 'payment';
-  // Today / On-the-day split: hidden on Details + Payment.
-  // - Details already shows the deposit + balance split inside the
-  //   BookingReview card.
-  // - Payment's PayHeader spells out the split in copy and the Pay
-  //   button carries the deposit amount.
-  // Repeating it in the footer on those two screens was just
-  // visual noise.
+  const isDetailsStep = api.stepKey === 'details';
   const breakdown = api.priceBreakdown;
-  const depositPence = breakdown.depositPence;
-  const onTheDayPence = breakdown.payAtAppointmentPence;
-  const hidePriceOnStep = isPaymentStep || api.stepKey === 'details';
-  const showPrice =
-    !hidePriceOnStep && (depositPence > 0 || onTheDayPence > 0);
+  const fullAmount = breakdown.subtotalPence;
+  // Footer total line: hidden on Details (BookingReview shows the
+  // full breakdown inline) and Payment (PayHeader spells it out
+  // and the Pay button carries the amount). Everywhere else we
+  // surface a single "Total" so the patient sees the running cost
+  // as soon as the price is resolvable from the catalogue.
+  const showPrice = !isDetailsStep && !isPaymentStep && fullAmount > 0;
+
+  const detailsValid = isNextEnabled(api);
+  const summaryPaid = isDetailsStep && fullAmount > 0;
+  const summaryFree = isDetailsStep && fullAmount === 0;
 
   const nextDisabled = isPaymentStep
     ? !paymentReady || paymentPaying || submitting
-    : !isNextEnabled(api) || submitting;
+    : !detailsValid || submitting;
 
   const nextLabel = (() => {
     if (isPaymentStep) {
       if (paymentPaying || submitting) return 'Processing…';
-      return `Pay ${formatPrice(depositPence)}`;
+      return `Pay ${formatPrice(fullAmount)}`;
     }
     if (submitting) return 'Booking…';
-    if (api.stepKey === 'details') {
-      return isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook;
-    }
+    if (isDetailsStep) return copy.summaryCtaBook;
     return 'Continue';
   })();
-
-  // Payment step shows the Pay button in the footer; the actual
-  // stripe.confirmPayment call is wired through paymentRef in the
-  // parent. We keep the Back button so the patient can return to
-  // the Details/Summary if they change their mind.
-  const showNext = true;
 
   return (
     <footer
@@ -824,72 +852,7 @@ function Footer({
       }}
     >
       {showPrice ? (
-        <FooterPrice
-          depositPence={depositPence}
-          onTheDayPence={onTheDayPence}
-          accent={accent}
-        />
-      ) : null}
-
-      {showTerms ? (
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            cursor: 'pointer',
-            maxWidth: 600,
-            width: '100%',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={api.state.details.agreeTerms}
-            onChange={(e) =>
-              api.setState((prev) => ({
-                ...prev,
-                details: { ...prev.details, agreeTerms: e.target.checked },
-              }))
-            }
-            style={{
-              width: 16,
-              height: 16,
-              cursor: 'pointer',
-              flexShrink: 0,
-              accentColor: accent,
-            }}
-          />
-          <span
-            style={{
-              fontSize: 14,
-              color: QUIZ.MUTED_2,
-              lineHeight: 1.4,
-              textAlign: 'left',
-            }}
-          >
-            I agree to the{' '}
-            <a
-              href={copy.detailsTermsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                color: accent,
-                fontWeight: 500,
-                textDecoration: 'none',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.textDecoration = 'underline';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.textDecoration = 'none';
-              }}
-            >
-              terms and conditions
-            </a>
-            .
-          </span>
-        </label>
+        <FooterPrice totalPence={fullAmount} accent={accent} />
       ) : null}
 
       <div
@@ -901,11 +864,49 @@ function Footer({
           maxWidth: 600,
         }}
       >
-        <BackButton
-          disabled={!api.canGoBack}
-          onClick={onBack}
-        />
-        {showNext ? (
+        <BackButton disabled={!api.canGoBack} onClick={onBack} />
+
+        {summaryPaid ? (
+          // Two-CTA summary footer. Pay-now is the primary path so
+          // it lives on the right (the same slot Next/Pay used to
+          // occupy); Pay-on-the-day sits before it as a secondary
+          // pill. Both share the disabled state — neither lights
+          // up until the form is valid.
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              minWidth: 0,
+            }}
+          >
+            <PayOnTheDayButton
+              disabled={nextDisabled}
+              onClick={onPayOnTheDay}
+              accent={accent}
+            >
+              {submitting ? 'Booking…' : 'Pay on the day'}
+            </PayOnTheDayButton>
+            <NextButton
+              disabled={nextDisabled}
+              onClick={onPayNow}
+              accent={accent}
+              shimmer={false}
+            >
+              {`Pay ${formatPrice(fullAmount)} now`}
+            </NextButton>
+          </div>
+        ) : summaryFree ? (
+          <NextButton
+            disabled={nextDisabled}
+            onClick={onNext}
+            accent={accent}
+            shimmer={false}
+          >
+            {nextLabel}
+          </NextButton>
+        ) : (
           <NextButton
             disabled={nextDisabled}
             onClick={onNext}
@@ -928,37 +929,74 @@ function Footer({
               nextLabel
             )}
           </NextButton>
-        ) : (
-          <div style={{ flex: 1 }} />
         )}
       </div>
     </footer>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Footer price — Today / On the day as plain typography
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Pure typography, no boxes, no icons. Small-caps label on top,
-// large bold number below. On-the-day faded to ~55% opacity so the
-// eye lands on the deposit first. Pair is centred with a hair-line
-// divider between on screens wide enough; stacks vertically on
-// narrow viewports (≤ 480px effective width). Either block hides
-// if its amount is zero.
-
-function FooterPrice({
-  depositPence,
-  onTheDayPence,
+function PayOnTheDayButton({
+  children,
+  disabled,
+  onClick,
   accent,
 }: {
-  depositPence: number;
-  onTheDayPence: number;
+  children: React.ReactNode;
+  disabled: boolean;
+  onClick: () => void;
   accent: string;
 }) {
-  const showDeposit = depositPence > 0;
-  const showOnTheDay = onTheDayPence > 0;
-  if (!showDeposit && !showOnTheDay) return null;
+  // Secondary pill. Matches NextButton's geometry (same height,
+  // pill radius) so the two CTAs read as a balanced pair; outlined
+  // chrome (white fill, 1.5px accent border, accent text) keeps
+  // the primary "Pay £X now" as the visual anchor.
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        height: 52,
+        borderRadius: 26,
+        border: `1.5px solid ${accent}`,
+        background: '#fff',
+        color: accent,
+        fontFamily: 'inherit',
+        fontSize: 15,
+        fontWeight: 600,
+        letterSpacing: '-0.005em',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        transition: 'background 120ms ease, transform 120ms ease',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Footer price — single Total block, plain typography
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// One running total at the bottom of every step before Details
+// (where the customer commits and picks pay-now vs pay-on-the-day).
+// Pure typography, accent colour, no chrome. Hides itself when the
+// price isn't resolvable yet (axes incomplete, free service).
+
+function FooterPrice({
+  totalPence,
+  accent,
+}: {
+  totalPence: number;
+  accent: string;
+}) {
+  if (totalPence <= 0) return null;
   return (
     <div
       className="vlounge-footer-price"
@@ -973,35 +1011,12 @@ function FooterPrice({
         animation: `vlounge-fadeIn 0.25s ease`,
       }}
     >
-      {showDeposit ? (
-        <FooterPriceBlock
-          label="Today"
-          valuePence={depositPence}
-          muted={false}
-          icon={<DepositGlyph size={20} />}
-          accent={accent}
-        />
-      ) : null}
-      {showDeposit && showOnTheDay ? (
-        <span
-          aria-hidden
-          className="vlounge-footer-price-divider"
-          style={{
-            width: 1,
-            height: 32,
-            background: 'rgba(0, 0, 0, 0.10)',
-            flexShrink: 0,
-          }}
-        />
-      ) : null}
-      {showOnTheDay ? (
-        <FooterPriceBlock
-          label="On the day"
-          valuePence={onTheDayPence}
-          muted
-          accent={accent}
-        />
-      ) : null}
+      <FooterPriceBlock
+        label="Total"
+        valuePence={totalPence}
+        muted={false}
+        accent={accent}
+      />
     </div>
   );
 }

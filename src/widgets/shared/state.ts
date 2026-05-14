@@ -79,6 +79,13 @@ export interface WidgetState {
   upgradeIds: string[];
   slotIso: string | null;
   details: WidgetDetails;
+  /** Pay-now vs Pay-on-the-day. Picked from the two CTAs at the
+   *  bottom of the details summary; null while the patient hasn't
+   *  decided yet (i.e. they're still filling in their details).
+   *  'now' includes the Payment step in activeSteps; 'on_the_day'
+   *  drops it. Free services (subtotal === 0) stay null and submit
+   *  via the single Book button. */
+  paymentChoice: 'now' | 'on_the_day' | null;
 }
 
 export interface WidgetDetails {
@@ -201,11 +208,15 @@ export function activeStepsFor(
   }
   if (hasUpgrades) out.push('upgrades');
   out.push('time');
-  // Details now also hosts the booking summary + price card + terms
-  // checkbox (via the footer) — one screen the customer reviews
-  // and commits on. Previous standalone 'summary' step removed.
+  // Details now also hosts the booking summary + price card — one
+  // screen the customer reviews and commits on. Previous standalone
+  // 'summary' step removed.
   out.push('details');
-  if (state.service && state.service.depositPence > 0) out.push('payment');
+  // Payment step is gated on the patient's "Pay now" choice from the
+  // details footer rather than the legacy "service has a deposit"
+  // rule. Services without a price (free walk-ins etc.) stay
+  // payment-less because the customer never sees the choice.
+  if (state.service && state.paymentChoice === 'now') out.push('payment');
   return out;
 }
 
@@ -261,6 +272,7 @@ export function useBookingState(
       // is, our localStorage is a guess based on a previous session
       // that may have ended on a different account.
       details: { ...EMPTY_DETAILS, ...(remembered ?? {}), ...prefill.details },
+      paymentChoice: null,
     };
   });
   const [stepKey, setStepKey] = useState<StepKey>(() =>
@@ -332,6 +344,20 @@ export function useBookingState(
   };
   const goTo = (key: StepKey) => {
     if (activeSteps.includes(key)) setStepKey(key);
+  };
+
+  /** Pick the pay-now vs pay-on-the-day path from the details footer.
+   *  Sets the choice in state AND advances atomically — by the time
+   *  React commits, paymentChoice is set, activeSteps reflects it,
+   *  and the new stepKey is consistent. For 'now' we walk into the
+   *  Payment step; for 'on_the_day' we leave stepKey on details so
+   *  the caller can fire its submit handler (the widget shell does
+   *  that immediately after this call). */
+  const choosePayment = (choice: 'now' | 'on_the_day') => {
+    setState((prev) => ({ ...prev, paymentChoice: choice }));
+    if (choice === 'now') {
+      setStepKey('payment');
+    }
   };
 
   // Choosing a service resets axis pins and upgrades (previous
@@ -409,6 +435,7 @@ export function useBookingState(
     goNext,
     goBack,
     goTo,
+    choosePayment,
   };
 }
 
@@ -435,6 +462,7 @@ function initialStepFor(prefill: ResolvedPrefill, locationCount: number): StepKe
     upgradeIds: [],
     slotIso: null,
     details: { ...EMPTY_DETAILS, ...prefill.details },
+    paymentChoice: null,
   };
   const steps = activeStepsFor(seed, false, locationCount);
   for (const step of steps) {
@@ -476,6 +504,7 @@ function initialLockedIdxFor(
     upgradeIds: [],
     slotIso: null,
     details: { ...EMPTY_DETAILS, ...prefill.details },
+    paymentChoice: null,
   };
   const steps = activeStepsFor(seed, false, locationCount);
   let idx = 0;
@@ -776,16 +805,16 @@ export function isNextEnabled(api: BookingStateApi): boolean {
       return !!api.state.slotIso;
     case 'details': {
       // Combined details + summary step. The customer must have
-      // filled all identity fields AND ticked the terms checkbox
-      // (rendered in the footer on this step) before they can
-      // advance to payment / commit a free booking.
+      // filled all identity fields; the previous terms-checkbox
+      // gate has been removed in favour of bundling the terms link
+      // into the secondary copy below the Pay-now / Pay-on-the-day
+      // buttons.
       const d = api.state.details;
       return (
         !validateFirstName(d.firstName) &&
         !validateLastName(d.lastName) &&
         !validateEmail(d.email) &&
-        !validatePhone(d.phoneNumber, d.phoneCountry) &&
-        d.agreeTerms
+        !validatePhone(d.phoneNumber, d.phoneCountry)
       );
     }
     case 'payment':

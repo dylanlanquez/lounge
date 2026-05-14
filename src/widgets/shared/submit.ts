@@ -31,10 +31,19 @@ export class SubmitError extends Error {
   }
 }
 
+/** What the customer chose at the details footer. The shell passes
+ *  this explicitly because state.paymentChoice may not have
+ *  propagated yet on the same tick — we set the choice and call
+ *  submit in the same handler. 'on_the_day' means no PaymentIntent.
+ *  'full' means the PI was created at the full-price amount and
+ *  verified server-side. null is the legacy free-booking path. */
+export type WidgetPaymentMode = 'full' | 'on_the_day' | null;
+
 export async function submitBooking(
   state: WidgetState,
   paymentIntentId: string | null = null,
   brandId: 'venneir' | 'denture' = 'venneir',
+  paymentMode: WidgetPaymentMode = null,
 ): Promise<SubmitResult> {
   if (!state.location) throw new SubmitError('no_location', null);
   if (!state.service) throw new SubmitError('no_service', null);
@@ -66,6 +75,13 @@ export async function submitBooking(
     // the caller didn't pass a brand (legacy /book route).
     brandId,
     details: state.details,
+    // 'full'        → PI verified against the resolved full price and
+    //                  appointment marked paid_in_full_at_booking.
+    // 'on_the_day'  → nothing taken now; cart settles at the till.
+    // null          → free service / legacy path; back-compat default
+    //                  on the server is 'on_the_day' for non-free
+    //                  services, no-op for free.
+    paymentMode,
   };
 
   const { data, error } = await supabase.functions.invoke<{
