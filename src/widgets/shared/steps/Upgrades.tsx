@@ -663,7 +663,11 @@ function PopupShell({
             minHeight: 0,
             overflowY: 'auto',
             overflowX: 'hidden',
-            overscrollBehavior: 'contain',
+            // `contain` only blocks scroll-chaining to parents — the
+            // rubber-band bounce still fires on macOS/iOS. `none`
+            // kills both, which is what we actually want for a
+            // popup body that should feel flat-bottomed.
+            overscrollBehavior: 'none',
             WebkitOverflowScrolling: 'touch',
             padding: '24px 28px 28px',
           }}

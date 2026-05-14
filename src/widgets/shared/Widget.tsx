@@ -395,7 +395,11 @@ function ChromeShell({
           minHeight: 0,
           overflowY: 'auto',
           overflowX: 'hidden',
-          overscrollBehavior: 'contain',
+          // `none` (not `contain`) kills both scroll-chaining AND
+          // the rubber-band bounce on macOS/iOS. `contain` was
+          // letting the trackpad over-scroll bounce content past
+          // the sticky chrome.
+          overscrollBehavior: 'none',
           WebkitOverflowScrolling: 'touch',
           scrollBehavior: 'smooth',
           animation: `vlounge-stepFadeIn 0.22s ${QUIZ.EASE_CARD} both`,
