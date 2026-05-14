@@ -139,11 +139,24 @@ export const PaymentStep = forwardRef<
     if (loading || !clientSecret) onReadyChange?.(false);
   }, [loading, clientSecret, onReadyChange]);
 
-  // Even when the PaymentForm hasn't mounted yet we want the
-  // forwarded ref to exist so the parent never gets a null call.
-  // Replace it once PaymentForm registers its real pay().
+  // The forwarded ref needs to be present from first render so the
+  // parent footer never gets a null call, BUT the exposed `pay`
+  // method must delegate to PaymentForm's live implementation
+  // (which only exists after Elements + Stripe have loaded). The
+  // factory below runs once and returns an object whose `pay`
+  // closes over `fallbackRef` — so at CALL TIME it reads whatever
+  // PaymentForm has assigned, not the no-op stub from mount.
+  // (Earlier shape `() => fallbackRef.current` snapshotted the
+  // stub at mount and exposed THAT forever, which is why clicking
+  // Pay did nothing — orphan PaymentIntents were the smoking gun.)
   const fallbackRef = useRef<PaymentApi>({ pay: async () => {} });
-  useImperativeHandle(ref, () => fallbackRef.current, []);
+  useImperativeHandle(
+    ref,
+    () => ({
+      pay: () => fallbackRef.current.pay(),
+    }),
+    [],
+  );
 
   const deposit = api.state.service?.depositPence ?? 0;
 
