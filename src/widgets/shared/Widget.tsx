@@ -1,13 +1,11 @@
 import {
-  lazy,
-  Suspense,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Loader2, Lock } from 'lucide-react';
-import type { PaymentApi } from './steps/Payment.tsx';
+import { ArrowLeft, CalendarCheck, Lock } from 'lucide-react';
+import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
@@ -29,12 +27,17 @@ import { AxisStep } from './steps/Axis.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
-// PaymentStep is lazy-loaded so @stripe/stripe-js (~80 KB) and
-// @stripe/react-stripe-js only download when a paid booking actually
-// reaches the deposit screen. Free-service bookings never fetch Stripe.
-const PaymentStep = lazy(() =>
-  import('./steps/Payment.tsx').then((m) => ({ default: m.PaymentStep })),
-);
+// PaymentStep imports statically. Previously this was lazy() +
+// dynamic import to save ~7 KB gzipped on the initial bundle, but
+// the cost was a chunk-mismatch 404 if a Vercel deploy landed
+// while a customer was mid-flow: the cached main.js still
+// referenced the old Payment-<hash>.js, which Vercel had already
+// replaced on the production domain. Inlining the Payment step
+// trades the 7 KB for reliability — patients never see a broken
+// payment screen because their browser is one deploy behind.
+// (The actual Stripe SDK still loads from js.stripe.com on demand
+// via loadStripe(), so the heavy ~80 KB bundle this comment used
+// to worry about is NOT in our bundle either way.)
 import { SuccessScreen } from './steps/Success.tsx';
 import { submitBooking, SubmitError } from './submit.ts';
 import { loadRememberedIdentity } from './state.ts';
@@ -634,16 +637,14 @@ function StepRouter({
       return <DetailsStep api={api} copy={copy} accent={accent} />;
     case 'payment':
       return (
-        <Suspense fallback={<PaymentLoadingFallback />}>
-          <PaymentStep
-            ref={paymentRef}
-            api={api}
-            onPaid={(pi) => onSubmit(pi)}
-            submitting={submitting}
-            onReadyChange={onPaymentReadyChange}
-            onPayingChange={onPaymentPayingChange}
-          />
-        </Suspense>
+        <PaymentStep
+          ref={paymentRef}
+          api={api}
+          onPaid={(pi) => onSubmit(pi)}
+          submitting={submitting}
+          onReadyChange={onPaymentReadyChange}
+          onPayingChange={onPaymentPayingChange}
+        />
       );
   }
   return null;
@@ -1087,30 +1088,6 @@ function NextButton({
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-function PaymentLoadingFallback() {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '200px',
-        color: QUIZ.MUTED,
-        fontSize: 14,
-        gap: 8,
-      }}
-      aria-live="polite"
-    >
-      <style>{`@keyframes lng-widget-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-      <Loader2
-        size={16}
-        style={{ animation: 'lng-widget-spin 0.9s linear infinite' }}
-      />
-      <span>Preparing payment…</span>
-    </div>
-  );
-}
 
 function BootScreen({ error }: { error: string | null }) {
   return (
