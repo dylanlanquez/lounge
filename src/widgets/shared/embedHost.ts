@@ -156,19 +156,19 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   // Content slot. Starts as a loading spinner so the customer sees
   // activity within one frame; React replaces this once the brand
   // bundle has loaded + hydrated.
+  // mountContainer is the flex slot the React widget mounts into.
+  // The widget owns its own flex-column with a Header / scrollable
+  // Body / Footer pattern (see Widget.tsx ChromeShell), so this
+  // wrapper just stretches to fill remaining vertical space inside
+  // the card and clips overflow. Scrolling lives on the Body inside,
+  // not here — keeps the Footer pinned without `position: sticky`
+  // tricks that fail under iOS over-scroll.
   const mountContainer = document.createElement('div');
   Object.assign(mountContainer.style, {
     flex: '1',
     minHeight: '0',
-    // Allow vertical scrolling for tall content; hard-clip horizontal
-    // overflow so a long email / wide grid in one of the steps can't
-    // surface a horizontal scrollbar at the modal level. Anything
-    // that genuinely needs to scroll horizontally (eg. the day strip
-    // in TimeStep) sets its own overflow on its inner container.
-    overflowY: 'auto',
-    overflowX: 'hidden',
-    WebkitOverflowScrolling: 'touch',
-    overscrollBehavior: 'contain',
+    overflow: 'hidden',
+    position: 'relative',
   } as Partial<CSSStyleDeclaration>);
   mountContainer.appendChild(buildLoadingSpinner());
 

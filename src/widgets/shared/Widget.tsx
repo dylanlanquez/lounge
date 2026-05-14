@@ -335,32 +335,51 @@ function ChromeShell({
     typeof document !== 'undefined' &&
     !!document.getElementById('vlounge-embed-modal');
 
-  // When embedded in the modal chrome, the shell fills the modal
-  // card (height: 100%). When standalone (/book route), the shell
-  // takes the full viewport.
-  const rootHeight = isHostEmbedded ? '100%' : '100dvh';
-  const rootBackground = isHostEmbedded ? 'transparent' : QUIZ.BG;
-  const rootPosition = 'relative' as const;
-
+  // Flex-sibling header / body / footer pattern. The outer card
+  // (embedHost.ts) is already display:flex column overflow:hidden;
+  // the widget root below is the same — three direct children, the
+  // middle one owns the scroll. Avoids the "footer peeks underneath
+  // on over-scroll" failure mode you get from position:sticky inside
+  // a scroll container. Standalone /book route gets a 100dvh root
+  // so the same flex shell expands to the viewport.
   return (
     <div
       style={{
-        position: rootPosition,
-        height: rootHeight,
-        background: rootBackground,
+        display: 'flex',
+        flexDirection: 'column',
+        height: isHostEmbedded ? '100%' : '100dvh',
+        background: isHostEmbedded ? 'transparent' : QUIZ.BG,
         color: QUIZ.INK,
         fontFamily: QUIZ.FONT_STACK,
-        // Reserve room for the absolute close button in the modal
-        // chrome (top:14 right:20) — the progress bar starts below it.
-        paddingTop: isHostEmbedded ? 0 : 0,
+        overflow: 'hidden',
       }}
     >
-      <ProgressBar
-        value={api.visibleCurrentIdx + 1}
-        total={api.visibleTotalSteps}
-      />
+      <header
+        style={{
+          flexShrink: 0,
+          padding: '20px 60px 12px 20px', // right padding leaves room for close ×
+        }}
+      >
+        <ProgressBar
+          value={api.visibleCurrentIdx + 1}
+          total={api.visibleTotalSteps}
+        />
+      </header>
 
-      <StepFrame stepKey={api.stepKey}>
+      <div
+        key={api.stepKey}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          overscrollBehavior: 'contain',
+          WebkitOverflowScrolling: 'touch',
+          scrollBehavior: 'smooth',
+          padding: '8px 20px 24px',
+          animation: `vlounge-stepFadeIn 0.22s ${QUIZ.EASE_CARD} both`,
+        }}
+      >
         <StepBody
           api={api}
           copy={copy}
@@ -371,7 +390,7 @@ function ChromeShell({
           onSubmit={onSubmit}
           submitting={submitting}
         />
-      </StepFrame>
+      </div>
 
       <Footer
         api={api}
@@ -387,76 +406,32 @@ function ChromeShell({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Progress bar
+// Progress bar — gradient fill with shimmer. Sits inside the
+// header flex slot, not absolute, so over-scroll never lifts it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProgressBar({ value, total }: { value: number; total: number }) {
   const pct = total > 0 ? Math.max(0, Math.min(100, (value / total) * 100)) : 0;
   return (
     <div
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-label={`Step ${value} of ${total}`}
       style={{
-        position: 'absolute',
-        top: 20,
-        left: 20,
-        right: 60, // leave room for the close × button
-        zIndex: 5,
+        height: 16,
+        borderRadius: 8,
+        background: QUIZ.PROGRESS_TRACK,
+        overflow: 'hidden',
+        position: 'relative',
+        width: '100%',
       }}
-      aria-hidden
     >
       <div
-        role="progressbar"
-        aria-valuenow={value}
-        aria-valuemin={0}
-        aria-valuemax={total}
-        aria-label={`Step ${value} of ${total}`}
-        style={{
-          height: 16,
-          borderRadius: 8,
-          background: QUIZ.PROGRESS_TRACK,
-          overflow: 'hidden',
-          position: 'relative',
-        }}
-      >
-        <div
-          className="vlounge-progress-fill"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step frame — absolute-positioned content area
-// ─────────────────────────────────────────────────────────────────────────────
-
-function StepFrame({
-  stepKey,
-  children,
-}: {
-  stepKey: string;
-  children: React.ReactNode;
-}) {
-  // Re-mount fade key whenever stepKey changes so the new step
-  // animates in from translateY(8px) → 0.
-  return (
-    <div
-      key={stepKey}
-      style={{
-        position: 'absolute',
-        top: QUIZ.STEP_TOP_OFFSET,
-        left: 0,
-        right: 0,
-        bottom: QUIZ.STEP_BOTTOM_OFFSET,
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        padding: '0 20px 20px',
-        WebkitOverflowScrolling: 'touch',
-        scrollBehavior: 'smooth',
-        animation: `vlounge-stepFadeIn 0.22s ${QUIZ.EASE_CARD} both`,
-      }}
-    >
-      {children}
+        className="vlounge-progress-fill"
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }
@@ -596,8 +571,11 @@ function Footer({
   isPaymentNext: boolean;
 }) {
   const showTerms = api.stepKey === 'summary';
-  const showPrice =
-    api.stepKey === 'summary' || api.stepKey === 'payment';
+  // Price preview only on Summary. Payment step has Stripe's own
+  // "Pay £xx" button — showing the same total again in the footer
+  // is the redundancy Dylan flagged on the previous build. Every
+  // other step never had it.
+  const showPrice = api.stepKey === 'summary';
   const total = priceTotalFor(api);
   const nextDisabled = !isNextEnabled(api) || submitting;
 
@@ -615,12 +593,9 @@ function Footer({
   const showNext = api.stepKey !== 'payment';
 
   return (
-    <div
+    <footer
       style={{
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
+        flexShrink: 0,
         padding: '16px 20px 18px',
         background: QUIZ.BG,
         boxShadow: QUIZ.SHADOW_FOOTER,
@@ -628,7 +603,6 @@ function Footer({
         flexDirection: 'column',
         alignItems: 'center',
         gap: 10,
-        zIndex: 10,
         paddingBottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
       }}
     >
@@ -737,7 +711,7 @@ function Footer({
           <div style={{ flex: 1 }} />
         )}
       </div>
-    </div>
+    </footer>
   );
 }
 
