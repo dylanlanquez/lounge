@@ -171,14 +171,13 @@ export function DetailsStep({
       </div>
 
       {/* Booking review — appointment summary + price total.
-          The customer fills the form above and reviews the booking
-          below before ticking terms in the footer and committing.
-          Each section inside BookingReview opens with its own
-          small-caps label + 1px hairline, so an additional <hr>
-          here would only stack two hairlines next to the first
-          label. The 32px wrapper margin below is enough visual
-          breathing room from the form's last input row. */}
-      <div style={{ marginTop: 32 }}>
+          16px above the card (matches the form's internal row gap)
+          so the textarea bottom and the card top read as a tight
+          continuation of the same column, not as two disconnected
+          regions. The card's own 20px top padding gives the
+          "Your booking" heading enough breathing room from the
+          card border. */}
+      <div style={{ marginTop: 16 }}>
         <BookingReview api={api} copy={copy} accent={accent} />
       </div>
     </div>
