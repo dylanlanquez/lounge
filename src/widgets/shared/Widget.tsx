@@ -5,7 +5,7 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, Loader2 } from 'lucide-react';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
@@ -357,9 +357,30 @@ function ChromeShell({
       <header
         style={{
           flexShrink: 0,
-          padding: '20px 60px 12px 20px', // right padding leaves room for close ×
+          padding: '18px 60px 10px 20px', // right padding leaves room for close ×
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
         }}
       >
+        {/* Subtle "Your Appointment" eyebrow so the flow reads as
+            booking, not e-commerce. Calendar tick icon + small navy
+            tracking-wide label, top-left of the modal. */}
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 12,
+            fontWeight: 600,
+            color: accent,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          <CalendarCheck size={14} aria-hidden />
+          <span>Your appointment</span>
+        </div>
         <ProgressBar
           value={api.visibleCurrentIdx + 1}
           total={api.visibleTotalSteps}
@@ -583,12 +604,14 @@ function Footer({
   isPaymentNext: boolean;
 }) {
   const showTerms = api.stepKey === 'summary';
-  // Price preview only on Summary. Payment step has Stripe's own
-  // "Pay £xx" button — showing the same total again in the footer
-  // is the redundancy Dylan flagged on the previous build. Every
-  // other step never had it.
-  const showPrice = api.stepKey === 'summary';
+  // Running price preview on every step where there's a service +
+  // price to render. Matches the retainer-cart pattern (the
+  // .price-preview-vt sits in the footer above the Next button on
+  // every step from step 1 onward). Hidden on Payment because
+  // Stripe's own "Pay £xx" button inside the form is the
+  // authoritative display there.
   const total = priceTotalFor(api);
+  const showPrice = total > 0 && api.stepKey !== 'payment';
   const nextDisabled = !isNextEnabled(api) || submitting;
 
   const nextLabel = (() => {
@@ -618,20 +641,19 @@ function Footer({
         paddingBottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
       }}
     >
-      {showPrice && total > 0 ? (
+      {showPrice ? (
         <p
           style={{
             margin: 0,
-            fontSize: 16,
+            fontSize: 22,
             fontWeight: 700,
             color: QUIZ.INK,
             animation: `vlounge-fadeIn 0.3s ease`,
             fontVariantNumeric: 'tabular-nums',
+            letterSpacing: '-0.01em',
+            lineHeight: 1.2,
           }}
         >
-          <span style={{ color: QUIZ.MUTED_2, fontWeight: 500, marginRight: 6 }}>
-            {copy.summaryTotalLabel}
-          </span>
           {formatPrice(total)}
         </p>
       ) : null}

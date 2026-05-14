@@ -110,8 +110,11 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     transition: reducedMotion
       ? 'none'
       : 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1)',
-    fontFamily:
-      '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif',
+    // Inherit the host storefront's font so typography matches the
+    // surrounding venneir.com / denture-services.co.uk page. The
+    // CSS reset below uses font:inherit on inputs/buttons so
+    // descendants pick it up too.
+    fontFamily: 'inherit',
     color: '#333',
   } as Partial<CSSStyleDeclaration>);
 
@@ -329,8 +332,7 @@ function ensureResetStyles() {
   style.id = RESET_STYLE_ID;
   style.textContent = `
     #${MODAL_ID} {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-      color: #0E1414;
+      color: #333;
     }
     #${MODAL_ID} *,
     #${MODAL_ID} *::before,
