@@ -698,14 +698,6 @@ function PaymentLine({ state }: { state: LedgerPaymentState }) {
         };
       case 'deposit_paid':
         return {
-          // Shared DepositGlyph mark — same icon used by the
-          // AppointmentDetail hero pill + Deposit card + the
-          // timeline's "Deposit captured" event, so the deposit
-          // story reads as one consistent surface across the app.
-          // Dashed arc around a tick = "partial / secured to here",
-          // distinct from BadgeCheck's solid mark used by Paid in
-          // full. Size 14 (was 12) so the filled-arc dash gaps
-          // read as visibly dashed on the ledger row.
           icon: <DepositGlyph size={14} />,
           label: 'Deposit paid',
           // Sage green — clearly green-family (positive money fact)

@@ -769,10 +769,6 @@ function Hero({
     pills.push({
       tone: 'deposit_paid',
       label: 'Deposit paid',
-      // Size 14 (was 12) — the filled-arc DepositGlyph's dash gaps
-      // are small relative to the viewBox, so at 12px they blur
-      // into a solid ring. 14px lets them read as visibly dashed,
-      // matching how the widget footer renders the same glyph.
       icon: <DepositGlyph size={14} />,
     });
   }
@@ -1595,14 +1591,12 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   const paid = appt.deposit_status === 'paid';
   const failed = appt.deposit_status === 'failed';
 
-  // Paid: a soft accent-tinted card with the DepositGlyph mark
-  // and a "Deposit paid" headline. Crucially NOT "Paid in full" —
-  // that implies the whole bill is settled, which a booking deposit
-  // never guarantees. The dashed-arc glyph (vs. the solid BadgeCheck
+  // Paid: a soft accent-tinted card with the DepositGlyph mark and
+  // a "Deposit paid" headline. Crucially NOT "Paid in full" — that
+  // implies the whole bill is settled, which a booking deposit
+  // never guarantees. The dashed glyph (vs. the solid BadgeCheck
   // used by "Paid in full" on VisitDetail) reads as "partial / not
-  // all the way" so a glance differentiates deposit from full
-  // settlement. Pairs with the "Deposit paid" pill in the hero,
-  // which uses the same glyph at a smaller size.
+  // all the way".
   if (paid) {
     return (
       <Card
