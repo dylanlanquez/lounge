@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, BadgeCheck, CalendarCheck, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, CircleDashed, Loader2, Lock } from 'lucide-react';
 import type { PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -872,7 +872,7 @@ function FooterPrice({
           label="Today"
           valuePence={depositPence}
           muted={false}
-          icon={<BadgeCheck size={18} aria-hidden />}
+          icon={<CircleDashed size={18} strokeWidth={2.5} aria-hidden />}
         />
       ) : null}
       {showDeposit && showOnTheDay ? (
