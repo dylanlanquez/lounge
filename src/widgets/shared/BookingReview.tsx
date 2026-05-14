@@ -147,6 +147,12 @@ export function BookingReview({
       </h3>
       {rows.map((row, i) => {
         const isLast = i === rows.length - 1;
+        // Suppress the bottom hairline on the row immediately
+        // before the Total row — the Total carries its own
+        // (heavier) top hairline, so without this we'd stack two
+        // 1px lines on top of each other.
+        const next = rows[i + 1];
+        const nextIsTotal = next?.kind === 'total';
         if (row.kind === 'item') {
           return (
             <ItemRow
@@ -156,7 +162,7 @@ export function BookingReview({
               subtitle={row.subtitle}
               rightAmount={row.rightAmount}
               rightAmountColour={row.rightAmountColour}
-              isLast={isLast}
+              isLast={isLast || nextIsTotal}
             />
           );
         }
