@@ -57,6 +57,7 @@ import {
 } from '../lib/dateFormat.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
 import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
+import { DiscountIcon } from '../components/Icons/DiscountIcon.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -1276,9 +1277,7 @@ export function VisitDetail() {
                     </>
                   ) : (
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('apply')}>
-                        Apply discount
-                      </Button>
+                      <ApplyDiscountLink onClick={() => openDiscountSheet('apply')} />
                     </div>
                   )}
                 </div>

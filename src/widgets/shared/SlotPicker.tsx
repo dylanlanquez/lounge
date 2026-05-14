@@ -137,23 +137,18 @@ export function SlotPicker({
   // Source-of-truth priority:
   //
   //   1. Live RPC, IF its returned slot iso is genuinely in the
-  //      future. The RPC knows real conflicts; trust it first.
+  //      future. As of 20260514000011_lng_widget_slots_past_filter
+  //      the underlying `lng_widget_available_slots` function skips
+  //      past-time candidates server-side, so `lng_widget_first_
+  //      available` naturally returns the next genuinely-bookable
+  //      day. This is the hot path.
   //
-  //   2. The stub firstAvailable() result. Past-filtered + opening-
-  //      hours-aware — it walks forward through the next 60 days
-  //      and lands on the first day with a remaining stub slot.
+  //   2. Stub firstAvailable() — past-filtered + opening-hours-
+  //      aware. Belt-and-suspenders fallback when the live RPC
+  //      returns null (e.g. a service has no availability in the
+  //      next 60 days) or somehow surfaces a past slot.
   //
   //   3. Today, as a last resort if both above failed.
-  //
-  // Why the live result can fall through to (2): the server's
-  // `lng_widget_first_available` RPC scans 60 days for the first
-  // non-conflicting slot but does NOT filter by current clock time.
-  // At 5pm on a 9am-6pm clinic it'll happily return today's 9am as
-  // "first available". Dropping the patient there would land them
-  // on a date whose slot list is entirely past — exactly the
-  // "Today's slots have all passed" empty state Dylan saw. The
-  // stub fallback walks forward day-by-day until it finds one with
-  // future openings, which on that example would be tomorrow.
   useEffect(() => {
     if (userPickedRef.current) return;
     if (selectedDate !== null) return;
