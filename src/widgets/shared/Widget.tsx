@@ -376,20 +376,32 @@ function ChromeShell({
           overscrollBehavior: 'contain',
           WebkitOverflowScrolling: 'touch',
           scrollBehavior: 'smooth',
-          padding: '8px 20px 24px',
           animation: `vlounge-stepFadeIn 0.22s ${QUIZ.EASE_CARD} both`,
         }}
       >
-        <StepBody
-          api={api}
-          copy={copy}
-          locations={locations}
-          accent={accent}
-          submissionError={submissionError}
-          onDismissError={onDismissError}
-          onSubmit={onSubmit}
-          submitting={submitting}
-        />
+        {/* Inner container caps content width — the modal is 97.5vw
+            (~1500px on a large display) but cards / forms read best
+            around 920px max. Centred horizontally, full height of
+            the scroll container so empty space appears below the
+            content rather than the content stretching to fill. */}
+        <div
+          style={{
+            maxWidth: 920,
+            margin: '0 auto',
+            padding: '8px 20px 24px',
+          }}
+        >
+          <StepBody
+            api={api}
+            copy={copy}
+            locations={locations}
+            accent={accent}
+            submissionError={submissionError}
+            onDismissError={onDismissError}
+            onSubmit={onSubmit}
+            submitting={submitting}
+          />
+        </div>
       </div>
 
       <Footer

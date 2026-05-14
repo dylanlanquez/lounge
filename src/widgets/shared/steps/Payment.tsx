@@ -463,13 +463,13 @@ function PaymentForm({
             marginTop: 16,
             appearance: 'none',
             border: 'none',
-            background: QUIZ.INK,
-            color: QUIZ.SURFACE,
+            background: QUIZ.ACCENT,
+            color: '#fff',
             height: 52,
             borderRadius: 999,
             fontFamily: 'inherit',
             fontSize: '16px',
-            fontWeight: '600',
+            fontWeight: 700,
             cursor: disabled ? 'default' : 'pointer',
             opacity: disabled ? 0.5 : 1,
             display: 'inline-flex',
@@ -477,6 +477,17 @@ function PaymentForm({
             justifyContent: 'center',
             gap: 8,
             width: '100%',
+            transition: `transform 0.2s ${QUIZ.EASE_CARD}, box-shadow 0.2s ${QUIZ.EASE_CARD}`,
+          }}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.transform = 'translateY(-1px)';
+            e.currentTarget.style.boxShadow = QUIZ.SHADOW_BUTTON_HOVER;
+          }}
+          onMouseLeave={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.transform = 'none';
+            e.currentTarget.style.boxShadow = 'none';
           }}
         >
           <Lock size={14} aria-hidden />{' '}

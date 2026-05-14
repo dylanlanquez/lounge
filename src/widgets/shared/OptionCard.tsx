@@ -69,7 +69,6 @@ export function OptionCard({
         paddingRight: '52px', // room for the radio indicator
         minHeight: 130,
         width: '100%',
-        maxWidth: '27rem',
         textAlign: 'left',
         cursor: 'pointer',
         fontFamily: 'inherit',
@@ -122,21 +121,29 @@ function RadioIndicator({
   );
 }
 
-// Grid wrapper for OptionCard collections. Flex-wrap so the cards
-// line up on desktop (two per row at modal width) and stack on
-// mobile. Centred so a single card doesn't drift to the left.
+// Grid wrapper for OptionCard collections. Auto-fit responsive grid
+// — cards size themselves to the available space, never less than
+// 260px wide, never wrapping into an awkward N-1 row (the failure
+// mode 27rem flex-wrap produced for 3-card sets where the third
+// card orphaned to its own line).
+//
+// Max-width keeps cards readable on the very wide retainer-cart
+// modal: with 3 options at modal width, each card lands ~300px
+// wide; with 4 it drops to ~220-240px per card. Single-card sets
+// stay capped at 460px so a lone "Click-in veneers" card doesn't
+// stretch the full row.
 
 export function OptionGrid({ children }: { children: ReactNode }) {
   return (
     <div
       className="vlounge-stagger"
       style={{
-        display: 'flex',
-        flexWrap: 'wrap',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
         gap: 20,
-        justifyContent: 'center',
         margin: '0 auto',
-        maxWidth: '60rem', // two 27rem cards + gap
+        maxWidth: 920,
+        width: '100%',
       }}
     >
       {children}

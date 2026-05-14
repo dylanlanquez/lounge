@@ -112,7 +112,16 @@ export function SlotPicker({
   const slots = availability.data ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 16,
+        maxWidth: 560,
+        margin: '0 auto',
+        width: '100%',
+      }}
+    >
       {showFirstAvailableBanner && earliest ? (
         <button
           type="button"
@@ -304,16 +313,17 @@ function Month({
                   : disabled
                     ? SUBTLE
                     : INK,
-                aspectRatio: '1 / 1',
+                height: 44,
                 width: '100%',
                 fontFamily: 'inherit',
                 fontSize: 14,
                 fontWeight: selected ? 600 : 500,
                 fontVariantNumeric: 'tabular-nums',
-                borderRadius: 12,
+                borderRadius: 10,
                 cursor: disabled ? 'default' : 'pointer',
                 opacity: disabled ? 0.4 : 1,
                 transition: `all 0.18s ${EASE_CARD}`,
+                padding: 0,
               }}
               onMouseEnter={(e) => {
                 if (selected || disabled) return;
