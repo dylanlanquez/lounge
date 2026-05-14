@@ -224,16 +224,26 @@ export function generateSlots(date: Date, durationMinutes: number): WidgetSlot[]
 /** First future date that has at least one slot for the given
  *  booking-type duration. Kept on a stub generator for the
  *  optimistic banner placement before live data arrives — the live
- *  hook below replaces this once the patient's axes resolve. */
+ *  hook below replaces this once the patient's axes resolve.
+ *
+ *  Filters out slots in the past before counting a day's openings,
+ *  so a load at 7pm on a 9am–6pm clinic skips today entirely and
+ *  returns tomorrow's first slot. Without this filter, the
+ *  generator returned today's 9am even though that slot was hours
+ *  past, and the calendar landed on today with the slot list
+ *  empty — confusing UX for the customer. */
 export function firstAvailable(
   durationMinutes: number,
   from: Date = new Date(),
 ): { date: Date; slot: WidgetSlot } | null {
+  const nowMs = Date.now();
   for (let i = 0; i < 60; i++) {
     const d = new Date(from);
     d.setDate(d.getDate() + i);
     d.setHours(0, 0, 0, 0);
-    const slots = generateSlots(d, durationMinutes);
+    const slots = generateSlots(d, durationMinutes).filter(
+      (s) => new Date(s.iso).getTime() > nowMs,
+    );
     if (slots.length > 0) return { date: d, slot: slots[0]! };
   }
   return null;

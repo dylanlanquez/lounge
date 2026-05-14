@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   firstAvailable,
+  generateSlots,
   useWidgetAvailableSlots,
   useWidgetFirstAvailable,
   type WidgetSlot,
@@ -212,6 +213,7 @@ export function SlotPicker({
         monthCursor={monthCursor}
         selectedDate={selectedDate}
         openingHours={openingHours}
+        durationMinutes={durationMinutes}
         onSelectDate={(d) => {
           setSelectedDate(d);
           // If the patient had already locked in a time on a
@@ -252,12 +254,14 @@ function CalendarGrid({
   monthCursor,
   selectedDate,
   openingHours,
+  durationMinutes,
   onSelectDate,
   onShiftMonth,
 }: {
   monthCursor: Date;
   selectedDate: Date;
   openingHours: OpeningHoursWeek;
+  durationMinutes: number;
   onSelectDate: (d: Date) => void;
   onShiftMonth: (delta: -1 | 1) => void;
 }) {
@@ -297,6 +301,7 @@ function CalendarGrid({
         monthDate={monthCursor}
         selectedDate={selectedDate}
         openingHours={openingHours}
+        durationMinutes={durationMinutes}
         onSelectDate={onSelectDate}
       />
     </div>
@@ -307,15 +312,31 @@ function Month({
   monthDate,
   selectedDate,
   openingHours,
+  durationMinutes,
   onSelectDate,
 }: {
   monthDate: Date;
   selectedDate: Date;
   openingHours: OpeningHoursWeek;
+  durationMinutes: number;
   onSelectDate: (d: Date) => void;
 }) {
   const cells = useMemo(() => buildMonthCells(monthDate), [monthDate]);
   const today = startOfDay(new Date());
+  // Whether today still has a slot the customer could pick. We
+  // compute against the same stub generator the init logic uses so
+  // the calendar's "today disabled" state always agrees with the
+  // auto-selected starting date — if firstAvailable() decided to
+  // skip today, the calendar shouldn't offer it back. The check
+  // happens once per Month render; sub-minute drift between mount
+  // and click is acceptable (server's past-slot guard catches it).
+  const todayHasOpening = useMemo(() => {
+    const nowMs = Date.now();
+    return generateSlots(today, durationMinutes).some(
+      (s) => new Date(s.iso).getTime() > nowMs,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [durationMinutes, today.getTime()]);
 
   return (
     <div>
@@ -346,8 +367,13 @@ function Month({
         {cells.map((c, i) => {
           const inMonth = c.date.getMonth() === monthDate.getMonth();
           const isPast = c.date < today;
+          const isToday = sameDay(c.date, today);
           const closed = isClinicClosedOn(c.date, openingHours);
-          const disabled = isPast || closed || !inMonth;
+          // Today is treated as past once its remaining openings
+          // can no longer fit a slot of this duration before
+          // clinic close.
+          const todayExhausted = isToday && !todayHasOpening;
+          const disabled = isPast || todayExhausted || closed || !inMonth;
           const selected = sameDay(c.date, selectedDate);
           return (
             <button
