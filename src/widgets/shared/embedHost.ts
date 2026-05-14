@@ -88,20 +88,25 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     cursor: 'pointer',
   } as Partial<CSSStyleDeclaration>);
 
-  // Card. Mirrors venneir.com retainer-cart quiz modal dimensions —
-  // 97.5vw × 90vh, generous 12px corner, dramatic 30px-blur shadow.
-  // Mobile collapses to full-bleed.
+  // Card. Mirrors venneir.com retainer-cart quiz modal dimensions
+  // verbatim (.modal-content-vt at line 3 of the template): the
+  // same 97.5vw × 90vh sheet at every viewport, with a 1.25vh top
+  // margin so the modal floats inside the backdrop instead of
+  // bleeding to the edges. No mobile breakpoint — the template
+  // doesn't have one, and the previous mobile-fullscreen branch
+  // was triggering inside Shopify's narrow preview pane and
+  // making the modal look like it had crashed back to fullscreen.
   const card = document.createElement('div');
-  const isDesktop = window.matchMedia('(min-width: 768px)').matches;
   Object.assign(card.style, {
     position: 'relative',
     background: '#F4F4F4',
-    width: isDesktop ? '97.5vw' : '100vw',
-    height: isDesktop ? '90vh' : '100dvh',
-    margin: isDesktop ? '1.25vh auto' : '0',
+    width: '97.5vw',
+    height: '90vh',
+    margin: '1.25vh auto',
+    maxWidth: '100vw',
     maxHeight: '100dvh',
-    borderRadius: isDesktop ? '12px' : '0',
-    boxShadow: isDesktop ? '0 0 30px rgba(0, 0, 0, 0.3)' : 'none',
+    borderRadius: '12px',
+    boxShadow: '0 0 30px rgba(0, 0, 0, 0.3)',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
@@ -111,9 +116,7 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
       ? 'none'
       : 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1)',
     // Inherit the host storefront's font so typography matches the
-    // surrounding venneir.com / denture-services.co.uk page. The
-    // CSS reset below uses font:inherit on inputs/buttons so
-    // descendants pick it up too.
+    // surrounding venneir.com / denture-services.co.uk page.
     fontFamily: 'inherit',
     color: '#333',
   } as Partial<CSSStyleDeclaration>);
@@ -128,7 +131,7 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   closeBtn.textContent = '×';
   Object.assign(closeBtn.style, {
     position: 'absolute',
-    top: isDesktop ? '14px' : 'calc(env(safe-area-inset-top, 0px) + 8px)',
+    top: '14px',
     right: '20px',
     width: '32px',
     height: '32px',
