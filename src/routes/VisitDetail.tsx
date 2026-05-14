@@ -3299,6 +3299,42 @@ function formatPaidAtDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+function ApplyDiscountLink({ onClick }: { onClick: () => void }) {
+  // Link-style affordance for the cart's "Apply discount" entry
+  // point. A standard pill button reads as a primary action, but
+  // the discount flow is a quiet secondary path the operator opts
+  // into. Underlined-text-plus-glyph is the in-app cue for "this
+  // takes you somewhere", same vocabulary as anchor links.
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        padding: 0,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        color: hover ? theme.color.ink : theme.color.inkMuted,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.medium,
+        textDecoration: 'underline',
+        textUnderlineOffset: '3px',
+      }}
+    >
+      <DiscountIcon size={14} />
+      Apply discount
+    </button>
+  );
+}
+
 function Row({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
