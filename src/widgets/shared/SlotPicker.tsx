@@ -553,7 +553,7 @@ function Bucket({
                 height: 44,
                 padding: '0 12px',
                 borderRadius: 999,
-                border: `1px solid ${selected ? ACCENT : '#dde3e7'}`,
+                border: `1px solid ${selected ? ACCENT : 'rgba(0, 0, 0, 0.08)'}`,
                 background: selected ? ACCENT : SURFACE,
                 color: selected ? '#FFFFFF' : INK,
                 cursor: 'pointer',
@@ -561,7 +561,7 @@ function Bucket({
                 boxSizing: 'border-box',
                 boxShadow: selected
                   ? '0 2px 6px rgba(8, 55, 88, 0.22)'
-                  : '0 1px 2px rgba(15, 23, 42, 0.04)',
+                  : 'none',
                 transition: `border-color 0.15s ${EASE_CARD}, background 0.15s ${EASE_CARD}, color 0.15s ${EASE_CARD}, box-shadow 0.15s ${EASE_CARD}, transform 0.15s ${EASE_CARD}`,
               }}
               onMouseEnter={(e) => {
@@ -573,9 +573,9 @@ function Bucket({
               }}
               onMouseLeave={(e) => {
                 if (selected) return;
-                e.currentTarget.style.borderColor = '#dde3e7';
+                e.currentTarget.style.borderColor = 'rgba(0, 0, 0, 0.08)';
                 e.currentTarget.style.color = INK;
-                e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.04)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'none';
               }}
             >
