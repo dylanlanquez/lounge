@@ -959,8 +959,11 @@ function FooterPriceBlock({
           alignItems: 'center',
           gap: 8,
           marginTop: 4,
-          fontSize: 22,
-          fontWeight: 700,
+          // Muted block (On the day) drops to 500 weight + 18px so
+          // the eye still lands on Today first — the deposit is the
+          // hero moment, the balance is supporting context.
+          fontSize: muted ? 18 : 22,
+          fontWeight: muted ? 500 : 700,
           color: QUIZ.INK,
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: '-0.01em',
