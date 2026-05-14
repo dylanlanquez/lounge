@@ -39,6 +39,7 @@ import {
   Section,
   ShipVisitSheet,
   Skeleton,
+  SmilePhotosCard,
   Toast,
   VisitTimeline,
   WaiverSheet,
@@ -48,6 +49,7 @@ import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
 import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from '../lib/waiverDocument.ts';
 import { humaniseEventTypeLabel, usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
+import { formatNativeBookingSummary } from '../lib/queries/appointments.ts';
 import {
   formatDateLongOrdinal,
   formatTime,
@@ -1107,6 +1109,22 @@ export function VisitDetail() {
                 }
               />
             </div>
+
+            {/* Pre-visit smile photos — the same intake photos the
+                patient uploaded from the booking-confirmation screen,
+                surfaced post-arrival so the clinical team has the
+                reference shots in front of them while building the
+                cart. Click-in-veneers only (the only service whose
+                widget exposes the upload UI). Auto-opens when one
+                or more photos have landed; collapses to a compact
+                header otherwise so the visit page stays tidy.
+                Same shared card the AppointmentDetail page uses, so
+                the two surfaces read identically. */}
+            {visit.appointment_id && appointment?.service_type === 'click_in_veneers' ? (
+              <div style={{ marginBottom: theme.space[6] }}>
+                <SmilePhotosCard appointmentId={visit.appointment_id} />
+              </div>
+            ) : null}
 
             {/* Whole banner dims when the visit is unsuitable so it
                 reads as terminated alongside the cart. The View
@@ -2706,8 +2724,26 @@ function buildVisitHeroProps(
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
   const dateLong = formatDateLongOrdinal(headlineIso);
-  const service =
-    humaniseEventTypeLabel(appointment?.event_type_label ?? null) ?? (isWalkIn ? 'Walk-in' : 'Appointment');
+  // Service title for the hero ribbon. Native-widget bookings
+  // store the booking's axis pins (arch + product_key +
+  // service_type) on the row directly, so compose the title from
+  // those columns the same way AppointmentDetail's hero does —
+  // result reads "Upper Click-in veneers" / "Lower retainer" etc.
+  // Calendly-imported and walk-in rows fall back to the legacy
+  // event_type_label heuristic (no axis pins available).
+  const isNativeBooking =
+    !!appointment &&
+    appointment.source === 'native' &&
+    !!appointment.service_type;
+  const service = isNativeBooking
+    ? formatNativeBookingSummary({
+        service_type: appointment.service_type,
+        event_type_label: appointment.event_type_label,
+        arch: appointment.arch,
+        product_key: appointment.product_key,
+      })
+    : humaniseEventTypeLabel(appointment?.event_type_label ?? null) ??
+      (isWalkIn ? 'Walk-in' : 'Appointment');
 
   // State-driven ribbon — every (visit status × cart status × walk-in
   // vs scheduled) combination resolves to a single triple of icon +

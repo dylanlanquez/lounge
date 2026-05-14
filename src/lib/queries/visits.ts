@@ -447,6 +447,17 @@ export interface VisitAppointmentContext {
   // Source of the booking ('calendly', 'manual', etc.). Used to
   // tweak the "Booked" copy when shown.
   source: string | null;
+  // Axis pins on the booking row. Native-widget bookings store
+  // service_type / arch / product_key directly so VisitDetail's
+  // hero title can compose "Upper Click-in veneers" / "Lower
+  // retainer" etc. via formatNativeBookingSummary — matching how
+  // AppointmentDetail's hero renders the same booking. Calendly-
+  // imported rows leave service_type populated but arch /
+  // product_key null; the formatter falls back to the
+  // event_type_label in that case.
+  service_type: string | null;
+  arch: string | null;
+  product_key: string | null;
 }
 
 // Visits currently in progress at the receptionist's location. RLS scopes
@@ -618,7 +629,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, source'
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, source, service_type, arch, product_key'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -639,6 +650,9 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               created_at: string;
               start_at: string;
               source: string | null;
+              service_type: string | null;
+              arch: string | null;
+              product_key: string | null;
             };
             setAppointment({
               event_type_label: a.event_type_label,
@@ -648,6 +662,9 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               created_at: a.created_at,
               start_at: a.start_at,
               source: a.source,
+              service_type: a.service_type ?? null,
+              arch: a.arch ?? null,
+              product_key: a.product_key ?? null,
             });
             if (
               a.deposit_pence != null &&
@@ -705,6 +722,15 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               created_at: w.created_at,
               start_at: w.created_at,
               source: 'walk_in',
+              // Walk-ins have no axis pins. service_type carries
+              // the picked service label for cart suggestions; arch
+              // and product_key default to null so the hero falls
+              // back to the legacy humaniseEventTypeLabel path
+              // rather than trying to compose "Upper Walk-in" or
+              // similar.
+              service_type: w.service_type ?? null,
+              arch: null,
+              product_key: null,
             });
             setDeposit(null);
           } else {

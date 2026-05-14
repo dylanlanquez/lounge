@@ -7,9 +7,7 @@ import {
   Ban,
   CalendarCheck,
   CalendarClock,
-  Camera,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   CircleSlash,
   ClipboardList,
@@ -42,6 +40,7 @@ import {
   RescheduleSheet,
   Section,
   Skeleton,
+  SmilePhotosCard,
   type StatusTone,
 } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -76,7 +75,6 @@ import {
   type AppointmentDetailRow,
 } from '../lib/queries/appointmentDetail.ts';
 import { humaniseLedgerSource } from '../lib/queries/ledger.ts';
-import { signIntakePhotoUrl, useBookingIntakePhotos } from '../lib/queries/bookingIntakePhotos.ts';
 import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 import googleMeetIcon from '../assets/google-meet.png';
 
@@ -1414,225 +1412,6 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
         ))}
       </div>
     </Card>
-  );
-}
-
-function SmilePhotosCard({ appointmentId }: { appointmentId: string }) {
-  const { rows, loading, error } = useBookingIntakePhotos(appointmentId);
-  const byKind = new Map(rows.map((r) => [r.kind, r] as const));
-  const slots: Array<{ kind: 'front' | 'left' | 'right'; label: string }> = [
-    { kind: 'front', label: 'Front smile' },
-    { kind: 'left', label: 'Left side' },
-    { kind: 'right', label: 'Right side' },
-  ];
-  // Uploaded count drives both the trailing counter pill and the
-  // panel-id'd region. Photos are optional intake (patient uploads
-  // from the success screen), so the card spends most of its life
-  // empty — collapsed-by-default keeps the appointment page short.
-  const uploadedCount = rows.length;
-  const [open, setOpen] = useState(false);
-  const panelId = `lng-smile-photos-${appointmentId}`;
-
-  const counterPill =
-    uploadedCount > 0 ? (
-      <span
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          padding: '2px 9px',
-          minWidth: 22,
-          height: 22,
-          borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.tight,
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1,
-        }}
-        aria-label={`${uploadedCount} of ${slots.length} uploaded`}
-      >
-        {uploadedCount}
-      </span>
-    ) : null;
-
-  const trailing = (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: theme.space[2],
-      }}
-    >
-      {counterPill}
-      <ChevronDown
-        size={18}
-        color={theme.color.inkSubtle}
-        aria-hidden
-        style={{
-          transition: `transform ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
-          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-        }}
-      />
-    </span>
-  );
-
-  return (
-    <Card padding="lg">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          appearance: 'none',
-          width: '100%',
-          padding: 0,
-          margin: 0,
-          background: 'transparent',
-          border: 'none',
-          cursor: 'pointer',
-          textAlign: 'left',
-          fontFamily: 'inherit',
-          color: 'inherit',
-          WebkitTapHighlightColor: 'transparent',
-        }}
-      >
-        <DetailSectionHeader
-          icon={<Camera size={15} aria-hidden />}
-          title="Pre-visit smile photos"
-          trailing={trailing}
-          // When closed there is no body to push away from the
-          // header. Without this, theme.space[4] hangs off the
-          // bottom of the header and pushes the title off-centre
-          // inside the card's symmetric padding.
-          bottomGap={0}
-        />
-      </button>
-      {/* Grid-rows 0fr/1fr trick — same pattern as CollapsibleCard.
-          Keeps the body mounted across toggles so the signed-URL
-          fetches don't restart on every expand. */}
-      <div
-        id={panelId}
-        role="region"
-        style={{
-          display: 'grid',
-          gridTemplateRows: open ? '1fr' : '0fr',
-          transition: `grid-template-rows ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
-        }}
-      >
-        <div style={{ overflow: 'hidden' }}>
-          {/* paddingTop replaces the DetailSectionHeader's old
-              marginBottom — it only contributes vertical space when
-              the panel is actually open, so the closed-state card
-              stays compact. */}
-          <div style={{ paddingTop: theme.space[4] }}>
-            {error ? (
-              <p style={{ margin: '8px 0 0', fontSize: theme.type.size.sm, color: theme.color.alert }}>
-                Couldn't load photos: {error}
-              </p>
-            ) : null}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-                gap: 12,
-                marginTop: 4,
-              }}
-            >
-              {slots.map((s) => {
-                const row = byKind.get(s.kind) ?? null;
-                return (
-                  <SmilePhotoTile key={s.kind} label={s.label} row={row} loading={loading} />
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function SmilePhotoTile({
-  label,
-  row,
-  loading,
-}: {
-  label: string;
-  row: import('../lib/queries/bookingIntakePhotos.ts').IntakePhotoRow | null;
-  loading: boolean;
-}) {
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!row) {
-      setSignedUrl(null);
-      return;
-    }
-    let cancelled = false;
-    void signIntakePhotoUrl(row.filePath).then((url) => {
-      if (!cancelled) setSignedUrl(url);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [row]);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <a
-        href={signedUrl ?? undefined}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          position: 'relative',
-          aspectRatio: '4 / 5',
-          borderRadius: 10,
-          background: theme.color.bg,
-          border: `1px solid ${theme.color.border}`,
-          overflow: 'hidden',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: signedUrl ? 'zoom-in' : 'default',
-          textDecoration: 'none',
-        }}
-      >
-        {signedUrl ? (
-          <img
-            src={signedUrl}
-            alt={`${label} photo`}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-            }}
-          />
-        ) : (
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkSubtle,
-              textAlign: 'center',
-              padding: 8,
-            }}
-          >
-            {loading ? 'Loading…' : 'Not uploaded'}
-          </span>
-        )}
-      </a>
-      <span
-        style={{
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.medium,
-          color: theme.color.inkMuted,
-        }}
-      >
-        {label}
-      </span>
-    </div>
   );
 }
 

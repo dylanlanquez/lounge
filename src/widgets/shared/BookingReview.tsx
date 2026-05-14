@@ -1,4 +1,5 @@
-import { MapPin, Award, Calendar, Sparkles, CreditCard, Clock } from 'lucide-react';
+import { MapPin, Award, Calendar, Sparkles, Clock } from 'lucide-react';
+import { DepositGlyph } from './DepositGlyph.tsx';
 import {
   axesForService,
   axisValueLabel,
@@ -138,7 +139,11 @@ export function BookingReview({
     rows.push({
       kind: 'split',
       key: 'deposit',
-      icon: <CreditCard size={18} aria-hidden style={{ color: QUIZ.MUTED_2 }} />,
+      icon: (
+        <span aria-hidden style={{ color: QUIZ.MUTED_2, display: 'inline-flex' }}>
+          <DepositGlyph size={18} />
+        </span>
+      ),
       label: 'Deposit today',
       amount: formatPrice(priceBreakdown.depositPence),
     });
