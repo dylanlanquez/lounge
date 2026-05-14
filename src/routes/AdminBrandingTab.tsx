@@ -575,13 +575,14 @@ function ClinicCard({
   onToast,
 }: {
   settings: ClinicSettings;
-  location: { id: string; name: string; city: string | null; address: string | null; phone: string | null } | null;
+  location: { id: string; name: string; city: string | null; address: string | null; postcode: string | null; phone: string | null } | null;
   onRefresh: () => void;
   onToast: (t: Toast) => void;
 }) {
   const [name, setName] = useState(location?.name ?? '');
   const [city, setCity] = useState(location?.city ?? '');
   const [address, setAddress] = useState(location?.address ?? '');
+  const [postcode, setPostcode] = useState(location?.postcode ?? '');
   const [phone, setPhone] = useState(location?.phone ?? '');
   const [publicEmail, setPublicEmail] = useState(settings.publicEmail);
   const [websiteUrl, setWebsiteUrl] = useState(settings.websiteUrl);
@@ -593,8 +594,9 @@ function ClinicCard({
     setName(location?.name ?? '');
     setCity(location?.city ?? '');
     setAddress(location?.address ?? '');
+    setPostcode(location?.postcode ?? '');
     setPhone(location?.phone ?? '');
-  }, [location?.name, location?.city, location?.address, location?.phone]);
+  }, [location?.name, location?.city, location?.address, location?.postcode, location?.phone]);
   useEffect(() => {
     setPublicEmail(settings.publicEmail);
     setWebsiteUrl(settings.websiteUrl);
@@ -606,6 +608,7 @@ function ClinicCard({
     name !== (location?.name ?? '') ||
     city !== (location?.city ?? '') ||
     address !== (location?.address ?? '') ||
+    postcode !== (location?.postcode ?? '') ||
     phone !== (location?.phone ?? '') ||
     publicEmail !== settings.publicEmail ||
     websiteUrl !== settings.websiteUrl ||
@@ -616,6 +619,7 @@ function ClinicCard({
     setName(location?.name ?? '');
     setCity(location?.city ?? '');
     setAddress(location?.address ?? '');
+    setPostcode(location?.postcode ?? '');
     setPhone(location?.phone ?? '');
     setPublicEmail(settings.publicEmail);
     setWebsiteUrl(settings.websiteUrl);
@@ -636,6 +640,7 @@ function ClinicCard({
           name: name.trim(),
           city: city.trim() || null,
           address: address.trim() || null,
+          postcode: postcode.trim() || null,
           phone: phone.trim() || null,
         }),
         saveClinicSetting('publicEmail', publicEmail.trim()),
@@ -667,12 +672,20 @@ function ClinicCard({
           <Input label="Clinic name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="City" value={city} onChange={(e) => setCity(e.target.value)} />
         </div>
-        <Input
-          label="Street address"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          placeholder="123 High Street"
-        />
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
+          <Input
+            label="Street address"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="123 High Street"
+          />
+          <Input
+            label="Postcode"
+            value={postcode}
+            onChange={(e) => setPostcode(e.target.value.toUpperCase())}
+            placeholder="ML1 5UH"
+          />
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
           <Input
             label="Phone"

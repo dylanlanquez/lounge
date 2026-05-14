@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Calendar, Check, CheckCircle2, Copy, Hash, ImageIcon, Loader2, MapPin } from 'lucide-react';
 import { formatBookingSuccessTitle, type WidgetState } from '../state.ts';
 import type { WidgetBrand } from '../Widget.tsx';
@@ -490,6 +490,26 @@ function PhotoIntakeCard({
   manageToken: string;
   accent: string;
 }) {
+  // Lift the per-tile done state up so the Submit button at the
+  // bottom can disable itself when nothing is uploaded yet. Each
+  // PhotoSlot reports its own kind into/out of the doneKinds set
+  // via the onDoneChange callback below.
+  const [doneKinds, setDoneKinds] = useState<Set<PhotoKind>>(new Set());
+  const [submitted, setSubmitted] = useState(false);
+  // useCallback so PhotoSlot's onDoneChange effect dep doesn't fire
+  // every render. Children call it on transitions; an unstable
+  // identity would loop forever.
+  const handleDoneChange = useCallback((kind: PhotoKind, done: boolean) => {
+    setDoneKinds((prev) => {
+      const next = new Set(prev);
+      if (done) next.add(kind);
+      else next.delete(kind);
+      return next;
+    });
+  }, []);
+  const uploadedCount = doneKinds.size;
+  const canSubmit = uploadedCount > 0 && !submitted;
+
   return (
     <div
       style={{
@@ -535,14 +555,10 @@ function PhotoIntakeCard({
         fit for you, your deposit is refunded in full, no questions.
       </p>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-          gap: 12,
-          marginTop: 20,
-        }}
-      >
+      {/* Grid → 3 columns on desktop, smooth horizontal-snap row on
+          ≤520px. Class + media query live in quizTokens.ts so the
+          breakpoint sits next to the other widget breakpoints. */}
+      <div className="vlounge-photo-grid" style={{ marginTop: 20 }}>
         {PHOTO_KINDS.map((p) => (
           <PhotoSlot
             key={p.kind}
@@ -552,8 +568,73 @@ function PhotoIntakeCard({
             appointmentId={appointmentId}
             manageToken={manageToken}
             accent={accent}
+            onDoneChange={handleDoneChange}
           />
         ))}
+      </div>
+
+      {/* Submit affordance — photos auto-upload to storage as the
+          patient picks them, so the backend has them either way.
+          This button gives the patient a clear "I'm done" moment
+          and surfaces a confirmation state so they don't sit
+          wondering whether the team got them. Disabled until at
+          least one tile has uploaded. */}
+      <div
+        style={{
+          marginTop: 24,
+          display: 'flex',
+          justifyContent: 'flex-end',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (!canSubmit) return;
+            setSubmitted(true);
+          }}
+          disabled={!canSubmit}
+          style={{
+            appearance: 'none',
+            border: 'none',
+            padding: '12px 22px',
+            borderRadius: QUIZ.R_PILL,
+            background: submitted
+              ? 'rgba(34, 139, 34, 0.10)'
+              : canSubmit
+                ? accent
+                : 'rgba(0, 0, 0, 0.06)',
+            color: submitted
+              ? '#2F7D32'
+              : canSubmit
+                ? '#fff'
+                : QUIZ.SUBTLE,
+            cursor: canSubmit ? 'pointer' : 'default',
+            fontSize: 14,
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            transition:
+              'background 0.15s ease, color 0.15s ease, transform 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            if (!canSubmit) return;
+            e.currentTarget.style.transform = 'translateY(-1px)';
+          }}
+          onMouseLeave={(e) => {
+            if (!canSubmit) return;
+            e.currentTarget.style.transform = 'translateY(0)';
+          }}
+        >
+          {submitted ? (
+            <>
+              <Check size={14} strokeWidth={2.5} aria-hidden /> Photos sent
+            </>
+          ) : (
+            <>Send photos{uploadedCount > 0 ? ` (${uploadedCount})` : ''}</>
+          )}
+        </button>
       </div>
     </div>
   );
@@ -572,6 +653,7 @@ function PhotoSlot({
   appointmentId,
   manageToken,
   accent,
+  onDoneChange,
 }: {
   kind: PhotoKind;
   label: string;
@@ -579,9 +661,23 @@ function PhotoSlot({
   appointmentId: string;
   manageToken: string;
   accent: string;
+  /** Reports the slot's done-state to PhotoIntakeCard so the Send-
+   *  photos button can enable when at least one upload has landed
+   *  and disable again if the slot transitions out of done (error,
+   *  reset). Called only on transitions, not every render. */
+  onDoneChange: (kind: PhotoKind, done: boolean) => void;
 }) {
   const [slot, setSlot] = useState<SlotState>({ stage: 'idle' });
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Surface done/undone transitions to the parent. We watch the
+  // stage rather than calling onDoneChange directly from the upload
+  // handler so the contract stays declarative — the parent's
+  // doneKinds set always matches what's actually rendered.
+  const isDoneStage = slot.stage === 'done';
+  useEffect(() => {
+    onDoneChange(kind, isDoneStage);
+  }, [kind, isDoneStage, onDoneChange]);
 
   const onFile = async (file: File) => {
     const previewUrl = URL.createObjectURL(file);
@@ -639,7 +735,12 @@ function PhotoSlot({
       <div
         style={{
           position: 'relative',
-          aspectRatio: '4 / 5',
+          // Square tiles match the staff-app patient-files grid
+          // pattern Dylan called out as the visual reference. On
+          // mobile the parent .vlounge-photo-grid switches to a
+          // horizontal scroll so the square tile stays generous
+          // (~70vw wide) instead of squishing into three columns.
+          aspectRatio: '1 / 1',
           borderRadius: 12,
           background: preview ? 'transparent' : QUIZ.SOFT_BG,
           border: `2px ${isDone ? 'solid' : 'dashed'} ${

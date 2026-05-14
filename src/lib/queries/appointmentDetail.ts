@@ -127,7 +127,9 @@ export interface AppointmentDetailRow {
   location: {
     id: string;
     name: string | null;
+    address: string | null;
     city: string | null;
+    postcode: string | null;
   } | null;
   staff: {
     id: string;
@@ -267,7 +269,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
             .maybeSingle(),
           supabase
             .from('locations')
-            .select('id, name, city')
+            .select('id, name, address, city, postcode')
             .eq('id', appt.location_id)
             .maybeSingle(),
           appt.staff_account_id
@@ -406,7 +408,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           shopify_order_total_pence: appt.shopify_order_total_pence,
           patient: patientRow,
           location:
-            (locationRes.data as { id: string; name: string | null; city: string | null } | null) ?? null,
+            (locationRes.data as { id: string; name: string | null; address: string | null; city: string | null; postcode: string | null } | null) ?? null,
           staff:
             (staffRes.data as { id: string; first_name: string | null; last_name: string | null } | null) ??
             null,

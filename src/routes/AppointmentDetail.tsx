@@ -1323,11 +1323,32 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
   const { data: clinicSettings } = useClinicSettings();
   const isVirtual = !!appt.join_url;
 
-  const locationLine = isVirtual
+  // In-person bookings now surface the full deliverable address —
+  // clinic name, street address, city, then postcode on the next
+  // line — sourced from the locations table (which the Branding tab
+  // writes to). City + postcode share a line so the postcode reads
+  // alongside its city rather than dangling on its own.
+  const locationLine: ReactNode = isVirtual
     ? platformLabel(appt.meeting_platform, appt.join_url)
-    : appt.location?.name
-      ? [appt.location.name, appt.location.city].filter(Boolean).join(', ')
-      : null;
+    : (() => {
+        const l = appt.location;
+        if (!l?.name) return null;
+        const street = l.address?.trim() || null;
+        const cityPostcode = [l.city?.trim(), l.postcode?.trim()]
+          .filter(Boolean)
+          .join(', ');
+        const lines = [l.name, street, cityPostcode || null].filter(
+          (s): s is string => Boolean(s),
+        );
+        if (lines.length === 1) return lines[0];
+        return (
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {lines.map((line, i) => (
+              <span key={i}>{line}</span>
+            ))}
+          </span>
+        );
+      })();
 
   const staffLine = appt.staff
     ? [properCase(appt.staff.first_name), properCase(appt.staff.last_name)].filter(Boolean).join(' ').trim()

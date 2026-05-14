@@ -63,6 +63,7 @@ export interface EditableLocationRow {
   type: string;
   city: string | null;
   address: string | null;
+  postcode: string | null;
   phone: string | null;
 }
 
@@ -90,7 +91,7 @@ export function useEditableLocation(): EditableResult {
       if (tick === 0) setLoading(true);
       const { data: rows, error: err } = await supabase
         .from('locations')
-        .select('id, name, type, city, address, phone')
+        .select('id, name, type, city, address, postcode, phone')
         .limit(1);
       if (cancelled) return;
       if (err) {
@@ -118,6 +119,7 @@ export async function saveLocation(input: {
   name: string;
   city: string | null;
   address: string | null;
+  postcode: string | null;
   phone: string | null;
 }): Promise<void> {
   const { error } = await supabase
@@ -126,6 +128,7 @@ export async function saveLocation(input: {
       name: input.name,
       city: input.city,
       address: input.address,
+      postcode: input.postcode,
       phone: input.phone,
     })
     .eq('id', input.id);

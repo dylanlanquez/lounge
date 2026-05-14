@@ -253,6 +253,45 @@ export function ensureQuizKeyframes(): void {
       }
     }
 
+    /* Success-screen smile-photo grid:
+       • Desktop: 3 columns, square tiles side-by-side.
+       • Mobile (≤520px): horizontal-snap row so three large
+         tiles can stay tappable on a phone instead of squishing
+         into thumbnails. Native momentum scroll + scroll-snap so
+         each tile lands cleanly under the patient's thumb. */
+    .vlounge-photo-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 520px) {
+      .vlounge-photo-grid {
+        display: flex;
+        grid-template-columns: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x mandatory;
+        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 6px;
+        /* Tighter scrollbar so the modal doesn't get a heavy iOS
+           scroll track underlining the photo row. */
+        scrollbar-width: thin;
+      }
+      .vlounge-photo-grid > * {
+        flex: 0 0 70%;
+        max-width: 240px;
+        scroll-snap-align: start;
+      }
+      .vlounge-photo-grid::-webkit-scrollbar {
+        height: 4px;
+      }
+      .vlounge-photo-grid::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.12);
+        border-radius: 2px;
+      }
+    }
+
 
     /* Thin neutral scrollbar — applied to any scrollable area in
        the widget (step body, popup body, etc) via the
