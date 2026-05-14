@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
 import { DepositGlyph } from '../DepositGlyph/DepositGlyph.tsx';
+import { DiscountIcon } from '../Icons/DiscountIcon.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
@@ -577,6 +578,8 @@ function iconFor(event: TimelineEvent): ReactNode {
       return <CreditCard size={size} />;
     case 'deposit':
       return <DepositGlyph size={18} />;
+    case 'discount':
+      return <DiscountIcon size={16} />;
     case 'box':
       return <Box size={size} />;
     case 'mail':

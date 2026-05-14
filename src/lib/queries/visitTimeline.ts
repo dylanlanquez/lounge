@@ -30,6 +30,8 @@ export type TimelineEventType =
   | 'jb_freed'
   | 'waiver_signed'
   | 'cart_item_added'
+  | 'cart_discount_applied'
+  | 'cart_discount_removed'
   | 'payment_succeeded'
   | 'payment_failed'
   | 'patient_event';
@@ -61,7 +63,7 @@ export interface TimelineEvent {
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
   actor?: string;
-  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box' | 'mail' | 'deposit';
+  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box' | 'mail' | 'deposit' | 'discount';
   // Optional tone override. When set, the icon dot uses this tone
   // directly instead of the type-derived fallback. Lets producers
   // (e.g. AppointmentTimeline) opt out of the visit-centric heuristics
@@ -470,12 +472,14 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           appointmentEvents,
           waiverEvents,
           cartItemEvents,
+          cartDiscountEvents,
           paymentEvents,
           patientEventsBundle,
         ] = await Promise.all([
           fetchAppointmentEvents(visit),
           fetchWaiverEvents(visit),
           fetchCartItemEvents(visit.id),
+          fetchCartDiscountEvents(visit.id),
           fetchPaymentEvents(visit.id),
           fetchPatientEvents(visit),
         ]);
@@ -573,6 +577,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           ...visitOwnEvents,
           ...waiverEvents,
           ...cartItemEvents,
+          ...cartDiscountEvents,
           ...paymentEvents,
           ...patientEvents,
         ];
@@ -789,6 +794,62 @@ async function fetchWaiverEvents(visit: VisitRow): Promise<RawTimelineEvent[]> {
     actorAccountId: s.witnessed_by,
     hint: 'signature' as const,
   }));
+}
+
+// Sale-wide discount audit rows. Apply, amend, and remove each
+// emit a row pair against lng_cart_discounts (amend = soft-delete
+// the old row + insert a new one), so this fetcher surfaces them
+// as two timeline events per row: "Discount applied" at created_at
+// and, when removed_at is set, "Discount removed" at removed_at.
+async function fetchCartDiscountEvents(visitId: string): Promise<RawTimelineEvent[]> {
+  const { data: cart, error: cartErr } = await supabase
+    .from('lng_carts')
+    .select('id')
+    .eq('visit_id', visitId)
+    .maybeSingle();
+  if (cartErr) throw new Error(cartErr.message);
+  if (!cart) return [];
+
+  const { data: discounts, error: dErr } = await supabase
+    .from('lng_cart_discounts')
+    .select('id, amount_pence, reason, approved_by, removed_at, removed_reason, removed_by, created_at')
+    .eq('cart_id', (cart as { id: string }).id)
+    .order('created_at', { ascending: true });
+  if (dErr) throw new Error(dErr.message);
+
+  const out: RawTimelineEvent[] = [];
+  for (const d of (discounts ?? []) as Array<{
+    id: string;
+    amount_pence: number;
+    reason: string | null;
+    approved_by: string | null;
+    removed_at: string | null;
+    removed_reason: string | null;
+    removed_by: string | null;
+    created_at: string;
+  }>) {
+    out.push({
+      id: `discount-${d.id}-applied`,
+      type: 'cart_discount_applied' as const,
+      timestamp: d.created_at,
+      title: 'Discount applied',
+      detail: joinDetail(`-${PENCE(d.amount_pence)}`, d.reason),
+      actorAccountId: d.approved_by,
+      hint: 'discount' as const,
+    });
+    if (d.removed_at) {
+      out.push({
+        id: `discount-${d.id}-removed`,
+        type: 'cart_discount_removed' as const,
+        timestamp: d.removed_at,
+        title: 'Discount removed',
+        detail: d.removed_reason ?? undefined,
+        actorAccountId: d.removed_by,
+        hint: 'discount' as const,
+      });
+    }
+  }
+  return out;
 }
 
 async function fetchCartItemEvents(visitId: string): Promise<RawTimelineEvent[]> {

@@ -2090,11 +2090,14 @@ export function VisitDetail() {
         onClose={() => !discountBusy && setDiscountSheet(null)}
         dismissable={!discountBusy}
         title={
-          discountSheet === 'remove'
-            ? 'Remove discount'
-            : discountSheet === 'amend'
-              ? 'Amend discount'
-              : 'Apply discount'
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+            <DiscountIcon size={20} />
+            {discountSheet === 'remove'
+              ? 'Remove discount'
+              : discountSheet === 'amend'
+                ? 'Amend discount'
+                : 'Apply discount'}
+          </span>
         }
         description={
           discountSheet === 'remove'
