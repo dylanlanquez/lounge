@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Lock } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, CircleDashed, Lock } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -936,7 +936,7 @@ function FooterPrice({
           label="Today"
           valuePence={depositPence}
           muted={false}
-          icon={<DepositGlyph size={20} />}
+          icon={<CircleDashed size={18} strokeWidth={2.5} aria-hidden />}
           accent={accent}
         />
       ) : null}
@@ -964,27 +964,6 @@ function FooterPrice({
   );
 }
 
-function DepositGlyph({ size = 20 }: { size?: number }) {
-  // Custom pie-slice / donut mark Dylan supplied for the deposit
-  // indicator on the footer. Visually reads as "this is the
-  // portion of the total being paid now" — the wedge separated
-  // from the donut. Inlined so the widget bundle stays single-
-  // asset and the icon picks up `currentColor` from the parent
-  // FooterPriceBlock automatically.
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 512 512"
-      fill="currentColor"
-      aria-hidden
-      style={{ display: 'block', flexShrink: 0 }}
-    >
-      <path d="M271,0v240.99s241,0,241,0v30l-.92,5.11c-9.01,124.79-110.12,225.85-234.99,235.01l-5.09.88h-30l-5.08-.88C111.01,501.96,10.06,400.99.88,276.1l-.88-5.1.43-30.13c3.5-60.46,28.26-117.34,70.11-161.31C115.62,32.2,176.43,4.07,241.16.39l29.84-.39ZM481.25,271.01l-240.24-.02V30.7c-54.05,3.25-104.21,26.36-142.27,63.11C7.31,182.1,7.79,327.76,96.42,416.1c88.4,88.11,233.71,88.43,321.75-2.86,36.77-37.92,59.92-88.3,63.08-142.23Z" />
-      <path d="M498.17,173.17c4.48,13.08,7.32,25,10.61,37.83h-207.79s0-207.71,0-207.71c12.58,3.01,24.63,6.29,37.39,10.32,74.91,25.71,133.93,84.17,159.78,159.56ZM469.19,180.99c-22.93-64.71-73.48-115.26-138.18-138.19l-.02,138.2,138.2-.02Z" />
-    </svg>
-  );
-}
 
 function FooterPriceBlock({
   label,
