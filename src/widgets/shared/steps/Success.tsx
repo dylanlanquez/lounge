@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Calendar, Check, CheckCircle2, Copy, ImageIcon, Loader2, MapPin } from 'lucide-react';
+import { Calendar, Check, CheckCircle2, Copy, Hash, ImageIcon, Loader2, MapPin } from 'lucide-react';
 import { formatBookingSuccessTitle, type WidgetState } from '../state.ts';
 import type { WidgetBrand } from '../Widget.tsx';
 import { QUIZ } from '../quizTokens.ts';
@@ -145,19 +145,10 @@ export function SuccessScreen({
                 secondary={locationAddress ?? undefined}
               />
             ) : null}
+            {appointmentRef ? (
+              <BookingReferenceRow value={appointmentRef} accent={accent} />
+            ) : null}
           </div>
-
-          {appointmentRef ? (
-            <div
-              style={{
-                marginTop: 24,
-                paddingBottom: 20,
-                borderBottom: `1px solid ${QUIZ.BORDER_SOFT}`,
-              }}
-            >
-              <ReferencePill value={appointmentRef} accent={accent} />
-            </div>
-          ) : null}
 
           <p
             style={{
@@ -254,12 +245,12 @@ function SuccessGlyph({ accent }: { accent: string }) {
   );
 }
 
-// Branded reference pill — mirrors the staff app's meeting-link
-// copy card (full-width bordered row, value left, copy-state right,
-// hover lifts the tint). Tinted with the booking's brand accent and
-// labelled "Booking reference" so the patient knows what it is. Tap
-// to copy; the right-hand state flips to "Copied" for ~2.2s.
-function ReferencePill({
+// Booking-reference row — shares the icon + content shape with
+// DetailRow above (16px icon column, 14px text body) so the row
+// reads as a continuation of the Date / Location list rather than
+// a separate surface. The value sits next to a small accent-
+// coloured copy button; tap to copy, ~2.2s flip to "Copied".
+function BookingReferenceRow({
   value,
   accent,
 }: {
@@ -267,14 +258,13 @@ function ReferencePill({
   accent: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const [hovered, setHovered] = useState(false);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(value);
     } catch {
-      // Older Safari / WebViews — fall back to the textarea+execCommand
-      // trick. Same recipe the staff-app MeetingLinkCard uses.
+      // Older Safari / WebViews — same textarea+execCommand
+      // fallback the staff-app MeetingLinkCard uses.
       const ta = document.createElement('textarea');
       ta.value = value;
       document.body.appendChild(ta);
@@ -282,8 +272,8 @@ function ReferencePill({
       try {
         document.execCommand('copy');
       } catch {
-        // ignore — last-resort path; if both clipboard APIs are
-        // blocked the patient still sees the reference in the pill.
+        // ignore — last-resort; the value is still visible on
+        // screen for the patient to read off manually.
       }
       document.body.removeChild(ta);
     }
@@ -295,74 +285,67 @@ function ReferencePill({
     <div
       style={{
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'flex-start',
-        gap: 6,
+        gap: 12,
       }}
     >
       <span
         style={{
-          fontSize: 13,
-          color: accent,
-          fontWeight: 500,
-          lineHeight: 1.3,
+          flexShrink: 0,
+          width: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: QUIZ.MUTED_2,
+          paddingTop: 2,
         }}
       >
-        Booking reference
+        <Hash size={16} strokeWidth={1.75} aria-hidden />
       </span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
+      <span
         style={{
-          appearance: 'none',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 10,
-          background: hovered ? hexWithAlpha(accent, 0.1) : hexWithAlpha(accent, 0.06),
-          border: `1px solid ${hexWithAlpha(accent, hovered ? 0.28 : 0.14)}`,
-          borderRadius: 10,
-          padding: '8px 12px',
-          cursor: 'pointer',
-          textAlign: 'left',
-          fontFamily: 'inherit',
-          transition: 'background 0.15s ease, border-color 0.15s ease',
-          userSelect: 'none',
+          minWidth: 0,
         }}
       >
         <span
           style={{
             fontSize: 14,
-            color: accent,
-            fontWeight: 600,
+            color: QUIZ.INK,
+            fontWeight: 500,
             fontVariantNumeric: 'tabular-nums',
             letterSpacing: '0.02em',
-            whiteSpace: 'nowrap',
+            lineHeight: 1.4,
           }}
         >
           {value}
         </span>
-        <span
-          aria-hidden
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
           style={{
-            width: 1,
-            height: 14,
-            background: hexWithAlpha(accent, 0.18),
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            padding: 0,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
             display: 'inline-flex',
             alignItems: 'center',
             gap: 5,
             fontSize: 12,
             fontWeight: 600,
             color: accent,
-            flexShrink: 0,
-            transition: 'color 0.15s ease',
+            transition: 'opacity 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.opacity = '0.8';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.opacity = '1';
           }}
         >
           {copied ? (
@@ -374,29 +357,10 @@ function ReferencePill({
               <Copy size={13} aria-hidden /> Copy
             </>
           )}
-        </span>
-      </button>
+        </button>
+      </span>
     </div>
   );
-}
-
-// Convert a hex colour (#RRGGBB or #RGB) to an rgba() string with
-// the supplied alpha. Used by ReferencePill so the brand accent
-// tints the tile background + border without baking per-brand
-// rgba constants into QUIZ. Returns the original hex (alpha
-// ignored) on parse failure — defensive, since accent values can
-// arrive from per-brand bundles.
-function hexWithAlpha(hex: string, alpha: number): string {
-  let h = hex.trim();
-  if (h.startsWith('#')) h = h.slice(1);
-  if (h.length === 3) {
-    h = h.split('').map((c) => c + c).join('');
-  }
-  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return hex;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function DetailRow({
