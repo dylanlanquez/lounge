@@ -30,33 +30,35 @@ export function ServiceStep({
   if (!data || data.length === 0) return <ServiceEmpty />;
 
   return (
-    <OptionGrid>
-      {data.map((bt) => {
-        const selected = api.state.service?.id === bt.id;
-        return (
-          <OptionCard
-            key={bt.id}
-            selected={selected}
-            anySelected={!!api.state.service}
-            onSelect={() => api.setService(bt)}
-            accent={accent}
-            ariaLabel={bt.label.replace(/<[^>]*>/g, '')}
-          >
-            <OptionTitle>
-              <span dangerouslySetInnerHTML={{ __html: bt.label }} />
-            </OptionTitle>
-            <OptionDescription>
-              <span dangerouslySetInnerHTML={{ __html: bt.description }} />
-            </OptionDescription>
-            {bt.depositPence > 0 ? (
-              <OptionMeta>
-                {formatPrice(bt.depositPence)} deposit secures the slot
-              </OptionMeta>
-            ) : null}
-          </OptionCard>
-        );
-      })}
-    </OptionGrid>
+    <div style={{ marginTop: 32 }}>
+      <OptionGrid>
+        {data.map((bt) => {
+          const selected = api.state.service?.id === bt.id;
+          return (
+            <OptionCard
+              key={bt.id}
+              selected={selected}
+              anySelected={!!api.state.service}
+              onSelect={() => api.setService(bt)}
+              accent={accent}
+              ariaLabel={bt.label.replace(/<[^>]*>/g, '')}
+            >
+              <OptionTitle>
+                <span dangerouslySetInnerHTML={{ __html: bt.label }} />
+              </OptionTitle>
+              <OptionDescription>
+                <span dangerouslySetInnerHTML={{ __html: bt.description }} />
+              </OptionDescription>
+              {bt.depositPence > 0 ? (
+                <OptionMeta>
+                  {formatPrice(bt.depositPence)} deposit secures the slot
+                </OptionMeta>
+              ) : null}
+            </OptionCard>
+          );
+        })}
+      </OptionGrid>
+    </div>
   );
 }
 

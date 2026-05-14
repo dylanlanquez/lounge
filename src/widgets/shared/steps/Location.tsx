@@ -36,7 +36,7 @@ export function LocationStep({
       : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
       {greeting ? (
         <p
           style={{

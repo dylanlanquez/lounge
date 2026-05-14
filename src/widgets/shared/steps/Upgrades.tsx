@@ -41,7 +41,7 @@ export function UpgradesStep({
   const perks = INCLUDED_PERKS[serviceType] ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
       <p
         style={{
           margin: '0 auto',

@@ -91,6 +91,11 @@ export function DetailsStep({
         maxWidth: 720,
         margin: '0 auto',
         width: '100%',
+        // 32px breathing room from the step title — this step has
+        // no intro paragraph between StepTitle and the form, so the
+        // tight 6px StepTitle bottom margin alone made the inputs
+        // hug the heading.
+        marginTop: 32,
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >

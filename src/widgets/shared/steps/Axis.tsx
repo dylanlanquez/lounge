@@ -87,7 +87,7 @@ function AxisOptions({
           : undefined;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
       <p
         style={{
           margin: 0,

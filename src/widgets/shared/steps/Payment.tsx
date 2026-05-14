@@ -505,6 +505,10 @@ function Shell({
         display: 'flex',
         flexDirection: 'column',
         gap: 20,
+        // 32px from the step title — Payment has no intro
+        // paragraph so the Pay-headline + card form would hug the
+        // "Payment" h2 without it.
+        marginTop: 32,
       }}
     >
       {children}
