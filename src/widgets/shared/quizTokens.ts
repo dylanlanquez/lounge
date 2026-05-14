@@ -167,6 +167,51 @@ export function ensureQuizKeyframes(): void {
       animation: vlounge-shimmer 2s ease-in-out infinite;
     }
 
+    /* "Still" modifier on the progress fill — disables both the
+       background-position shine AND the ::after shimmer overlay so
+       the bar sits perfectly static. Used on the Payment step where
+       the Pay button is the only thing that should pulse. */
+    .vlounge-progress-fill--still {
+      animation: none !important;
+    }
+    .vlounge-progress-fill--still::after {
+      animation: none !important;
+      opacity: 0;
+    }
+
+    /* Pay-button glisten — a soft white gradient sweeps across the
+       navy CTA every 2.6s so the button hints "press me" without
+       being noisy. Applied via the .vlounge-pay-shimmer class on
+       the Payment step's footer button. Wrapper uses overflow:hidden
+       to mask the diagonal gradient outside the pill geometry. */
+    @keyframes vlounge-pay-shimmer {
+      0%   { transform: translateX(-130%) skewX(-18deg); }
+      60%  { transform: translateX(180%) skewX(-18deg); }
+      100% { transform: translateX(180%) skewX(-18deg); }
+    }
+    .vlounge-pay-shimmer {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+    }
+    .vlounge-pay-shimmer::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 35%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.18) 50%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      animation: vlounge-pay-shimmer 2.6s ease-in-out infinite;
+      pointer-events: none;
+      z-index: 1;
+    }
+
     /* Stagger delays for sets of cards (option-card-vt / addon-item-vt)
        — applied via inline animationDelay too, this is a fallback. */
     .vlounge-stagger > *:nth-child(1) { animation-delay: 0.05s; }

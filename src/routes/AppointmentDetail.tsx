@@ -7,6 +7,7 @@ import {
   Ban,
   CalendarCheck,
   CalendarClock,
+  Camera,
   CheckCircle2,
   ChevronRight,
   CircleSlash,
@@ -72,6 +73,7 @@ import {
   type AppointmentDetailRow,
 } from '../lib/queries/appointmentDetail.ts';
 import { humaniseLedgerSource } from '../lib/queries/ledger.ts';
+import { signIntakePhotoUrl, useBookingIntakePhotos } from '../lib/queries/bookingIntakePhotos.ts';
 import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 import googleMeetIcon from '../assets/google-meet.png';
 
@@ -483,6 +485,9 @@ function Loaded({
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : null}
         <BookingFactsCard appt={appt} />
+        {appt.service_type === 'click_in_veneers' ? (
+          <SmilePhotosCard appointmentId={appt.id} />
+        ) : null}
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
         {appt.shopify_order_name && (appt.shopify_order_total_pence ?? 0) > 0 ? (
@@ -1344,6 +1349,125 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+function SmilePhotosCard({ appointmentId }: { appointmentId: string }) {
+  const { rows, loading, error } = useBookingIntakePhotos(appointmentId);
+  const byKind = new Map(rows.map((r) => [r.kind, r] as const));
+  const slots: Array<{ kind: 'front' | 'left' | 'right'; label: string }> = [
+    { kind: 'front', label: 'Front smile' },
+    { kind: 'left', label: 'Left side' },
+    { kind: 'right', label: 'Right side' },
+  ];
+  return (
+    <Card padding="lg">
+      <DetailSectionHeader
+        icon={<Camera size={15} aria-hidden />}
+        title="Pre-visit smile photos"
+      />
+      {error ? (
+        <p style={{ margin: '8px 0 0', fontSize: theme.type.size.sm, color: theme.color.alert }}>
+          Couldn't load photos: {error}
+        </p>
+      ) : null}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: 12,
+          marginTop: 4,
+        }}
+      >
+        {slots.map((s) => {
+          const row = byKind.get(s.kind) ?? null;
+          return (
+            <SmilePhotoTile key={s.kind} label={s.label} row={row} loading={loading} />
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function SmilePhotoTile({
+  label,
+  row,
+  loading,
+}: {
+  label: string;
+  row: import('../lib/queries/bookingIntakePhotos.ts').IntakePhotoRow | null;
+  loading: boolean;
+}) {
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!row) {
+      setSignedUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void signIntakePhotoUrl(row.filePath).then((url) => {
+      if (!cancelled) setSignedUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [row]);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <a
+        href={signedUrl ?? undefined}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          position: 'relative',
+          aspectRatio: '4 / 5',
+          borderRadius: 10,
+          background: theme.color.bg,
+          border: `1px solid ${theme.color.border}`,
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: signedUrl ? 'zoom-in' : 'default',
+          textDecoration: 'none',
+        }}
+      >
+        {signedUrl ? (
+          <img
+            src={signedUrl}
+            alt={`${label} photo`}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkSubtle,
+              textAlign: 'center',
+              padding: 8,
+            }}
+          >
+            {loading ? 'Loading…' : 'Not uploaded'}
+          </span>
+        )}
+      </a>
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkMuted,
+        }}
+      >
+        {label}
+      </span>
+    </div>
   );
 }
 

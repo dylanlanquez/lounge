@@ -216,21 +216,37 @@ function WidgetReady({
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
     appointmentRef: string | null;
+    appointmentId: string | null;
+    manageToken: string | null;
     error: string | null;
-  }>({ state: 'idle', appointmentRef: null, error: null });
+  }>({
+    state: 'idle',
+    appointmentRef: null,
+    appointmentId: null,
+    manageToken: null,
+    error: null,
+  });
 
   // Single submission entry-point. Called from the footer Next
   // button on the summary step (free booking) or from the Payment
   // step's onPaid handler after Stripe confirms.
   const submit = async (paymentIntentId: string | null = null) => {
     if (submission.state === 'submitting') return;
-    setSubmission({ state: 'submitting', appointmentRef: null, error: null });
+    setSubmission({
+      state: 'submitting',
+      appointmentRef: null,
+      appointmentId: null,
+      manageToken: null,
+      error: null,
+    });
     try {
       const result = await submitBooking(api.state, paymentIntentId, brand?.id);
       if (result.manageToken) rememberBookingToken(result.manageToken);
       setSubmission({
         state: 'done',
         appointmentRef: result.appointmentRef,
+        appointmentId: result.appointmentId,
+        manageToken: result.manageToken,
         error: null,
       });
     } catch (e) {
@@ -239,6 +255,8 @@ function WidgetReady({
         setSubmission({
           state: 'idle',
           appointmentRef: null,
+          appointmentId: null,
+          manageToken: null,
           error: 'That slot was just taken — pick another time.',
         });
         api.goTo('time');
@@ -247,6 +265,8 @@ function WidgetReady({
       setSubmission({
         state: 'idle',
         appointmentRef: null,
+        appointmentId: null,
+        manageToken: null,
         error:
           messageForCode(err.code) ??
           "Couldn't book your appointment. Please try again.",
@@ -259,6 +279,8 @@ function WidgetReady({
       <SuccessScreen
         state={api.state}
         appointmentRef={submission.appointmentRef}
+        appointmentId={submission.appointmentId}
+        manageToken={submission.manageToken}
         brand={brand}
       />
     );
@@ -422,6 +444,7 @@ function ChromeShell({
         <ProgressBar
           value={api.visibleCurrentIdx + 1}
           total={api.visibleTotalSteps}
+          still={api.stepKey === 'payment'}
         />
       </header>
 
@@ -491,7 +514,19 @@ function ChromeShell({
 // header flex slot, not absolute, so over-scroll never lifts it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProgressBar({ value, total }: { value: number; total: number }) {
+function ProgressBar({
+  value,
+  total,
+  still = false,
+}: {
+  value: number;
+  total: number;
+  /** Disable the shimmering gradient/shine animations. On the
+   *  Payment step we want all motion to come from the Pay button
+   *  alone, so the progress bar should sit static rather than
+   *  competing for the eye. */
+  still?: boolean;
+}) {
   const pct = total > 0 ? Math.max(0, Math.min(100, (value / total) * 100)) : 0;
   return (
     <div
@@ -510,7 +545,9 @@ function ProgressBar({ value, total }: { value: number; total: number }) {
       }}
     >
       <div
-        className="vlounge-progress-fill"
+        className={
+          still ? 'vlounge-progress-fill vlounge-progress-fill--still' : 'vlounge-progress-fill'
+        }
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -835,6 +872,7 @@ function Footer({
             disabled={nextDisabled}
             onClick={onNext}
             accent={accent}
+            shimmer={isPaymentStep}
           >
             {isPaymentStep ? (
               <span
@@ -931,7 +969,7 @@ function FooterPrice({
 }
 
 function DepositGlyph({ size = 20 }: { size?: number }) {
-  // Custom 8-spoke "sunburst" mark Dylan supplied for the deposit
+  // Custom clock-quadrant mark Dylan supplied for the deposit
   // indicator on the footer. Inlined here rather than imported as
   // a file so the widget bundle stays single-asset (no extra HTTP
   // request) and the icon picks up `currentColor` from the parent
@@ -940,18 +978,16 @@ function DepositGlyph({ size = 20 }: { size?: number }) {
     <svg
       width={size}
       height={size}
-      viewBox="0 0 20.21 20.21"
+      viewBox="0 0 384 384"
       fill="currentColor"
       aria-hidden
       style={{ display: 'block', flexShrink: 0 }}
     >
-      <path d="M11.23,4.1c0,.65-.51,1.13-1.1,1.14s-1.14-.48-1.14-1.12V1.12c0-.63.51-1.11,1.1-1.12s1.14.48,1.14,1.12v2.98Z" />
-      <path d="M4.15,11.22H1.12C.49,11.23.01,10.72,0,10.13s.48-1.14,1.12-1.14h3c.63,0,1.11.5,1.12,1.1s-.44,1.14-1.09,1.14Z" />
-      <path d="M19.12,11.22h-3.02c-.63,0-1.11-.51-1.12-1.1s.48-1.14,1.12-1.14h3c.63,0,1.11.5,1.12,1.1s-.44,1.14-1.09,1.14Z" />
-      <path d="M11.23,19.07c0,.65-.51,1.13-1.1,1.14s-1.14-.48-1.14-1.12v-3c0-.63.51-1.11,1.1-1.12s1.14.48,1.14,1.12v2.98Z" />
-      <path d="M4.57,17.23c-.47.47-1.16.47-1.6.04s-.46-1.15,0-1.61l2.16-2.14c.43-.43,1.15-.35,1.54.06s.44,1.11.01,1.55l-2.11,2.12Z" />
-      <path d="M17.22,15.64c.47.46.47,1.16.04,1.6s-1.15.46-1.61,0l-2.14-2.16c-.42-.42-.36-1.12.03-1.52s1.11-.49,1.54-.06l2.14,2.13Z" />
-      <path d="M6.69,5.12c.44.44.37,1.13-.02,1.53s-1.11.49-1.54.06l-2.16-2.14c-.45-.45-.46-1.15-.03-1.59s1.15-.46,1.61,0l2.13,2.14Z" />
+      <path d="M226.06,0c83.45,6.84,150.99,74.54,157.94,157.94v10.48c-2.59,9.72-10.67,18.26-21.53,18.27l-43.94.05c-12.85.01-21.76-9.71-22.83-22.03-3.56-40.76-35.64-73.46-76.36-77.02-12.69-1.11-22.09-10.4-22.04-23.38l.18-43.37c.04-10.66,8.74-18.46,18.1-20.94h10.48ZM323.69,158.44l31.32-.1c-6.86-68.54-60.88-122.49-129.29-129.36l.02,30.83c51.7,6.7,91.5,47.37,97.95,98.63Z" />
+      <path d="M258.22,218.26c1.15-12.87,10.55-22.02,23.28-22.01l41.86.03c13.6.01,23.18,11.43,22.44,24.23-5.09,87.64-75.34,157.69-162.92,162.46h-19.15C68.21,377.55-4.1,295.64,1.01,201.12,5.78,113,76.59,42.03,165.04,38c11.98-.55,22.47,9.88,22.47,22.01l.02,43.16c0,11.21-8.75,21.24-20.04,22.12-47.12,3.65-82.86,44.56-79.08,91.89,3.32,41.63,36.77,75.06,78.5,78.28,46.06,3.55,87.15-30.72,91.31-77.2ZM176.36,324.09c-61.34,1.53-111.83-45.64-116.15-105.4-4.33-59.79,38.81-113.39,98.94-121.06l.07-30.77C83.25,74.34,26.61,139.72,29.11,215.19c2.51,75.79,63.33,136.76,139.02,139.52,75.81,2.77,141.38-54.08,148.77-130.11l-30.76.15c-6.92,55.17-53.63,97.94-109.78,99.34Z" />
+      <path d="M159.14,258.15c-4.64,7.2-12.33,9.44-19.4,5.74s-10.04-12.64-5.49-19.71l56.51-87.74c4.48-6.95,13.32-8.49,19.75-4.29s8.57,12.89,4.07,19.88l-55.45,86.12Z" />
+      <path d="M134.7,162.1c10.72-1.7,19.79,5.7,21.45,15.24,1.82,10.49-5.29,20.01-15.24,21.77s-19.72-4.99-21.66-14.83,4.47-20.43,15.45-22.17Z" />
+      <path d="M205.8,221.21c10.72-2.11,20.05,4.93,22.04,14.69s-4.55,19.98-14.53,22.02-19.77-4.24-22.09-13.94,3.69-20.62,14.59-22.77Z" />
     </svg>
   );
 }
@@ -1089,17 +1125,23 @@ function NextButton({
   onClick,
   accent,
   children,
+  shimmer = false,
 }: {
   disabled: boolean;
   onClick: () => void;
   accent: string;
   children: React.ReactNode;
+  /** Slow white-gradient sweep across the pill. Used on the Pay
+   *  button so the conversion moment feels inviting; the rest of
+   *  the flow's Continue buttons stay still. */
+  shimmer?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
+      className={shimmer && !disabled ? 'vlounge-pay-shimmer' : undefined}
       style={{
         border: 'none',
         padding: '12px 28px',
@@ -1125,7 +1167,10 @@ function NextButton({
         e.currentTarget.style.boxShadow = 'none';
       }}
     >
-      {children}
+      {/* z-index 2 so the label sits ABOVE the .vlounge-pay-shimmer
+          ::before overlay (z-index 1) when the shimmer is on.
+          Harmless when shimmer is off. */}
+      <span style={{ position: 'relative', zIndex: 2 }}>{children}</span>
     </button>
   );
 }

@@ -533,7 +533,7 @@ export function stepTitle(key: StepKey, copy: WidgetCopy = DEFAULT_COPY): string
  *  asks plain-English questions instead. */
 export const AXIS_QUESTION: Record<AxisKey, string> = {
   repair_variant: 'What needs fixing?',
-  product_key: 'What kind?',
+  product_key: 'Which retainer do you need?',
   arch: 'Which teeth?',
 };
 

@@ -556,7 +556,7 @@ function PayHeader({ deposit }: { deposit: number }) {
           letterSpacing: '-0.01em',
         }}
       >
-        Pay {formatPrice(deposit)} to secure your slot
+        Pay {formatPrice(deposit)} to secure the appointment
       </h2>
       <p
         style={{
