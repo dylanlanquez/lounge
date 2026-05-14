@@ -954,7 +954,7 @@ function FooterPriceBlock({
         flexDirection: 'column',
         alignItems: 'center',
         lineHeight: 1.1,
-        opacity: muted ? 0.55 : 1,
+        opacity: muted ? 0.4 : 1,
         color: accent,
       }}
     >
