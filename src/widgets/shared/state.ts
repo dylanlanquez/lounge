@@ -340,14 +340,19 @@ export function useBookingState(
       return;
     }
     const newAxes = axesForService(service.serviceType as BookingServiceType);
-    // First axis the new service declares wins. No axes → land on
-    // 'time' directly (free-text bookings like virtual impression).
-    // We don't try to land on 'upgrades' here even when upgrades
-    // exist for the row — the upgrades query fires async, and
-    // jumping the patient there mid-flight would be weird. The
-    // engine inserts the upgrades step on a later render once
-    // its query resolves.
-    setStepKey(newAxes.length > 0 ? `axis:${newAxes[0]!.key}` : 'time');
+    // First axis the new service declares wins. If the service has
+    // no axes at all, fall through to upgrades (when available) or
+    // 'time'. Note: hasUpgrades may still be stale here because the
+    // upgrades query is keyed on the new service and only just
+    // started — but that case (no-axis service with upgrades) is
+    // rare. The activeSteps memo re-inserts the upgrades step on
+    // the next render once the query resolves and goNext from time
+    // still walks through it.
+    if (newAxes.length > 0) {
+      setStepKey(`axis:${newAxes[0]!.key}`);
+    } else {
+      setStepKey(hasUpgrades ? 'upgrades' : 'time');
+    }
   };
 
   /** Update one axis pin and advance to the next active step. The
@@ -397,9 +402,14 @@ export function useBookingState(
       setStepKey(`axis:${next.key}`);
       return;
     }
-    // Last axis pinned — go to 'time'. Same rationale as
-    // setService: don't try to predict 'upgrades' here.
-    setStepKey('time');
+    // Last axis pinned. If any upgrades exist for the resolved
+    // catalogue row, land on the Upgrades step before time. The
+    // upgrades query fires on mount (deep-linked product+service)
+    // so hasUpgrades is settled by the time the customer reaches
+    // this axis. For services with no upgrades the step is absent
+    // from activeSteps entirely; skipping straight to 'time'
+    // matches that.
+    setStepKey(hasUpgrades ? 'upgrades' : 'time');
   };
 
   /** Toggle a single upgrade in the patient's selection. Used by

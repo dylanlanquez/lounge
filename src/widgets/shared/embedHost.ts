@@ -84,28 +84,31 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     cursor: 'pointer',
   } as Partial<CSSStyleDeclaration>);
 
-  // Card. Mobile = full-bleed, desktop = centred sheet.
+  // Card. Mirrors venneir.com retainer-cart quiz modal dimensions —
+  // 97.5vw × 90vh, generous 12px corner, dramatic 30px-blur shadow.
+  // Mobile collapses to full-bleed.
   const card = document.createElement('div');
   const isDesktop = window.matchMedia('(min-width: 768px)').matches;
   Object.assign(card.style, {
     position: 'relative',
-    background: '#F7F6F2',
-    width: isDesktop ? 'min(720px, calc(100vw - 32px))' : '100vw',
-    height: isDesktop ? 'min(900px, calc(100dvh - 32px))' : '100dvh',
+    background: '#F4F4F4',
+    width: isDesktop ? '97.5vw' : '100vw',
+    height: isDesktop ? '90vh' : '100dvh',
+    margin: isDesktop ? '1.25vh auto' : '0',
     maxHeight: '100dvh',
-    borderRadius: isDesktop ? '20px' : '0',
-    boxShadow: isDesktop ? '0 20px 60px rgba(0, 0, 0, 0.25)' : 'none',
+    borderRadius: isDesktop ? '12px' : '0',
+    boxShadow: isDesktop ? '0 0 30px rgba(0, 0, 0, 0.3)' : 'none',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    transform: reducedMotion ? 'none' : 'scale(0.96)',
+    transform: reducedMotion ? 'none' : 'scale(0.95) translateY(10px)',
     opacity: reducedMotion ? '1' : '0',
     transition: reducedMotion
       ? 'none'
-      : 'transform 240ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease',
+      : 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1)',
     fontFamily:
       '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif',
-    color: '#0E1414',
+    color: '#333',
   } as Partial<CSSStyleDeclaration>);
 
   // Close button. 44 × 44 touch target, top-right of the card.
@@ -189,7 +192,7 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     requestAnimationFrame(() => {
       backdrop.style.opacity = '1';
       card.style.opacity = '1';
-      card.style.transform = 'scale(1)';
+      card.style.transform = 'scale(1) translateY(0)';
     });
   }
 
@@ -201,7 +204,7 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     if (!reducedMotion) {
       backdrop.style.opacity = '0';
       card.style.opacity = '0';
-      card.style.transform = 'scale(0.96)';
+      card.style.transform = 'scale(0.95) translateY(10px)';
     }
 
     document.removeEventListener('keydown', onKey, true);
