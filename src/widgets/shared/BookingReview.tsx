@@ -84,6 +84,7 @@ export function BookingReview({
         label: string;
         amount: string;
         muted?: boolean;
+        emphasized?: boolean;
       };
 
   const rows: Row[] = [];
@@ -145,17 +146,24 @@ export function BookingReview({
         </span>
       ),
       label: 'Deposit today',
-      amount: formatPrice(priceBreakdown.depositPence),
+      // Minus prefix so the row reads as a deduction from Total
+      // rather than a separate fee — the patient should see the
+      // arithmetic Total − Deposit = Balance at a glance.
+      amount: `−${formatPrice(priceBreakdown.depositPence)}`,
+      muted: true,
     });
   }
   if (priceBreakdown.payAtAppointmentPence > 0) {
     rows.push({
       kind: 'split',
       key: 'balance',
-      icon: <Clock size={18} aria-hidden style={{ color: QUIZ.MUTED_2 }} />,
+      icon: <Clock size={18} aria-hidden style={{ color: accent }} />,
       label: 'Balance on the day',
       amount: formatPrice(priceBreakdown.payAtAppointmentPence),
-      muted: true,
+      // The actual takeaway: this is what they pay on the day.
+      // Render bigger + bolder + accent so the eye lands here
+      // after scanning Total and the deposit deduction.
+      emphasized: true,
     });
   }
 
@@ -222,6 +230,8 @@ export function BookingReview({
             label={row.label}
             amount={row.amount}
             muted={row.muted}
+            emphasized={row.emphasized}
+            accent={accent}
             isLast={isLast}
           />
         );
@@ -386,25 +396,59 @@ function SplitRow({
   label,
   amount,
   muted,
+  emphasized,
+  accent,
   isLast,
 }: {
   icon: React.ReactNode;
   label: string;
   amount: string;
   muted?: boolean;
+  emphasized?: boolean;
+  accent: string;
   isLast: boolean;
 }) {
-  // Smaller scale than ItemRow — these rows are a sub-breakdown of
-  // the Total above them, not standalone facts. Icon is muted grey,
-  // label is regular weight, amount keeps tabular-nums for clean
-  // right-edge alignment when stacked.
+  // Three visual modes:
+  //   • emphasized — the row the eye should land on (Balance on the
+  //     day). Larger label, big bold amount in the brand accent so
+  //     the customer's "what do I pay on the day" question is
+  //     answered at a glance after the deductions above.
+  //   • muted       — deductions / secondary references (deposit
+  //     today carries a minus prefix from the producer, so this
+  //     row reads as money coming off the Total above).
+  //   • default     — historical SplitRow look, kept in place for
+  //     any future row that fits neither of the above.
+  const iconSize = emphasized ? 26 : 22;
+  const padY = emphasized ? 16 : 12;
+  const labelStyle: React.CSSProperties = emphasized
+    ? { fontSize: 15, fontWeight: 600, color: QUIZ.INK, lineHeight: 1.3 }
+    : { fontSize: 14, fontWeight: 500, color: muted ? QUIZ.MUTED_2 : QUIZ.INK, lineHeight: 1.3 };
+  const amountStyle: React.CSSProperties = emphasized
+    ? {
+        fontSize: 20,
+        fontWeight: 700,
+        color: accent,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+        flexShrink: 0,
+        letterSpacing: '0.01em',
+      }
+    : {
+        fontSize: 14,
+        fontWeight: 600,
+        color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+        flexShrink: 0,
+        letterSpacing: '0.02em',
+      };
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 14,
-        padding: '12px 0',
+        padding: `${padY}px 0`,
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
@@ -414,8 +458,8 @@ function SplitRow({
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 22,
-          height: 22,
+          width: iconSize,
+          height: iconSize,
           flexShrink: 0,
         }}
       >
@@ -431,29 +475,8 @@ function SplitRow({
           gap: 12,
         }}
       >
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 500,
-            color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
-            lineHeight: 1.3,
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 600,
-            color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
-            fontVariantNumeric: 'tabular-nums',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-            letterSpacing: '0.02em',
-          }}
-        >
-          {amount}
-        </span>
+        <span style={labelStyle}>{label}</span>
+        <span style={amountStyle}>{amount}</span>
       </div>
     </div>
   );
