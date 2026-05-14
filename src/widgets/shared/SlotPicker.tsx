@@ -295,19 +295,18 @@ function Month({
           <span
             key={d}
             style={{
-              fontSize: 11,
-              fontWeight: 600,
+              fontSize: 12,
+              fontWeight: 500,
               color: SUBTLE,
               textAlign: 'center',
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
+              padding: '4px 0 8px',
             }}
           >
             {d}
           </span>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', rowGap: 2 }}>
         {cells.map((c, i) => {
           const inMonth = c.date.getMonth() === monthDate.getMonth();
           const isPast = c.date < today;
@@ -328,41 +327,51 @@ function Month({
               })}
               style={{
                 appearance: 'none',
-                border: `2px solid ${selected ? ACCENT : 'transparent'}`,
-                background: selected ? ACCENT : 'transparent',
-                color: selected
-                  ? '#FFFFFF'
-                  : disabled
-                    ? SUBTLE
-                    : INK,
-                height: 44,
+                border: 'none',
+                background: 'transparent',
                 width: '100%',
-                fontFamily: 'inherit',
-                fontSize: 14,
-                fontWeight: selected ? 600 : 500,
-                fontVariantNumeric: 'tabular-nums',
-                borderRadius: 10,
-                cursor: disabled ? 'default' : 'pointer',
-                opacity: disabled ? 0.4 : 1,
-                transition: `all 0.18s ${EASE_CARD}`,
+                height: 40,
                 padding: 0,
+                fontFamily: 'inherit',
+                cursor: disabled ? 'default' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
               onMouseEnter={(e) => {
                 if (selected || disabled) return;
-                e.currentTarget.style.borderColor = ACCENT;
-                e.currentTarget.style.background = SURFACE;
-                e.currentTarget.style.boxShadow = SHADOW_LIFT;
-                e.currentTarget.style.transform = 'translateY(-1px)';
+                const inner = e.currentTarget.firstElementChild as HTMLElement | null;
+                if (inner) inner.style.background = '#eef1f4';
               }}
               onMouseLeave={(e) => {
                 if (selected || disabled) return;
-                e.currentTarget.style.borderColor = 'transparent';
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.boxShadow = 'none';
-                e.currentTarget.style.transform = 'none';
+                const inner = e.currentTarget.firstElementChild as HTMLElement | null;
+                if (inner) inner.style.background = 'transparent';
               }}
             >
-              {c.date.getDate()}
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: selected ? ACCENT : 'transparent',
+                  color: selected
+                    ? '#FFFFFF'
+                    : disabled
+                      ? SUBTLE
+                      : INK,
+                  fontSize: 14,
+                  fontWeight: selected ? 600 : 500,
+                  fontVariantNumeric: 'tabular-nums',
+                  opacity: disabled && !selected ? 0.55 : 1,
+                  transition: `background 0.15s ${EASE_CARD}, color 0.15s ${EASE_CARD}`,
+                }}
+              >
+                {c.date.getDate()}
+              </span>
             </button>
           );
         })}
@@ -583,7 +592,7 @@ function Bucket({
 // Date helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DOW_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function startOfDay(d: Date): Date {
   const c = new Date(d);

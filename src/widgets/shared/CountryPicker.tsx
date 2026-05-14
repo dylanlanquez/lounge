@@ -141,7 +141,14 @@ export function CountryPicker({
                 borderRadius: theme.radius.input,
                 boxShadow: theme.shadow.overlay,
                 overflowY: 'auto',
-                zIndex: 1000,
+                // The embed modal sits at zIndex 2147483646 inside
+                // its own `isolation: isolate` stacking context, so
+                // the panel needs to land at least one step higher
+                // OR be portaled INTO the modal (see portalTarget
+                // below) to win the stack. We do both so the panel
+                // is visible whether the widget is embedded or
+                // mounted standalone on /book.
+                zIndex: 2147483647,
               }}
             >
               {PHONE_COUNTRIES.map((c) => {
@@ -199,7 +206,11 @@ export function CountryPicker({
                 );
               })}
             </ul>,
-            document.body,
+            // Prefer the embed modal root so the panel lives inside
+            // the modal's `isolation: isolate` stacking context.
+            // Fallback to document.body for the standalone /book
+            // route where no embed modal exists.
+            document.getElementById('vlounge-embed-modal') ?? document.body,
           )
         : null}
     </div>
