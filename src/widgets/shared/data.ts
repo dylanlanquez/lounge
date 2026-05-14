@@ -271,7 +271,18 @@ interface FirstAvailableResult {
  *  optimistically before the live data arrives. */
 export function useWidgetFirstAvailable(input: FirstAvailableInput): FirstAvailableResult {
   const [data, setData] = useState<{ date: Date; slot: WidgetSlot } | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Initial loading=true matters: consumers like SlotPicker's
+  // init-pin effect distinguish "hook hasn't fetched yet" from
+  // "hook resolved with no result" by checking `loading`. If we
+  // initialised with loading=false the very first render would
+  // expose (loading=false, data=null) to the consumer BEFORE the
+  // hook's own useEffect could kick off the fetch — the consumer
+  // would treat that as "no live availability" and fall back to a
+  // stub date, then ignore the real May-18 result when it arrived
+  // because by then selectedDate was already set. Starting at true
+  // and only flipping to false after the fetch completes guarantees
+  // consumers see a clean loading→resolved transition.
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
