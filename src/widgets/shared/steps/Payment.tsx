@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { Mail, CalendarClock, MapPin } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import type { BookingStateApi } from '../state.ts';
@@ -451,7 +452,91 @@ function PaymentForm({
           {payError}
         </p>
       ) : null}
+
+      {elementReady ? <AfterYouPayCard /> : null}
     </>
+  );
+}
+
+function AfterYouPayCard() {
+  // Soft accent-tinted reassurance block below the card form. Lists
+  // what the patient gets after they hit Pay so the moment-of-
+  // conversion feels less like a leap into the dark. Three concise
+  // items, icons in accent so they read as on-brand chrome rather
+  // than third-party widget decoration.
+  const items: Array<{ icon: React.ReactNode; text: string }> = [
+    {
+      icon: <Mail size={16} aria-hidden />,
+      text: "Confirmation email with everything for your appointment, sent the moment payment clears.",
+    },
+    {
+      icon: <CalendarClock size={16} aria-hidden />,
+      text: "Reschedule or cancel any time from that email, free up to 24 hours before.",
+    },
+    {
+      icon: <MapPin size={16} aria-hidden />,
+      text: "Address, parking and what to bring all included so you arrive easy.",
+    },
+  ];
+  return (
+    <div
+      style={{
+        background: 'rgba(8, 55, 88, 0.04)',
+        border: '1px solid rgba(8, 55, 88, 0.10)',
+        borderRadius: 12,
+        padding: '16px 18px',
+        marginTop: 8,
+      }}
+    >
+      <h3
+        style={{
+          margin: '0 0 10px',
+          fontSize: 13,
+          fontWeight: 700,
+          color: QUIZ.ACCENT,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+        }}
+      >
+        After you pay
+      </h3>
+      <ul
+        style={{
+          margin: 0,
+          padding: 0,
+          listStyle: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+        }}
+      >
+        {items.map((item, i) => (
+          <li
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              fontSize: 14,
+              lineHeight: 1.45,
+              color: QUIZ.MUTED,
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                color: QUIZ.ACCENT,
+                marginTop: 2,
+                flexShrink: 0,
+              }}
+            >
+              {item.icon}
+            </span>
+            <span>{item.text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
