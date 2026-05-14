@@ -130,33 +130,48 @@ export function SlotPicker({
   const earliest = liveFirstAvailable.data ?? stubEarliest;
 
   // Init-pin: the FIRST time the live first-available RPC settles,
-  // commit selectedDate to whatever the server says. Only runs while
-  // selectedDate is still null (unset) and the patient hasn't picked
-  // — both conditions prevent a second jump.
+  // commit selectedDate. Only runs while selectedDate is still null
+  // (unset) and the patient hasn't picked — both conditions prevent
+  // a second jump.
   //
-  // We additionally guard against the (rare) case where the RPC
-  // returns a slot whose timestamp is already in the past — a stale
-  // result from a race between the patient opening the page and the
-  // server's window rolling forward. In that case we still want to
-  // commit *something* so the loading state doesn't hang; today is
-  // the sensible fallback and the slot list's empty-state copy
-  // explains the situation.
+  // Source-of-truth priority:
+  //
+  //   1. Live RPC, IF its returned slot iso is genuinely in the
+  //      future. The RPC knows real conflicts; trust it first.
+  //
+  //   2. The stub firstAvailable() result. Past-filtered + opening-
+  //      hours-aware — it walks forward through the next 60 days
+  //      and lands on the first day with a remaining stub slot.
+  //
+  //   3. Today, as a last resort if both above failed.
+  //
+  // Why the live result can fall through to (2): the server's
+  // `lng_widget_first_available` RPC scans 60 days for the first
+  // non-conflicting slot but does NOT filter by current clock time.
+  // At 5pm on a 9am-6pm clinic it'll happily return today's 9am as
+  // "first available". Dropping the patient there would land them
+  // on a date whose slot list is entirely past — exactly the
+  // "Today's slots have all passed" empty state Dylan saw. The
+  // stub fallback walks forward day-by-day until it finds one with
+  // future openings, which on that example would be tomorrow.
   useEffect(() => {
     if (userPickedRef.current) return;
     if (selectedDate !== null) return;
     if (liveFirstAvailable.loading) return;
+    const nowMs = Date.now();
     const live = liveFirstAvailable.data;
-    const liveIsFuture =
-      !!live && new Date(live.slot.iso).getTime() > Date.now();
-    if (liveIsFuture) {
-      setSelectedDate(startOfDay(live!.date));
-      setMonthCursor(startOfMonth(live!.date));
-      return;
-    }
-    const today = startOfDay(new Date());
-    setSelectedDate(today);
-    setMonthCursor(startOfMonth(today));
-  }, [liveFirstAvailable.loading, liveFirstAvailable.data, selectedDate]);
+    const liveDate =
+      live && new Date(live.slot.iso).getTime() > nowMs ? live.date : null;
+    const targetDate =
+      liveDate ?? stubEarliest?.date ?? startOfDay(new Date());
+    setSelectedDate(startOfDay(targetDate));
+    setMonthCursor(startOfMonth(targetDate));
+  }, [
+    liveFirstAvailable.loading,
+    liveFirstAvailable.data,
+    selectedDate,
+    stubEarliest,
+  ]);
 
   const availability = useWidgetAvailableSlots({
     locationId,
