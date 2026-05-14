@@ -3,9 +3,11 @@ import {
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Loader2 } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, Loader2, Lock } from 'lucide-react';
+import type { PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
@@ -269,13 +271,28 @@ function WidgetReady({
     );
   }
 
+  // Payment step plumbing — the Pay button lives in the sticky
+  // footer (not in the Payment step) so the layout matches the
+  // rest of the form. PaymentStep exposes a `pay()` method via
+  // ref so the footer can trigger stripe.confirmPayment without
+  // losing the Elements context, and the footer's
+  // disabled/label state reads `paymentReady` + `paymentPaying`.
+  const paymentRef = useRef<PaymentApi | null>(null);
+  const [paymentReady, setPaymentReady] = useState(false);
+  const [paymentPaying, setPaymentPaying] = useState(false);
+
   // Determine what the Next button does on this step.
   // - 'details' + no payment next → submit (free booking)
   // - 'details' + payment next → goNext (advance to Stripe)
+  // - 'payment' → call paymentRef.current.pay()
   // - other steps → goNext
   const nextStepKey = api.activeSteps[api.currentIdx + 1] ?? null;
   const isPaymentNext = nextStepKey === 'payment';
   const onFooterNext = () => {
+    if (api.stepKey === 'payment') {
+      paymentRef.current?.pay();
+      return;
+    }
     if (api.stepKey === 'details' && !isPaymentNext) {
       submit(null);
       return;
@@ -298,6 +315,11 @@ function WidgetReady({
         setSubmission((s) => ({ ...s, error: null }))
       }
       isPaymentNext={isPaymentNext}
+      paymentRef={paymentRef}
+      paymentReady={paymentReady}
+      paymentPaying={paymentPaying}
+      onPaymentReadyChange={setPaymentReady}
+      onPaymentPayingChange={setPaymentPaying}
     />
   );
 }
@@ -317,6 +339,11 @@ function ChromeShell({
   submissionError,
   onDismissError,
   isPaymentNext,
+  paymentRef,
+  paymentReady,
+  paymentPaying,
+  onPaymentReadyChange,
+  onPaymentPayingChange,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
@@ -328,6 +355,11 @@ function ChromeShell({
   submissionError: string | null;
   onDismissError: () => void;
   isPaymentNext: boolean;
+  paymentRef: React.MutableRefObject<PaymentApi | null>;
+  paymentReady: boolean;
+  paymentPaying: boolean;
+  onPaymentReadyChange: (ready: boolean) => void;
+  onPaymentPayingChange: (paying: boolean) => void;
 }) {
   const accent = brand?.accent ?? QUIZ.ACCENT;
   const isHostEmbedded =
@@ -425,6 +457,9 @@ function ChromeShell({
             onDismissError={onDismissError}
             onSubmit={onSubmit}
             submitting={submitting}
+            paymentRef={paymentRef}
+            onPaymentReadyChange={onPaymentReadyChange}
+            onPaymentPayingChange={onPaymentPayingChange}
           />
         </div>
       </div>
@@ -437,6 +472,8 @@ function ChromeShell({
         onBack={api.goBack}
         submitting={submitting}
         isPaymentNext={isPaymentNext}
+        paymentReady={paymentReady}
+        paymentPaying={paymentPaying}
       />
     </div>
   );
@@ -516,6 +553,9 @@ function StepBody({
   onDismissError,
   onSubmit,
   submitting,
+  paymentRef,
+  onPaymentReadyChange,
+  onPaymentPayingChange,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
@@ -525,6 +565,9 @@ function StepBody({
   onDismissError: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
+  paymentRef: React.MutableRefObject<PaymentApi | null>;
+  onPaymentReadyChange: (ready: boolean) => void;
+  onPaymentPayingChange: (paying: boolean) => void;
 }) {
   return (
     <>
@@ -539,6 +582,9 @@ function StepBody({
         accent={accent}
         onSubmit={onSubmit}
         submitting={submitting}
+        paymentRef={paymentRef}
+        onPaymentReadyChange={onPaymentReadyChange}
+        onPaymentPayingChange={onPaymentPayingChange}
       />
     </>
   );
@@ -551,6 +597,9 @@ function StepRouter({
   accent,
   onSubmit,
   submitting,
+  paymentRef,
+  onPaymentReadyChange,
+  onPaymentPayingChange,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
@@ -558,6 +607,9 @@ function StepRouter({
   accent: string;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
+  paymentRef: React.MutableRefObject<PaymentApi | null>;
+  onPaymentReadyChange: (ready: boolean) => void;
+  onPaymentPayingChange: (paying: boolean) => void;
 }) {
   if (api.stepKey.startsWith('axis:')) {
     const axisKey = api.stepKey.slice(5) as AxisKey;
@@ -580,9 +632,12 @@ function StepRouter({
       return (
         <Suspense fallback={<PaymentLoadingFallback />}>
           <PaymentStep
+            ref={paymentRef}
             api={api}
             onPaid={(pi) => onSubmit(pi)}
             submitting={submitting}
+            onReadyChange={onPaymentReadyChange}
+            onPayingChange={onPaymentPayingChange}
           />
         </Suspense>
       );
@@ -602,6 +657,8 @@ function Footer({
   onBack,
   submitting,
   isPaymentNext,
+  paymentReady,
+  paymentPaying,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
@@ -610,25 +667,29 @@ function Footer({
   onBack: () => void;
   submitting: boolean;
   isPaymentNext: boolean;
+  paymentReady: boolean;
+  paymentPaying: boolean;
 }) {
   // Terms checkbox lives in the footer on the combined Details
   // step — the form + summary are above; the customer ticks terms
   // and hits Next once everything reads right.
   const showTerms = api.stepKey === 'details';
-  // Today / On-the-day split is rendered as two pill blocks side
-  // by side. Hidden on Payment (Stripe's own button shows the
-  // amount), but visible on every other priced step so the
-  // customer always knows what they're paying now vs at the
-  // appointment, even as upgrades change the breakdown live.
+  const isPaymentStep = api.stepKey === 'payment';
+  // Today / On-the-day split: shown on every priced step.
   const breakdown = api.priceBreakdown;
   const depositPence = breakdown.depositPence;
   const onTheDayPence = breakdown.payAtAppointmentPence;
-  const showPrice =
-    api.stepKey !== 'payment' &&
-    (depositPence > 0 || onTheDayPence > 0);
-  const nextDisabled = !isNextEnabled(api) || submitting;
+  const showPrice = depositPence > 0 || onTheDayPence > 0;
+
+  const nextDisabled = isPaymentStep
+    ? !paymentReady || paymentPaying || submitting
+    : !isNextEnabled(api) || submitting;
 
   const nextLabel = (() => {
+    if (isPaymentStep) {
+      if (paymentPaying || submitting) return 'Processing…';
+      return `Pay ${formatPrice(depositPence)}`;
+    }
     if (submitting) return 'Booking…';
     if (api.stepKey === 'details') {
       return isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook;
@@ -636,10 +697,11 @@ function Footer({
     return 'Continue';
   })();
 
-  // Payment step: Stripe owns the submission button. We hide the
-  // footer Next entirely — back remains so the customer can return
-  // to the summary if they change their mind.
-  const showNext = api.stepKey !== 'payment';
+  // Payment step shows the Pay button in the footer; the actual
+  // stripe.confirmPayment call is wired through paymentRef in the
+  // parent. We keep the Back button so the patient can return to
+  // the Details/Summary if they change their mind.
+  const showNext = true;
 
   return (
     <footer
@@ -742,7 +804,21 @@ function Footer({
             onClick={onNext}
             accent={accent}
           >
-            {nextLabel}
+            {isPaymentStep ? (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <Lock size={14} aria-hidden />
+                {nextLabel}
+              </span>
+            ) : (
+              nextLabel
+            )}
           </NextButton>
         ) : (
           <div style={{ flex: 1 }} />
