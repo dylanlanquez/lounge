@@ -144,14 +144,16 @@ export function ensureQuizKeyframes(): void {
 
     /* Progress fill shimmer overlay — ::after pseudo isn't reachable
        from inline styles, so we declare it on the .vlounge-progress-fill
-       class and toggle it through className. */
+       class and toggle it through className. Gradient uses the
+       brand accent + a hover shade so the bar reads as on-brand
+       navy rather than the earlier washed-out blue-grey. */
     .vlounge-progress-fill {
       position: relative;
       height: 100%;
       background: linear-gradient(90deg,
-        ${QUIZ.PROGRESS_GRAD_START} 0%,
-        ${QUIZ.PROGRESS_GRAD_MID}   50%,
-        ${QUIZ.PROGRESS_GRAD_START} 100%);
+        ${QUIZ.ACCENT}       0%,
+        ${QUIZ.ACCENT_HOVER} 50%,
+        ${QUIZ.ACCENT}       100%);
       background-size: 200% 100%;
       transition: width 0.35s ${QUIZ.EASE_CARD};
       animation: vlounge-progressShine 2s ease-in-out infinite;
@@ -180,14 +182,18 @@ export function ensureQuizKeyframes(): void {
     }
 
     /* Pay-button glisten — a soft white gradient sweeps across the
-       navy CTA every 2.6s so the button hints "press me" without
-       being noisy. Applied via the .vlounge-pay-shimmer class on
-       the Payment step's footer button. Wrapper uses overflow:hidden
-       to mask the diagonal gradient outside the pill geometry. */
+       navy CTA so the button hints "press me" without being noisy.
+       Continuous translateX combined with opacity fades at the
+       start and end of the cycle: the gradient becomes invisible
+       before it teleports back to the start, so the loop reads as
+       a single smooth pulse with a beat of rest between repeats
+       instead of the earlier "snap-back-to-left" glitch. */
     @keyframes vlounge-pay-shimmer {
-      0%   { transform: translateX(-130%) skewX(-18deg); }
-      60%  { transform: translateX(180%) skewX(-18deg); }
-      100% { transform: translateX(180%) skewX(-18deg); }
+      0%   { transform: translateX(-130%) skewX(-18deg); opacity: 0; }
+      15%  { opacity: 1; }
+      50%  { transform: translateX(180%) skewX(-18deg); opacity: 1; }
+      60%  { transform: translateX(180%) skewX(-18deg); opacity: 0; }
+      100% { transform: translateX(180%) skewX(-18deg); opacity: 0; }
     }
     .vlounge-pay-shimmer {
       position: relative;
@@ -204,12 +210,13 @@ export function ensureQuizKeyframes(): void {
       background: linear-gradient(
         90deg,
         rgba(255, 255, 255, 0) 0%,
-        rgba(255, 255, 255, 0.18) 50%,
+        rgba(255, 255, 255, 0.22) 50%,
         rgba(255, 255, 255, 0) 100%
       );
-      animation: vlounge-pay-shimmer 2.6s ease-in-out infinite;
+      animation: vlounge-pay-shimmer 3.6s ease-in-out infinite;
       pointer-events: none;
       z-index: 1;
+      opacity: 0;
     }
 
     /* Stagger delays for sets of cards (option-card-vt / addon-item-vt)
