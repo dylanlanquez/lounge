@@ -525,9 +525,13 @@ export function StepTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2
       style={{
-        // 35px bottom margin matches the template `.step-title-vt`
-        // exactly (line 15 of retainer-cart.liquid).
-        margin: '0 auto 35px',
+        // Tight title/subtitle pair — title gets 30px breathing
+        // room above the body content and only 10px below so the
+        // step's intro paragraph sits as a natural continuation
+        // rather than a separate region. (Was 0 auto 35px which
+        // mirrored retainer-cart but read as too-far-apart in
+        // Dylan's tests.)
+        margin: '30px auto 10px',
         textAlign: 'center',
         fontSize: 28,
         lineHeight: 1.2,

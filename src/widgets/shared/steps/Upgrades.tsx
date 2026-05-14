@@ -165,7 +165,12 @@ function UpgradeCard({
           minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
-          gap: 6,
+          // Price → title gets 8px breathing room; title → sub
+          // tightens to 2px below so the description reads as a
+          // direct continuation of the title rather than a
+          // separate row. (Was uniform 6px which left an awkward
+          // gap under the upgrade name.)
+          gap: 2,
         }}
       >
         <div
@@ -173,6 +178,7 @@ function UpgradeCard({
             display: 'flex',
             alignItems: 'center',
             gap: 8,
+            marginBottom: 6,
           }}
         >
           <span
