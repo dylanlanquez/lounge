@@ -698,11 +698,19 @@ function Footer({
   // and hits Next once everything reads right.
   const showTerms = api.stepKey === 'details';
   const isPaymentStep = api.stepKey === 'payment';
-  // Today / On-the-day split: shown on every priced step.
+  // Today / On-the-day split: hidden on Details + Payment.
+  // - Details already shows the deposit + balance split inside the
+  //   BookingReview card.
+  // - Payment's PayHeader spells out the split in copy and the Pay
+  //   button carries the deposit amount.
+  // Repeating it in the footer on those two screens was just
+  // visual noise.
   const breakdown = api.priceBreakdown;
   const depositPence = breakdown.depositPence;
   const onTheDayPence = breakdown.payAtAppointmentPence;
-  const showPrice = depositPence > 0 || onTheDayPence > 0;
+  const hidePriceOnStep = isPaymentStep || api.stepKey === 'details';
+  const showPrice =
+    !hidePriceOnStep && (depositPence > 0 || onTheDayPence > 0);
 
   const nextDisabled = isPaymentStep
     ? !paymentReady || paymentPaying || submitting
@@ -1015,6 +1023,9 @@ function FooterPriceBlock({
               alignItems: 'center',
               justifyContent: 'center',
               color: accent,
+              // Faded so the icon reads as a soft cue beside the
+              // £25.00, not a competing focal point.
+              opacity: 0.45,
             }}
           >
             {icon}
