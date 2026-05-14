@@ -252,6 +252,15 @@ export function useBookingState(
   const [stepKey, setStepKey] = useState<StepKey>(() =>
     initialStepFor(prefill, locations.length),
   );
+  // Lock boundary: the index of the first step the patient still has
+  // to answer. Anything BEFORE it is a deep-link pin from the host
+  // page (Shopify trigger data-attrs) and the back arrow must not let
+  // the patient overwrite it. Computed once at mount because the
+  // pinned prefix is fixed for the life of the flow — pins don't
+  // appear or disappear mid-session.
+  const [lockedStepIdx] = useState<number>(() =>
+    initialLockedIdxFor(prefill, locations.length),
+  );
 
   // Upgrades + catalogue resolution both live inside the hook so
   // every consumer (Summary, Service step, Payment step) sees the
@@ -290,8 +299,9 @@ export function useBookingState(
       setStepKey(activeSteps[nextIdx]!);
     }
   };
+  const canGoBack = currentIdx > lockedStepIdx;
   const goBack = () => {
-    if (currentIdx > 0) {
+    if (canGoBack) {
       setStepKey(activeSteps[currentIdx - 1]!);
     }
   };
@@ -405,6 +415,7 @@ export function useBookingState(
     activeSteps,
     currentIdx,
     totalSteps,
+    canGoBack,
     goNext,
     goBack,
     goTo,
@@ -457,6 +468,46 @@ function initialStepFor(prefill: ResolvedPrefill, locationCount: number): StepKe
   // Defensive: shouldn't reach here unless every step is somehow
   // pinned including time, which the trigger can't provide.
   return 'time';
+}
+
+/** Twin of initialStepFor — returns the INDEX of the first step the
+ *  patient still needs to answer. Used as the back-navigation lock so
+ *  the patient can't rewind into Service / Product / Arch when those
+ *  came from the Shopify trigger. Same iteration logic as
+ *  initialStepFor; counted separately so each function stays readable. */
+function initialLockedIdxFor(
+  prefill: ResolvedPrefill,
+  locationCount: number,
+): number {
+  const seed: WidgetState = {
+    location: prefill.location ?? null,
+    service: prefill.service,
+    axes: { ...prefill.axes },
+    upgradeIds: [],
+    slotIso: null,
+    details: { ...EMPTY_DETAILS, ...prefill.details },
+  };
+  const steps = activeStepsFor(seed, false, locationCount);
+  let idx = 0;
+  for (const step of steps) {
+    if (step === 'location') {
+      if (prefill.location) { idx++; continue; }
+      return idx;
+    }
+    if (step === 'service') {
+      if (prefill.service) { idx++; continue; }
+      return idx;
+    }
+    if (step.startsWith('axis:')) {
+      const axisKey = step.slice(5) as AxisKey;
+      if (axisKey === 'product_key' && prefill.axes.product_key) { idx++; continue; }
+      if (axisKey === 'arch' && prefill.axes.arch) { idx++; continue; }
+      if (axisKey === 'repair_variant' && prefill.axes.repair_variant) { idx++; continue; }
+      return idx;
+    }
+    return idx;
+  }
+  return idx;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -363,7 +363,7 @@ function WidgetReady({
         title={stepTitle(api.stepKey, copy)}
         currentIdx={api.currentIdx}
         totalSteps={api.totalSteps}
-        canGoBack={api.currentIdx > 0}
+        canGoBack={api.canGoBack}
         onBack={api.goBack}
       />
 
