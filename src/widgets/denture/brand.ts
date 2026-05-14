@@ -12,12 +12,14 @@ export const brand = {
   // Customer-facing name. Used in modal aria-label + body copy.
   name: 'Denture Services',
   tagline: 'Book your appointment',
-  // Accent colour chosen distinct enough from venneir's deep green
-  // that an internal team member glancing at a screenshot can tell
-  // the brands apart. Same satin-finish character though so the
-  // visual language family stays recognisable.
-  accent: '#1F4D3A',
-  accentBg: 'rgba(31, 77, 58, 0.08)',
+  // Placeholder navy until denture-services.co.uk publishes its
+  // own brand spec. Same hue as Venneir so the cross-storefront
+  // visual language stays continuous; flip to the denture-specific
+  // primary once Dylan supplies it. The widget reads brand.accent
+  // for option-card selected borders, footer Next button, terms
+  // checkbox accent, and trust signal icons.
+  accent: '#083758',
+  accentBg: 'rgba(8, 55, 88, 0.08)',
   // Logo for the modal header. Absolute URL because the bundle
   // runs on the host page (denture-services.co.uk) — relative
   // path would 404 against the wrong origin. Replace with a

@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
-import { theme } from '../../../theme/index.ts';
 import {
   axesForService,
   type AxisDef,
@@ -10,63 +8,54 @@ import {
 } from '../../../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../../../lib/queries/bookingTypes.ts';
 import type { BookingStateApi } from '../state.ts';
+import { QUIZ } from '../quizTokens.ts';
+import {
+  OptionCard,
+  OptionDescription,
+  OptionGrid,
+  OptionTitle,
+} from '../OptionCard.tsx';
 
-// AxisStep — one axis question at a time.
+// AxisStep — one axis question at a time (arch, product, repair
+// variant). Same option-card visual pattern as Location and Service
+// for consistency across the flow.
 //
-// Reads SERVICE_AXES + loadAxisValues() (same registry the staff
-// app uses), so what the widget shows for "click_in_veneers" is
-// exactly the same option set the operator sees in the new-booking
-// sheet. No drift, no per-widget reimplementation.
-//
-// Patient-friendly framing:
-//
-//   • Question is plain English ("Which teeth?", not "Arch")
-//   • Helper line under the question explains why we're asking
-//   • Cards are tap-targets, not radios — same mobile-friendly
-//     pattern as the Service / Dentist steps so the flow stays
-//     visually consistent.
-//
-// Conditional logic lives in state.ts's setAxisPin: picking a
-// product whose arch_match isn't 'single' auto-fills arch and the
-// step engine drops the next axis screen before the patient sees it.
+// Selection updates state via api.setAxisPin; the footer Next button
+// is the sole navigation control (no auto-advance).
 
 const AXIS_HELPER: Record<AxisKey, string> = {
   repair_variant: "We'll match you to the right specialist.",
-  product_key: "Pick the option that fits — we'll confirm any details when you arrive.",
+  product_key:
+    "Pick the option that fits — we'll confirm any details when you arrive.",
   arch: 'The top teeth, the bottom teeth, or both. Pick whichever applies.',
 };
 
 export function AxisStep({
   api,
   axisKey,
+  accent = QUIZ.ACCENT,
 }: {
   api: BookingStateApi;
   axisKey: AxisKey;
+  accent?: string;
 }) {
   const service = api.state.service;
-  if (!service) {
-    // Should never happen — the step engine wouldn't surface an axis
-    // step without a service in state. Guard anyway so we don't try
-    // to render against a null.
-    return null;
-  }
-
+  if (!service) return null;
   const axes = axesForService(service.serviceType as BookingServiceType);
   const axis = axes.find((a) => a.key === axisKey) ?? null;
-
-  if (!axis) {
-    return null;
-  }
-
-  return (
-    <AxisOptions
-      api={api}
-      axis={axis}
-    />
-  );
+  if (!axis) return null;
+  return <AxisOptions api={api} axis={axis} accent={accent} />;
 }
 
-function AxisOptions({ api, axis }: { api: BookingStateApi; axis: AxisDef }) {
+function AxisOptions({
+  api,
+  axis,
+  accent,
+}: {
+  api: BookingStateApi;
+  axis: AxisDef;
+  accent: string;
+}) {
   const [options, setOptions] = useState<AxisValueOption[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,7 +68,8 @@ function AxisOptions({ api, axis }: { api: BookingStateApi; axis: AxisDef }) {
         const opts = await loadAxisValues(axis);
         if (!cancelled) setOptions(opts);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load options');
+        if (!cancelled)
+          setError(e instanceof Error ? e.message : 'Could not load options');
       }
     })();
     return () => {
@@ -97,14 +87,17 @@ function AxisOptions({ api, axis }: { api: BookingStateApi; axis: AxisDef }) {
           : undefined;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <p
         style={{
           margin: 0,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          lineHeight: theme.type.leading.snug,
-          maxWidth: 560,
+          fontSize: 14,
+          color: QUIZ.MUTED_2,
+          lineHeight: 1.45,
+          maxWidth: 600,
+          textAlign: 'center',
+          marginLeft: 'auto',
+          marginRight: 'auto',
         }}
       >
         {AXIS_HELPER[axis.key]}
@@ -113,105 +106,63 @@ function AxisOptions({ api, axis }: { api: BookingStateApi; axis: AxisDef }) {
       {error ? (
         <ErrorCard message={error} />
       ) : options === null ? (
-        <Skeleton />
+        <SkeletonGrid />
       ) : options.length === 0 ? (
         <EmptyCard />
       ) : (
-        options.map((opt) => {
-          const selected = currentValue === opt.key;
-          return (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => {
-                // setAxisPin advances itself based on the post-pin
-                // active step list — calling goNext would skip the
-                // freshly-introduced step.
-                api.setAxisPin(axis.key, opt.key, opt.archMatch);
-              }}
-              style={{
-                appearance: 'none',
-                textAlign: 'left',
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-                padding: `${theme.space[4]}px ${theme.space[5]}px`,
-                borderRadius: theme.radius.card,
-                background: theme.color.surface,
-                border: `1px solid ${selected ? theme.color.accent : theme.color.border}`,
-                boxShadow: selected ? theme.shadow.card : 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: theme.space[4],
-                transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-              }}
-              onMouseEnter={(e) => {
-                if (selected) return;
-                e.currentTarget.style.borderColor = theme.color.ink;
-              }}
-              onMouseLeave={(e) => {
-                if (selected) return;
-                e.currentTarget.style.borderColor = theme.color.border;
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.md,
-                    fontWeight: theme.type.weight.semibold,
-                    color: theme.color.ink,
-                    letterSpacing: theme.type.tracking.tight,
-                  }}
-                >
-                  {opt.label}
-                </p>
-                {/* For the arch axis, surface a one-liner hint that
-                    explains what "upper / lower / both" means in
-                    practice. Skipped for variant / product where the
-                    label already does the work. */}
+        <OptionGrid>
+          {options.map((opt) => {
+            const selected = currentValue === opt.key;
+            return (
+              <OptionCard
+                key={opt.key}
+                selected={selected}
+                anySelected={!!currentValue}
+                onSelect={() =>
+                  api.setAxisPin(axis.key, opt.key, opt.archMatch)
+                }
+                accent={accent}
+                ariaLabel={opt.label}
+              >
+                <OptionTitle>{opt.label}</OptionTitle>
                 {axis.key === 'arch' ? (
-                  <p
-                    style={{
-                      margin: `${theme.space[1]}px 0 0`,
-                      fontSize: theme.type.size.sm,
-                      color: theme.color.inkMuted,
-                      lineHeight: theme.type.leading.snug,
-                    }}
-                  >
+                  <OptionDescription>
                     {opt.key === 'upper'
                       ? 'The top row of teeth.'
                       : opt.key === 'lower'
                         ? 'The bottom row of teeth.'
                         : 'Both top and bottom together.'}
-                  </p>
+                  </OptionDescription>
                 ) : null}
-              </div>
-              <ChevronRight size={18} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
-            </button>
-          );
-        })
+              </OptionCard>
+            );
+          })}
+        </OptionGrid>
       )}
     </div>
   );
 }
 
-function Skeleton() {
+function SkeletonGrid() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+    <OptionGrid>
       {[0, 1, 2].map((i) => (
         <div
           key={i}
           aria-hidden
           style={{
-            height: 72,
-            background: theme.color.surface,
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.card,
+            width: '100%',
+            maxWidth: '27rem',
+            height: 130,
+            background: QUIZ.SURFACE,
+            border: `1px solid ${QUIZ.BORDER}`,
+            borderRadius: QUIZ.R_CARD,
             opacity: 0.6,
+            animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
           }}
         />
       ))}
-    </div>
+    </OptionGrid>
   );
 }
 
@@ -219,16 +170,19 @@ function EmptyCard() {
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px dashed ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
+        background: QUIZ.SURFACE,
+        border: `1px dashed ${QUIZ.BORDER}`,
+        borderRadius: QUIZ.R_CARD,
+        padding: 24,
         textAlign: 'center',
-        color: theme.color.inkMuted,
-        fontSize: theme.type.size.sm,
+        color: QUIZ.MUTED_2,
+        fontSize: 14,
+        maxWidth: 480,
+        margin: '0 auto',
       }}
     >
-      No options available for this service. Give us a call so we can sort it for you.
+      No options available for this service. Give us a call so we can sort it
+      for you.
     </div>
   );
 }
@@ -237,27 +191,29 @@ function ErrorCard({ message }: { message: string }) {
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.alert}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
+        background: QUIZ.SURFACE,
+        border: `1px solid ${QUIZ.ALERT}`,
+        borderRadius: QUIZ.R_CARD,
+        padding: 20,
+        maxWidth: 480,
+        margin: '0 auto',
       }}
     >
       <p
         style={{
           margin: 0,
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.alert,
+          fontSize: 16,
+          fontWeight: 600,
+          color: QUIZ.ALERT,
         }}
       >
         Couldn't load the options
       </p>
       <p
         style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
+          margin: '8px 0 0',
+          fontSize: 14,
+          color: QUIZ.MUTED_2,
         }}
       >
         Refresh the page, or call us if it sticks. ({message})

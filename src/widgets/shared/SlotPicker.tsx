@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
 import {
   firstAvailable,
   isClosedDay,
@@ -28,26 +27,23 @@ import {
 // 0.2,1) transitions, soft (0,0,0,0.08) shadow on lift.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Visual tokens
+// Visual tokens — pulled from quizTokens so the calendar reads as
+// part of the same retainer-cart-style chrome as the rest of the
+// modal.
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// Hard-coded rather than threaded via brand props because both the
-// venneir.com and (eventually) denture-services.co.uk pages use the
-// same navy-on-white card system. If denture diverges visually,
-// these become props on SlotPicker and the per-brand bundles pass
-// their own values.
 
-const ACCENT = '#083758';
-const BORDER = '#e5e5e5';
-const BORDER_STRONG = '#cfd4d8';
-const INK = '#1F2937';
-const MUTED = '#555';
-const SUBTLE = '#9CA3AF';
-const SURFACE = '#FFFFFF';
-const BG_SUBTLE = '#F8F9FA';
-const SHADOW_LIFT = '0 4px 12px rgba(0,0,0,0.08)';
-const SHADOW_CARD = '0 1px 3px rgba(0,0,0,0.04)';
-const EASE_CARD = 'cubic-bezier(0.4, 0, 0.2, 1)';
+import { QUIZ } from './quizTokens.ts';
+const ACCENT = QUIZ.ACCENT;
+const BORDER = QUIZ.BORDER;
+const BORDER_STRONG = QUIZ.SUBTLE_2;
+const INK = QUIZ.INK;
+const MUTED = QUIZ.MUTED;
+const SUBTLE = QUIZ.SUBTLE;
+const SURFACE = QUIZ.SURFACE;
+const BG_SUBTLE = QUIZ.SOFT_BG;
+const SHADOW_LIFT = QUIZ.SHADOW_LIFT;
+const SHADOW_CARD = QUIZ.SHADOW_SOFT;
+const EASE_CARD = QUIZ.EASE_CARD;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -406,11 +402,11 @@ function SlotList({
         role="alert"
         style={{
           background: SURFACE,
-          border: `1px solid ${theme.color.alert}`,
+          border: `1px solid ${QUIZ.ALERT}`,
           borderRadius: 12,
           padding: 18,
           textAlign: 'center',
-          color: theme.color.alert,
+          color: QUIZ.ALERT,
           fontSize: 14,
           fontWeight: 600,
         }}

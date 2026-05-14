@@ -12,6 +12,12 @@ import {
 } from '../../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
 import { DEFAULT_COPY, type WidgetCopy } from './copy.ts';
+import {
+  validateEmail,
+  validateFirstName,
+  validateLastName,
+  validatePhone,
+} from './validation.ts';
 
 // Booking-widget state + step engine.
 //
@@ -42,6 +48,11 @@ export type StepKey =
   | 'service'
   | 'upgrades'
   | 'time'
+  // Dedicated review step. Shows the appointment summary (location,
+  // service, upgrades, time), the price card, and the terms checkbox
+  // before the customer commits. Matches step 6 of the venneir.com
+  // retainer-cart quiz modal.
+  | 'summary'
   | 'details'
   | 'payment'
   | `axis:${AxisKey}`;
@@ -191,6 +202,9 @@ export function activeStepsFor(
   if (hasUpgrades) out.push('upgrades');
   out.push('time');
   out.push('details');
+  // Dedicated review step. Holds the price card + terms checkbox
+  // (via the footer) — the customer commits AFTER reading it.
+  out.push('summary');
   if (state.service && state.service.depositPence > 0) out.push('payment');
   return out;
 }
@@ -320,14 +334,12 @@ export function useBookingState(
     if (activeSteps.includes(key)) setStepKey(key);
   };
 
-  // Choosing a service resets the axis pins (the previous
-  // service's choices don't transfer) and any upgrade picks (they
-  // were keyed on the old catalogue row). Navigation has to be
-  // computed from the NEW state — calling api.goNext() afterward
-  // would read the stale activeSteps from the current render, so
-  // the patient would skip the axes the new service introduced.
-  // We do the setStepKey here ourselves based on the predicted
-  // post-update active list.
+  // Choosing a service resets axis pins and upgrades (previous
+  // service's choices don't transfer). Navigation does NOT advance
+  // automatically — the footer Next button is the sole way to move
+  // between steps, matching the retainer-cart UX. If the customer
+  // back-navigates and re-picks a service, they explicitly tap Next
+  // to walk into the new axes.
   const setService = (service: WidgetBookingType | null) => {
     setState((prev) => ({
       ...prev,
@@ -335,32 +347,13 @@ export function useBookingState(
       axes: {},
       upgradeIds: [],
     }));
-    if (!service) {
-      setStepKey('service');
-      return;
-    }
-    const newAxes = axesForService(service.serviceType as BookingServiceType);
-    // First axis the new service declares wins. If the service has
-    // no axes at all, fall through to upgrades (when available) or
-    // 'time'. Note: hasUpgrades may still be stale here because the
-    // upgrades query is keyed on the new service and only just
-    // started — but that case (no-axis service with upgrades) is
-    // rare. The activeSteps memo re-inserts the upgrades step on
-    // the next render once the query resolves and goNext from time
-    // still walks through it.
-    if (newAxes.length > 0) {
-      setStepKey(`axis:${newAxes[0]!.key}`);
-    } else {
-      setStepKey(hasUpgrades ? 'upgrades' : 'time');
-    }
   };
 
-  /** Update one axis pin and advance to the next active step. The
-   *  navigation is computed here (not via api.goNext from the call
-   *  site) because the post-update active step list is what we
-   *  need to consult — stale activeSteps in the render closure
-   *  would let the patient skip future axes that this pick just
-   *  introduced or hide an axis this pick just removed. */
+  /** Update one axis pin. Does NOT advance to the next step —
+   *  navigation is footer-driven now (single Next button at the
+   *  bottom of the modal). Customer picks an option, the option's
+   *  card shows the selected state, and they tap Next to commit.
+   *  Matches the retainer-cart quiz UX. */
   const setAxisPin = (
     axisKey: AxisKey,
     value: string,
@@ -384,32 +377,6 @@ export function useBookingState(
       }
       return { ...prev, axes: nextAxes, upgradeIds: [] };
     });
-
-    // Predict the next step from the post-pin state without
-    // waiting for React to commit. Walks the same axis registry
-    // activeStepsFor uses, applying the same conditional skip
-    // rules.
-    if (!state.service) return;
-    const allAxes = axesForService(state.service.serviceType as BookingServiceType);
-    const currentAxisIdx = allAxes.findIndex((a) => a.key === axisKey);
-    for (let i = currentAxisIdx + 1; i < allAxes.length; i++) {
-      const next = allAxes[i]!;
-      // Same skip rule as activeStepsFor: drop the arch axis when
-      // the picked product's arch_match isn't 'single'.
-      const skipArch =
-        next.key === 'arch' && productArchMatch && productArchMatch !== 'single';
-      if (skipArch) continue;
-      setStepKey(`axis:${next.key}`);
-      return;
-    }
-    // Last axis pinned. If any upgrades exist for the resolved
-    // catalogue row, land on the Upgrades step before time. The
-    // upgrades query fires on mount (deep-linked product+service)
-    // so hasUpgrades is settled by the time the customer reaches
-    // this axis. For services with no upgrades the step is absent
-    // from activeSteps entirely; skipping straight to 'time'
-    // matches that.
-    setStepKey(hasUpgrades ? 'upgrades' : 'time');
   };
 
   /** Toggle a single upgrade in the patient's selection. Used by
@@ -661,5 +628,58 @@ export function computePriceBreakdown(input: {
     depositPence,
     payAtAppointmentPence,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Footer Next-button gate
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// One predicate per step that the sticky footer reads to decide if the
+// Next button is enabled. Centralised here so the gating rules live
+// next to the step machinery rather than scattered across the Widget
+// shell. Mirrors the retainer-cart pattern where each step has a
+// validator that lights up the navy pill.
+
+export function isNextEnabled(api: BookingStateApi): boolean {
+  switch (api.stepKey) {
+    case 'location':
+      return !!api.state.location;
+    case 'service':
+      return !!api.state.service;
+    case 'axis:product_key':
+      return !!api.state.axes.product_key;
+    case 'axis:arch':
+      return !!api.state.axes.arch;
+    case 'axis:repair_variant':
+      return !!api.state.axes.repair_variant;
+    case 'upgrades':
+      // Upgrades are optional — Next is always live so the customer
+      // can pass through without picking anything.
+      return true;
+    case 'time':
+      return !!api.state.slotIso;
+    case 'details': {
+      const d = api.state.details;
+      // Terms-checkbox is no longer part of the Details form (it
+      // moved to the Summary step footer), so we only check the
+      // identity fields here.
+      return (
+        !validateFirstName(d.firstName) &&
+        !validateLastName(d.lastName) &&
+        !validateEmail(d.email) &&
+        !validatePhone(d.phoneNumber, d.phoneCountry)
+      );
+    }
+    case 'summary':
+      // Final review. Customer must have ticked the terms checkbox
+      // before they can advance to payment (or commit a free booking).
+      return api.state.details.agreeTerms;
+    case 'payment':
+      // Stripe owns submission via its own button inside the iframe.
+      // The footer's Next button is hidden on this step.
+      return false;
+    default:
+      return false;
+  }
 }
 

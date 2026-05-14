@@ -1,26 +1,33 @@
-import { ChevronRight, Home, MapPin } from 'lucide-react';
-import { theme } from '../../../theme/index.ts';
+import { Home } from 'lucide-react';
 import type { BookingStateApi } from '../state.ts';
 import { clearRememberedIdentity, loadRememberedIdentity } from '../state.ts';
 import type { WidgetLocation } from '../data.ts';
+import { QUIZ } from '../quizTokens.ts';
+import {
+  OptionCard,
+  OptionDescription,
+  OptionGrid,
+  OptionTitle,
+} from '../OptionCard.tsx';
 
-// Step 1 — Location.
-//
-// Auto-skipped when there's exactly one location (the default for
-// most clinics; the engine in state.ts boots straight onto Service).
-// Shown when there are multiple — the patient taps the clinic
-// they're booking with.
+// Location step — auto-skipped when there's exactly one location.
+// Shown when multiple — the patient taps the clinic.
 //
 // "Welcome back" line appears when the widget has a remembered
 // identity (a previous booking from this device) and offers a
-// "Not you?" reset that wipes it and re-renders Step 1 fresh.
+// "Not you?" reset.
+//
+// Selection updates state only — the footer Next button is the sole
+// navigation control (no auto-advance).
 
 export function LocationStep({
   api,
   locations,
+  accent = QUIZ.ACCENT,
 }: {
   api: BookingStateApi;
   locations: WidgetLocation[];
+  accent?: string;
 }) {
   const remembered = loadRememberedIdentity();
   const greeting =
@@ -29,17 +36,19 @@ export function LocationStep({
       : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       {greeting ? (
         <p
           style={{
             margin: 0,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
+            fontSize: 14,
+            color: QUIZ.MUTED_2,
             display: 'flex',
             alignItems: 'center',
-            gap: theme.space[2],
+            gap: 8,
             flexWrap: 'wrap',
+            justifyContent: 'center',
+            textAlign: 'center',
           }}
         >
           <Home size={14} aria-hidden /> {greeting}{' '}
@@ -47,13 +56,15 @@ export function LocationStep({
             type="button"
             onClick={() => {
               clearRememberedIdentity();
-              // No state to reset here — the booking state just
-              // re-reads loadRememberedIdentity on next mount. For
-              // the current session we surface the change by
-              // dispatching a re-render via the api hook owner.
               api.setState((prev) => ({
                 ...prev,
-                details: { ...prev.details, firstName: '', lastName: '', email: '', phoneNumber: '' },
+                details: {
+                  ...prev.details,
+                  firstName: '',
+                  lastName: '',
+                  email: '',
+                  phoneNumber: '',
+                },
               }));
             }}
             style={{
@@ -63,9 +74,9 @@ export function LocationStep({
               padding: 0,
               cursor: 'pointer',
               fontFamily: 'inherit',
-              fontSize: theme.type.size.sm,
-              color: theme.color.accent,
-              fontWeight: theme.type.weight.semibold,
+              fontSize: 14,
+              color: accent,
+              fontWeight: 600,
             }}
           >
             Not you?
@@ -73,69 +84,26 @@ export function LocationStep({
         </p>
       ) : null}
 
-      {locations.map((loc) => {
-        const selected = api.state.location?.id === loc.id;
-        return (
-          <button
-            key={loc.id}
-            type="button"
-            onClick={() => {
-              api.setState((prev) => ({ ...prev, location: loc }));
-              api.goNext();
-            }}
-            style={{
-              appearance: 'none',
-              textAlign: 'left',
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-              padding: `${theme.space[4]}px ${theme.space[5]}px`,
-              borderRadius: theme.radius.card,
-              background: theme.color.surface,
-              border: `1px solid ${selected ? theme.color.accent : theme.color.border}`,
-              boxShadow: theme.shadow.card,
-              display: 'flex',
-              alignItems: 'center',
-              gap: theme.space[4],
-              transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            }}
-            onMouseEnter={(e) => {
-              if (selected) return;
-              e.currentTarget.style.borderColor = theme.color.ink;
-            }}
-            onMouseLeave={(e) => {
-              if (selected) return;
-              e.currentTarget.style.borderColor = theme.color.border;
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.md,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  letterSpacing: theme.type.tracking.tight,
-                }}
-              >
-                {loc.name}
-              </p>
-              <p
-                style={{
-                  margin: `${theme.space[1]}px 0 0`,
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: theme.space[1],
-                }}
-              >
-                <MapPin size={12} aria-hidden /> {loc.addressLine}
-              </p>
-            </div>
-            <ChevronRight size={18} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
-          </button>
-        );
-      })}
+      <OptionGrid>
+        {locations.map((loc) => {
+          const selected = api.state.location?.id === loc.id;
+          return (
+            <OptionCard
+              key={loc.id}
+              selected={selected}
+              anySelected={!!api.state.location}
+              onSelect={() =>
+                api.setState((prev) => ({ ...prev, location: loc }))
+              }
+              accent={accent}
+              ariaLabel={loc.name}
+            >
+              <OptionTitle>{loc.name}</OptionTitle>
+              <OptionDescription>{loc.addressLine}</OptionDescription>
+            </OptionCard>
+          );
+        })}
+      </OptionGrid>
     </div>
   );
 }

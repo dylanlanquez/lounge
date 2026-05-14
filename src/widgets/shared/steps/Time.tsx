@@ -1,13 +1,10 @@
 import type { BookingStateApi } from '../state.ts';
 import { SlotPicker } from '../SlotPicker.tsx';
 
-// Step 4 — Date and Time.
-//
-// Thin shim that adapts the booking state api to the reusable
-// SlotPicker component. The picker itself is shared with the
-// patient-side reschedule flow on /widget/manage; keeping its
-// inputs prop-shaped means both flows render the same calendar +
-// slot list without coupling to the booking-flow state.
+// Time step — thin adapter around SlotPicker. Selection only updates
+// state.slotIso; the footer Next button is the sole navigation
+// control. Same pattern the rest of the booking flow uses (no
+// auto-advance).
 
 export function TimeStep({ api }: { api: BookingStateApi }) {
   const service = api.state.service;
@@ -22,9 +19,11 @@ export function TimeStep({ api }: { api: BookingStateApi }) {
       selectedIso={api.state.slotIso}
       onPick={(iso) => {
         api.setState((prev) => ({ ...prev, slotIso: iso }));
-        api.goNext();
       }}
+      // Drop the "first availability" banner — the template doesn't
+      // have a counterpart and customers reach Time after a deep-link
+      // already committed them to a service.
+      showFirstAvailableBanner={false}
     />
   );
 }
-

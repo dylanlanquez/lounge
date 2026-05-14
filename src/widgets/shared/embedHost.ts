@@ -74,11 +74,15 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   } as Partial<CSSStyleDeclaration>);
 
   // Backdrop. Click-to-close lives here; the card stops propagation.
+  // Backdrop alpha + blur lifted from #quizModal-vt (retainer-cart
+  // line 2) so the dim feels continuous with the storefront.
   const backdrop = document.createElement('div');
   Object.assign(backdrop.style, {
     position: 'absolute',
     inset: '0',
-    background: 'rgba(14, 20, 20, 0.55)',
+    background: 'rgba(0, 0, 0, 0.4)',
+    backdropFilter: 'blur(5px)',
+    WebkitBackdropFilter: 'blur(5px)',
     opacity: reducedMotion ? '1' : '0',
     transition: reducedMotion ? 'none' : 'opacity 200ms ease',
     cursor: 'pointer',
@@ -111,31 +115,43 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     color: '#333',
   } as Partial<CSSStyleDeclaration>);
 
-  // Close button. 44 × 44 touch target, top-right of the card.
+  // Close button. Matches retainer-cart's .close-vt (line 5): a plain
+  // text × character, 28px, no background, no border, no circle. Top
+  // -right of the card. 28px keeps the touch target visible without
+  // adding chrome that fights the modal's clean look.
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.setAttribute('aria-label', 'Close booking');
-  closeBtn.innerHTML = closeIconSvg();
+  closeBtn.textContent = '×';
   Object.assign(closeBtn.style, {
     position: 'absolute',
-    top: isDesktop ? '12px' : 'calc(env(safe-area-inset-top, 0px) + 8px)',
-    right: '12px',
-    width: '44px',
-    height: '44px',
+    top: isDesktop ? '14px' : 'calc(env(safe-area-inset-top, 0px) + 8px)',
+    right: '20px',
+    width: '32px',
+    height: '32px',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(255, 255, 255, 0.7)',
-    backdropFilter: 'blur(8px)',
-    WebkitBackdropFilter: 'blur(8px)',
-    border: '1px solid rgba(14, 20, 20, 0.08)',
-    borderRadius: '999px',
+    background: 'transparent',
+    border: '0',
+    borderRadius: '0',
     cursor: 'pointer',
-    color: '#0E1414',
+    color: '#333',
     padding: '0',
-    zIndex: '2',
+    fontSize: '28px',
     fontFamily: 'inherit',
+    lineHeight: '1',
+    zIndex: '2',
+    transition: 'transform 0.15s ease, opacity 0.15s ease',
   } as Partial<CSSStyleDeclaration>);
+  closeBtn.addEventListener('mouseenter', () => {
+    closeBtn.style.transform = 'scale(1.1)';
+    closeBtn.style.opacity = '0.7';
+  });
+  closeBtn.addEventListener('mouseleave', () => {
+    closeBtn.style.transform = 'scale(1)';
+    closeBtn.style.opacity = '1';
+  });
 
   // Content slot. Starts as a loading spinner so the customer sees
   // activity within one frame; React replaces this once the brand
@@ -408,11 +424,6 @@ function buildLoadingSpinner(): HTMLElement {
   wrap.appendChild(spinner);
   wrap.appendChild(label);
   return wrap;
-}
-
-function closeIconSvg(): string {
-  // Lucide X glyph, inlined as raw SVG to keep the chrome React-free.
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
 }
 
 const FOCUSABLE_SELECTOR = [

@@ -1,48 +1,60 @@
-import { Check, Plus } from 'lucide-react';
-import { theme } from '../../../theme/index.ts';
+import { Check } from 'lucide-react';
 import type { BookingStateApi } from '../state.ts';
 import type { WidgetUpgrade } from '../data.ts';
 import { formatPrice } from '../state.ts';
+import { QUIZ } from '../quizTokens.ts';
 
-// Upgrades step — surfaces add-ons for whatever catalogue row the
-// patient has resolved to (via service + axis pins). Only inserted
-// in the active step list when at least one widget-visible upgrade
-// applies; the widget shell skips this screen entirely when there
-// are no upsells to offer.
+// Upgrades step — addon-style checkbox cards mirroring
+// `.addon-item-vt` + `.addon-content-vt` from the retainer-cart
+// template (lines 56–70).
 //
-// Multi-pick: the patient can tick zero, one, or several upgrades.
-// State holds an array of upgrade ids; toggleUpgrade adds/removes.
+// Multi-pick: the patient ticks zero, one, or several. Selection
+// only updates state; navigation is footer-driven.
 //
-// Pricing UX: each card shows the upgrade's per-arch price (and
-// both-arches price when the parent catalogue row's arch_match is
-// 'single'). The booking summary picks up the selection
-// progressively — phase 2c will fold it into the total alongside
-// per-axis price resolution.
+// Layout: vertical stack of cards (`.addons-grid-vt` flex-direction
+// column gap 12). Each card: white surface, 2px transparent border
+// activating to navy on hover/checked, 12px radius, soft lift on
+// hover, scale(1.01) when checked. Title + description on the left;
+// price (lavender #6f86ff bold) + 22px rounded-corner checkbox
+// indicator on the right.
 
 export function UpgradesStep({
   api,
   upgrades,
+  accent = QUIZ.ACCENT,
 }: {
   api: BookingStateApi;
   upgrades: WidgetUpgrade[];
+  accent?: string;
 }) {
   const archIsBoth = api.state.axes.arch === 'both';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <p
         style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          lineHeight: theme.type.leading.snug,
-          maxWidth: 560,
+          margin: '0 auto',
+          fontSize: 14,
+          color: QUIZ.MUTED_2,
+          lineHeight: 1.45,
+          maxWidth: 600,
+          textAlign: 'center',
         }}
       >
-        Anything you'd like to add? Pick as many as you want, or none, then continue.
-        You can always change your mind in clinic.
+        Anything you'd like to add? Pick as many as you want, or none. You can
+        always change your mind in clinic.
       </p>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div
+        className="vlounge-stagger"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          maxWidth: 700,
+          margin: '0 auto',
+          width: '100%',
+        }}
+      >
         {upgrades.map((upgrade) => (
           <UpgradeCard
             key={upgrade.id}
@@ -50,31 +62,9 @@ export function UpgradesStep({
             archIsBoth={archIsBoth}
             checked={api.state.upgradeIds.includes(upgrade.id)}
             onToggle={() => api.toggleUpgrade(upgrade.id)}
+            accent={accent}
           />
         ))}
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button
-          type="button"
-          onClick={api.goNext}
-          style={{
-            appearance: 'none',
-            border: 'none',
-            background: theme.color.ink,
-            color: theme.color.surface,
-            padding: `${theme.space[3]}px ${theme.space[5]}px`,
-            borderRadius: theme.radius.pill,
-            fontFamily: 'inherit',
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            cursor: 'pointer',
-          }}
-        >
-          {api.state.upgradeIds.length === 0
-            ? 'No extras, continue'
-            : `Continue with ${api.state.upgradeIds.length} extra${api.state.upgradeIds.length === 1 ? '' : 's'}`}
-        </button>
       </div>
     </div>
   );
@@ -85,11 +75,13 @@ function UpgradeCard({
   archIsBoth,
   checked,
   onToggle,
+  accent,
 }: {
   upgrade: WidgetUpgrade;
   archIsBoth: boolean;
   checked: boolean;
   onToggle: () => void;
+  accent: string;
 }) {
   const price =
     archIsBoth && upgrade.bothArchesPricePence !== null
@@ -102,66 +94,83 @@ function UpgradeCard({
       onClick={onToggle}
       aria-pressed={checked}
       style={{
-        appearance: 'none',
         textAlign: 'left',
-        fontFamily: 'inherit',
         cursor: 'pointer',
-        padding: `${theme.space[4]}px ${theme.space[5]}px`,
-        borderRadius: theme.radius.card,
-        background: theme.color.surface,
-        border: `1px solid ${checked ? theme.color.accent : theme.color.border}`,
-        boxShadow: checked ? theme.shadow.card : 'none',
+        fontFamily: 'inherit',
+        background: QUIZ.SURFACE,
+        border: `2px solid ${checked ? accent : QUIZ.BORDER}`,
+        borderRadius: QUIZ.R_CARD,
+        padding: '16px 20px',
         display: 'flex',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        gap: theme.space[4],
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        gap: 16,
+        transform: checked ? 'scale(1.01)' : 'none',
+        boxShadow: 'none',
+        transition: `all 0.2s ${QUIZ.EASE_CARD}`,
+        animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
       onMouseEnter={(e) => {
-        if (checked) return;
-        e.currentTarget.style.borderColor = theme.color.ink;
+        e.currentTarget.style.borderColor = accent;
+        if (!checked) {
+          e.currentTarget.style.transform = 'translateY(-1px)';
+          e.currentTarget.style.boxShadow = QUIZ.SHADOW_SOFT;
+        }
       }}
       onMouseLeave={(e) => {
-        if (checked) return;
-        e.currentTarget.style.borderColor = theme.color.border;
+        e.currentTarget.style.borderColor = checked ? accent : QUIZ.BORDER;
+        if (!checked) {
+          e.currentTarget.style.transform = 'none';
+          e.currentTarget.style.boxShadow = 'none';
+        }
       }}
     >
-      <span
-        aria-hidden
+      <div
         style={{
-          width: 28,
-          height: 28,
-          borderRadius: '50%',
-          border: `2px solid ${checked ? theme.color.accent : theme.color.border}`,
-          background: checked ? theme.color.accent : theme.color.surface,
-          color: checked ? theme.color.surface : theme.color.inkSubtle,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
         }}
       >
-        {checked ? <Check size={14} aria-hidden /> : <Plus size={14} aria-hidden />}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 16,
+              color: QUIZ.LAVENDER,
+              fontWeight: 700,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            +{formatPrice(price)}
+          </span>
+        </div>
+        <h3
           style={{
             margin: 0,
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
+            fontSize: 16,
+            fontWeight: 600,
+            color: QUIZ.INK,
+            letterSpacing: '-0.005em',
+            lineHeight: 1.3,
           }}
         >
           {upgrade.name}
-        </p>
+        </h3>
         {upgrade.description ? (
           <p
             style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.snug,
+              margin: 0,
+              fontSize: 13,
+              color: QUIZ.MUTED_2,
+              lineHeight: 1.45,
             }}
           >
             {upgrade.description}
@@ -169,15 +178,23 @@ function UpgradeCard({
         ) : null}
       </div>
       <span
+        aria-hidden
         style={{
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          fontVariantNumeric: 'tabular-nums',
-          whiteSpace: 'nowrap',
+          width: 22,
+          height: 22,
+          borderRadius: 6,
+          border: `2px solid ${checked ? accent : QUIZ.SUBTLE_2}`,
+          background: checked ? accent : QUIZ.SURFACE,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#fff',
+          flexShrink: 0,
+          transform: checked ? 'scale(1.1)' : 'scale(1)',
+          transition: `all 0.2s ${QUIZ.EASE_CARD}`,
         }}
       >
-        +{formatPrice(price)}
+        {checked ? <Check size={14} aria-hidden strokeWidth={3} /> : null}
       </span>
     </button>
   );

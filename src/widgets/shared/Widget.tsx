@@ -1,11 +1,16 @@
-import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { ArrowLeft, Loader2 } from 'lucide-react';
-import { theme } from '../../theme/index.ts';
-import { useIsMobile } from '../../lib/useIsMobile.ts';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
   formatPrice,
+  isNextEnabled,
   stepTitle,
   useBookingState,
 } from './state.ts';
@@ -22,6 +27,7 @@ import { AxisStep } from './steps/Axis.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
+import { SummaryStep } from './steps/SummaryStep.tsx';
 // PaymentStep is lazy-loaded so @stripe/stripe-js (~80 KB) and
 // @stripe/react-stripe-js only download when a paid booking actually
 // reaches the deposit screen. Free-service bookings never fetch Stripe.
@@ -29,53 +35,39 @@ const PaymentStep = lazy(() =>
   import('./steps/Payment.tsx').then((m) => ({ default: m.PaymentStep })),
 );
 import { SuccessScreen } from './steps/Success.tsx';
-import { Summary } from './Summary.tsx';
 import { submitBooking, SubmitError } from './submit.ts';
-import {
-  loadRememberedIdentity,
-} from './state.ts';
+import { loadRememberedIdentity } from './state.ts';
 import { rememberBookingToken, useRememberedBookings } from './rememberedBookings.ts';
 import { WelcomeBack } from './WelcomeBack.tsx';
-import { isDetailsValid } from './validation.ts';
 import type { AxisKey } from '../../lib/queries/bookingTypeAxes.ts';
+import { QUIZ, ensureQuizKeyframes } from './quizTokens.ts';
 
 // Public booking widget — embedded on the practice's website.
 //
-// Stands alone from the staff app: no kiosk status bar, no bottom
-// nav, no auth gate. Reads its data from the widget/data.ts
-// constants for now (phase 1). Phase 2 will swap them for live reads
-// once the public-read RLS policies are in place.
+// Rewritten 2026-05-14 to mirror the venneir.com retainer-cart quiz
+// modal at /Users/dylan/Downloads/retainer-cart.liquid. The shell
+// has three rows:
 //
-// Layout:
+//   ┌─────────────────────────────────────────────────────────┐
+//   │ ProgressBar (gradient + shimmer, 16px tall)             │
+//   ├─────────────────────────────────────────────────────────┤
+//   │                                                          │
+//   │ Step content (absolute, top:80 bottom:108, scrollable)   │
+//   │   • centred 28px title with fadeInDown                   │
+//   │   • per-step component body                              │
+//   │                                                          │
+//   ├─────────────────────────────────────────────────────────┤
+//   │ Sticky footer:                                           │
+//   │   • Terms checkbox (summary step only)                   │
+//   │   • Price preview (summary/payment only)                 │
+//   │   • [round back] [pill Next]                             │
+//   └─────────────────────────────────────────────────────────┘
 //
-//   ┌────────────────────────────────────────────────────────────┐
-//   │ ← Step title                              Step 2 of 4 ◐   │
-//   ├──────────────────────────────────────┬─────────────────────┤
-//   │                                      │                     │
-//   │ Step content                         │ Booking summary     │
-//   │ (Location / Service / Axis steps /   │ (location, service, │
-//   │  Time / Details / Payment)           │  axes chain, time)  │
-//   │                                      │                     │
-//   └──────────────────────────────────────┴─────────────────────┘
-//
-// Mobile collapses to a single column, with the summary docked to
-// the bottom of the viewport in a sticky container that the patient
-// can tap to expand. The summary takes back its full sidebar role
-// at >= 880px wide.
+// Selection is decoupled from navigation: the customer taps an
+// option to select it, then taps the navy Next pill in the footer
+// to advance. Matches the template's UX exactly. No more auto-
+// advance, no more right-rail sidebar, no more mobile dock.
 
-const SIDEBAR_WIDTH = 320;
-const TWO_COLUMN_BREAKPOINT = 880;
-
-// Optional props passed by the per-brand embed entries
-// (widgets/venneir/main.tsx, widgets/denture/main.tsx). The legacy
-// /book + /manage routes still render <Widget /> with no props and
-// fall back to URL-search-param prefill.
-//
-// The prefill carries the raw string values straight off the
-// Shopify trigger's data-* attributes. Widget resolves
-// `serviceKey` against the loaded booking types and `locationId`
-// against the loaded locations before seeding the engine — see
-// resolvePrefill below.
 export interface WidgetBrand {
   id: 'venneir' | 'denture';
   name: string;
@@ -87,11 +79,9 @@ export interface WidgetBrand {
 }
 
 export interface WidgetPrefill {
-  /** Maps to lng_widget_booking_types.service_type (closed enum:
-   *  'click_in_veneers', 'denture_repair', 'same_day_appliance', etc.). */
+  /** Maps to lng_widget_booking_types.service_type. */
   serviceKey?: string | null;
-  /** Maps to the catalogue's product_key (e.g. 'click_in',
-   *  'whitening_tray', 'retainer'). */
+  /** Maps to the catalogue's product_key. */
   productKey?: string | null;
   /** 'upper' | 'lower' | 'both'. */
   arch?: 'upper' | 'lower' | 'both' | null;
@@ -99,12 +89,9 @@ export interface WidgetPrefill {
   repairVariant?: string | null;
   /** Maps to lng_widget_locations.id. */
   locationId?: string | null;
-  /** Pre-fills the Details step email field. The host page knows the
-   *  logged-in Shopify customer; we just trust it. */
+  /** Pre-fills the Details step email field. */
   shopifyCustomerEmail?: string | null;
-  /** Held but not used yet — see staff-link-shopify-customer for the
-   *  follow-up that links a confirmed booking back to the Shopify
-   *  customer record. */
+  /** Held but not used yet — see staff-link-shopify-customer. */
   shopifyCustomerId?: string | null;
 }
 
@@ -115,16 +102,12 @@ export interface WidgetProps {
 }
 
 export function Widget({ brand, prefill }: WidgetProps = {}) {
-  // Live reads of locations + booking types + copy. We gate the
-  // first render on all three so a deep-linked service has its
-  // matching booking-type object resolved before useBookingState
-  // seeds initial state — otherwise the engine would land on
-  // Step 2 (Service) for one render before correcting to the
-  // pre-pinned service, violating the no-flicker rule.
+  // Gate the first render on locations + booking types + copy so a
+  // deep-linked service has its matching booking-type object
+  // resolved before useBookingState seeds initial state.
   const locationsResult = useWidgetLocations();
   const bookingTypesResult = useWidgetBookingTypes();
   const { copy, loading: copyLoading } = useWidgetCopy();
-  const isMobile = useIsMobile(TWO_COLUMN_BREAKPOINT);
 
   if (
     locationsResult.loading ||
@@ -143,7 +126,6 @@ export function Widget({ brand, prefill }: WidgetProps = {}) {
       locations={locationsResult.data}
       bookingTypes={bookingTypesResult.data}
       copy={copy}
-      isMobile={isMobile}
       brand={brand}
       prefill={prefill}
     />
@@ -154,29 +136,21 @@ function WidgetReady({
   locations,
   bookingTypes,
   copy,
-  isMobile,
   brand,
   prefill,
 }: {
   locations: WidgetLocation[];
   bookingTypes: WidgetBookingType[];
   copy: WidgetCopy;
-  isMobile: boolean;
   brand?: WidgetBrand;
   prefill?: WidgetPrefill;
 }) {
-  // Resolve the host-page prefill (Shopify trigger data-* attrs)
-  // and the legacy URL deep-link into a single ResolvedPrefill the
-  // engine seeds initial state from.
-  //
-  // Precedence:
-  //   1. Trigger data-* attrs (modal embed, the future)
-  //   2. URL ?location= (legacy iframe, kept working)
-  //
-  // String values from the trigger are matched against the loaded
-  // locations / booking-types. A miss falls through to the next
-  // source rather than throwing — a misconfigured trigger should
-  // open the modal at Step 1, not break.
+  // Inject the keyframes used by the chrome (modal-slide-in, step
+  // fade-in, progress shimmer) once per page. Cheap and idempotent.
+  useEffect(() => {
+    ensureQuizKeyframes();
+  }, []);
+
   const resolvedPrefill = useMemo<ResolvedPrefill>(() => {
     const out: ResolvedPrefill = {
       location: null,
@@ -184,8 +158,6 @@ function WidgetReady({
       axes: {},
       details: {},
     };
-
-    // 1. Trigger data-* attrs
     if (prefill?.locationId) {
       const match = locations.find((l) => l.id === prefill.locationId);
       if (match) out.location = match;
@@ -202,8 +174,6 @@ function WidgetReady({
     if (prefill?.shopifyCustomerEmail) {
       out.details.email = prefill.shopifyCustomerEmail.toLowerCase().trim();
     }
-
-    // 2. URL ?location= fallback for the legacy iframe
     if (!out.location && typeof window !== 'undefined') {
       const param = new URLSearchParams(window.location.search).get('location');
       if (param) {
@@ -211,34 +181,18 @@ function WidgetReady({
         if (match) out.location = match;
       }
     }
-
     return out;
-    // Resolved once on mount; we don't react to dataset changes
-    // mid-session (the modal can be re-opened from a different
-    // trigger, but the opener re-mounts a fresh root each time).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // True when the host page actually told us something useful —
-  // distinguishes "Shopify customer clicked a product CTA" from
-  // "standalone /book load with localStorage maybe but no host
-  // context". Drives the welcome-screen bypass below.
-  const hasMeaningfulPrefill =
-    Boolean(
-      resolvedPrefill.service ||
-        resolvedPrefill.axes.product_key ||
-        resolvedPrefill.axes.arch ||
-        resolvedPrefill.axes.repair_variant ||
-        resolvedPrefill.details.email,
-    );
+  const hasMeaningfulPrefill = Boolean(
+    resolvedPrefill.service ||
+      resolvedPrefill.axes.product_key ||
+      resolvedPrefill.axes.arch ||
+      resolvedPrefill.axes.repair_variant ||
+      resolvedPrefill.details.email,
+  );
 
-  // Returning-patient gate: when localStorage holds tokens that
-  // resolve to upcoming-active bookings, we show a welcome screen
-  // first. The patient picks "Manage" to deep-link into the manage
-  // page, or "Book another" to drop into the normal flow. Skipped
-  // for any deep-link (URL location OR Shopify trigger prefill) —
-  // those embeds are pinned to a specific CTA and a welcome screen
-  // would feel like a detour.
   const remembered = useRememberedBookings();
   const [mode, setMode] = useState<'welcome' | 'booking'>('welcome');
   const showWelcome =
@@ -254,8 +208,6 @@ function WidgetReady({
     return fromBooking?.patientFirstName ?? null;
   }, [remembered.data]);
 
-  // Hooks below run for both modes — calling useBookingState
-  // unconditionally keeps the hook order stable across renders.
   const api = useBookingState(locations, resolvedPrefill);
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
@@ -263,29 +215,14 @@ function WidgetReady({
     error: string | null;
   }>({ state: 'idle', appointmentRef: null, error: null });
 
-  // Single submission entry-point. Called from:
-  //   • Summary CTA on Details step when no Payment step follows
-  //     (free service — book straight away).
-  //   • Mobile dock CTA, same conditions.
-  //   • Payment step's onPaid handler after Stripe confirms the
-  //     PaymentIntent — paymentIntentId is forwarded so the edge
-  //     function can verify the charge before persisting.
-  //
-  // On 'slot_unavailable' the slot was taken between time pick and
-  // submit — bounce back to the time step so the patient picks
-  // again. Other errors surface as a banner + leave them where
-  // they are.
+  // Single submission entry-point. Called from the footer Next
+  // button on the summary step (free booking) or from the Payment
+  // step's onPaid handler after Stripe confirms.
   const submit = async (paymentIntentId: string | null = null) => {
     if (submission.state === 'submitting') return;
     setSubmission({ state: 'submitting', appointmentRef: null, error: null });
     try {
-      // Brand id falls through to the edge function so the
-      // appointment row records which storefront the booking came
-      // from. Standalone /book route (no brand prop) defaults to
-      // 'venneir' inside submitBooking — preserves existing behaviour.
       const result = await submitBooking(api.state, paymentIntentId, brand?.id);
-      // Stash the manage token locally so a returning visit can
-      // recall this booking on Step 1 — see WelcomeBack screen.
       if (result.manageToken) rememberBookingToken(result.manageToken);
       setSubmission({
         state: 'done',
@@ -306,7 +243,9 @@ function WidgetReady({
       setSubmission({
         state: 'idle',
         appointmentRef: null,
-        error: messageForCode(err.code) ?? "Couldn't book your appointment. Please try again.",
+        error:
+          messageForCode(err.code) ??
+          "Couldn't book your appointment. Please try again.",
       });
     }
   };
@@ -331,293 +270,304 @@ function WidgetReady({
     );
   }
 
-  // The Summary / Dock CTA submits directly when Details is the last
-  // step. Otherwise it advances to whatever step (Payment) comes next.
-  const isPaymentNext = (api.activeSteps[api.currentIdx + 1] ?? null) === 'payment';
-  const onCtaClick = isPaymentNext ? api.goNext : () => submit(null);
-  const ctaBusy = !isPaymentNext && submission.state === 'submitting';
-  // The Details CTA gates on the same validity rules the inline
-  // errors use — single source of truth in widget/validation.ts.
-  // Stays disabled until every required field is valid AND terms
-  // are agreed.
-  const ctaDisabled = api.stepKey === 'details' && !isDetailsValid(api.state.details);
+  // Determine what the Next button does on this step.
+  // - 'summary' + no payment next → submit (free booking)
+  // - 'summary' + payment next → goNext (advance to Stripe)
+  // - other steps → goNext
+  const nextStepKey = api.activeSteps[api.currentIdx + 1] ?? null;
+  const isPaymentNext = nextStepKey === 'payment';
+  const onFooterNext = () => {
+    if (api.stepKey === 'summary' && !isPaymentNext) {
+      submit(null);
+      return;
+    }
+    api.goNext();
+  };
+  const submitting = submission.state === 'submitting';
+
+  return (
+    <ChromeShell
+      api={api}
+      copy={copy}
+      brand={brand}
+      locations={locations}
+      onNext={onFooterNext}
+      onSubmit={submit}
+      submitting={submitting}
+      submissionError={submission.error}
+      onDismissError={() =>
+        setSubmission((s) => ({ ...s, error: null }))
+      }
+      isPaymentNext={isPaymentNext}
+    />
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chrome shell — three-row layout matching retainer-cart.liquid
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ChromeShell({
+  api,
+  copy,
+  brand,
+  locations,
+  onNext,
+  onSubmit,
+  submitting,
+  submissionError,
+  onDismissError,
+  isPaymentNext,
+}: {
+  api: BookingStateApi;
+  copy: WidgetCopy;
+  brand?: WidgetBrand;
+  locations: WidgetLocation[];
+  onNext: () => void;
+  onSubmit: (paymentIntentId: string | null) => void;
+  submitting: boolean;
+  submissionError: string | null;
+  onDismissError: () => void;
+  isPaymentNext: boolean;
+}) {
+  const accent = brand?.accent ?? QUIZ.ACCENT;
+  const isHostEmbedded =
+    typeof document !== 'undefined' &&
+    !!document.getElementById('vlounge-embed-modal');
+
+  // When embedded in the modal chrome, the shell fills the modal
+  // card (height: 100%). When standalone (/book route), the shell
+  // takes the full viewport.
+  const rootHeight = isHostEmbedded ? '100%' : '100dvh';
+  const rootBackground = isHostEmbedded ? 'transparent' : QUIZ.BG;
+  const rootPosition = 'relative' as const;
 
   return (
     <div
       style={{
-        // The widget owns the entire viewport when standalone, but
-        // also sits naturally inside an iframe at any size. min-height
-        // 100dvh keeps it tall in standalone use; the iframe parent
-        // controls actual height when embedded.
-        minHeight: '100dvh',
-        background: theme.color.bg,
-        color: theme.color.ink,
-        fontFamily: theme.type.family,
-        // Hide the browser's smooth-scroll snap if it bleeds in from
-        // ancestor styles when embedded. The widget's own scroll is
-        // a normal page scroll.
-        scrollSnapType: 'none',
+        position: rootPosition,
+        height: rootHeight,
+        background: rootBackground,
+        color: QUIZ.INK,
+        fontFamily: QUIZ.FONT_STACK,
+        // Reserve room for the absolute close button in the modal
+        // chrome (top:14 right:20) — the progress bar starts below it.
+        paddingTop: isHostEmbedded ? 0 : 0,
       }}
     >
-      <Header
-        title={stepTitle(api.stepKey, copy)}
-        currentIdx={api.visibleCurrentIdx}
-        totalSteps={api.visibleTotalSteps}
-        canGoBack={api.canGoBack}
-        onBack={api.goBack}
+      <ProgressBar
+        value={api.visibleCurrentIdx + 1}
+        total={api.visibleTotalSteps}
       />
 
-      <main
-        style={{
-          maxWidth: 1080,
-          margin: '0 auto',
-          padding: isMobile
-            ? `${theme.space[4]}px ${theme.space[4]}px ${theme.space[8]}px`
-            : `${theme.space[5]}px ${theme.space[6]}px ${theme.space[8]}px`,
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : `1fr ${SIDEBAR_WIDTH}px`,
-          gap: isMobile ? theme.space[5] : theme.space[6],
-          alignItems: 'start',
-        }}
-      >
-        <section>
-          {submission.error ? (
-            <ErrorBanner message={submission.error} onDismiss={() => setSubmission((s) => ({ ...s, error: null }))} />
-          ) : null}
-          <StepContent
-            api={api}
-            locations={locations}
-            onSubmit={submit}
-            submitting={submission.state === 'submitting'}
-          />
-        </section>
+      <StepFrame stepKey={api.stepKey}>
+        <StepBody
+          api={api}
+          copy={copy}
+          locations={locations}
+          accent={accent}
+          submissionError={submissionError}
+          onDismissError={onDismissError}
+          onSubmit={onSubmit}
+          submitting={submitting}
+        />
+      </StepFrame>
 
-        {isMobile ? (
-          <MobileSummaryDock
-            api={api}
-            copy={copy}
-            onCtaClick={onCtaClick}
-            ctaBusy={ctaBusy}
-            ctaDisabled={ctaDisabled}
-            isPaymentNext={isPaymentNext}
-          />
-        ) : (
-          <aside style={{ position: 'sticky', top: theme.space[5] }}>
-            <Summary
-              state={api.state}
-              upgrades={api.upgrades}
-              resolvedRow={api.resolvedRow}
-              breakdown={api.priceBreakdown}
-              copy={copy}
-              showCta={api.stepKey === 'details'}
-              onCtaClick={onCtaClick}
-              ctaBusy={ctaBusy}
-              ctaDisabled={ctaDisabled}
-              isPaymentNext={isPaymentNext}
-            />
-          </aside>
-        )}
-      </main>
+      <Footer
+        api={api}
+        copy={copy}
+        accent={accent}
+        onNext={onNext}
+        onBack={api.goBack}
+        submitting={submitting}
+        isPaymentNext={isPaymentNext}
+      />
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Header — back arrow, title, circular progress
+// Progress bar
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Header({
-  title,
-  currentIdx,
-  totalSteps,
-  canGoBack,
-  onBack,
-}: {
-  title: string;
-  currentIdx: number;
-  totalSteps: number;
-  canGoBack: boolean;
-  onBack: () => void;
-}) {
-  return (
-    <header
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
-        background: theme.color.bg,
-        borderBottom: `1px solid ${theme.color.border}`,
-      }}
-    >
-      {/* Brand row removed — customer already arrived from a
-          branded landing page, so the logo + name was redundant
-          chrome and ate vertical space the booking flow needed. */}
-      <div
-        style={{
-          maxWidth: 1080,
-          margin: '0 auto',
-          padding: `${theme.space[4]}px ${theme.space[5]}px`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[3],
-        }}
-      >
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back"
-          disabled={!canGoBack}
-          style={{
-            appearance: 'none',
-            border: 'none',
-            background: 'transparent',
-            width: 36,
-            height: 36,
-            borderRadius: theme.radius.pill,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: canGoBack ? theme.color.ink : theme.color.inkSubtle,
-            cursor: canGoBack ? 'pointer' : 'default',
-            opacity: canGoBack ? 1 : 0,
-            transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => {
-            if (!canGoBack) return;
-            e.currentTarget.style.background = theme.color.surface;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent';
-          }}
-        >
-          <ArrowLeft size={18} aria-hidden />
-        </button>
-        <h1
-          aria-live="polite"
-          aria-atomic="true"
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xl,
-            fontWeight: theme.type.weight.semibold,
-            letterSpacing: theme.type.tracking.tight,
-            color: theme.color.ink,
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {title}
-        </h1>
-        <ProgressDot currentIdx={currentIdx} totalSteps={totalSteps} />
-      </div>
-    </header>
-  );
-}
-
-function ProgressDot({
-  currentIdx,
-  totalSteps,
-}: {
-  currentIdx: number;
-  totalSteps: number;
-}) {
-  // Circular progress drawn with two stacked SVG arcs. The lower arc
-  // is the muted track; the upper arc fills clockwise from 12 o'clock
-  // proportional to (currentIdx + 1) / totalSteps.
-  const size = 18;
-  const stroke = 3;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const filled = ((currentIdx + 1) / totalSteps) * circumference;
-  const stepNumber = currentIdx + 1;
+function ProgressBar({ value, total }: { value: number; total: number }) {
+  const pct = total > 0 ? Math.max(0, Math.min(100, (value / total) * 100)) : 0;
   return (
     <div
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: theme.space[2],
-        flexShrink: 0,
+        position: 'absolute',
+        top: 20,
+        left: 20,
+        right: 60, // leave room for the close × button
+        zIndex: 5,
       }}
+      aria-hidden
     >
-      <span
+      <div
+        role="progressbar"
+        aria-valuenow={value}
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-label={`Step ${value} of ${total}`}
         style={{
-          fontSize: 11,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
-          fontVariantNumeric: 'tabular-nums',
+          height: 16,
+          borderRadius: 8,
+          background: QUIZ.PROGRESS_TRACK,
+          overflow: 'hidden',
+          position: 'relative',
         }}
       >
-        Step {stepNumber} of {totalSteps}
-      </span>
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        aria-hidden
-        style={{ transform: 'rotate(-90deg)' }}
-      >
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={theme.color.border}
-          strokeWidth={stroke}
+        <div
+          className="vlounge-progress-fill"
+          style={{ width: `${pct}%` }}
         />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={theme.color.accent}
-          strokeWidth={stroke}
-          strokeDasharray={`${filled} ${circumference}`}
-          strokeLinecap="round"
-        />
-      </svg>
+      </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step router — picks the active step component
+// Step frame — absolute-positioned content area
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepContent({
+function StepFrame({
+  stepKey,
+  children,
+}: {
+  stepKey: string;
+  children: React.ReactNode;
+}) {
+  // Re-mount fade key whenever stepKey changes so the new step
+  // animates in from translateY(8px) → 0.
+  return (
+    <div
+      key={stepKey}
+      style={{
+        position: 'absolute',
+        top: QUIZ.STEP_TOP_OFFSET,
+        left: 0,
+        right: 0,
+        bottom: QUIZ.STEP_BOTTOM_OFFSET,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        padding: '0 20px 20px',
+        WebkitOverflowScrolling: 'touch',
+        scrollBehavior: 'smooth',
+        animation: `vlounge-stepFadeIn 0.22s ${QUIZ.EASE_CARD} both`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step title — centred 28px header at the top of each step
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function StepTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h2
+      style={{
+        margin: '0 auto 28px',
+        textAlign: 'center',
+        fontSize: 28,
+        lineHeight: 1.2,
+        fontWeight: 700,
+        color: QUIZ.INK,
+        letterSpacing: '-0.01em',
+        animation: `vlounge-fadeInDown 0.3s ${QUIZ.EASE_BOUNCE}`,
+        maxWidth: 720,
+      }}
+    >
+      {children}
+    </h2>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step body — title + per-step content, dispatched by stepKey
+// ─────────────────────────────────────────────────────────────────────────────
+
+function StepBody({
   api,
+  copy,
   locations,
+  accent,
+  submissionError,
+  onDismissError,
   onSubmit,
   submitting,
 }: {
   api: BookingStateApi;
+  copy: WidgetCopy;
   locations: WidgetLocation[];
+  accent: string;
+  submissionError: string | null;
+  onDismissError: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
 }) {
-  // Axis steps are dynamic — one per axis declared on the chosen
-  // service, encoded as `axis:<key>` strings (axis:product_key,
-  // axis:arch, etc). Branch on the prefix and pull the axis key out.
+  return (
+    <>
+      <StepTitle>{stepTitle(api.stepKey, copy)}</StepTitle>
+      {submissionError ? (
+        <ErrorBanner message={submissionError} onDismiss={onDismissError} />
+      ) : null}
+      <StepRouter
+        api={api}
+        copy={copy}
+        locations={locations}
+        accent={accent}
+        onSubmit={onSubmit}
+        submitting={submitting}
+      />
+    </>
+  );
+}
+
+function StepRouter({
+  api,
+  copy,
+  locations,
+  accent,
+  onSubmit,
+  submitting,
+}: {
+  api: BookingStateApi;
+  copy: WidgetCopy;
+  locations: WidgetLocation[];
+  accent: string;
+  onSubmit: (paymentIntentId: string | null) => void;
+  submitting: boolean;
+}) {
   if (api.stepKey.startsWith('axis:')) {
     const axisKey = api.stepKey.slice(5) as AxisKey;
-    return <AxisStep api={api} axisKey={axisKey} />;
+    return <AxisStep api={api} axisKey={axisKey} accent={accent} />;
   }
   switch (api.stepKey) {
     case 'location':
-      return <LocationStep api={api} locations={locations} />;
+      return <LocationStep api={api} locations={locations} accent={accent} />;
     case 'service':
-      return <ServiceStep api={api} />;
+      return <ServiceStep api={api} accent={accent} />;
     case 'upgrades':
-      return <UpgradesStep api={api} upgrades={api.upgrades} />;
+      return (
+        <UpgradesStep api={api} upgrades={api.upgrades} accent={accent} />
+      );
     case 'time':
       return <TimeStep api={api} />;
+    case 'summary':
+      return <SummaryStep api={api} copy={copy} accent={accent} />;
     case 'details':
       return <DetailsStep api={api} />;
     case 'payment':
       return (
         <Suspense fallback={<PaymentLoadingFallback />}>
-          <PaymentStep api={api} onPaid={(pi) => onSubmit(pi)} submitting={submitting} />
+          <PaymentStep
+            api={api}
+            onPaid={(pi) => onSubmit(pi)}
+            submitting={submitting}
+          />
         </Suspense>
       );
   }
@@ -625,109 +575,262 @@ function StepContent({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mobile summary dock — sticky bottom bar that expands on tap
+// Footer — sticky bottom with terms, price preview, back, next
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MobileSummaryDock({
+function Footer({
   api,
   copy,
-  onCtaClick,
-  ctaBusy,
-  ctaDisabled,
+  accent,
+  onNext,
+  onBack,
+  submitting,
   isPaymentNext,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
-  onCtaClick: () => void;
-  ctaBusy: boolean;
-  ctaDisabled: boolean;
+  accent: string;
+  onNext: () => void;
+  onBack: () => void;
+  submitting: boolean;
   isPaymentNext: boolean;
 }) {
-  const { priceBreakdown } = api;
-  const total =
-    priceBreakdown.depositPence > 0
-      ? priceBreakdown.depositPence
-      : priceBreakdown.subtotalPence;
-  const showSummary =
-    api.stepKey === 'time' ||
-    api.stepKey === 'details' ||
-    api.stepKey === 'payment';
-  // The details step hosts the primary CTA; on mobile it lives in
-  // the dock so it sits above the keyboard.
-  const showDetailsCta = api.stepKey === 'details';
+  const showTerms = api.stepKey === 'summary';
+  const showPrice =
+    api.stepKey === 'summary' || api.stepKey === 'payment';
+  const total = priceTotalFor(api);
+  const nextDisabled = !isNextEnabled(api) || submitting;
 
-  if (!showSummary && !showDetailsCta) return null;
+  const nextLabel = (() => {
+    if (submitting) return 'Booking…';
+    if (api.stepKey === 'summary') {
+      return isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook;
+    }
+    return 'Continue';
+  })();
+
+  // Payment step: Stripe owns the submission button. We hide the
+  // footer Next entirely — back remains so the customer can return
+  // to the summary if they change their mind.
+  const showNext = api.stepKey !== 'payment';
 
   return (
     <div
       style={{
-        position: 'sticky',
+        position: 'absolute',
         bottom: 0,
-        zIndex: 20,
-        marginTop: theme.space[5],
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        left: 0,
+        right: 0,
+        padding: '16px 20px 18px',
+        background: QUIZ.BG,
+        boxShadow: QUIZ.SHADOW_FOOTER,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 10,
+        zIndex: 10,
+        paddingBottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
       }}
     >
-      <div
-        style={{
-          background: theme.color.surface,
-          borderTop: `1px solid ${theme.color.border}`,
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
-          boxShadow: theme.shadow.overlay,
-          borderRadius: `${theme.radius.input}px ${theme.radius.input}px 0 0`,
-        }}
-      >
-        <div
+      {showPrice && total > 0 ? (
+        <p
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: theme.space[3],
+            margin: 0,
+            fontSize: 16,
+            fontWeight: 700,
+            color: QUIZ.INK,
+            animation: `vlounge-fadeIn 0.3s ease`,
+            fontVariantNumeric: 'tabular-nums',
           }}
         >
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <p
+          <span style={{ color: QUIZ.MUTED_2, fontWeight: 500, marginRight: 6 }}>
+            {copy.summaryTotalLabel}
+          </span>
+          {formatPrice(total)}
+        </p>
+      ) : null}
+
+      {showTerms ? (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            gap: 8,
+            cursor: 'pointer',
+            maxWidth: 600,
+            width: '100%',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={api.state.details.agreeTerms}
+            onChange={(e) =>
+              api.setState((prev) => ({
+                ...prev,
+                details: { ...prev.details, agreeTerms: e.target.checked },
+              }))
+            }
+            style={{
+              marginTop: 3,
+              width: 16,
+              height: 16,
+              cursor: 'pointer',
+              flexShrink: 0,
+              accentColor: accent,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 14,
+              color: QUIZ.MUTED_2,
+              lineHeight: 1.4,
+              textAlign: 'left',
+            }}
+          >
+            I agree to the{' '}
+            <a
+              href={copy.detailsTermsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
-                margin: 0,
-                fontSize: 11,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.inkMuted,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
+                color: accent,
+                fontWeight: 500,
+                textDecoration: 'none',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = 'underline';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = 'none';
               }}
             >
-              {copy.summaryTotalLabel}
-            </p>
-            <p
-              style={{
-                margin: `${theme.space[1]}px 0 0`,
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                fontVariantNumeric: 'tabular-nums',
-                letterSpacing: theme.type.tracking.tight,
-              }}
-            >
-              {formatPrice(total)}
-            </p>
-          </div>
-          {showDetailsCta ? (
-            <button
-              type="button"
-              onClick={onCtaClick}
-              disabled={ctaBusy || ctaDisabled}
-              style={{
-                ...primaryCtaStyle,
-                opacity: ctaBusy || ctaDisabled ? 0.5 : 1,
-                cursor: ctaBusy || ctaDisabled ? 'default' : 'pointer',
-              }}
-            >
-              {ctaBusy ? 'Booking…' : isPaymentNext ? copy.summaryCtaPayment : copy.summaryCtaBook}
-            </button>
-          ) : null}
-        </div>
+              terms and conditions
+            </a>
+            .
+          </span>
+        </label>
+      ) : null}
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          maxWidth: 600,
+        }}
+      >
+        <BackButton
+          disabled={!api.canGoBack}
+          onClick={onBack}
+        />
+        {showNext ? (
+          <NextButton
+            disabled={nextDisabled}
+            onClick={onNext}
+            accent={accent}
+          >
+            {nextLabel}
+          </NextButton>
+        ) : (
+          <div style={{ flex: 1 }} />
+        )}
       </div>
     </div>
+  );
+}
+
+function BackButton({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      aria-label="Back"
+      style={{
+        border: 'none',
+        width: 42,
+        height: 42,
+        minWidth: 32,
+        padding: 0,
+        borderRadius: '50%',
+        cursor: disabled ? 'default' : 'pointer',
+        background: QUIZ.PROGRESS_BACK_BG,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        color: QUIZ.ACCENT,
+        transition: `all 0.2s ${QUIZ.EASE_CARD}`,
+        opacity: disabled ? 0 : 1,
+        pointerEvents: disabled ? 'none' : 'auto',
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = QUIZ.PROGRESS_BACK_BG_HOVER;
+        e.currentTarget.style.transform = 'translateY(-1px)';
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.background = QUIZ.PROGRESS_BACK_BG;
+        e.currentTarget.style.transform = 'translateY(0)';
+      }}
+    >
+      <ArrowLeft size={20} aria-hidden />
+    </button>
+  );
+}
+
+function NextButton({
+  disabled,
+  onClick,
+  accent,
+  children,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+  accent: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      style={{
+        border: 'none',
+        padding: '12px 28px',
+        borderRadius: QUIZ.R_PILL,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontSize: 16,
+        fontWeight: 700,
+        background: accent,
+        color: '#fff',
+        flex: 1,
+        fontFamily: 'inherit',
+        transition: `all 0.2s ${QUIZ.EASE_CARD}`,
+        opacity: disabled ? 0.4 : 1,
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.transform = 'translateY(-1px)';
+        e.currentTarget.style.boxShadow = QUIZ.SHADOW_BUTTON_HOVER;
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.transform = 'translateY(0)';
+        e.currentTarget.style.boxShadow = 'none';
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -735,10 +838,11 @@ function MobileSummaryDock({
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Suspense fallback shown while the lazy-loaded PaymentStep chunk
-// (Stripe.js + react-stripe-js + our Payment.tsx) downloads. The
-// chunk is small (~10 KB gz) so this almost always paints once; the
-// PaymentElement spinner inside Payment.tsx takes over from there.
+function priceTotalFor(api: BookingStateApi): number {
+  const b = api.priceBreakdown;
+  return b.depositPence > 0 ? b.depositPence : b.subtotalPence;
+}
+
 function PaymentLoadingFallback() {
   return (
     <div
@@ -747,39 +851,45 @@ function PaymentLoadingFallback() {
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: '200px',
-        color: theme.color.inkMuted,
-        fontSize: theme.type.size.sm,
-        gap: theme.space[2],
+        color: QUIZ.MUTED,
+        fontSize: 14,
+        gap: 8,
       }}
       aria-live="polite"
     >
       <style>{`@keyframes lng-widget-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-      <Loader2 size={16} style={{ animation: 'lng-widget-spin 0.9s linear infinite' }} />
+      <Loader2
+        size={16}
+        style={{ animation: 'lng-widget-spin 0.9s linear infinite' }}
+      />
       <span>Preparing payment…</span>
     </div>
   );
 }
 
 function BootScreen({ error }: { error: string | null }) {
-  // Shown while locations + copy are loading on first mount. Plain
-  // and quiet — most loads complete in <300ms so flashing a big
-  // spinner just adds noise.
   return (
     <div
       style={{
         minHeight: '100dvh',
-        background: theme.color.bg,
-        color: theme.color.inkMuted,
-        fontFamily: theme.type.family,
-        fontSize: theme.type.size.sm,
+        background: QUIZ.BG,
+        color: QUIZ.MUTED,
+        fontFamily: QUIZ.FONT_STACK,
+        fontSize: 14,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: theme.space[5],
+        padding: 20,
       }}
     >
       {error ? (
-        <p style={{ margin: 0, color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+        <p
+          style={{
+            margin: 0,
+            color: QUIZ.ALERT,
+            fontWeight: 600,
+          }}
+        >
           Couldn't reach the booking system. Please refresh the page.
         </p>
       ) : (
@@ -789,23 +899,32 @@ function BootScreen({ error }: { error: string | null }) {
   );
 }
 
-function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+function ErrorBanner({
+  message,
+  onDismiss,
+}: {
+  message: string;
+  onDismiss: () => void;
+}) {
   return (
     <div
       role="alert"
       style={{
-        marginBottom: theme.space[4],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        marginBottom: 16,
+        padding: '12px 16px',
         background: 'rgba(184, 58, 42, 0.08)',
-        border: `1px solid ${theme.color.alert}`,
-        borderRadius: theme.radius.input,
-        color: theme.color.alert,
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
+        border: `1px solid ${QUIZ.ALERT}`,
+        borderRadius: QUIZ.R_INPUT,
+        color: QUIZ.ALERT,
+        fontSize: 14,
+        fontWeight: 600,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: theme.space[3],
+        gap: 12,
+        maxWidth: 720,
+        marginLeft: 'auto',
+        marginRight: 'auto',
       }}
     >
       <span>{message}</span>
@@ -814,12 +933,11 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
         onClick={onDismiss}
         aria-label="Dismiss"
         style={{
-          appearance: 'none',
           border: 'none',
           background: 'transparent',
           color: 'inherit',
-          fontSize: theme.type.size.lg,
-          fontWeight: theme.type.weight.semibold,
+          fontSize: 20,
+          fontWeight: 600,
           cursor: 'pointer',
           padding: 0,
           lineHeight: 1,
@@ -846,7 +964,7 @@ function messageForCode(code: string): string | null {
     case 'no_location_resolved':
       return "We couldn't find an available location.";
     case 'payment_intent_required':
-      return "Please complete payment before booking.";
+      return 'Please complete payment before booking.';
     case 'payment_not_succeeded':
     case 'payment_amount_mismatch':
     case 'payment_currency_mismatch':
@@ -858,47 +976,3 @@ function messageForCode(code: string): string | null {
       return null;
   }
 }
-
-const primaryCtaStyle = {
-  appearance: 'none',
-  border: 'none',
-  background: theme.color.ink,
-  color: theme.color.surface,
-  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-  borderRadius: theme.radius.pill,
-  fontFamily: 'inherit',
-  fontSize: theme.type.size.sm,
-  fontWeight: theme.type.weight.semibold,
-  cursor: 'pointer',
-  flexShrink: 0,
-} as const;
-
-export function PrimaryCta({
-  children,
-  onClick,
-  disabled,
-  fullWidth,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  fullWidth?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        ...primaryCtaStyle,
-        opacity: disabled ? 0.5 : 1,
-        cursor: disabled ? 'default' : 'pointer',
-        width: fullWidth ? '100%' : undefined,
-        height: 48,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-

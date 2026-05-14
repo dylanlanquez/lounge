@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
-import { theme } from '../../../theme/index.ts';
 import type { BookingStateApi } from '../state.ts';
 import { formatPrice } from '../state.ts';
+import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
 import { supabase } from '../../../lib/supabase.ts';
 
@@ -113,7 +113,7 @@ export function PaymentStep({
   if (!stripePromise) {
     return (
       <Card>
-        <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+        <p style={{ margin: 0, color: QUIZ.ALERT, fontSize: '14px' }}>
           Payment isn't configured for this site (missing Stripe key). Please contact the
           clinic to complete your booking.
         </p>
@@ -127,9 +127,9 @@ export function PaymentStep({
         <p
           style={{
             margin: 0,
-            color: theme.color.alert,
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
+            color: QUIZ.ALERT,
+            fontSize: '14px',
+            fontWeight: '600',
           }}
         >
           {error}
@@ -144,8 +144,8 @@ export function PaymentStep({
         <p
           style={{
             margin: 0,
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
+            color: QUIZ.MUTED_2,
+            fontSize: '14px',
           }}
         >
           Preparing payment…
@@ -166,22 +166,22 @@ export function PaymentStep({
         appearance: {
           theme: 'flat',
           variables: {
-            fontFamily: theme.type.family,
+            fontFamily: QUIZ.FONT_STACK,
             fontSizeBase: '15px',
             fontLineHeight: '1.4',
             fontWeightNormal: '400',
             fontWeightMedium: '500',
             fontWeightBold: '600',
 
-            colorPrimary: theme.color.accent,
-            colorBackground: theme.color.surface,
-            colorText: theme.color.ink,
-            colorDanger: theme.color.alert,
-            colorSuccess: theme.color.accent,
+            colorPrimary: QUIZ.ACCENT,
+            colorBackground: QUIZ.SURFACE,
+            colorText: QUIZ.INK,
+            colorDanger: QUIZ.ALERT,
+            colorSuccess: QUIZ.ACCENT,
             colorTextSecondary: 'rgba(14, 20, 20, 0.6)',
             colorTextPlaceholder: 'rgba(14, 20, 20, 0.4)',
-            colorIconTab: theme.color.ink,
-            colorIconTabSelected: theme.color.accent,
+            colorIconTab: QUIZ.INK,
+            colorIconTabSelected: QUIZ.ACCENT,
 
             spacingUnit: '4px',
             gridColumnSpacing: '12px',
@@ -200,32 +200,32 @@ export function PaymentStep({
               transition: 'border-color 120ms ease, transform 120ms ease',
             },
             '.Tab:hover': {
-              borderColor: theme.color.ink,
+              borderColor: QUIZ.INK,
             },
             '.Tab--selected': {
-              borderColor: theme.color.accent,
-              backgroundColor: theme.color.accentBg,
+              borderColor: QUIZ.ACCENT,
+              backgroundColor: 'rgba(8, 55, 88, 0.08)',
               boxShadow: '0 1px 2px rgba(14, 20, 20, 0.04)',
               // Stripe's default selected-tab text colour goes
               // near-white against the light-green tinted bg —
               // illegible. Force ink so the label stays readable
               // and the accent green only carries the chrome.
-              color: theme.color.ink,
+              color: QUIZ.INK,
             },
             '.Tab--selected:focus': {
-              borderColor: theme.color.accent,
+              borderColor: QUIZ.ACCENT,
               boxShadow: '0 0 0 3px rgba(31, 77, 58, 0.18)',
-              color: theme.color.ink,
+              color: QUIZ.INK,
             },
             '.Tab--selected:hover': {
-              color: theme.color.ink,
+              color: QUIZ.INK,
             },
             '.TabLabel': {
               fontWeight: '600',
               letterSpacing: '-0.005em',
             },
             '.TabIcon--selected': {
-              fill: theme.color.accent,
+              fill: QUIZ.ACCENT,
             },
             '.Input': {
               padding: '12px 14px',
@@ -235,11 +235,11 @@ export function PaymentStep({
               transition: 'border-color 120ms ease, box-shadow 120ms ease',
             },
             '.Input:focus': {
-              borderColor: theme.color.ink,
+              borderColor: QUIZ.INK,
               boxShadow: 'none',
             },
             '.Input--invalid': {
-              borderColor: theme.color.alert,
+              borderColor: QUIZ.ALERT,
               boxShadow: 'none',
             },
             '.Label': {
@@ -255,7 +255,7 @@ export function PaymentStep({
               textTransform: 'uppercase',
             },
             '.Error': {
-              color: theme.color.alert,
+              color: QUIZ.ALERT,
               fontSize: '12px',
               fontWeight: '600',
               marginTop: '6px',
@@ -272,8 +272,8 @@ export function PaymentStep({
               padding: '14px 16px',
             },
             '.AccordionItem--selected': {
-              borderColor: theme.color.accent,
-              backgroundColor: theme.color.accentBg,
+              borderColor: QUIZ.ACCENT,
+              backgroundColor: 'rgba(8, 55, 88, 0.08)',
             },
             '.PickerItem': {
               border: '1px solid rgba(14, 20, 20, 0.08)',
@@ -281,18 +281,18 @@ export function PaymentStep({
               boxShadow: 'none',
             },
             '.PickerItem--selected': {
-              borderColor: theme.color.accent,
-              backgroundColor: theme.color.accentBg,
+              borderColor: QUIZ.ACCENT,
+              backgroundColor: 'rgba(8, 55, 88, 0.08)',
             },
             '.CheckboxInput--checked': {
-              backgroundColor: theme.color.accent,
-              borderColor: theme.color.accent,
+              backgroundColor: QUIZ.ACCENT,
+              borderColor: QUIZ.ACCENT,
             },
             '.MenuIcon': {
               fill: 'rgba(14, 20, 20, 0.6)',
             },
             '.MenuAction': {
-              color: theme.color.accent,
+              color: QUIZ.ACCENT,
               fontWeight: '600',
             },
           },
@@ -411,8 +411,8 @@ function PaymentForm({
         <p
           style={{
             margin: 0,
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
+            color: QUIZ.MUTED_2,
+            fontSize: '14px',
           }}
         >
           Preparing payment…
@@ -441,13 +441,13 @@ function PaymentForm({
           role="alert"
           style={{
             margin: 0,
-            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            padding: '12px 16px',
             background: 'rgba(184, 58, 42, 0.08)',
-            border: `1px solid ${theme.color.alert}`,
-            borderRadius: theme.radius.input,
-            color: theme.color.alert,
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
+            border: `1px solid ${QUIZ.ALERT}`,
+            borderRadius: 8,
+            color: QUIZ.ALERT,
+            fontSize: '14px',
+            fontWeight: '600',
           }}
         >
           {payError}
@@ -460,22 +460,22 @@ function PaymentForm({
           onClick={onPay}
           disabled={disabled}
           style={{
-            marginTop: theme.space[4],
+            marginTop: 16,
             appearance: 'none',
             border: 'none',
-            background: theme.color.ink,
-            color: theme.color.surface,
+            background: QUIZ.INK,
+            color: QUIZ.SURFACE,
             height: 52,
-            borderRadius: theme.radius.pill,
+            borderRadius: 999,
             fontFamily: 'inherit',
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
+            fontSize: '16px',
+            fontWeight: '600',
             cursor: disabled ? 'default' : 'pointer',
             opacity: disabled ? 0.5 : 1,
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: theme.space[2],
+            gap: 8,
             width: '100%',
           }}
         >
@@ -495,15 +495,15 @@ function PaymentHeader({ deposit }: { deposit: number }) {
   // numbers, but the form needs its own header so it reads as a
   // single self-contained surface.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <p
         style={{
           margin: 0,
           fontSize: 11,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.inkMuted,
+          fontWeight: '600',
+          color: QUIZ.MUTED_2,
           textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
+          letterSpacing: '0.04em',
         }}
       >
         Deposit · Refundable per cancellation policy
@@ -511,20 +511,20 @@ function PaymentHeader({ deposit }: { deposit: number }) {
       <h2
         style={{
           margin: 0,
-          fontSize: theme.type.size.lg,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
+          fontSize: '18px',
+          fontWeight: '600',
+          color: QUIZ.INK,
+          letterSpacing: '-0.01em',
         }}
       >
         Pay {formatPrice(deposit)} to secure your slot
       </h2>
       <p
         style={{
-          margin: `${theme.space[1]}px 0 0`,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          lineHeight: theme.type.leading.snug,
+          margin: '4px 0 0',
+          fontSize: '14px',
+          color: QUIZ.MUTED_2,
+          lineHeight: 1.45,
         }}
       >
         The remaining balance is paid at your appointment. We'll send a confirmation email
@@ -538,14 +538,14 @@ function Card({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
+        background: QUIZ.SURFACE,
+        border: `1px solid ${QUIZ.BORDER}`,
+        borderRadius: 12,
+        padding: 20,
         display: 'flex',
         flexDirection: 'column',
-        gap: theme.space[3],
-        boxShadow: theme.shadow.card,
+        gap: 12,
+        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
       }}
     >
       {children}

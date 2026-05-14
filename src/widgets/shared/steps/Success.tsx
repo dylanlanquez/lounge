@@ -1,15 +1,12 @@
 import { Calendar, Check } from 'lucide-react';
-import { theme } from '../../../theme/index.ts';
 import type { WidgetState } from '../state.ts';
 import type { WidgetBrand } from '../Widget.tsx';
+import { QUIZ } from '../quizTokens.ts';
 
-// Confirmation screen — shown after a successful (mock or real)
-// submission. Plain, calm, single-column. Tells the patient
-// exactly what happens next.
-//
-// Phase 2 wires this to the real booking write + .ics download +
-// confirmation email send. For phase 1 it's a visual end-state
-// only.
+// Confirmation screen — shown after a successful submission.
+// Lives outside the chrome (replaces the whole shell when booking
+// completes). White card on the modal's #f4f4f4 surface, brand logo
+// on top, navy check tick, appointment summary lines.
 
 export function SuccessScreen({
   state,
@@ -31,28 +28,30 @@ export function SuccessScreen({
       ', ' +
       formatHourMinute(slot)
     : '—';
+  const accent = brand?.accent ?? QUIZ.ACCENT;
 
   return (
     <div
       style={{
-        minHeight: '100dvh',
-        background: theme.color.bg,
+        minHeight: '100%',
+        height: '100%',
+        background: QUIZ.BG,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: theme.space[5],
+        padding: 24,
       }}
     >
       <div
         style={{
-          maxWidth: 440,
+          maxWidth: 480,
           width: '100%',
-          background: theme.color.surface,
-          border: `1px solid ${theme.color.border}`,
-          borderRadius: theme.radius.card,
-          padding: theme.space[6],
-          boxShadow: theme.shadow.card,
+          background: QUIZ.SURFACE,
+          border: `2px solid ${QUIZ.BORDER}`,
+          borderRadius: QUIZ.R_CARD,
+          padding: 32,
           textAlign: 'center',
+          animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
         }}
       >
         {brand ? (
@@ -63,7 +62,7 @@ export function SuccessScreen({
               height: 28,
               width: 'auto',
               display: 'block',
-              margin: `0 auto ${theme.space[5]}px`,
+              margin: '0 auto 20px',
             }}
           />
         ) : null}
@@ -72,9 +71,9 @@ export function SuccessScreen({
             width: 56,
             height: 56,
             borderRadius: '50%',
-            background: brand?.accent ?? theme.color.accent,
-            color: theme.color.surface,
-            margin: `0 auto ${theme.space[4]}px`,
+            background: accent,
+            color: '#fff',
+            margin: '0 auto 16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -85,20 +84,20 @@ export function SuccessScreen({
         <h2
           style={{
             margin: 0,
-            fontSize: theme.type.size.xl,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
+            fontSize: 24,
+            fontWeight: 700,
+            color: QUIZ.INK,
+            letterSpacing: '-0.01em',
           }}
         >
           You're booked in
         </h2>
         <p
           style={{
-            margin: `${theme.space[3]}px 0 0`,
-            fontSize: theme.type.size.md,
-            color: theme.color.ink,
-            lineHeight: theme.type.leading.snug,
+            margin: '12px 0 0',
+            fontSize: 16,
+            color: QUIZ.INK,
+            lineHeight: 1.45,
           }}
         >
           <span dangerouslySetInnerHTML={{ __html: state.service?.label ?? '' }} /> at{' '}
@@ -106,12 +105,12 @@ export function SuccessScreen({
         </p>
         <p
           style={{
-            margin: `${theme.space[2]}px 0 0`,
-            fontSize: theme.type.size.md,
-            color: theme.color.inkMuted,
+            margin: '8px 0 0',
+            fontSize: 16,
+            color: QUIZ.MUTED_2,
             display: 'inline-flex',
             alignItems: 'center',
-            gap: theme.space[2],
+            gap: 8,
           }}
         >
           <Calendar size={14} aria-hidden />
@@ -120,12 +119,12 @@ export function SuccessScreen({
         {appointmentRef ? (
           <p
             style={{
-              margin: `${theme.space[4]}px 0 0`,
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              fontWeight: theme.type.weight.semibold,
+              margin: '20px 0 0',
+              fontSize: 11,
+              color: QUIZ.MUTED_2,
+              fontWeight: 600,
               textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
+              letterSpacing: '0.06em',
               fontVariantNumeric: 'tabular-nums',
             }}
           >
@@ -134,13 +133,16 @@ export function SuccessScreen({
         ) : null}
         <p
           style={{
-            margin: `${theme.space[5]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-            lineHeight: theme.type.leading.snug,
+            margin: '24px 0 0',
+            fontSize: 14,
+            color: QUIZ.MUTED_2,
+            lineHeight: 1.45,
           }}
         >
-          A confirmation has gone to <strong>{state.details.email || 'your inbox'}</strong>{' '}
+          A confirmation has gone to{' '}
+          <strong style={{ color: QUIZ.INK }}>
+            {state.details.email || 'your inbox'}
+          </strong>{' '}
           with a calendar invite. We'll send a reminder a day before.
         </p>
       </div>
@@ -152,6 +154,6 @@ function formatHourMinute(d: Date): string {
   const hour = d.getHours();
   const minute = d.getMinutes();
   const period = hour < 12 ? 'am' : 'pm';
-  const display = hour <= 12 ? hour : hour - 12;
+  const display = hour === 0 ? 12 : hour <= 12 ? hour : hour - 12;
   return `${display}:${String(minute).padStart(2, '0')} ${period}`;
 }

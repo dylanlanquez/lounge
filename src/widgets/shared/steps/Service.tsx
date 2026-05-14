@@ -1,115 +1,62 @@
-import { ChevronRight, Phone } from 'lucide-react';
-import { theme } from '../../../theme/index.ts';
+import { Phone } from 'lucide-react';
 import { formatPrice, type BookingStateApi } from '../state.ts';
 import { useWidgetBookingTypes } from '../data.ts';
+import { QUIZ } from '../quizTokens.ts';
+import {
+  OptionCard,
+  OptionDescription,
+  OptionGrid,
+  OptionMeta,
+  OptionTitle,
+} from '../OptionCard.tsx';
 
-// Step 2 — Service / Appointment Type.
+// Service step — every widget-visible booking type as an option
+// card. Reads live from public.lng_widget_booking_types.
 //
-// Lists every widget-visible booking type as a card. Reads live from
-// the public.lng_widget_booking_types view (admins control which
-// services show by toggling widget_visible per row in
-// lng_booking_type_config). Price + deposit render right-aligned;
-// description reads like the practice wrote it for the patient
-// (lives in widget_description on the same row).
-//
-// Tapping a card sets the service in state, which can shorten or
-// lengthen the rest of the flow — Dentist and Payment steps switch
-// on / off based on the chosen service's flags.
+// Selection updates state only; the footer Next button is the sole
+// navigation control. Matches the retainer-cart quiz flow.
 
-export function ServiceStep({ api }: { api: BookingStateApi }) {
+export function ServiceStep({
+  api,
+  accent = QUIZ.ACCENT,
+}: {
+  api: BookingStateApi;
+  accent?: string;
+}) {
   const { data, loading, error } = useWidgetBookingTypes();
 
-  if (loading) {
-    return <ServiceSkeleton />;
-  }
-  if (error) {
-    return <ServiceError message={error} />;
-  }
-  if (!data || data.length === 0) {
-    return <ServiceEmpty />;
-  }
+  if (loading) return <ServiceSkeleton />;
+  if (error) return <ServiceError message={error} />;
+  if (!data || data.length === 0) return <ServiceEmpty />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+    <OptionGrid>
       {data.map((bt) => {
         const selected = api.state.service?.id === bt.id;
         return (
-          <button
+          <OptionCard
             key={bt.id}
-            type="button"
-            onClick={() => {
-              // setService advances the step itself — calling
-              // goNext too would compound on stale activeSteps.
-              api.setService(bt);
-            }}
-            style={{
-              appearance: 'none',
-              textAlign: 'left',
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-              padding: `${theme.space[4]}px ${theme.space[5]}px`,
-              borderRadius: theme.radius.card,
-              background: theme.color.surface,
-              border: `1px solid ${selected ? theme.color.accent : theme.color.border}`,
-              boxShadow: selected ? theme.shadow.card : 'none',
-              display: 'grid',
-              gridTemplateColumns: '1fr auto',
-              alignItems: 'center',
-              gap: theme.space[4],
-              transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            }}
-            onMouseEnter={(e) => {
-              if (selected) return;
-              e.currentTarget.style.borderColor = theme.color.ink;
-            }}
-            onMouseLeave={(e) => {
-              if (selected) return;
-              e.currentTarget.style.borderColor = theme.color.border;
-            }}
+            selected={selected}
+            anySelected={!!api.state.service}
+            onSelect={() => api.setService(bt)}
+            accent={accent}
+            ariaLabel={bt.label.replace(/<[^>]*>/g, '')}
           >
-            <div style={{ minWidth: 0 }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.md,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  letterSpacing: theme.type.tracking.tight,
-                }}
-              >
-                {/* dangerouslySetInnerHTML so the data.ts entries can
-                    use HTML entities like &amp; without leaking. */}
-                <span dangerouslySetInnerHTML={{ __html: bt.label }} />
-              </p>
-              <p
-                style={{
-                  margin: `${theme.space[1]}px 0 0`,
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                  lineHeight: theme.type.leading.snug,
-                }}
-              >
-                <span dangerouslySetInnerHTML={{ __html: bt.description }} />
-              </p>
-              {bt.depositPence > 0 ? (
-                <p
-                  style={{
-                    margin: `${theme.space[2]}px 0 0`,
-                    fontSize: theme.type.size.xs,
-                    color: theme.color.accent,
-                    fontWeight: theme.type.weight.semibold,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  {formatPrice(bt.depositPence)} deposit secures the slot
-                </p>
-              ) : null}
-            </div>
-            <ChevronRight size={18} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
-          </button>
+            <OptionTitle>
+              <span dangerouslySetInnerHTML={{ __html: bt.label }} />
+            </OptionTitle>
+            <OptionDescription>
+              <span dangerouslySetInnerHTML={{ __html: bt.description }} />
+            </OptionDescription>
+            {bt.depositPence > 0 ? (
+              <OptionMeta>
+                {formatPrice(bt.depositPence)} deposit secures the slot
+              </OptionMeta>
+            ) : null}
+          </OptionCard>
         );
       })}
-    </div>
+    </OptionGrid>
   );
 }
 
@@ -119,21 +66,24 @@ export function ServiceStep({ api }: { api: BookingStateApi }) {
 
 function ServiceSkeleton() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+    <OptionGrid>
       {[0, 1, 2].map((i) => (
         <div
           key={i}
           aria-hidden
           style={{
-            height: 96,
-            background: theme.color.surface,
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.card,
+            width: '100%',
+            maxWidth: '27rem',
+            height: 130,
+            background: QUIZ.SURFACE,
+            border: `1px solid ${QUIZ.BORDER}`,
+            borderRadius: QUIZ.R_CARD,
             opacity: 0.6,
+            animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
           }}
         />
       ))}
-    </div>
+    </OptionGrid>
   );
 }
 
@@ -141,11 +91,13 @@ function ServiceEmpty() {
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px dashed ${theme.color.border}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[6],
+        background: QUIZ.SURFACE,
+        border: `1px dashed ${QUIZ.BORDER}`,
+        borderRadius: QUIZ.R_CARD,
+        padding: 32,
         textAlign: 'center',
+        maxWidth: 480,
+        margin: '0 auto',
       }}
     >
       <span
@@ -157,9 +109,9 @@ function ServiceEmpty() {
           width: 48,
           height: 48,
           borderRadius: '50%',
-          background: theme.color.bg,
-          color: theme.color.inkMuted,
-          marginBottom: theme.space[3],
+          background: QUIZ.BG,
+          color: QUIZ.MUTED_2,
+          marginBottom: 12,
         }}
       >
         <Phone size={20} aria-hidden />
@@ -167,20 +119,20 @@ function ServiceEmpty() {
       <p
         style={{
           margin: 0,
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          letterSpacing: theme.type.tracking.tight,
+          fontSize: 16,
+          fontWeight: 600,
+          color: QUIZ.INK,
+          letterSpacing: '-0.01em',
         }}
       >
         Online booking is paused right now
       </p>
       <p
         style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          lineHeight: theme.type.leading.snug,
+          margin: '8px 0 0',
+          fontSize: 14,
+          color: QUIZ.MUTED_2,
+          lineHeight: 1.5,
         }}
       >
         Give us a call and we'll find you a time. Sorry for the hop.
@@ -193,27 +145,29 @@ function ServiceError({ message }: { message: string }) {
   return (
     <div
       style={{
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.alert}`,
-        borderRadius: theme.radius.card,
-        padding: theme.space[5],
+        background: QUIZ.SURFACE,
+        border: `1px solid ${QUIZ.ALERT}`,
+        borderRadius: QUIZ.R_CARD,
+        padding: 20,
+        maxWidth: 480,
+        margin: '0 auto',
       }}
     >
       <p
         style={{
           margin: 0,
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.alert,
+          fontSize: 16,
+          fontWeight: 600,
+          color: QUIZ.ALERT,
         }}
       >
         Something went wrong loading our services
       </p>
       <p
         style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
+          margin: '8px 0 0',
+          fontSize: 14,
+          color: QUIZ.MUTED_2,
         }}
       >
         Refresh the page, or call us if it sticks. ({message})
