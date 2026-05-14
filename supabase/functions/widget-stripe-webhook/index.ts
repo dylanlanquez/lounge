@@ -41,10 +41,17 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 // Stripe scopes signing secrets per-endpoint, so the widget webhook
-// gets its own. Falls back to the terminal STRIPE_WEBHOOK_SECRET
-// when only one is set (single-endpoint deployments).
-const WIDGET_WEBHOOK_SECRET =
+// gets its own. The widget supports a live/test mode toggle stored
+// in lng_settings, so each mode has its own webhook endpoint with
+// its own signing secret — we try both signatures and accept
+// whichever verifies, which means a single endpoint URL handles
+// events from both Stripe environments transparently.
+const WIDGET_WEBHOOK_SECRET_LEGACY =
   Deno.env.get('STRIPE_WIDGET_WEBHOOK_SECRET') ?? Deno.env.get('STRIPE_WEBHOOK_SECRET') ?? '';
+const WIDGET_WEBHOOK_SECRET_LIVE =
+  Deno.env.get('STRIPE_WIDGET_WEBHOOK_SECRET_LIVE') ?? WIDGET_WEBHOOK_SECRET_LEGACY;
+const WIDGET_WEBHOOK_SECRET_TEST =
+  Deno.env.get('STRIPE_WIDGET_WEBHOOK_SECRET_TEST') ?? '';
 
 interface StripeEvent {
   id: string;
@@ -67,12 +74,23 @@ Deno.serve(async (req) => {
   const rawBody = await req.text();
   const sigHeader = req.headers.get('stripe-signature') ?? '';
 
-  if (!WIDGET_WEBHOOK_SECRET) {
+  if (!WIDGET_WEBHOOK_SECRET_LIVE && !WIDGET_WEBHOOK_SECRET_TEST) {
     await logFailure('stripe_webhook_secret_missing', {}, 'critical');
     return new Response('Server misconfigured', { status: 500 });
   }
 
-  const verified = await verifyStripeSignature(rawBody, sigHeader, WIDGET_WEBHOOK_SECRET);
+  // Try LIVE first (the most common path), then TEST. The same
+  // endpoint accepts events from both Stripe environments — we
+  // don't gate on lng_settings.stripe.mode here because Stripe
+  // can replay a stale test event after the admin flips back to
+  // live, and we want those to still ack so Stripe stops retrying.
+  let verified = false;
+  if (WIDGET_WEBHOOK_SECRET_LIVE) {
+    verified = await verifyStripeSignature(rawBody, sigHeader, WIDGET_WEBHOOK_SECRET_LIVE);
+  }
+  if (!verified && WIDGET_WEBHOOK_SECRET_TEST) {
+    verified = await verifyStripeSignature(rawBody, sigHeader, WIDGET_WEBHOOK_SECRET_TEST);
+  }
   if (!verified) {
     await logFailure('stripe_signature_invalid', { sigHeader }, 'critical');
     return new Response('Bad signature', { status: 401 });

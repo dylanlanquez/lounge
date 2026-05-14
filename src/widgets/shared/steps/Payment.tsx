@@ -14,6 +14,7 @@ import { formatPrice } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
 import { supabase } from '../../../lib/supabase.ts';
+import { useClinicSettings } from '../../../lib/queries/clinicSettings.ts';
 
 // Payment step.
 //
@@ -28,9 +29,30 @@ import { supabase } from '../../../lib/supabase.ts';
 // Elements context. Ready + paying signals flow up to the parent
 // via callback props so the footer can manage its disabled state.
 
-const stripePromise: Promise<Stripe | null> | null = env.STRIPE_PUBLISHABLE_KEY
-  ? loadStripe(env.STRIPE_PUBLISHABLE_KEY)
-  : null;
+// Stripe publishable keys are picked at runtime based on the
+// `stripe.mode` setting from lng_settings (live | test). loadStripe
+// returns a singleton per key string, so calling it multiple times
+// with the same key reuses the same Stripe instance — meaning
+// flipping the toggle without a redeploy works first-render.
+const stripeSingletons = new Map<string, Promise<Stripe | null>>();
+function getStripeSingleton(publishableKey: string): Promise<Stripe | null> {
+  let p = stripeSingletons.get(publishableKey);
+  if (!p) {
+    p = loadStripe(publishableKey);
+    stripeSingletons.set(publishableKey, p);
+  }
+  return p;
+}
+
+function resolvePublishableKey(mode: 'live' | 'test'): string | null {
+  if (mode === 'test') {
+    return env.STRIPE_PUBLISHABLE_KEY_TEST ?? null;
+  }
+  // 'live' — prefer the explicit _LIVE var, fall back to the legacy
+  // un-suffixed STRIPE_PUBLISHABLE_KEY so deployments configured
+  // before the toggle landed keep working without a config change.
+  return env.STRIPE_PUBLISHABLE_KEY_LIVE ?? env.STRIPE_PUBLISHABLE_KEY ?? null;
+}
 
 export interface PaymentApi {
   pay: () => Promise<void>;
@@ -53,6 +75,14 @@ export const PaymentStep = forwardRef<
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Stripe mode toggle. Defaults to 'live' while clinic settings
+  // load so the very first paint doesn't accidentally show a Stripe
+  // form pointed at the wrong account on a stale cache.
+  const clinic = useClinicSettings();
+  const stripeMode: 'live' | 'test' = clinic.data.stripeMode === 'test' ? 'test' : 'live';
+  const publishableKey = resolvePublishableKey(stripeMode);
+  const stripePromise = publishableKey ? getStripeSingleton(publishableKey) : null;
 
   // Fetch clientSecret on mount + whenever the inputs that affect
   // the deposit change. Server idempotency key (email + slot +

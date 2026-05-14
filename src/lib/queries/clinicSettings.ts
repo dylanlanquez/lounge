@@ -51,6 +51,11 @@ export interface ClinicSettings {
   bookingUrl: string;
   mapUrl: string;
   openingHours: OpeningHoursWeek;
+  // Stripe mode toggle — 'live' uses the *_LIVE env keys, 'test'
+  // uses the *_TEST keys. Picked at runtime by widget bundle +
+  // edge functions; allows an admin to flip between sandbox and
+  // real charges without a redeploy.
+  stripeMode: 'live' | 'test';
   // Legal
   companyNumber: string;
   vatNumber: string;
@@ -81,6 +86,7 @@ const DEFAULTS: ClinicSettings = {
   bookingUrl: '',
   mapUrl: '',
   openingHours: DEFAULT_OPENING,
+  stripeMode: 'live',
   companyNumber: '',
   vatNumber: '',
   registeredAddress: '',
@@ -102,6 +108,7 @@ const KEY_MAP = {
   'clinic.booking_url': 'bookingUrl',
   'clinic.map_url': 'mapUrl',
   'clinic.opening_hours': 'openingHours',
+  'stripe.mode': 'stripeMode',
   'legal.company_number': 'companyNumber',
   'legal.vat_number': 'vatNumber',
   'legal.registered_address': 'registeredAddress',

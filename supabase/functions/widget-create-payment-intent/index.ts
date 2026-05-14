@@ -36,8 +36,24 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+// Legacy un-suffixed key used as the live-mode fallback so
+// deployments configured before the stripe.mode toggle landed
+// keep working without a secrets rename.
+const STRIPE_SECRET_KEY_LEGACY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+const STRIPE_SECRET_KEY_LIVE = Deno.env.get('STRIPE_SECRET_KEY_LIVE') ?? STRIPE_SECRET_KEY_LEGACY;
+const STRIPE_SECRET_KEY_TEST = Deno.env.get('STRIPE_SECRET_KEY_TEST') ?? '';
 const STRIPE_BASE = 'https://api.stripe.com/v1';
+
+async function resolveStripeSecret(supabase: SupabaseClient): Promise<string> {
+  const { data } = await supabase
+    .from('lng_settings')
+    .select('value')
+    .eq('key', 'stripe.mode')
+    .is('location_id', null)
+    .maybeSingle();
+  const mode = (data?.value as string | undefined) === 'test' ? 'test' : 'live';
+  return mode === 'test' ? STRIPE_SECRET_KEY_TEST : STRIPE_SECRET_KEY_LIVE;
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -59,11 +75,6 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' });
 
-  if (!STRIPE_SECRET_KEY) {
-    await logFailure('stripe_secret_key_missing', {});
-    return jsonResponse(500, { error: 'stripe_not_configured' });
-  }
-
   let body: Body;
   try {
     body = (await req.json()) as Body;
@@ -74,6 +85,12 @@ Deno.serve(async (req) => {
   if (v) return jsonResponse(400, { error: 'invalid', detail: v });
 
   const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  const stripeSecret = await resolveStripeSecret(supabase);
+  if (!stripeSecret) {
+    await logFailure('stripe_secret_key_missing', {});
+    return jsonResponse(500, { error: 'stripe_not_configured' });
+  }
 
   const resolvedLocationId = await resolveLocationId(supabase, body.locationId);
   if (!resolvedLocationId) {
@@ -136,6 +153,7 @@ Deno.serve(async (req) => {
   // PaymentElement surfaces them inside the card tab on supported
   // devices), so we don't lose the in-page wallet flows.
   const piRes = await stripeFetch(
+    stripeSecret,
     'POST',
     '/payment_intents',
     {
@@ -225,13 +243,14 @@ async function resolveLocationId(
 }
 
 async function stripeFetch(
+  stripeSecret: string,
   method: 'GET' | 'POST',
   path: string,
   body?: Record<string, string>,
   idempotencyKey?: string,
 ): Promise<{ ok: boolean; body: unknown }> {
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+    Authorization: `Bearer ${stripeSecret}`,
     'Stripe-Version': '2024-10-28.acacia',
   };
   if (body) headers['Content-Type'] = 'application/x-www-form-urlencoded';

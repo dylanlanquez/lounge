@@ -1059,9 +1059,6 @@ function FooterPriceBlock({
               alignItems: 'center',
               justifyContent: 'center',
               color: accent,
-              // Faded so the icon reads as a soft cue beside the
-              // £25.00, not a competing focal point.
-              opacity: 0.45,
             }}
           >
             {icon}
