@@ -688,6 +688,21 @@ export function formatPrice(pence: number): string {
   return GBP_FORMATTER.format(pence / 100);
 }
 
+const GBP_FORMATTER_SHORT = new Intl.NumberFormat('en-GB', {
+  style: 'currency',
+  currency: 'GBP',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+/** "£399" for whole pounds, "£399.50" otherwise. Thousand separators
+ *  still apply. Used on the customer-facing pay buttons where
+ *  trailing ".00" felt like visual noise on a primary CTA. */
+export function formatPriceShort(pence: number): string {
+  if (pence === 0) return 'Free';
+  return GBP_FORMATTER_SHORT.format(pence / 100);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pricing — pure resolution from state + catalogue row + upgrades
 // ─────────────────────────────────────────────────────────────────────────────

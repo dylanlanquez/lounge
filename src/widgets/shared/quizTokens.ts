@@ -60,12 +60,14 @@ export const QUIZ = {
   R_PILL: 999,
 
   // ── Typography ─────────────────────────────────────────────────
-  // Inherits the storefront's font stack. retainer-cart.liquid sets
-  // no font-family on .modal-content-vt so the modal naturally
-  // adopts venneir.com's brand typography; our embed does the same
-  // by inheriting from the host page. If the embed ever lands on a
-  // host with hostile fonts, override here.
-  FONT_STACK: 'inherit',
+  // Hard-coded Inter stack — venneir.com loads Inter from its
+  // Shopify theme CDN, so on that host the widget already rendered
+  // in Inter. Other hosts (denture-services.co.uk, future white-
+  // labels) ship theme fonts that don't carry the same polish, so
+  // embedHost.ts injects an Inter stylesheet from Google Fonts on
+  // every host and we anchor on Inter here. System fonts trail the
+  // stack as graceful fallbacks while the webfont loads.
+  FONT_STACK: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
 
   // ── Modal chrome ───────────────────────────────────────────────
   // The modal frame these live inside is built by embedHost.ts; the

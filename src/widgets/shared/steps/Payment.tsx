@@ -10,7 +10,7 @@ import { CalendarClock, Mail, MapPin } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import type { BookingStateApi } from '../state.ts';
-import { formatPrice } from '../state.ts';
+import { formatPriceShort } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
 import { supabase } from '../../../lib/supabase.ts';
@@ -624,7 +624,7 @@ function PayHeader({ fullAmount }: { fullAmount: number }) {
           letterSpacing: '-0.01em',
         }}
       >
-        Pay {formatPrice(fullAmount)} to book
+        Pay {formatPriceShort(fullAmount)} to book
       </h2>
       <p
         style={{

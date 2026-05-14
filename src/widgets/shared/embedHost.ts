@@ -25,6 +25,13 @@ const MODAL_ID = 'vlounge-embed-modal';
 const MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 const SPIN_STYLE_ID = 'vlounge-embed-keyframes';
 const RESET_STYLE_ID = 'vlounge-embed-reset';
+const FONT_STYLE_ID = 'vlounge-embed-font';
+// Inter — same family the venneir.com Shopify theme loads, so the
+// widget renders identically across embeds (and on hosts whose own
+// theme fonts read poorly inside the modal). Pulled from Google
+// Fonts at 400/500/600/700; preconnect cuts the TLS handshake.
+const FONT_STYLESHEET_URL =
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
 
 export interface ModalOpenOptions {
   /** Accessible name announced to screen readers. */
@@ -55,6 +62,7 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
 
   ensureKeyframes();
   ensureResetStyles();
+  ensureFontStylesheet();
 
   const reducedMotion = window.matchMedia?.(MOTION_QUERY).matches ?? false;
   const root = document.createElement('div');
@@ -332,6 +340,29 @@ function ensureKeyframes() {
   document.head.appendChild(style);
 }
 
+// Lazily pull Inter onto the host page. The widget renders with
+// `font-family: Inter, …system fallbacks` so the modal stays
+// legible while the webfont is in flight, then upgrades to Inter
+// once Google Fonts resolves. preconnect shaves the TLS handshake.
+function ensureFontStylesheet() {
+  if (document.getElementById(FONT_STYLE_ID)) return;
+  const pre1 = document.createElement('link');
+  pre1.rel = 'preconnect';
+  pre1.href = 'https://fonts.googleapis.com';
+  pre1.crossOrigin = '';
+  document.head.appendChild(pre1);
+  const pre2 = document.createElement('link');
+  pre2.rel = 'preconnect';
+  pre2.href = 'https://fonts.gstatic.com';
+  pre2.crossOrigin = '';
+  document.head.appendChild(pre2);
+  const sheet = document.createElement('link');
+  sheet.id = FONT_STYLE_ID;
+  sheet.rel = 'stylesheet';
+  sheet.href = FONT_STYLESHEET_URL;
+  document.head.appendChild(sheet);
+}
+
 // Defensive CSS reset scoped to the modal. Stops Shopify themes from
 // reaching into the widget via global selectors like `button { ... }`
 // or `body { font-family: ... }`. ID-prefixed so each rule has
@@ -349,6 +380,9 @@ function ensureResetStyles() {
   style.textContent = `
     #${MODAL_ID} {
       color: #333;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
     #${MODAL_ID} *,
     #${MODAL_ID} *::before,

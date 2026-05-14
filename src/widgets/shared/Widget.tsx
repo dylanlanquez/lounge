@@ -4,12 +4,13 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, Lock } from 'lucide-react';
+import { ArrowLeft, CalendarClock, Lock } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
   type ResolvedPrefill,
   formatPrice,
+  formatPriceShort,
   isNextEnabled,
   stepTitle,
   useBookingState,
@@ -812,6 +813,22 @@ function Footer({
   const isDetailsStep = api.stepKey === 'details';
   const breakdown = api.priceBreakdown;
   const fullAmount = breakdown.subtotalPence;
+
+  // "Pay on the day" needs a confirmation beat — clicking it
+  // shouldn't book the appointment outright; the customer needs a
+  // moment of "right, this is going to commit me". When confirmOTD
+  // is true the two-CTA row collapses into one full-width "Book
+  // appointment" button, with a quiet "Change" link to roll back
+  // to the two-button view. Local state (not api.state) because the
+  // intent is a transient UI mode, not a piece of the booking the
+  // server cares about until the customer hits Book.
+  const [confirmOTD, setConfirmOTD] = useState(false);
+  // Reset the confirmation flag any time the customer leaves the
+  // details step (Back arrow, etc.) so they land in the
+  // two-button view next time they reach the summary.
+  useEffect(() => {
+    if (!isDetailsStep) setConfirmOTD(false);
+  }, [isDetailsStep]);
   // Footer total line: hidden on Details (BookingReview shows the
   // full breakdown inline) and Payment (PayHeader spells it out
   // and the Pay button carries the amount). Everywhere else we
@@ -830,7 +847,7 @@ function Footer({
   const nextLabel = (() => {
     if (isPaymentStep) {
       if (paymentPaying || submitting) return 'Processing…';
-      return `Pay ${formatPrice(fullAmount)}`;
+      return `Pay ${formatPriceShort(fullAmount)}`;
     }
     if (submitting) return 'Booking…';
     if (isDetailsStep) return copy.summaryCtaBook;
@@ -867,36 +884,92 @@ function Footer({
         <BackButton disabled={!api.canGoBack} onClick={onBack} />
 
         {summaryPaid ? (
-          // Two-CTA summary footer. Pay-now is the primary path so
-          // it lives on the right (the same slot Next/Pay used to
-          // occupy); Pay-on-the-day sits before it as a secondary
-          // pill. Both share the disabled state — neither lights
-          // up until the form is valid.
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              minWidth: 0,
-            }}
-          >
-            <PayOnTheDayButton
-              disabled={nextDisabled}
-              onClick={onPayOnTheDay}
-              accent={accent}
+          confirmOTD ? (
+            // Confirmation beat — Pay-on-the-day was tapped once;
+            // surfacing the explicit "Book appointment" makes the
+            // commit step obvious (no surprise bookings from a
+            // mistapped CTA). "Change" reopens the two-button row.
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'stretch',
+                gap: 6,
+                minWidth: 0,
+              }}
             >
-              {submitting ? 'Booking…' : 'Pay on the day'}
-            </PayOnTheDayButton>
-            <NextButton
-              disabled={nextDisabled}
-              onClick={onPayNow}
-              accent={accent}
-              shimmer={false}
+              <NextButton
+                disabled={nextDisabled}
+                onClick={onPayOnTheDay}
+                accent={accent}
+                shimmer={false}
+              >
+                {submitting ? 'Booking…' : 'Book appointment'}
+              </NextButton>
+              <button
+                type="button"
+                onClick={() => setConfirmOTD(false)}
+                disabled={submitting}
+                style={{
+                  appearance: 'none',
+                  border: 'none',
+                  background: 'transparent',
+                  fontFamily: 'inherit',
+                  fontSize: 13,
+                  color: QUIZ.MUTED_2,
+                  cursor: submitting ? 'not-allowed' : 'pointer',
+                  textAlign: 'center',
+                  padding: '4px 8px',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 3,
+                }}
+              >
+                Paying on the day · Change
+              </button>
+            </div>
+          ) : (
+            // Two-CTA summary footer. Pay-now is the primary path so
+            // it lives on the right (the same slot Next/Pay used to
+            // occupy); Pay-on-the-day sits before it as a secondary
+            // pill. Both share the disabled state — neither lights
+            // up until the form is valid.
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                minWidth: 0,
+              }}
             >
-              {`Pay ${formatPrice(fullAmount)} now`}
-            </NextButton>
-          </div>
+              <PayOnTheDayButton
+                disabled={nextDisabled}
+                onClick={() => setConfirmOTD(true)}
+                accent={accent}
+              >
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <CalendarClock size={14} aria-hidden />
+                  Pay on the day
+                </span>
+              </PayOnTheDayButton>
+              <NextButton
+                disabled={nextDisabled}
+                onClick={onPayNow}
+                accent={accent}
+                shimmer={false}
+              >
+                {`Pay ${formatPriceShort(fullAmount)} now`}
+              </NextButton>
+            </div>
+          )
         ) : summaryFree ? (
           <NextButton
             disabled={nextDisabled}
