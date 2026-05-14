@@ -543,7 +543,7 @@ function Bucket({
                 fontVariantNumeric: 'tabular-nums',
                 height: 44,
                 padding: '0 12px',
-                borderRadius: 10,
+                borderRadius: 999,
                 border: `1px solid ${selected ? ACCENT : '#dde3e7'}`,
                 background: selected ? ACCENT : SURFACE,
                 color: selected ? '#FFFFFF' : INK,
