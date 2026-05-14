@@ -726,6 +726,7 @@ function Footer({
         <FooterPrice
           depositPence={depositPence}
           onTheDayPence={onTheDayPence}
+          accent={accent}
         />
       ) : null}
 
@@ -847,9 +848,11 @@ function Footer({
 function FooterPrice({
   depositPence,
   onTheDayPence,
+  accent,
 }: {
   depositPence: number;
   onTheDayPence: number;
+  accent: string;
 }) {
   const showDeposit = depositPence > 0;
   const showOnTheDay = onTheDayPence > 0;
@@ -874,6 +877,7 @@ function FooterPrice({
           valuePence={depositPence}
           muted={false}
           icon={<DepositGlyph size={20} />}
+          accent={accent}
         />
       ) : null}
       {showDeposit && showOnTheDay ? (
@@ -889,7 +893,12 @@ function FooterPrice({
         />
       ) : null}
       {showOnTheDay ? (
-        <FooterPriceBlock label="On the day" valuePence={onTheDayPence} muted />
+        <FooterPriceBlock
+          label="On the day"
+          valuePence={onTheDayPence}
+          muted
+          accent={accent}
+        />
       ) : null}
     </div>
   );
@@ -926,12 +935,18 @@ function FooterPriceBlock({
   valuePence,
   muted,
   icon,
+  accent,
 }: {
   label: string;
   valuePence: number;
   muted: boolean;
   icon?: React.ReactNode;
+  accent: string;
 }) {
+  // Label + amount both tint with the brand accent so the Today
+  // block reads as one cohesive primary unit. Muted ("On the day")
+  // block dims uniformly via opacity 0.55 — same colour family,
+  // softer presence so the eye lands on Today first.
   return (
     <div
       style={{
@@ -940,13 +955,14 @@ function FooterPriceBlock({
         alignItems: 'center',
         lineHeight: 1.1,
         opacity: muted ? 0.55 : 1,
+        color: accent,
       }}
     >
       <span
         style={{
           fontSize: 10,
           fontWeight: 600,
-          color: QUIZ.MUTED_2,
+          color: accent,
           textTransform: 'uppercase',
           letterSpacing: '0.1em',
           whiteSpace: 'nowrap',
@@ -965,7 +981,7 @@ function FooterPriceBlock({
           // hero moment, the balance is supporting context.
           fontSize: muted ? 18 : 22,
           fontWeight: muted ? 500 : 700,
-          color: QUIZ.INK,
+          color: accent,
           fontVariantNumeric: 'tabular-nums',
           // Slight positive tracking on currency so "£25.00" breathes
           // — tabular-nums sets each digit on a fixed advance but
@@ -980,7 +996,7 @@ function FooterPriceBlock({
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: QUIZ.ACCENT,
+              color: accent,
             }}
           >
             {icon}
