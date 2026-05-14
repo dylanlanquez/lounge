@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  CircleDashed,
   RotateCcw,
   Search,
   X,
@@ -14,6 +13,7 @@ import {
 import {
   Avatar,
   DateRangePicker,
+  DepositGlyph,
   EmptyState,
   Skeleton,
   StatusPill,
@@ -698,11 +698,14 @@ function PaymentLine({ state }: { state: LedgerPaymentState }) {
         };
       case 'deposit_paid':
         return {
-          // CircleDashed reads as "partial / not all the way" — the
-          // visual cue lines up with what a deposit actually is: money
-          // in, but not the full bill yet. Distinct from BadgeCheck
-          // which lands when the cart is settled in full.
-          icon: <CircleDashed size={12} strokeWidth={2.5} aria-hidden />,
+          // Shared DepositGlyph mark — same icon used by the
+          // AppointmentDetail hero pill + Deposit card + the
+          // timeline's "Deposit captured" event, so the deposit
+          // story reads as one consistent surface across the app.
+          // Dashed arc around a tick = "partial / secured to here",
+          // distinct from BadgeCheck's solid mark used by Paid in
+          // full.
+          icon: <DepositGlyph size={12} />,
           label: 'Deposit paid',
           // Sage green — clearly green-family (positive money fact)
           // but visually distinct from the dark forest accent used by

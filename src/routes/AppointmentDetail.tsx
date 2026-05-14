@@ -36,6 +36,7 @@ import {
   Breadcrumb,
   Button,
   Card,
+  DepositGlyph,
   DropdownSelect,
   EmptyState,
   RescheduleSheet,
@@ -767,7 +768,11 @@ function Hero({
     { tone, label: humaniseAppointmentStatus(appt.status) },
   ];
   if (appt.deposit_status === 'paid' && (appt.deposit_pence ?? 0) > 0) {
-    pills.push({ tone: 'deposit_paid', label: 'Deposit paid' });
+    pills.push({
+      tone: 'deposit_paid',
+      label: 'Deposit paid',
+      icon: <DepositGlyph size={12} />,
+    });
   }
 
   return (
@@ -1807,13 +1812,14 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   const paid = appt.deposit_status === 'paid';
   const failed = appt.deposit_status === 'failed';
 
-  // Paid: a soft accent-tinted card with the BadgeCheck mark and a
-  // "Deposit paid" headline. Crucially NOT "Paid in full" — that
-  // implies the whole bill is settled, which a booking deposit never
-  // guarantees. The wording + lighter background tells the operator
-  // "money in against this booking, but the cart at the visit is the
-  // source of truth for what's owed". Pairs with the "Deposit paid"
-  // pill in the hero.
+  // Paid: a soft accent-tinted card with the DepositGlyph mark
+  // and a "Deposit paid" headline. Crucially NOT "Paid in full" —
+  // that implies the whole bill is settled, which a booking deposit
+  // never guarantees. The dashed-arc glyph (vs. the solid BadgeCheck
+  // used by "Paid in full" on VisitDetail) reads as "partial / not
+  // all the way" so a glance differentiates deposit from full
+  // settlement. Pairs with the "Deposit paid" pill in the hero,
+  // which uses the same glyph at a smaller size.
   if (paid) {
     return (
       <Card
@@ -1824,7 +1830,7 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
         }}
       >
         <DetailSectionHeader
-          icon={<BadgeCheck size={16} aria-hidden />}
+          icon={<DepositGlyph size={16} />}
           title="Deposit paid"
         />
         <div

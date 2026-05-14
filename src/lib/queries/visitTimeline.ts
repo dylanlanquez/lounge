@@ -61,7 +61,7 @@ export interface TimelineEvent {
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
   actor?: string;
-  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box' | 'mail';
+  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box' | 'mail' | 'deposit';
   // Optional tone override. When set, the icon dot uses this tone
   // directly instead of the type-derived fallback. Lets producers
   // (e.g. AppointmentTimeline) opt out of the visit-centric heuristics
@@ -704,7 +704,12 @@ async function fetchAppointmentEvents(
           PENCE(appt.deposit_pence),
           appt.deposit_provider ? `via ${HUMAN_PROVIDER(appt.deposit_provider)}` : null
         ),
-        hint: 'card',
+        // `deposit` hint → renders the shared DepositGlyph mark
+        // used by the rest of the deposit-paid surfaces (hero pill,
+        // Deposit card, Ledger row). The earlier `card`
+        // (CreditCard) hint was generic — this one ties the timeline
+        // event back to the deposit surface visually.
+        hint: 'deposit',
       });
     }
   }

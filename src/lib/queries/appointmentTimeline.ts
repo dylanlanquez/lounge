@@ -681,7 +681,12 @@ function mapEvent(
           provider ? `via ${humaniseProvider(provider)}` : null,
           externalId ? `ref ${externalId}` : null,
         ),
-        hint: 'card',
+        // Dedicated `deposit` hint → renders the shared DepositGlyph
+        // dashed-arc-and-tick mark, matching the AppointmentDetail
+        // hero pill / Deposit card / Ledger row. Previously this used
+        // the generic `card` (CreditCard) hint which didn't tie back
+        // to the deposit-specific surface.
+        hint: 'deposit',
         tone: 'accent',
       };
     }

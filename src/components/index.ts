@@ -45,6 +45,9 @@ export type { EmptyStateProps } from './EmptyState/EmptyState.tsx';
 export { Avatar } from './Avatar/Avatar.tsx';
 export type { AvatarProps, AvatarSize } from './Avatar/Avatar.tsx';
 
+export { DepositGlyph } from './DepositGlyph/DepositGlyph.tsx';
+export type { DepositGlyphProps } from './DepositGlyph/DepositGlyph.tsx';
+
 export { Breadcrumb } from './Breadcrumb/Breadcrumb.tsx';
 export type { BreadcrumbProps, BreadcrumbItem } from './Breadcrumb/Breadcrumb.tsx';
 

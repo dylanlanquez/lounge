@@ -13,6 +13,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
+import { DepositGlyph } from '../DepositGlyph/DepositGlyph.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
@@ -574,6 +575,12 @@ function iconFor(event: TimelineEvent): ReactNode {
       return <FileSignature size={size} />;
     case 'card':
       return <CreditCard size={size} />;
+    case 'deposit':
+      // Shared DepositGlyph mark — same icon used by the
+      // AppointmentDetail hero pill + Deposit card and the Ledger
+      // PaymentLine, so the "deposit paid" story reads as one
+      // surface across the app.
+      return <DepositGlyph size={size} />;
     case 'box':
       return <Box size={size} />;
     case 'mail':
