@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarCheck, Loader2, Lock, Wallet } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, Loader2, Lock } from 'lucide-react';
 import type { PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -872,7 +872,7 @@ function FooterPrice({
           label="Today"
           valuePence={depositPence}
           muted={false}
-          icon={<Wallet size={18} strokeWidth={2} aria-hidden />}
+          icon={<DepositGlyph size={20} />}
         />
       ) : null}
       {showDeposit && showOnTheDay ? (
@@ -891,6 +891,32 @@ function FooterPrice({
         <FooterPriceBlock label="On the day" valuePence={onTheDayPence} muted />
       ) : null}
     </div>
+  );
+}
+
+function DepositGlyph({ size = 20 }: { size?: number }) {
+  // Custom 8-spoke "sunburst" mark Dylan supplied for the deposit
+  // indicator on the footer. Inlined here rather than imported as
+  // a file so the widget bundle stays single-asset (no extra HTTP
+  // request) and the icon picks up `currentColor` from the parent
+  // FooterPriceBlock without theming plumbing.
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 20.21 20.21"
+      fill="currentColor"
+      aria-hidden
+      style={{ display: 'block', flexShrink: 0 }}
+    >
+      <path d="M11.23,4.1c0,.65-.51,1.13-1.1,1.14s-1.14-.48-1.14-1.12V1.12c0-.63.51-1.11,1.1-1.12s1.14.48,1.14,1.12v2.98Z" />
+      <path d="M4.15,11.22H1.12C.49,11.23.01,10.72,0,10.13s.48-1.14,1.12-1.14h3c.63,0,1.11.5,1.12,1.1s-.44,1.14-1.09,1.14Z" />
+      <path d="M19.12,11.22h-3.02c-.63,0-1.11-.51-1.12-1.1s.48-1.14,1.12-1.14h3c.63,0,1.11.5,1.12,1.1s-.44,1.14-1.09,1.14Z" />
+      <path d="M11.23,19.07c0,.65-.51,1.13-1.1,1.14s-1.14-.48-1.14-1.12v-3c0-.63.51-1.11,1.1-1.12s1.14.48,1.14,1.12v2.98Z" />
+      <path d="M4.57,17.23c-.47.47-1.16.47-1.6.04s-.46-1.15,0-1.61l2.16-2.14c.43-.43,1.15-.35,1.54.06s.44,1.11.01,1.55l-2.11,2.12Z" />
+      <path d="M17.22,15.64c.47.46.47,1.16.04,1.6s-1.15.46-1.61,0l-2.14-2.16c-.42-.42-.36-1.12.03-1.52s1.11-.49,1.54-.06l2.14,2.13Z" />
+      <path d="M6.69,5.12c.44.44.37,1.13-.02,1.53s-1.11.49-1.54.06l-2.16-2.14c-.45-.45-.46-1.15-.03-1.59s1.15-.46,1.61,0l2.13,2.14Z" />
+    </svg>
   );
 }
 
