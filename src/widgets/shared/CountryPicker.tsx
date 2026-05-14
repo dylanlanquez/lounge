@@ -81,10 +81,16 @@ export function CountryPicker({
     };
   }, [open]);
 
+  // Transparent trigger background so the country-code half of the
+  // phone composite reads as one continuous white field with the
+  // number input on the right. The earlier `theme.color.bg` was a
+  // beige cream tint from the staff-app theme that visibly split
+  // the composite into two-tone halves once the outer border was
+  // removed from the details form.
   const triggerStyle: CSSProperties = {
     appearance: 'none',
     border: 'none',
-    background: theme.color.bg,
+    background: 'transparent',
     height: '100%',
     padding: `0 ${theme.space[3]}px`,
     display: 'flex',
@@ -94,7 +100,7 @@ export function CountryPicker({
     fontSize: theme.type.size.sm,
     color: theme.color.ink,
     cursor: 'pointer',
-    borderRight: `1px solid ${theme.color.border}`,
+    borderRight: `1px solid rgba(0, 0, 0, 0.08)`,
     minWidth: 96,
     boxSizing: 'border-box',
   };
