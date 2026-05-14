@@ -67,6 +67,11 @@ interface RawPatientEventRow {
 interface RawAppointmentRow {
   id: string;
   source: 'calendly' | 'native' | 'manual';
+  /** Storefront the booking originated from for native rows
+   *  ('venneir' | 'denture'). Drives the "via venneir.com" / "via
+   *  denture-services.co.uk" detail line under the Booking-placed
+   *  timeline event. Null on Calendly / manual rows. */
+  brand_id: string | null;
   start_at: string;
   end_at: string;
   created_at: string;
@@ -128,7 +133,7 @@ export function useAppointmentTimeline(
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, source, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id',
+            'id, source, brand_id, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -350,7 +355,7 @@ export function useAppointmentTimeline(
             type: 'appointment_created',
             timestamp: appt.created_at,
             title: 'Booking placed',
-            detail: humaniseSource(appt.source),
+            detail: humaniseSource(appt.source, appt.brand_id),
             facts: bookingFacts(appt, walkIn),
             hint: 'calendar',
             tone: 'accent',
@@ -436,12 +441,17 @@ function mapEvent(
 
   switch (row.event_type) {
     case 'appointment_booked': {
-      const source = readString(row.payload, 'source') ?? appt.source;
+      // payload.source is the legacy slug from widget-create-
+      // appointment ('widget'); appt.source is the canonical
+      // 'native'/'manual'/'calendly' on the row. Prefer the row's
+      // value so the brand-aware "via venneir.com" mapping fires.
+      const payloadSource = readString(row.payload, 'source');
+      const effectiveSource = payloadSource === 'widget' ? appt.source : (payloadSource ?? appt.source);
       return {
         ...base,
         type: 'appointment_created',
         title: 'Booking placed',
-        detail: humaniseSource(source),
+        detail: humaniseSource(effectiveSource, appt.brand_id),
         facts: bookingFacts(appt, walkIn),
         hint: 'calendar',
         tone: 'accent',
@@ -790,10 +800,18 @@ function formatWhen(iso: string): string {
   return `${date} at ${time}`;
 }
 
-function humaniseSource(source: string): string {
+function humaniseSource(source: string, brandId: string | null = null): string {
   if (source === 'calendly') return 'Imported from Calendly';
   if (source === 'manual') return 'Manually added';
-  if (source === 'native') return 'Created in Lounge';
+  if (source === 'native') {
+    // Native = booked through one of the embedded Shopify widgets.
+    // The brand_id tells us which storefront so the timeline says
+    // "via venneir.com" / "via denture-services.co.uk" instead of
+    // a generic "Created in Lounge".
+    if (brandId === 'denture') return 'via denture-services.co.uk';
+    if (brandId === 'venneir') return 'via venneir.com';
+    return 'via the booking widget';
+  }
   return source;
 }
 

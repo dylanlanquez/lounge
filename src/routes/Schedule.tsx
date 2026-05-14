@@ -61,6 +61,7 @@ import {
   type AppointmentRow,
   eventTypeCategory,
   formatBookingSummary,
+  formatNativeBookingSummary,
   formatLateDuration,
   humaniseStatus,
   isAppointmentDimmed,
@@ -904,7 +905,23 @@ export function Schedule() {
                 </div>
               ) : null}
 
-              {formatBookingSummary(selected) ? (
+              {(() => {
+                // Native widget bookings compose the summary from axis
+                // columns (arch + product_key + service_type) so the
+                // popup matches the appointment-detail hero — without
+                // this, "Click-in veneers" rendered without its arch.
+                // Calendly rows keep the intake-parsing path.
+                const summaryRaw =
+                  selected.source === 'native'
+                    ? formatNativeBookingSummary({
+                        service_type: selected.service_type,
+                        event_type_label: selected.event_type_label,
+                        arch: selected.arch,
+                        product_key: selected.product_key,
+                      })
+                    : formatBookingSummary(selected);
+                return summaryRaw;
+              })() ? (
                 (() => {
                   // When the virtual-appointment notice above is also
                   // showing (mobile virtual booking), quiet down this
@@ -916,7 +933,15 @@ export function Schedule() {
                     !!selected.join_url && !isDesktop;
                   // Split "Virtual impression appointment for lower whitening tray"
                   // into a large service-name heading + a smaller detail line.
-                  const summary = formatBookingSummary(selected);
+                  const summary =
+                    selected.source === 'native'
+                      ? formatNativeBookingSummary({
+                          service_type: selected.service_type,
+                          event_type_label: selected.event_type_label,
+                          arch: selected.arch,
+                          product_key: selected.product_key,
+                        })
+                      : formatBookingSummary(selected);
                   const forIdx = summary.indexOf(' for ');
                   const headingText = forIdx !== -1 ? summary.slice(0, forIdx) : summary;
                   const detailText = forIdx !== -1 ? summary.slice(forIdx + 1) : null; // keeps "for …"

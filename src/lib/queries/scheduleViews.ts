@@ -31,6 +31,14 @@ interface RawRow {
   status: AppointmentRow['status'];
   source: AppointmentRow['source'];
   event_type_label: string | null;
+  // Catalogue axis pins from the widget booking flow. Optional on
+  // the raw shape so a deploy that lands before the SELECT update
+  // doesn't blow up.
+  service_type?: string | null;
+  product_key?: string | null;
+  repair_variant?: string | null;
+  arch?: string | null;
+  brand_id?: string | null;
   staff_account_id: string | null;
   notes: string | null;
   intake: AppointmentRow['intake'];
@@ -69,14 +77,18 @@ const PHASE_SELECT =
   'phases:lng_appointment_phases ( phase_index, label, patient_required, start_at, end_at, status, pool_ids )';
 
 const SELECT_WITH_INTAKE = `
-  id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, notes, intake, join_url,
+  id, patient_id, location_id, start_at, end_at, status, source, event_type_label,
+  service_type, product_key, repair_variant, arch, brand_id,
+  staff_account_id, notes, intake, join_url,
   deposit_pence, deposit_currency, deposit_provider, deposit_status,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
   ${PHASE_SELECT}
 `;
 const SELECT_NO_INTAKE = `
-  id, patient_id, location_id, start_at, end_at, status, source, event_type_label, staff_account_id, notes,
+  id, patient_id, location_id, start_at, end_at, status, source, event_type_label,
+  service_type, product_key, repair_variant, arch, brand_id,
+  staff_account_id, notes,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
   ${PHASE_SELECT}
@@ -96,6 +108,11 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       status: raw.status,
       source: raw.source,
       event_type_label: raw.event_type_label,
+      service_type: raw.service_type ?? null,
+      product_key: raw.product_key ?? null,
+      repair_variant: raw.repair_variant ?? null,
+      arch: raw.arch ?? null,
+      brand_id: raw.brand_id ?? null,
       staff_account_id: raw.staff_account_id,
       notes: raw.notes ?? null,
       intake: raw.intake ?? null,

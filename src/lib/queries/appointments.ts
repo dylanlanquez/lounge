@@ -32,6 +32,17 @@ export interface AppointmentRow {
   status: AppointmentStatus;
   source: AppointmentSource;
   event_type_label: string | null;
+  /** Catalogue axis pins populated by native widget bookings.
+   *  Used by formatNativeBookingSummary() to compose hero titles
+   *  like "Upper Click-in veneers" / "Lower retainer". Calendly-
+   *  imported rows leave these null. */
+  service_type: string | null;
+  product_key: string | null;
+  repair_variant: string | null;
+  arch: string | null;
+  /** Storefront the booking originated from ('venneir' | 'denture').
+   *  Drives source-badge chrome on the appointment cards. */
+  brand_id: string | null;
   staff_account_id: string | null;
   notes: string | null;
   intake: IntakeAnswer[] | null;
