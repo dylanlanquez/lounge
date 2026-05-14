@@ -190,6 +190,22 @@ export function ensureQuizKeyframes(): void {
       }
     }
 
+    /* Booking-review rows: label / content / amount in three
+       columns on desktop, label-on-its-own-line + content + amount
+       on mobile so neither the label nor the +£X amount clips on a
+       narrow phone. The label span is always the first child of
+       .vlounge-review-row in BookingReview.tsx. */
+    @media (max-width: 480px) {
+      .vlounge-review-row {
+        grid-template-columns: 1fr auto !important;
+        column-gap: 12px !important;
+      }
+      .vlounge-review-row > span:first-child {
+        grid-column: 1 / -1 !important;
+        margin-bottom: 4px !important;
+      }
+    }
+
     /* Thin neutral scrollbar — applied to any scrollable area in
        the widget (step body, popup body, etc) via the
        .vlounge-scroll class. The default OS scrollbar in macOS /

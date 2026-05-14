@@ -1,4 +1,3 @@
-import { Calendar, MapPin, Award, ShieldCheck, Sparkles } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -10,14 +9,21 @@ import { formatPrice } from './state.ts';
 import type { WidgetCopy } from './copy.ts';
 import { QUIZ } from './quizTokens.ts';
 
-// Booking review — appointment recap + price breakdown shown
-// inside the combined Details step. Single column, no card chrome
-// on this screen at all (the inputs above this carry the only
-// borders). Sections are separated by 1px hairlines, not boxes.
+// Booking review — appointment recap + price total shown inside
+// the combined Details step. Single column, zero card chrome on
+// this screen (the form inputs above carry the only borders).
 //
-// 2026 reference set: Stripe Checkout, Calendly, Apple Pay sheet.
-// All four use plain typography for prices, right-aligned amounts,
-// and zero card backgrounds around money. We follow that here.
+// Rules learned the hard way on this screen:
+//   1. NEVER repeat the deposit / balance split here. The sticky
+//      footer already shows TODAY / ON THE DAY. Duplicating those
+//      figures (Deposit today, Balance on the day) makes the screen
+//      a wall of numbers and confuses non-technical customers.
+//   2. NEVER mix icon weights/colours in the booking list. The pin,
+//      ribbon, calendar, sparkle quartet looked busy and the
+//      vertical centres didn't line up. Typography-only is calmer
+//      and more premium.
+//   3. Right-aligned amounts MUST have `flex-shrink: 0` so they
+//      can't clip off the right edge of narrow viewports.
 
 export function BookingReview({
   api,
@@ -41,79 +47,82 @@ export function BookingReview({
       : u.unitPricePence;
   };
 
-  // The "Total" row is the full price (service + extras), before
-  // splitting into deposit-today vs balance-on-the-day below.
   const total = priceBreakdown.subtotalPence;
-  const deposit = priceBreakdown.depositPence;
-  const onTheDay = priceBreakdown.payAtAppointmentPence;
+  const showExtras = priceBreakdown.upgradesLinePence > 0;
   void copy;
+  void accent;
+
+  const serviceLine = state.service
+    ? buildServiceLine(state, state.service.label)
+    : null;
 
   return (
     <div
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 32,
+        gap: 28,
         width: '100%',
       }}
     >
-      {/* ── Your booking ────────────────────────────────────────── */}
+      {/* ── Your booking ─────────────────────────────────────────
+          Label-content rows. No icons, no card. Each row is
+          self-titled by a small-caps label on the left (desktop)
+          or above (mobile, via the .vlounge-review-row class). */}
       <section>
         <SectionLabel>Your booking</SectionLabel>
-        <ItemList>
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            borderTop: '1px solid rgba(0, 0, 0, 0.08)',
+          }}
+        >
           {state.location ? (
-            <Item
-              icon={<MapPin size={16} aria-hidden style={{ color: accent }} />}
-              label={state.location.name}
-              sub={state.location.addressLine}
+            <ReviewRow
+              label="Location"
+              primary={state.location.name}
+              secondary={state.location.addressLine}
             />
           ) : null}
-          {state.service ? (
-            <Item
-              icon={<Award size={16} aria-hidden style={{ color: accent }} />}
-              label={state.service.label.replace(/<[^>]*>/g, '')}
-              sub={axisChainLabel(state) ?? undefined}
-            />
+          {serviceLine ? (
+            <ReviewRow label="Service" primary={serviceLine} />
           ) : null}
           {state.slotIso ? (
-            <Item
-              icon={<Calendar size={16} aria-hidden style={{ color: accent }} />}
-              label={formatSlotLong(state.slotIso)}
-            />
+            <ReviewRow label="When" primary={formatSlotLong(state.slotIso)} />
           ) : null}
           {selectedUpgrades.map((u) => (
-            <Item
+            <ReviewRow
               key={u.id}
-              icon={<Sparkles size={16} aria-hidden style={{ color: QUIZ.LAVENDER }} />}
-              label={u.name}
-              right={
-                <span
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: QUIZ.LAVENDER,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  +{formatPrice(upgradePrice(u.id))}
-                </span>
-              }
+              label="Extra"
+              primary={u.name}
+              rightAmount={`+${formatPrice(upgradePrice(u.id))}`}
+              rightAmountColour={QUIZ.LAVENDER}
             />
           ))}
-        </ItemList>
+        </ul>
       </section>
 
-      {/* ── Total ───────────────────────────────────────────────── */}
+      {/* ── Total ────────────────────────────────────────────────
+          Three lines max: Service · Extras (if any) · Total.
+          Deposit/Balance split lives in the sticky footer only —
+          showing it twice was the headline complaint on the
+          previous pass. */}
       <section>
         <SectionLabel>Total</SectionLabel>
-        <PriceTable>
+        <div
+          style={{
+            borderTop: '1px solid rgba(0, 0, 0, 0.08)',
+          }}
+        >
           {priceBreakdown.serviceLinePence > 0 ? (
             <PriceRow
               label="Service"
               amount={formatPrice(priceBreakdown.serviceLinePence)}
             />
           ) : null}
-          {priceBreakdown.upgradesLinePence > 0 ? (
+          {showExtras ? (
             <PriceRow
               label="Extras"
               amount={`+${formatPrice(priceBreakdown.upgradesLinePence)}`}
@@ -123,24 +132,8 @@ export function BookingReview({
           {total > 0 ? (
             <PriceRow label="Total" amount={formatPrice(total)} emphasised />
           ) : null}
-          {deposit > 0 ? (
-            <PriceRow
-              label="Deposit today"
-              amount={formatPrice(deposit)}
-            />
-          ) : null}
-          {onTheDay > 0 ? (
-            <PriceRow
-              label="Balance on the day"
-              amount={formatPrice(onTheDay)}
-              muted
-            />
-          ) : null}
-        </PriceTable>
+        </div>
       </section>
-
-      {/* ── Trust signals ───────────────────────────────────────── */}
-      <TrustSignals accent={accent} />
     </div>
   );
 }
@@ -153,7 +146,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <h3
       style={{
-        margin: '0 0 12px',
+        margin: '0 0 10px',
         fontSize: 11,
         fontWeight: 600,
         color: QUIZ.MUTED_2,
@@ -166,88 +159,88 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ItemList({ children }: { children: React.ReactNode }) {
-  return (
-    <ul
-      style={{
-        listStyle: 'none',
-        margin: 0,
-        padding: 0,
-      }}
-    >
-      {children}
-    </ul>
-  );
-}
-
-function Item({
-  icon,
+function ReviewRow({
   label,
-  sub,
-  right,
+  primary,
+  secondary,
+  rightAmount,
+  rightAmountColour,
 }: {
-  icon: React.ReactNode;
   label: string;
-  sub?: string;
-  right?: React.ReactNode;
+  primary: string;
+  secondary?: string;
+  rightAmount?: string;
+  rightAmountColour?: string;
 }) {
   return (
     <li
+      className="vlounge-review-row"
       style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 12,
-        padding: '12px 0',
+        display: 'grid',
+        gridTemplateColumns: '110px 1fr auto',
+        columnGap: 16,
+        rowGap: 2,
+        padding: '14px 0',
         borderBottom: '1px solid rgba(0, 0, 0, 0.06)',
+        alignItems: 'baseline',
       }}
     >
       <span
-        aria-hidden
         style={{
-          flexShrink: 0,
-          marginTop: 2,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          fontSize: 11,
+          fontWeight: 600,
+          color: QUIZ.MUTED_2,
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+          lineHeight: 1.4,
         }}
       >
-        {icon}
+        {label}
       </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ minWidth: 0 }}>
         <p
           style={{
             margin: 0,
             fontSize: 15,
             fontWeight: 500,
             color: QUIZ.INK,
-            lineHeight: 1.35,
+            lineHeight: 1.4,
+            wordBreak: 'break-word',
           }}
         >
-          {label}
+          {primary}
         </p>
-        {sub ? (
+        {secondary ? (
           <p
             style={{
               margin: '2px 0 0',
               fontSize: 13,
               color: QUIZ.MUTED_2,
               lineHeight: 1.4,
+              wordBreak: 'break-word',
             }}
           >
-            {sub}
+            {secondary}
           </p>
         ) : null}
       </div>
-      {right ? (
-        <span style={{ flexShrink: 0, marginTop: 2 }}>{right}</span>
-      ) : null}
+      {rightAmount ? (
+        <span
+          style={{
+            flexShrink: 0,
+            fontSize: 14,
+            fontWeight: 600,
+            color: rightAmountColour ?? QUIZ.INK,
+            fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {rightAmount}
+        </span>
+      ) : (
+        <span aria-hidden />
+      )}
     </li>
-  );
-}
-
-function PriceTable({ children }: { children: React.ReactNode }) {
-  return (
-    <div role="table">{children}</div>
   );
 }
 
@@ -256,13 +249,11 @@ function PriceRow({
   amount,
   amountColour,
   emphasised = false,
-  muted = false,
 }: {
   label: string;
   amount: string;
   amountColour?: string;
   emphasised?: boolean;
-  muted?: boolean;
 }) {
   return (
     <div
@@ -271,77 +262,28 @@ function PriceRow({
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'baseline',
-        padding: emphasised ? '12px 0 10px' : '8px 0',
+        gap: 16,
+        padding: emphasised ? '14px 0 4px' : '12px 0',
         borderTop: emphasised ? '1px solid rgba(0, 0, 0, 0.10)' : 'none',
-        marginTop: emphasised ? 4 : 0,
+        marginTop: emphasised ? 6 : 0,
         fontSize: emphasised ? 16 : 14,
-        color: muted ? QUIZ.MUTED_2 : QUIZ.INK,
-        opacity: muted ? 0.7 : 1,
+        color: QUIZ.INK,
       }}
     >
       <span role="cell">{label}</span>
       <span
         role="cell"
         style={{
+          flexShrink: 0,
           fontWeight: emphasised ? 700 : 600,
-          color: amountColour ?? (muted ? QUIZ.MUTED_2 : QUIZ.INK),
+          color: amountColour ?? QUIZ.INK,
           fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
         }}
       >
         {amount}
       </span>
     </div>
-  );
-}
-
-function TrustSignals({ accent }: { accent: string }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        justifyContent: 'center',
-        gap: 20,
-        paddingTop: 8,
-      }}
-    >
-      <TrustItem
-        icon={<ShieldCheck size={14} aria-hidden style={{ color: accent }} />}
-        label="GDC registered"
-      />
-      <TrustItem
-        icon={<Award size={14} aria-hidden style={{ color: accent }} />}
-        label="UK lab"
-      />
-      <TrustItem
-        icon={<ShieldCheck size={14} aria-hidden style={{ color: accent }} />}
-        label="14-day warranty"
-      />
-    </div>
-  );
-}
-
-function TrustItem({
-  icon,
-  label,
-}: {
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 12,
-        color: QUIZ.MUTED_2,
-        lineHeight: 1.3,
-      }}
-    >
-      {icon}
-      {label}
-    </span>
   );
 }
 
@@ -363,17 +305,19 @@ function formatSlotLong(iso: string): string {
   return `${day}, ${display}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-function axisChainLabel(state: WidgetState): string | null {
-  if (!state.service) return null;
+function buildServiceLine(state: WidgetState, serviceLabel: string): string {
+  const cleanLabel = serviceLabel.replace(/<[^>]*>/g, '');
+  if (!state.service) return cleanLabel;
   const axes = axesForService(state.service.serviceType as BookingServiceType);
-  if (axes.length === 0) return null;
+  if (axes.length === 0) return cleanLabel;
   const pieces: string[] = [];
   for (const axis of axes) {
     const value = readAxisPin(state, axis.key);
     if (!value) continue;
     pieces.push(axisValueLabel(axis, value));
   }
-  return pieces.length > 0 ? pieces.join(' · ') : null;
+  if (pieces.length === 0) return cleanLabel;
+  return `${cleanLabel}, ${pieces.join(', ')}`;
 }
 
 function readAxisPin(state: WidgetState, key: AxisKey): string | undefined {

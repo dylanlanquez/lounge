@@ -173,25 +173,17 @@ export function DetailsStep({
         />
       </div>
 
-      {/* Subtle hairline divider between the form and the booking
-          review. No section header — the small-caps labels inside
-          BookingReview ("Your booking", "Total") are enough to
-          announce the new context. */}
-      <hr
-        aria-hidden
-        style={{
-          margin: '36px 0 32px',
-          border: 'none',
-          height: 1,
-          background: 'rgba(0, 0, 0, 0.08)',
-        }}
-      />
-
-      {/* Booking review — appointment summary + price breakdown.
+      {/* Booking review — appointment summary + price total.
           The customer fills the form above and reviews the booking
           below before ticking terms in the footer and committing.
-          Single screen, no extra step. */}
-      <BookingReview api={api} copy={copy} accent={accent} />
+          Each section inside BookingReview opens with its own
+          small-caps label + 1px hairline, so an additional <hr>
+          here would only stack two hairlines next to the first
+          label. The 32px wrapper margin below is enough visual
+          breathing room from the form's last input row. */}
+      <div style={{ marginTop: 32 }}>
+        <BookingReview api={api} copy={copy} accent={accent} />
+      </div>
     </div>
   );
 }
