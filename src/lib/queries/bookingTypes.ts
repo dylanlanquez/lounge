@@ -47,10 +47,16 @@ export const DAYS_OF_WEEK: readonly DayOfWeek[] = [
 
 export type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
-// One day's hours. null = closed.
+// One day's hours. null = closed. Optional `break` is the mid-day
+// closure (lunch); when present, slots whose start falls inside
+// [break.start, break.end) are not bookable. Mirrors the same field
+// on lng_settings.clinic.opening_hours so per-service hours stay
+// flexible enough to encode a lab pause that's independent of the
+// front-of-house clinic hours.
 export interface DayHours {
   open: string;  // 'HH:MM' 24-hour
   close: string; // 'HH:MM' 24-hour
+  break?: { start: string; end: string } | null;
 }
 
 // Working hours for the whole week. Each day is either DayHours

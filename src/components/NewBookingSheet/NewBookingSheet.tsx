@@ -531,10 +531,38 @@ export function NewBookingSheet({
 
   const inWorkingHours = useMemo(() => {
     if (!hoursForDate || !time) return false;
-    return time >= hoursForDate.open && time < hoursForDate.close;
+    if (time < hoursForDate.open || time >= hoursForDate.close) return false;
+    const lunch = hoursForDate.break ?? null;
+    if (lunch && lunch.end > lunch.start && time >= lunch.start && time < lunch.end) {
+      return false;
+    }
+    return true;
   }, [hoursForDate, time]);
 
-  const slotIsValid = !!config && !!date && !!time && inWorkingHours;
+  // Defensive end-vs-close check covering the case where a stale
+  // time survives in state — picker can't surface a past-close start
+  // anymore, but a typed value or a race could still slip through.
+  // GREATEST of appointment block and phase sum mirrors the RPC's
+  // extent so the JS gate agrees with the SQL gate.
+  const fitsBeforeClose = useMemo(() => {
+    if (!config || !hoursForDate || !time) return false;
+    const extent = Math.max(
+      config.duration_default,
+      config.block_duration_minutes ?? config.duration_default,
+    );
+    const [openH, openM] = hoursForDate.open.split(':').map(Number);
+    const [closeH, closeM] = hoursForDate.close.split(':').map(Number);
+    const [startH, startM] = time.split(':').map(Number);
+    if ([openH, openM, closeH, closeM, startH, startM].some((n) => !Number.isFinite(n))) {
+      return false;
+    }
+    const startMin = (startH ?? 0) * 60 + (startM ?? 0);
+    const closeMin = (closeH ?? 0) * 60 + (closeM ?? 0);
+    return startMin + extent <= closeMin;
+  }, [config, hoursForDate, time]);
+
+  const slotIsValid =
+    !!config && !!date && !!time && inWorkingHours && fitsBeforeClose;
   // Virtual services require a Meet host. The dropdown auto-picks
   // the first one when hosts exist, so this guard mostly trips when
   // no host has been connected yet — Save stays disabled until
@@ -1040,7 +1068,11 @@ export function NewBookingSheet({
               >
                 {config.duration_default}-minute slot
                 {hoursForDate
-                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}.`
+                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}${
+                      hoursForDate.break && hoursForDate.break.end > hoursForDate.break.start
+                        ? `, minus lunch ${hoursForDate.break.start} to ${hoursForDate.break.end}`
+                        : ''
+                    }.`
                   : date
                   ? '. The clinic is closed on this day.'
                   : '.'}

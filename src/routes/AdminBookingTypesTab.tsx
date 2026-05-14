@@ -1416,7 +1416,20 @@ function BookingTypeEditorDialog({
     return target.pins.find((p) => p.key === axisKey)?.value ?? null;
   };
 
+  // Any day with a lunch break whose end isn't after the start is
+  // an unsaveable state — would write a zero-length or inverted
+  // window to JSONB and silently allow lunch-time bookings.
+  const hoursHaveInvalidLunch = (() => {
+    if (hoursInherits) return false;
+    return DAYS_OF_WEEK.some((d) => {
+      const day = hours[d];
+      if (!day || !day.break) return false;
+      return day.break.end <= day.break.start;
+    });
+  })();
+
   const save = async () => {
+    if (hoursHaveInvalidLunch) return;
     setBusy(true);
     try {
       const trimmedLabel = displayLabel.trim();
@@ -1487,7 +1500,12 @@ function BookingTypeEditorDialog({
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={save} loading={busy}>
+          <Button
+            variant="primary"
+            onClick={save}
+            loading={busy}
+            disabled={hoursHaveInvalidLunch}
+          >
             {busy ? 'Saving…' : 'Save'}
           </Button>
         </div>
@@ -1687,17 +1705,32 @@ function WorkingHoursEditor({
   // so it only appears when there's actually something to do.
   const monday = value.mon ?? null;
   const weekdays: DayOfWeek[] = ['tue', 'wed', 'thu', 'fri'];
+  const sameBreak = (a: DayHours['break'], b: DayHours['break']) => {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.start === b.start && a.end === b.end;
+  };
   const canApplyMonday =
     monday !== null &&
     weekdays.some((d) => {
       const v = value[d];
       if (!v) return true;
-      return v.open !== monday.open || v.close !== monday.close;
+      return (
+        v.open !== monday.open ||
+        v.close !== monday.close ||
+        !sameBreak(v.break ?? null, monday.break ?? null)
+      );
     });
   const applyMondayToWeekdays = () => {
     if (!monday) return;
     const next: WorkingHours = { ...value };
-    for (const d of weekdays) next[d] = { open: monday.open, close: monday.close };
+    for (const d of weekdays) {
+      next[d] = {
+        open: monday.open,
+        close: monday.close,
+        break: monday.break ?? null,
+      };
+    }
     onChange(next);
   };
 
@@ -1714,78 +1747,198 @@ function WorkingHoursEditor({
         {DAYS_OF_WEEK.map((day, i) => {
           const v = value[day] ?? null;
           const closed = v === null;
+          const lunch = v?.break ?? null;
+          const lunchInvalid =
+            !!lunch && lunch.end <= lunch.start;
+          const toggleBreak = (next: boolean) => {
+            if (!v) return;
+            setDay(day, {
+              open: v.open,
+              close: v.close,
+              break: next ? { start: '12:00', end: '13:00' } : null,
+            });
+          };
+          const setBreakStart = (t: string) => {
+            if (!v || !lunch) return;
+            setDay(day, {
+              open: v.open,
+              close: v.close,
+              break: { start: t, end: lunch.end },
+            });
+          };
+          const setBreakEnd = (t: string) => {
+            if (!v || !lunch) return;
+            setDay(day, {
+              open: v.open,
+              close: v.close,
+              break: { start: lunch.start, end: t },
+            });
+          };
           return (
             <li
               key={day}
               style={{
                 display: 'flex',
-                alignItems: 'center',
-                gap: theme.space[3],
-                minHeight: 44,
-                padding: `0 ${theme.space[3]}px`,
+                flexDirection: 'column',
+                padding: `${theme.space[2]}px ${theme.space[3]}px`,
                 borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}`,
               }}
             >
-              <Checkbox
-                checked={!closed}
-                onChange={(c) =>
-                  setDay(day, c ? { open: '09:00', close: '18:00' } : null)
-                }
-                size={18}
-                ariaLabel={`${DAY_LABELS[day]} open`}
-              />
-              <span
-                style={{
-                  width: 96,
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                  color: closed ? theme.color.inkMuted : theme.color.ink,
-                }}
-              >
-                {DAY_LABELS[day]}
-              </span>
               <div
                 style={{
-                  marginLeft: 'auto',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: theme.space[2],
+                  gap: theme.space[3],
+                  minHeight: 44,
                 }}
               >
-                {closed ? (
-                  <span
-                    style={{
-                      fontSize: theme.type.size.sm,
-                      color: theme.color.inkSubtle,
-                      fontStyle: 'italic',
-                    }}
-                  >
-                    Closed
-                  </span>
-                ) : (
-                  <>
-                    <TimeField
-                      value={v.open}
-                      onChange={(t) => setDay(day, { open: t, close: v.close })}
-                      ariaLabel={`${DAY_LABELS[day]} open time`}
-                    />
+                <Checkbox
+                  checked={!closed}
+                  onChange={(c) =>
+                    setDay(day, c ? { open: '09:00', close: '18:00' } : null)
+                  }
+                  size={18}
+                  ariaLabel={`${DAY_LABELS[day]} open`}
+                />
+                <span
+                  style={{
+                    width: 96,
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.medium,
+                    color: closed ? theme.color.inkMuted : theme.color.ink,
+                  }}
+                >
+                  {DAY_LABELS[day]}
+                </span>
+                <div
+                  style={{
+                    marginLeft: 'auto',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[2],
+                  }}
+                >
+                  {closed ? (
                     <span
-                      aria-hidden
                       style={{
                         fontSize: theme.type.size.sm,
                         color: theme.color.inkSubtle,
+                        fontStyle: 'italic',
                       }}
                     >
-                      —
+                      Closed
                     </span>
-                    <TimeField
-                      value={v.close}
-                      onChange={(t) => setDay(day, { open: v.open, close: t })}
-                      ariaLabel={`${DAY_LABELS[day]} close time`}
-                    />
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <TimeField
+                        value={v.open}
+                        onChange={(t) =>
+                          setDay(day, { open: t, close: v.close, break: v.break ?? null })
+                        }
+                        ariaLabel={`${DAY_LABELS[day]} open time`}
+                      />
+                      <span
+                        aria-hidden
+                        style={{
+                          fontSize: theme.type.size.sm,
+                          color: theme.color.inkSubtle,
+                        }}
+                      >
+                        —
+                      </span>
+                      <TimeField
+                        value={v.close}
+                        onChange={(t) =>
+                          setDay(day, { open: v.open, close: t, break: v.break ?? null })
+                        }
+                        ariaLabel={`${DAY_LABELS[day]} close time`}
+                      />
+                    </>
+                  )}
+                </div>
               </div>
+              {!closed ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[2],
+                    marginTop: theme.space[2],
+                    paddingLeft: 28 + theme.space[3],
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 96 - (28 + theme.space[3]) + 96,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                    }}
+                  >
+                    Lunch
+                  </span>
+                  <div
+                    style={{
+                      marginLeft: 'auto',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: theme.space[2],
+                    }}
+                  >
+                    {lunch ? (
+                      <>
+                        <TimeField
+                          value={lunch.start}
+                          onChange={setBreakStart}
+                          ariaLabel={`${DAY_LABELS[day]} lunch start`}
+                        />
+                        <span
+                          aria-hidden
+                          style={{
+                            fontSize: theme.type.size.sm,
+                            color: theme.color.inkSubtle,
+                          }}
+                        >
+                          —
+                        </span>
+                        <TimeField
+                          value={lunch.end}
+                          onChange={setBreakEnd}
+                          ariaLabel={`${DAY_LABELS[day]} lunch end`}
+                        />
+                      </>
+                    ) : null}
+                    <Checkbox
+                      checked={!!lunch}
+                      onChange={toggleBreak}
+                      size={16}
+                      ariaLabel={`${DAY_LABELS[day]} has break`}
+                      label={
+                        <span
+                          style={{
+                            fontSize: theme.type.size.xs,
+                            color: theme.color.inkMuted,
+                          }}
+                        >
+                          Has break
+                        </span>
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {lunchInvalid ? (
+                <p
+                  role="alert"
+                  style={{
+                    margin: `${theme.space[1]}px 0 0`,
+                    paddingLeft: 28 + theme.space[3],
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.alert,
+                  }}
+                >
+                  Lunch end must be after lunch start.
+                </p>
+              ) : null}
             </li>
           );
         })}

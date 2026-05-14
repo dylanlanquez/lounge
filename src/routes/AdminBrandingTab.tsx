@@ -183,11 +183,13 @@ function SaveRow({
   saving,
   onSave,
   onReset,
+  disabled = false,
 }: {
   dirty: boolean;
   saving: boolean;
   onSave: () => void;
   onReset: () => void;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -203,7 +205,7 @@ function SaveRow({
       <Button variant="tertiary" onClick={onReset} disabled={!dirty || saving}>
         Cancel
       </Button>
-      <Button variant="primary" onClick={onSave} disabled={!dirty || saving} loading={saving}>
+      <Button variant="primary" onClick={onSave} disabled={!dirty || saving || disabled} loading={saving}>
         {saving ? 'Saving…' : 'Save changes'}
       </Button>
     </div>
@@ -725,7 +727,20 @@ function OpeningHoursCard({
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(value), [draft, value]);
   const reset = () => setDraft(value);
 
+  // Any open day with a "Has break" ticked but a zero-length or
+  // inverted lunch window is unsaveable — would store nonsense and
+  // make slots inside the (empty) break window indistinguishable
+  // from non-break slots downstream.
+  const hasInvalidBreak = useMemo(() => {
+    return draft.some((day) => {
+      if (day.closed) return false;
+      if (!Array.isArray(day.break)) return false;
+      return day.break[1] <= day.break[0];
+    });
+  }, [draft]);
+
   const onSave = async () => {
+    if (hasInvalidBreak) return;
     setSaving(true);
     try {
       await saveClinicSetting('openingHours', draft);
@@ -759,7 +774,13 @@ function OpeningHoursCard({
           <DayRow key={label} label={label} value={draft[idx]!} onChange={(d) => updateDay(idx, d)} />
         ))}
       </div>
-      <SaveRow dirty={dirty} saving={saving} onSave={onSave} onReset={reset} />
+      <SaveRow
+        dirty={dirty}
+        saving={saving}
+        onSave={onSave}
+        onReset={reset}
+        disabled={hasInvalidBreak}
+      />
     </Section>
   );
 }
@@ -779,8 +800,9 @@ function DayRow({
   // open/close preserves the rest of the day's shape.
   const open = closed ? '09:00' : value.open ?? '09:00';
   const close = closed ? '18:00' : value.close ?? '18:00';
-  const breakStart = hasBreak ? value.break![0] : '13:00';
-  const breakEnd = hasBreak ? value.break![1] : '14:00';
+  const breakStart = hasBreak ? value.break![0] : '12:00';
+  const breakEnd = hasBreak ? value.break![1] : '13:00';
+  const breakInvalid = hasBreak && breakEnd <= breakStart;
 
   const setOpen = (v: string) => {
     onChange({
@@ -885,6 +907,19 @@ function DayRow({
           />
           <Checkbox label="Has break" checked={hasBreak} onChange={toggleBreak} />
         </div>
+      ) : null}
+      {breakInvalid ? (
+        <p
+          role="alert"
+          style={{
+            margin: 0,
+            paddingLeft: `calc(60px + ${theme.space[3]}px)`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.alert,
+          }}
+        >
+          Lunch end must be after lunch start.
+        </p>
       ) : null}
     </div>
   );

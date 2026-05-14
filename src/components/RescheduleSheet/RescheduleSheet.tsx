@@ -230,10 +230,36 @@ export function RescheduleSheet({
 
   const inWorkingHours = useMemo(() => {
     if (!hoursForDate || !time) return false;
-    return time >= hoursForDate.open && time < hoursForDate.close;
+    if (time < hoursForDate.open || time >= hoursForDate.close) return false;
+    const lunch = hoursForDate.break ?? null;
+    if (lunch && lunch.end > lunch.start && time >= lunch.start && time < lunch.end) {
+      return false;
+    }
+    return true;
   }, [hoursForDate, time]);
 
-  const slotIsValid = !!config && !!date && !!time && inWorkingHours;
+  // Defensive end-vs-close check — picker filters past-close starts,
+  // but a stale typed value or a date change could still slip
+  // through. Mirrors the GREATEST(duration, block) extent the RPC
+  // uses.
+  const fitsBeforeClose = useMemo(() => {
+    if (!config || !hoursForDate || !time) return false;
+    const extent = Math.max(
+      config.duration_default,
+      config.block_duration_minutes ?? config.duration_default,
+    );
+    const [closeH, closeM] = hoursForDate.close.split(':').map(Number);
+    const [startH, startM] = time.split(':').map(Number);
+    if ([closeH, closeM, startH, startM].some((n) => !Number.isFinite(n))) {
+      return false;
+    }
+    const startMin = (startH ?? 0) * 60 + (startM ?? 0);
+    const closeMin = (closeH ?? 0) * 60 + (closeM ?? 0);
+    return startMin + extent <= closeMin;
+  }, [config, hoursForDate, time]);
+
+  const slotIsValid =
+    !!config && !!date && !!time && inWorkingHours && fitsBeforeClose;
   // A reason on the new row's cancellation note is the audit trail
   // for why the slot moved — staff sick day, patient asked, equipment
   // delay, etc. Without it the patient timeline reads "Rescheduled"
@@ -409,7 +435,11 @@ export function RescheduleSheet({
               <InlineHint tone={hoursForDate || !date ? 'muted' : 'alert'}>
                 {config.duration_default}-minute slot
                 {hoursForDate
-                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}.`
+                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}${
+                      hoursForDate.break && hoursForDate.break.end > hoursForDate.break.start
+                        ? `, minus lunch ${hoursForDate.break.start} to ${hoursForDate.break.end}`
+                        : ''
+                    }.`
                   : date
                   ? '. The clinic is closed on this day.'
                   : '.'}
