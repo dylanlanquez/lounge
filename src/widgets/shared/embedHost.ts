@@ -470,27 +470,36 @@ function ensureResetStyles() {
     }
     /* Success state — once the booking has landed and React swaps
        in <SuccessScreen>, the modal contains a short confirmation
-       block that doesn't need the full ~92vw footprint on desktop.
-       The card animates down to 540px wide so the customer's eye
-       lands on the success glyph + booking ref directly rather
-       than scanning a sea of empty surface. 540px is wide enough
-       to accommodate the click-in-veneers photo-intake row (three
-       photo tiles + Send button) that some success screens carry,
-       and the inner Success.tsx column already maxes itself out
-       at 480 / 620px depending on photo intake — so the card +
-       content sizes agree on both paths.
+       block that doesn't need the full ~88vh × 92vw footprint on
+       desktop. The card animates down to 540 × 620 so the
+       confirmation sits in a proportionate card rather than a tall
+       narrow column with empty space at the bottom (the previous
+       width-only shrink left it visibly out of sync with the
+       content). 540px is wide enough for the click-in-veneers
+       photo-intake row (three photo tiles + Send button) the
+       widest variant carries, and 620px is the typical content
+       height for the no-photo-intake path — taller content
+       (photo intake) hits the height cap and the inner
+       Success.tsx column's existing overflowY:auto handles the
+       scroll within the card.
 
-       Phones (< 768px) keep the full sheet — there's no awkward
-       "small modal on a big screen" problem on a 390px viewport
-       because the card already fills it. Height stays untouched
-       so the existing overflowY:auto behaviour on the inner
-       Success column keeps working unchanged. The width
-       transition is set on the card inline above; !important here
-       defeats the inline width/max-width so the CSS wins. */
+       Both bounds clamp on viewports where the natural defaults
+       would overflow: max-width 92vw means narrow tablets keep
+       the existing edge breathing, max-height 88vh means short
+       viewports fall back to the full sheet.
+
+       Phones (< 768px) ignore the rule and keep the full sheet —
+       there's no awkward "small modal on a big screen" problem
+       on a 390px viewport. The width + height transitions are
+       set on the card inline above (450ms spring); !important
+       here defeats the inline width / max-width / height so the
+       CSS wins for the success state. */
     @media (min-width: 768px) {
       #${MODAL_ID}[data-state="success"] [data-vl-card="true"] {
         width: 540px !important;
         max-width: 92vw !important;
+        height: 620px !important;
+        max-height: 88vh !important;
       }
     }
   `;
