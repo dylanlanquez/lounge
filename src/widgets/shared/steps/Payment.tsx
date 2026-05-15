@@ -6,11 +6,12 @@ import {
   useRef,
   useState,
 } from 'react';
-import { CalendarClock, Mail, MapPin } from 'lucide-react';
+import { Calendar, CalendarClock, Mail, MapPin } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import type { BookingStateApi } from '../state.ts';
 import { formatPriceShort } from '../state.ts';
+import { formatSlotLong } from '../BookingReview.tsx';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
 import { supabase } from '../../../lib/supabase.ts';
@@ -208,7 +209,7 @@ export const PaymentStep = forwardRef<
   if (error) {
     return (
       <Shell maxWidth={720}>
-        <PayHeader fullAmount={fullAmount} />
+        <PayHeader fullAmount={fullAmount} slotIso={api.state.slotIso} />
         <p style={{ margin: 0, color: QUIZ.ALERT, fontSize: 14, fontWeight: 600 }}>
           {error}
         </p>
@@ -219,7 +220,7 @@ export const PaymentStep = forwardRef<
   if (loading || !clientSecret) {
     return (
       <Shell maxWidth={720}>
-        <PayHeader fullAmount={fullAmount} />
+        <PayHeader fullAmount={fullAmount} slotIso={api.state.slotIso} />
         <p style={{ margin: 0, color: QUIZ.MUTED_2, fontSize: 14 }}>Preparing payment…</p>
       </Shell>
     );
@@ -227,7 +228,7 @@ export const PaymentStep = forwardRef<
 
   return (
     <Shell maxWidth={720}>
-      <PayHeader fullAmount={fullAmount} />
+      <PayHeader fullAmount={fullAmount} slotIso={api.state.slotIso} />
       <Elements
         stripe={stripePromise}
         options={{
@@ -607,14 +608,19 @@ function AfterYouPayCard() {
   );
 }
 
-function PayHeader({ fullAmount }: { fullAmount: number }) {
-  // Plain headline + sub. No uppercase eyebrow — the surrounding
-  // step is already framed by the "Your appointment" banner at
-  // the top of the modal, so an additional small-caps label here
-  // was visual noise that didn't match the rest of the form's
-  // typography.
+function PayHeader({
+  fullAmount,
+  slotIso,
+}: {
+  fullAmount: number;
+  slotIso: string | null;
+}) {
+  // Title — slot — separator — assurance copy. The slot line
+  // surfaces "what they're paying for" right under the headline so
+  // there's no doubt the £X is for THIS appointment. Hairline
+  // separates the transactional line from the assurance paragraph.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 4 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 4 }}>
       <h2
         style={{
           margin: 0,
@@ -624,8 +630,31 @@ function PayHeader({ fullAmount }: { fullAmount: number }) {
           letterSpacing: '-0.01em',
         }}
       >
-        Pay the full {formatPriceShort(fullAmount)} and book appointment
+        Pay {formatPriceShort(fullAmount)} and book appointment
       </h2>
+      {slotIso ? (
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 15,
+            fontWeight: 600,
+            color: QUIZ.ACCENT,
+          }}
+        >
+          <Calendar size={16} aria-hidden />
+          <span>{formatSlotLong(slotIso)}</span>
+        </div>
+      ) : null}
+      <hr
+        style={{
+          border: 'none',
+          borderTop: `1px solid ${QUIZ.BORDER}`,
+          margin: '4px 0 2px',
+          width: '100%',
+        }}
+      />
       <p
         style={{
           margin: 0,

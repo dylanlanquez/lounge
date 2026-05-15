@@ -459,7 +459,7 @@ function SplitRow({
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 
-function formatSlotLong(iso: string): string {
+export function formatSlotLong(iso: string): string {
   const d = new Date(iso);
   const day = d.toLocaleDateString('en-GB', {
     weekday: 'short',
