@@ -372,10 +372,18 @@ function ItemRow({
           // Icon span height matches the title's line-height (15px ×
           // 1.3 ≈ 20px) so the icon's vertical centre lines up with
           // the title's visual midpoint when the outer row is
-          // flex-start aligned. Without this the 24px icon box sat
-          // 2px above the title baseline and looked slightly high.
+          // flex-start aligned. marginTop:2 compensates for the
+          // leading inside the title's line-box: text glyphs sit
+          // ~3-4px below the line-box top (font ascender + leading
+          // adjustment), while icon glyphs sit close to the icon's
+          // own viewBox top. Without the nudge the icon visual
+          // sits HIGHER than the title visual and reads as floating
+          // above the row — most noticeable on perfectly-symmetric
+          // glyphs like CheckCircle2 where there's no asymmetric
+          // top-weight to compensate.
           width: 24,
           height: 20,
+          marginTop: 2,
           flexShrink: 0,
         }}
       >
