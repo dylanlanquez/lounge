@@ -925,7 +925,7 @@ function Footer({
           maxWidth: 600,
         }}
       >
-        <BackButton disabled={!api.canGoBack} onClick={onBack} />
+        {api.canGoBack ? <BackButton onClick={onBack} /> : null}
 
         {/* Single context-aware Next / Book button. The label and
             commit verb flex on stepKey + paymentChoice (see
@@ -1170,18 +1170,15 @@ function BookCheckIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-function BackButton({
-  disabled,
-  onClick,
-}: {
-  disabled: boolean;
-  onClick: () => void;
-}) {
+function BackButton({ onClick }: { onClick: () => void }) {
+  // Caller decides whether to render this at all (only when
+  // api.canGoBack is true) so the Next button can stretch full-
+  // width on step 1 instead of leaving an invisible 42px gap where
+  // a back affordance would otherwise sit.
   return (
     <button
       type="button"
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
+      onClick={onClick}
       aria-label="Back"
       style={{
         border: 'none',
@@ -1190,7 +1187,7 @@ function BackButton({
         minWidth: 32,
         padding: 0,
         borderRadius: '50%',
-        cursor: disabled ? 'default' : 'pointer',
+        cursor: 'pointer',
         background: QUIZ.PROGRESS_BACK_BG,
         display: 'flex',
         alignItems: 'center',
@@ -1198,16 +1195,12 @@ function BackButton({
         flexShrink: 0,
         color: QUIZ.ACCENT,
         transition: `all 0.2s ${QUIZ.EASE_CARD}`,
-        opacity: disabled ? 0 : 1,
-        pointerEvents: disabled ? 'none' : 'auto',
       }}
       onMouseEnter={(e) => {
-        if (disabled) return;
         e.currentTarget.style.background = QUIZ.PROGRESS_BACK_BG_HOVER;
         e.currentTarget.style.transform = 'translateY(-1px)';
       }}
       onMouseLeave={(e) => {
-        if (disabled) return;
         e.currentTarget.style.background = QUIZ.PROGRESS_BACK_BG;
         e.currentTarget.style.transform = 'translateY(0)';
       }}
