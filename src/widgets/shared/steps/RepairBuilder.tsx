@@ -42,7 +42,11 @@ export function RepairArchStep({
 }) {
   const selected = api.state.axes.arch;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: 0 }}>
+    // marginTop:32 matches the no-helper axis-step convention in
+    // Axis.tsx — without a helper paragraph, the title's natural
+    // 6px bottom margin alone leaves the tile grid hugging the
+    // title. Bridge that gap so the page breathes.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: 32 }}>
       <div
         className="vlounge-stagger"
         style={{
@@ -170,19 +174,19 @@ export function RepairLinesStep({
 }) {
   const rowsResult = useRepairCatalogueRows();
   const selectedHere = api.state.repairItems.filter((r) => r.arch === arch);
-  const titleText =
-    arch === 'upper'
-      ? 'What needs fixing on your top denture?'
-      : 'What needs fixing on your bottom denture?';
+  const archWord = arch === 'upper' ? 'top denture' : 'bottom denture';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <StickyArchHeader arch={arch} accent={accent} />
       {/* Inline step title — StepBody skips its own title render for
           these steps so the sticky chip above can be first in the
-          DOM. Styling matches StepTitle so the look is consistent. */}
+          DOM. Styling matches StepTitle so the look is consistent.
+          The arch words are wrapped in an accent-coloured bold span
+          so even on desktop (where the chip is hidden) the patient
+          can see at a glance which arch they're answering for. */}
       <h2
         style={{
-          margin: '20px auto 0',
+          margin: '32px auto 0',
           maxWidth: 720,
           textAlign: 'center',
           fontSize: 28,
@@ -193,7 +197,8 @@ export function RepairLinesStep({
           animation: `vlounge-fadeInDown 0.3s ${QUIZ.EASE_BOUNCE}`,
         }}
       >
-        {titleText}
+        What needs fixing on your{' '}
+        <span style={{ color: accent, fontWeight: 700 }}>{archWord}</span>?
       </h2>
       {rowsResult.loading ? (
         <SkeletonTiles />
@@ -573,8 +578,13 @@ function StickyArchHeader({
   //     through as they scroll past)
   // Internal padding restores the 20px horizontal alignment for the
   // chip itself so it stays in the same column as the tiles.
+  // Hidden on desktop (≥768px viewport) via the .vlounge-arch-sticky
+  // class + media query in quizTokens. On wider screens the title's
+  // bold accent-coloured arch span carries the same context without
+  // a separate chip taking up vertical space.
   return (
     <div
+      className="vlounge-arch-sticky"
       style={{
         position: 'sticky',
         top: 0,
@@ -605,9 +615,10 @@ function ArchContextChip({
 }) {
   const label = arch === 'upper' ? 'My top denture' : 'My bottom denture';
   // Plain inline chip — navy filled circle with a white tick, then
-  // the label in italic. No pill background, no border. Sits at the
-  // left of the sticky bar so it reads as an answer the patient has
-  // already given (the choice they made on the previous step).
+  // the label in accent navy italic bold. No pill background, no
+  // border. Sits at the left of the sticky bar so it reads as an
+  // answer the patient has already given (the choice they made on
+  // the previous step).
   return (
     <span
       aria-label={label}
@@ -616,9 +627,9 @@ function ArchContextChip({
         alignItems: 'center',
         gap: 10,
         fontSize: 15,
-        fontWeight: 500,
+        fontWeight: 700,
         fontStyle: 'italic',
-        color: QUIZ.INK,
+        color: accent,
       }}
     >
       <span

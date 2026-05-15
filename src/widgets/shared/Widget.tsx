@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarClock, Lock } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarClock, Lock } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -936,9 +936,23 @@ function Footer({
               disabled={nextDisabled}
               onClick={onPayOnTheDay}
               accent={accent}
-              shimmer={false}
+              shimmer={!submitting}
             >
-              {submitting ? 'Booking…' : 'Book appointment'}
+              {submitting ? (
+                'Booking…'
+              ) : (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                >
+                  Book appointment
+                  <ArrowRight size={16} aria-hidden />
+                </span>
+              )}
             </NextButton>
           ) : (
             // Two-CTA summary footer. Pay-now is the primary path so
@@ -983,13 +997,31 @@ function Footer({
             </div>
           )
         ) : summaryFree ? (
+          // Free-service path — there's no payment step, the Book
+          // button on Details IS the commit. Same shimmer + arrow
+          // treatment as the paid Book-appointment so the conversion
+          // moment reads the same regardless of price.
           <NextButton
             disabled={nextDisabled}
             onClick={onNext}
             accent={accent}
-            shimmer={false}
+            shimmer={!submitting}
           >
-            {nextLabel}
+            {submitting ? (
+              nextLabel
+            ) : (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                {nextLabel}
+                <ArrowRight size={16} aria-hidden />
+              </span>
+            )}
           </NextButton>
         ) : (
           <NextButton

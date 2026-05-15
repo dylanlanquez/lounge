@@ -264,6 +264,17 @@ export function ensureQuizKeyframes(): void {
       }
     }
 
+    /* Denture-repair arch context chip — visible on mobile only.
+       On desktop (≥768px) the per-arch title already spells out
+       "...your top denture" / "...your bottom denture" with the
+       arch words in accent-bold, so the chip becomes redundant and
+       just steals vertical space. */
+    @media (min-width: 768px) {
+      .vlounge-arch-sticky {
+        display: none !important;
+      }
+    }
+
     /* Success-screen smile-photo grid:
        • Desktop: 3 columns, square tiles side-by-side.
        • Mobile (≤520px): horizontal-snap row so three large
