@@ -412,7 +412,17 @@ function ItemRow({
           style={{
             display: 'flex',
             justifyContent: 'space-between',
-            alignItems: 'center',
+            // alignItems: 'baseline' aligns the title and amount by
+            // their text baselines, not their line-box centres. With
+            // center alignment a title containing descenders ("Same-
+            // day upper retainer" — the 'p' and 'y' extend below
+            // baseline, so the line box reserves room and pushes its
+            // centre downward) sits visually higher than an amount
+            // with no descenders ("£149.00"). Baseline alignment
+            // pins the letters of both to the same horizontal line,
+            // which is how the eye actually reads "title + amount on
+            // one line".
+            alignItems: 'baseline',
             gap: 12,
           }}
         >
@@ -436,6 +446,7 @@ function ItemRow({
               style={{
                 fontSize: 14,
                 fontWeight: 600,
+                lineHeight: 1.2,
                 color: rightAmountColour ?? QUIZ.INK,
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
