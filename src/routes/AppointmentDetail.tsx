@@ -67,6 +67,7 @@ import {
   relativeDay,
 } from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
+import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
@@ -728,18 +729,29 @@ function Hero({
   // hero's timeLine. Sheet itself renders via portal so DOM position
   // doesn't matter.
   const [timelineOpen, setTimelineOpen] = useState(false);
+  // Resolve the LIVE booking-type phases for this appointment.
+  // Source is the admin's current config (lng_booking_type_resolve),
+  // not the materialised snapshot, because the modal is a customer-
+  // facing description of how the service unfolds and should reflect
+  // what's set up right now — not whatever was frozen at the moment
+  // of booking. See appointmentLivePhases.ts for the trade-off.
+  const livePhasesState = useAppointmentLivePhases({
+    service_type: appt.service_type,
+    repair_variant: appt.repair_variant,
+    product_key: appt.product_key,
+    arch: appt.arch,
+    start_at: appt.start_at,
+  });
+  const livePhases = livePhasesState.phases ?? [];
   // Only offer the link when the breakdown is non-trivial — i.e.
-  // the appointment has more than one phase. A single-phase booking
-  // (no passive lab gap) has a contiguous 09:15 → 09:45 window where
-  // the legacy timeRange line is honest; swapping to "Booked for
-  // 09:15 + link" would lose information without explaining anything
-  // new. Multi-phase bookings (Click-in veneers: Book-in + Impression
-  // + Manufacture + Try In) are exactly the case the original line
-  // misrepresents, so this is where the timeline link earns its
-  // place. Legacy rows with zero materialised phases also skip the
-  // link so it never points at a dead modal.
+  // the service has more than one phase in the live config. A
+  // single-phase booking (no passive lab gap) has a contiguous
+  // 09:15 → 09:45 window where the legacy timeRange line is honest;
+  // swapping to "Booked for 09:15 + link" would lose information
+  // without explaining anything new. Services without configured
+  // phases also skip the link so it never points at a dead modal.
   const onShowTimeline =
-    appt.phases.length > 1 ? () => setTimelineOpen(true) : null;
+    livePhases.length > 1 ? () => setTimelineOpen(true) : null;
   // Source label — "Native" reads as developer jargon to the
   // reception team. For widget-originated bookings we know which
   // storefront the patient booked through (brand_id is written by
@@ -853,7 +865,7 @@ function Hero({
           ) : null
         }
       >
-        <PhaseTimeline phases={appt.phases} />
+        <PhaseTimeline phases={livePhases} />
       </BottomSheet>
     </>
   );
@@ -962,10 +974,10 @@ function buildApptRibbon(
   // veneers: Book-in 10m + Impression 5m + Manufacture 4h + Try In
   // 10m), so the patient and the receptionist were both reading a
   // dishonest single-block window. We only swap when the timeline is
-  // actually available (phases.length > 0 and a callback is wired) —
-  // legacy rows fall back to the original range string.
-  const canShowTimeline =
-    onShowTimeline !== null && appt.phases.length > 1;
+  // actually available (caller passed a non-null onShowTimeline) —
+  // services with zero or one configured phase fall back to the
+  // original range string.
+  const canShowTimeline = onShowTimeline !== null;
   const bookedForLine: ReactNode = canShowTimeline ? (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
       <span>Booked for {startStr}</span>

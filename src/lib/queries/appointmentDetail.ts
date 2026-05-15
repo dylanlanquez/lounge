@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { logFailure } from '../failureLog.ts';
-import type { AppointmentPhaseSummary, AppointmentSource } from './appointments.ts';
+import type { AppointmentSource } from './appointments.ts';
 import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
 
 // Appointment detail — used by /appointment/:id (the Ledger
@@ -154,13 +154,6 @@ export interface AppointmentDetailRow {
   // no upgrades; only denture_repair has repair items).
   upgrades: AppointmentUpgradeRow[];
   repairItems: AppointmentRepairItemRow[];
-  /** Materialised phases for this appointment (ADR-006 / docs/booking-
-   *  phases.md). Snapshotted from the booking type's phase rows at
-   *  booking time so admin edits later can't rewrite live appointment
-   *  windows. Empty array for legacy rows that pre-date the
-   *  materialisation trigger — callers should fall back to the
-   *  appointment's single [start_at, end_at] window in that case. */
-  phases: AppointmentPhaseSummary[];
 }
 
 export interface AppointmentUpgradeRow {
@@ -307,7 +300,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         // so the page paints with everything on first useable render.
         // Host fetch returns null when meet_host_id is unset (legacy /
         // Calendly-imported rows).
-        const [patientRes, locationRes, staffRes, visitRes, hostRes, upgradesRes, repairsRes, phasesRes] = await Promise.all([
+        const [patientRes, locationRes, staffRes, visitRes, hostRes, upgradesRes, repairsRes] = await Promise.all([
           supabase
             .from('patients')
             .select('id, first_name, last_name, email, phone, avatar_data, internal_ref, lwo_ref')
@@ -366,14 +359,6 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
             .select('id, catalogue_id, code, repair_variant, name, unit_label, arch, quantity, unit_price_pence, both_arches_price_pence, line_total_pence, created_at')
             .eq('appointment_id', appt.id)
             .order('created_at', { ascending: true }),
-          // Materialised phases (lng_appointment_phases). Empty array
-          // for any pre-trigger / legacy row, which the AppointmentHero
-          // falls back from gracefully.
-          supabase
-            .from('lng_appointment_phases')
-            .select('phase_index, label, patient_required, start_at, end_at, status, pool_ids')
-            .eq('appointment_id', appt.id)
-            .order('phase_index', { ascending: true }),
         ]);
         if (cancelled) return;
 
@@ -532,15 +517,6 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
             bothArchesPricePence: r.both_arches_price_pence,
             lineTotalPence: r.line_total_pence,
             createdAt: r.created_at,
-          })),
-          phases: ((phasesRes.data ?? []) as AppointmentPhaseSummary[]).map((p) => ({
-            phase_index: p.phase_index,
-            label: p.label,
-            patient_required: p.patient_required,
-            start_at: p.start_at,
-            end_at: p.end_at,
-            status: p.status,
-            pool_ids: Array.isArray(p.pool_ids) ? p.pool_ids : [],
           })),
         };
 
