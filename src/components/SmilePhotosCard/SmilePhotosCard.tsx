@@ -485,22 +485,37 @@ function PhotoTile({
           </>
         )}
       </a>
-      <span
+      {/* Caption + per-tile promote affordance share one row so the
+          two read as a single piece of metadata under the photo —
+          "Front smile · Added ✓" — rather than the label sitting
+          alone with the button stacked beneath it. Small inline
+          gap, label first. */}
+      <div
         style={{
-          fontSize: theme.type.size.xs,
-          fontWeight: theme.type.weight.medium,
-          color: theme.color.inkMuted,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          minWidth: 0,
         }}
       >
-        {label}
-      </span>
-      {canPromote || promoteState.state !== 'idle' ? (
-        <PromoteTileLink
-          state={promoteState}
-          disabled={!canPromote || promoteState.state === 'busy'}
-          onClick={onPromote}
-        />
-      ) : null}
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkMuted,
+            flexShrink: 0,
+          }}
+        >
+          {label}
+        </span>
+        {canPromote || promoteState.state !== 'idle' ? (
+          <PromoteTileLink
+            state={promoteState}
+            disabled={!canPromote || promoteState.state === 'busy'}
+            onClick={onPromote}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -563,7 +578,6 @@ function PromoteTileLink({
         border: 'none',
         padding: 0,
         margin: 0,
-        marginTop: 2,
         fontFamily: 'inherit',
         color: labelColor,
         fontSize: theme.type.size.xs,
