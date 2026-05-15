@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  BadgeCheck,
   Calendar,
+  CalendarClock,
   Check,
   CheckCircle2,
   ClipboardCheck,
@@ -13,10 +15,13 @@ import {
 import {
   customerRepairLabel,
   formatBookingSuccessTitle,
+  formatPrice,
+  type PriceBreakdown,
   type RepairLine,
   type WidgetState,
 } from '../state.ts';
 import type { WidgetUpgrade } from '../data.ts';
+import { DepositGlyph } from '../DepositGlyph.tsx';
 import type { WidgetBrand } from '../Widget.tsx';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
@@ -40,6 +45,7 @@ import { env } from '../../../lib/env.ts';
 export function SuccessScreen({
   state,
   upgrades,
+  priceBreakdown,
   appointmentRef,
   appointmentId,
   manageToken,
@@ -50,6 +56,11 @@ export function SuccessScreen({
    *  resolve the names of `state.upgradeIds` for the "What you booked"
    *  section. Empty array for services without upgrades. */
   upgrades: ReadonlyArray<WidgetUpgrade>;
+  /** Resolved price breakdown for this booking — sourced from the
+   *  same computePriceBreakdown() the summary card used. Drives the
+   *  payment-status row ("£149 paid in full", "£25 deposit paid",
+   *  "Paying on the day"). */
+  priceBreakdown: PriceBreakdown;
   appointmentRef: string | null;
   appointmentId: string | null;
   manageToken: string | null;
@@ -174,25 +185,20 @@ export function SuccessScreen({
               state={state}
               upgrades={upgrades.filter((u) => state.upgradeIds.includes(u.id))}
             />
+            <PaymentStatusRow
+              state={state}
+              priceBreakdown={priceBreakdown}
+            />
+            {appointmentRef ? (
+              <BookingReferenceRow value={appointmentRef} />
+            ) : null}
           </div>
-
-          {appointmentRef ? (
-            <div
-              style={{
-                marginTop: 24,
-                paddingTop: 20,
-                paddingBottom: 24,
-                borderTop: `1px solid ${QUIZ.BORDER_SOFT}`,
-                borderBottom: `1px solid ${QUIZ.BORDER_SOFT}`,
-              }}
-            >
-              <BookingReferenceRow value={appointmentRef} accent={accent} />
-            </div>
-          ) : null}
 
           <p
             style={{
-              margin: '24px 0 0',
+              margin: '16px 0 0',
+              paddingTop: 16,
+              borderTop: `1px solid ${QUIZ.BORDER_SOFT}`,
               fontSize: 13.5,
               color: QUIZ.MUTED_2,
               lineHeight: 1.5,
@@ -285,21 +291,15 @@ function SuccessGlyph({ accent }: { accent: string }) {
   );
 }
 
-// Booking-reference row — shares the leading icon column with the
-// DetailRow above (Hash glyph in the same 20px column the Calendar
-// and MapPin icons sit in) so the row aligns visually with the
-// date and location entries. The value + copy state are wrapped in
-// a brand-accent-tinted bordered pill that the customer reads as
-// "tappable to copy"; tap flips it to "Copied" for ~2.2s.
-function BookingReferenceRow({
-  value,
-  accent,
-}: {
-  value: string;
-  accent: string;
-}) {
+// Booking-reference row — inline DetailRow-shaped layout: Hash glyph
+// in the leading column, the LAP value as the row's primary text,
+// and a small Copy button on the trailing edge. Drops the earlier
+// accent-tinted pill chrome — the visual weight of that pill was
+// outsized for what is essentially a copyable reference string, and
+// the row now reads as a peer of the date / location / upgrades /
+// payment rows above it in the same column.
+function BookingReferenceRow({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
-  const [hovered, setHovered] = useState(false);
 
   const handleCopy = async () => {
     try {
@@ -332,6 +332,7 @@ function BookingReferenceRow({
       }}
     >
       <span
+        aria-hidden
         style={{
           flexShrink: 0,
           width: 20,
@@ -341,97 +342,148 @@ function BookingReferenceRow({
           color: QUIZ.MUTED_2,
         }}
       >
-        <Hash size={16} strokeWidth={1.75} aria-hidden />
+        <Hash size={16} strokeWidth={1.75} />
+      </span>
+      <span
+        style={{
+          flex: 1,
+          fontSize: 14,
+          fontWeight: 600,
+          color: QUIZ.INK,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '0.02em',
+        }}
+      >
+        {value}
       </span>
       <button
         type="button"
         onClick={handleCopy}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
         style={{
           appearance: 'none',
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          margin: 0,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 10,
-          background: hovered
-            ? hexWithAlpha(accent, 0.1)
-            : hexWithAlpha(accent, 0.06),
-          border: `1px solid ${hexWithAlpha(accent, hovered ? 0.28 : 0.14)}`,
-          borderRadius: 10,
-          padding: '8px 12px',
-          cursor: 'pointer',
-          fontFamily: 'inherit',
-          transition: 'background 0.15s ease, border-color 0.15s ease',
-          userSelect: 'none',
+          gap: 5,
+          fontSize: 13,
+          fontWeight: 600,
+          color: QUIZ.MUTED_2,
+          flexShrink: 0,
+          transition: 'color 0.15s ease',
         }}
       >
-        <span
-          style={{
-            fontSize: 14,
-            color: accent,
-            fontWeight: 600,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: '0.02em',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {value}
-        </span>
-        <span
-          aria-hidden
-          style={{
-            width: 1,
-            height: 14,
-            background: hexWithAlpha(accent, 0.18),
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 5,
-            fontSize: 12,
-            fontWeight: 600,
-            color: accent,
-            flexShrink: 0,
-            transition: 'color 0.15s ease',
-          }}
-        >
-          {copied ? (
-            <>
-              <CheckCircle2 size={13} aria-hidden /> Copied
-            </>
-          ) : (
-            <>
-              <Copy size={13} aria-hidden /> Copy
-            </>
-          )}
-        </span>
+        {copied ? (
+          <>
+            <CheckCircle2 size={13} aria-hidden /> Copied
+          </>
+        ) : (
+          <>
+            <Copy size={13} aria-hidden /> Copy
+          </>
+        )}
       </button>
     </div>
   );
 }
 
-// Convert a hex colour (#RRGGBB or #RGB) to an rgba() string with
-// the supplied alpha. Used by BookingReferenceRow so the brand
-// accent tints the tile background + border without baking per-
-// brand rgba constants into QUIZ. Returns the original hex
-// unchanged on parse failure — defensive, since accent values
-// arrive from per-brand bundles.
-function hexWithAlpha(hex: string, alpha: number): string {
-  let h = hex.trim();
-  if (h.startsWith('#')) h = h.slice(1);
-  if (h.length === 3) {
-    h = h.split('').map((c) => c + c).join('');
+// Payment-status row — surfaces what's been settled at booking time
+// so the customer never lands on the success screen unsure whether
+// they paid the full amount, a deposit, or nothing yet. The three
+// states the widget can produce:
+//
+//   • Pay in full          → "£149 paid in full"
+//   • Pay deposit          → "£25 deposit paid"
+//   • Pay on the day       → "Paying on the day"
+//   • Free service         → no row at all
+//
+// Icon family + colour come from the staff-app pattern Dylan
+// referenced: solid BadgeCheck for paid-in-full, dashed
+// DepositGlyph for deposits (clearly a partial settlement), neutral
+// CalendarClock for on-the-day. The sage-green tint pulls the row
+// out from the neutral DetailRow stack above without competing
+// with the navy success glyph at the top.
+function PaymentStatusRow({
+  state,
+  priceBreakdown,
+}: {
+  state: WidgetState;
+  priceBreakdown: PriceBreakdown;
+}) {
+  const total = priceBreakdown.subtotalPence;
+  if (total <= 0) return null; // free service — no row to show.
+
+  const choice = state.paymentChoice;
+  let label: string;
+  let icon: React.ReactNode;
+  if (choice === 'pay_full') {
+    label = `${formatPrice(total)} paid in full`;
+    icon = <BadgeCheck size={16} strokeWidth={2.25} aria-hidden />;
+  } else if (choice === 'pay_deposit') {
+    const deposit = priceBreakdown.depositPence;
+    if (deposit <= 0) return null;
+    label = `${formatPrice(deposit)} deposit paid`;
+    icon = (
+      <span style={{ display: 'inline-flex', color: PAY_GREEN }}>
+        <DepositGlyph size={16} />
+      </span>
+    );
+  } else if (choice === 'pay_on_the_day') {
+    label = 'Paying on the day';
+    icon = <CalendarClock size={16} strokeWidth={1.75} aria-hidden />;
+  } else {
+    // Defensive — submission landed without a payment choice (legacy
+    // pre-mode-flag path). Surface nothing rather than guessing.
+    return null;
   }
-  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return hex;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          width: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: PAY_GREEN,
+        }}
+      >
+        {icon}
+      </span>
+      <span
+        style={{
+          fontSize: 14,
+          fontWeight: 600,
+          color: PAY_GREEN,
+          letterSpacing: '-0.005em',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
 }
+
+// Sage green — distinct from the navy brand accent so the payment-
+// status row reads as a confirmation-of-money rather than another
+// info row. Same swatch the staff app's DepositLine uses for the
+// partial-settlement chip, kept consistent so paid amounts read
+// the same colour wherever they appear in the system.
+const PAY_GREEN = '#5C8E76';
 
 // "What you booked" row — surfaces the patient's per-arch denture-
 // repair lines + any paid upgrades so the success card reflects the
@@ -547,11 +599,11 @@ function BookedItemsRow({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span
               style={{
-                fontSize: 11,
+                fontSize: 13,
                 fontWeight: 600,
-                color: QUIZ.SUBTLE,
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
+                color: QUIZ.INK,
+                letterSpacing: '-0.005em',
+                lineHeight: 1.3,
               }}
             >
               Upgrades

@@ -406,6 +406,7 @@ function WidgetReady({
       <SuccessScreen
         state={api.state}
         upgrades={api.upgrades}
+        priceBreakdown={api.priceBreakdown}
         appointmentRef={submission.appointmentRef}
         appointmentId={submission.appointmentId}
         manageToken={submission.manageToken}
