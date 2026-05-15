@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, ArrowRight, CalendarClock, Lock } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarClock } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -884,12 +884,12 @@ function Footer({
   const nextLabel = (() => {
     if (isPaymentStep) {
       if (paymentPaying || submitting) return 'Processing…';
-      // The pay button on the payment step IS the booking commit —
-      // tapping it confirms the slot, so the label has to read as
-      // "pay AND book", not just "pay". Without the second verb the
-      // patient can tap thinking they're only authorising the card
-      // and still have a separate Book step to go.
-      return `Pay ${formatPriceShort(fullAmount)} and book appointment`;
+      // Match the Pay-on-the-day path's Book-appointment CTA verbatim
+      // so the commit verb is identical regardless of which payment
+      // route the patient picked. The price + verb context lives in
+      // the PayHeader above the card form, so the button itself just
+      // needs to read as the commit action.
+      return 'Book appointment';
     }
     if (submitting) return 'Booking…';
     if (isDetailsStep) return copy.summaryCtaBook;
@@ -1030,7 +1030,7 @@ function Footer({
             accent={accent}
             shimmer={isPaymentStep}
           >
-            {isPaymentStep ? (
+            {isPaymentStep && !paymentPaying && !submitting ? (
               <span
                 style={{
                   display: 'inline-flex',
@@ -1039,8 +1039,8 @@ function Footer({
                   gap: 8,
                 }}
               >
-                <Lock size={14} aria-hidden />
                 {nextLabel}
+                <ArrowRight size={16} aria-hidden />
               </span>
             ) : (
               nextLabel
