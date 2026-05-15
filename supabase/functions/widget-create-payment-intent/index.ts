@@ -69,11 +69,24 @@ interface Body {
   repairVariant?: string | null;
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
+  /** Widget upgrade ids the customer ticked. Server-resolved against
+   *  lng_widget_upgrades (the anon-readable filtered view of
+   *  lng_catalogue_upgrades) and added to the PI amount. Empty when
+   *  the service has no selected upgrades. Defended against tampering:
+   *  every id must (a) resolve to an active, widget-visible row, and
+   *  (b) belong to the catalogue row that matches this booking's
+   *  axes — anything that doesn't is silently dropped from the
+   *  total. The widget client passes the same list to
+   *  widget-create-appointment at commit time so the verification
+   *  step recomputes an identical amount. */
+  upgradeIds?: string[];
   /** 'full' charges the resolved catalogue price (unit_price or
-   *  both_arches_price). 'deposit' is the legacy path — charges the
-   *  widget_deposit_pence configured on lng_widget_booking_types.
-   *  Defaults to 'deposit' so any older client that hasn't been
-   *  redeployed yet keeps working. */
+   *  both_arches_price) PLUS the applicable upgrade pence.
+   *  'deposit' is the legacy path — charges the widget_deposit_pence
+   *  configured on lng_widget_booking_types and ignores upgrades
+   *  (the till collects the balance later). Defaults to 'deposit'
+   *  so any older client that hasn't been redeployed yet keeps
+   *  working. */
   paymentMode?: 'full' | 'deposit';
 }
 
@@ -141,12 +154,15 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Idempotency: same (patient, slot, service, axes, mode) within
-  // Stripe's 24h window returns the same PaymentIntent. paymentMode
-  // is part of the hash so a customer who clicks Pay-now, backs out,
-  // and re-enters the flow as Pay-now again gets the same PI — but
-  // a future flow that mixes deposit + full on the same booking
-  // would correctly produce two distinct PIs.
+  // Idempotency: same (patient, slot, service, axes, upgrades, mode)
+  // within Stripe's 24h window returns the same PaymentIntent. A
+  // different upgrade selection must produce a different PI, so the
+  // sorted upgradeIds list is in the hash — otherwise re-entering
+  // the flow with new upgrades would reuse the old PI at the old
+  // (wrong) amount. paymentMode is also in the hash so a customer
+  // who clicks Pay-now, backs out, and switches to Pay-deposit
+  // correctly produces a fresh PI.
+  const upgradeIdsForHash = (body.upgradeIds ?? []).slice().sort().join(',');
   const idemKey = await sha256Hex(
     [
       body.email.toLowerCase().trim(),
@@ -155,6 +171,7 @@ Deno.serve(async (req) => {
       body.repairVariant ?? '',
       body.productKey ?? '',
       body.arch ?? '',
+      upgradeIdsForHash,
       paymentMode,
     ].join('|'),
   );
@@ -222,18 +239,30 @@ Deno.serve(async (req) => {
   });
 });
 
-// Compute the resolved catalogue price the same way the widget
-// client does: pick the lwo_catalogue row matching the pinned axes,
-// then use unit_price OR both_arches_price when archMatch ===
-// 'single' AND arch === 'both' AND a both_arches_price is set.
-// Returns pounds × 100 (catalogue stores decimals).
+// Compute the resolved full price the same way the widget client
+// does in computePriceBreakdown(): catalogue base + every applicable
+// upgrade, with arch-aware pricing on both layers.
+//
+// Why server-side: the PI amount must be authoritative. The client
+// composes a display price for the customer; the server resolves
+// independently and creates the PI for the server's number so a
+// tampered client body can never claim £0 on a £179 booking.
+//
+// Output: pounds × 100 (catalogue stores decimals).
+//
+// IMPORTANT: This logic must stay byte-for-byte identical to
+// widget-create-appointment's resolveFullPricePence — that endpoint
+// re-runs the same computation on submit and verifies the PI matches.
+// Any divergence between the two would either reject valid bookings
+// or accept under-charged ones.
 async function resolveFullPricePence(
   supabase: SupabaseClient,
   body: Body,
 ): Promise<{ ok: true; pence: number } | { ok: false; code: string }> {
+  // Step 1 — resolve the catalogue row + its base price.
   let q = supabase
     .from('lwo_catalogue')
-    .select('unit_price, both_arches_price, arch_match')
+    .select('id, unit_price, both_arches_price, arch_match')
     .eq('service_type', body.serviceType)
     .eq('active', true);
   if (body.productKey) q = q.eq('product_key', body.productKey);
@@ -245,6 +274,7 @@ async function resolveFullPricePence(
   }
   const row = (data && data.length > 0 ? data[0] : null) as
     | {
+        id: string;
         unit_price: number | string | null;
         both_arches_price: number | string | null;
         arch_match: 'any' | 'single' | 'both' | null;
@@ -256,15 +286,64 @@ async function resolveFullPricePence(
     archMatch === 'single' &&
     body.arch === 'both' &&
     row.both_arches_price !== null;
-  const decimal = useBoth ? row.both_arches_price : row.unit_price;
-  if (decimal === null || decimal === undefined) {
+  const baseDecimal = useBoth ? row.both_arches_price : row.unit_price;
+  if (baseDecimal === null || baseDecimal === undefined) {
     return { ok: false, code: 'no_price_resolved' };
   }
-  const pence = Math.round(Number(decimal) * 100);
-  if (!Number.isFinite(pence) || pence <= 0) {
+  const basePence = Math.round(Number(baseDecimal) * 100);
+  if (!Number.isFinite(basePence) || basePence <= 0) {
     return { ok: false, code: 'no_price_resolved' };
   }
-  return { ok: true, pence };
+
+  // Step 2 — add applicable upgrade pence. Every id must (a) live in
+  // lng_widget_upgrades (the anon-readable filtered view of
+  // lng_catalogue_upgrades — only active + widget_visible rows
+  // surface) and (b) belong to the catalogue row we just resolved.
+  // Defence against a tampered body that includes upgrade ids from
+  // a different product / hidden upgrades / inactive rows — they're
+  // silently dropped from the total so the customer is never
+  // overcharged by a manipulated request, and the system is never
+  // undercharged because the legitimate widget client only ever
+  // sends upgrade ids that pass both checks.
+  const upgradeIds = Array.from(new Set(body.upgradeIds ?? [])).filter(
+    (id) => typeof id === 'string' && id.length > 0,
+  );
+  let upgradePence = 0;
+  if (upgradeIds.length > 0) {
+    const { data: upgradeRows, error: upgradeErr } = await supabase
+      .from('lng_widget_upgrades')
+      .select('id, catalogue_id, unit_price, both_arches_price')
+      .in('id', upgradeIds)
+      .eq('catalogue_id', row.id);
+    if (upgradeErr) {
+      await logFailure('upgrade_price_resolve_failed', {
+        error: upgradeErr.message,
+        body,
+      });
+      return { ok: false, code: 'upgrade_resolve_failed' };
+    }
+    for (const u of (upgradeRows ?? []) as Array<{
+      id: string;
+      catalogue_id: string;
+      unit_price: number | string | null;
+      both_arches_price: number | string | null;
+    }>) {
+      // Upgrades inherit the parent row's arch_match: a single-arch
+      // product's upgrade also uses its both_arches_price when the
+      // customer picked arch='both'. Anything else uses unit_price.
+      const useUpgradeBoth =
+        archMatch === 'single' &&
+        body.arch === 'both' &&
+        u.both_arches_price !== null;
+      const upgradeDecimal = useUpgradeBoth ? u.both_arches_price : u.unit_price;
+      if (upgradeDecimal === null || upgradeDecimal === undefined) continue;
+      const pence = Math.round(Number(upgradeDecimal) * 100);
+      if (!Number.isFinite(pence) || pence <= 0) continue;
+      upgradePence += pence;
+    }
+  }
+
+  return { ok: true, pence: basePence + upgradePence };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

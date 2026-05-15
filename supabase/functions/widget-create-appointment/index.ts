@@ -713,13 +713,23 @@ type VerifyResult =
 // both endpoints must agree on the expected amount, so this
 // function is duplicated rather than imported (Deno function bundles
 // don't share modules across function dirs in the deploy pipeline).
+//
+// MUST stay byte-for-byte aligned with the PI endpoint's copy. If
+// the two diverge, verifyPaymentIntent rejects valid bookings (when
+// this endpoint computes more than the PI was created for) OR
+// accepts under-charged ones (when this endpoint computes less than
+// the PI actually captured). The shape of the bug we just fixed:
+// resolver excluded upgrades on both sides, customer was charged
+// base only, verification passed because both sides agreed on a
+// wrong total.
 async function resolveFullPricePence(
   supabase: SupabaseClient,
   body: SubmitBody,
 ): Promise<{ ok: true; pence: number } | { ok: false; code: string }> {
+  // Step 1 — resolve the catalogue row + its base price.
   let q = supabase
     .from('lwo_catalogue')
-    .select('unit_price, both_arches_price, arch_match')
+    .select('id, unit_price, both_arches_price, arch_match')
     .eq('service_type', body.serviceType)
     .eq('active', true);
   if (body.productKey) q = q.eq('product_key', body.productKey);
@@ -728,6 +738,7 @@ async function resolveFullPricePence(
   if (error) return { ok: false, code: 'catalogue_lookup_failed' };
   const row = (data && data.length > 0 ? data[0] : null) as
     | {
+        id: string;
         unit_price: number | string | null;
         both_arches_price: number | string | null;
         arch_match: 'any' | 'single' | 'both' | null;
@@ -739,15 +750,54 @@ async function resolveFullPricePence(
     archMatch === 'single' &&
     body.arch === 'both' &&
     row.both_arches_price !== null;
-  const decimal = useBoth ? row.both_arches_price : row.unit_price;
-  if (decimal === null || decimal === undefined) {
+  const baseDecimal = useBoth ? row.both_arches_price : row.unit_price;
+  if (baseDecimal === null || baseDecimal === undefined) {
     return { ok: false, code: 'no_price_resolved' };
   }
-  const pence = Math.round(Number(decimal) * 100);
-  if (!Number.isFinite(pence) || pence <= 0) {
+  const basePence = Math.round(Number(baseDecimal) * 100);
+  if (!Number.isFinite(basePence) || basePence <= 0) {
     return { ok: false, code: 'no_price_resolved' };
   }
-  return { ok: true, pence };
+
+  // Step 2 — add applicable upgrade pence. Every id must (a) live in
+  // lng_widget_upgrades (the anon-readable filtered view — only
+  // active + widget_visible rows surface) and (b) belong to the
+  // catalogue row we just resolved. Defence against a tampered body
+  // that includes upgrade ids from a different product / hidden
+  // upgrades / inactive rows — they're silently dropped from the
+  // total.
+  const upgradeIds = Array.from(new Set(body.upgradeIds ?? [])).filter(
+    (id) => typeof id === 'string' && id.length > 0,
+  );
+  let upgradePence = 0;
+  if (upgradeIds.length > 0) {
+    const { data: upgradeRows, error: upgradeErr } = await supabase
+      .from('lng_widget_upgrades')
+      .select('id, catalogue_id, unit_price, both_arches_price')
+      .in('id', upgradeIds)
+      .eq('catalogue_id', row.id);
+    if (upgradeErr) {
+      return { ok: false, code: 'upgrade_resolve_failed' };
+    }
+    for (const u of (upgradeRows ?? []) as Array<{
+      id: string;
+      catalogue_id: string;
+      unit_price: number | string | null;
+      both_arches_price: number | string | null;
+    }>) {
+      const useUpgradeBoth =
+        archMatch === 'single' &&
+        body.arch === 'both' &&
+        u.both_arches_price !== null;
+      const upgradeDecimal = useUpgradeBoth ? u.both_arches_price : u.unit_price;
+      if (upgradeDecimal === null || upgradeDecimal === undefined) continue;
+      const pence = Math.round(Number(upgradeDecimal) * 100);
+      if (!Number.isFinite(pence) || pence <= 0) continue;
+      upgradePence += pence;
+    }
+  }
+
+  return { ok: true, pence: basePence + upgradePence };
 }
 
 async function verifyPaymentIntent(

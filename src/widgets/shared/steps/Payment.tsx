@@ -95,6 +95,14 @@ export const PaymentStep = forwardRef<
   const repairVariant = api.state.axes.repair_variant ?? null;
   const productKey = api.state.axes.product_key ?? null;
   const arch = api.state.axes.arch ?? null;
+  // Selected widget upgrade ids. The PI endpoint server-resolves
+  // each one against lng_widget_upgrades and adds the resolved
+  // pence to the PI amount. Joining the sorted list into a stable
+  // cache key lets us put it in the dep array without re-firing
+  // the effect on every render when the underlying array literal
+  // is fresh but the contents haven't actually changed.
+  const upgradeIds = api.state.upgradeIds;
+  const upgradeIdsKey = upgradeIds.slice().sort().join('|');
   // Which amount the PI is created for. 'pay_deposit' tells the
   // server to read widget_deposit_pence (legacy "£25 deposit, balance
   // on the day" path); 'pay_full' tells it to charge the resolved
@@ -123,9 +131,16 @@ export const PaymentStep = forwardRef<
           repairVariant,
           productKey,
           arch,
-          // 'full' charges the resolved catalogue price; 'deposit'
-          // charges widget_deposit_pence and leaves the rest for the
-          // till. The server enforces the amount against its own
+          // Selected upgrades — server-resolved server-side against
+          // lng_widget_upgrades, added to the PI amount, and hashed
+          // into the idempotency key so a different selection makes
+          // a new PI. Empty array for services without upgrades.
+          upgradeIds,
+          // 'full' charges the resolved catalogue price PLUS any
+          // applicable upgrade pence; 'deposit' charges
+          // widget_deposit_pence (legacy "deposit only" path) and
+          // ignores upgrades since the till collects the balance
+          // later. The server enforces the amount against its own
           // resolution either way; the body's paymentMode is the
           // intent flag, not a price the client gets to claim.
           paymentMode: requestedMode,
@@ -145,7 +160,7 @@ export const PaymentStep = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch, requestedMode, onError]);
+  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch, upgradeIdsKey, requestedMode, onError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While the Stripe form isn't ready yet, the parent shouldn't
   // enable the footer's Pay button.
