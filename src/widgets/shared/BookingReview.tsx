@@ -120,20 +120,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'location',
-      // Optical centring: MapPin's bulb sits in the top half of the
-      // 24×24 viewBox (the tail is thin and short, the bulb is
-      // visually heavy). Geometric-centre alignment leaves the bulb
-      // floating above the badge centre. translateY(2px) drops the
-      // glyph so its visual centre — the bulb — lands on the badge
-      // centre. See ICON_OPTICAL_OFFSETS rationale at row primitives.
-      icon: (
-        <MapPin
-          size={16}
-          strokeWidth={2}
-          aria-hidden
-          style={{ transform: 'translateY(2px)' }}
-        />
-      ),
+      icon: <MapPin size={18} strokeWidth={2} aria-hidden />,
       title: state.location.name,
       subtitle: state.location.addressLine,
     });
@@ -147,20 +134,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'slot',
-      // Optical centring: Calendar's body rectangle occupies the
-      // lower 2/3 of the 24×24 viewBox (the two binding tabs at top
-      // are thin, the body below them is the dominant visual mass).
-      // Geometric-centre alignment leaves the body hanging below the
-      // badge centre. translateY(-2px) lifts the glyph so its visual
-      // centre — the body — lands on the badge centre.
-      icon: (
-        <Calendar
-          size={16}
-          strokeWidth={2}
-          aria-hidden
-          style={{ transform: 'translateY(-2px)' }}
-        />
-      ),
+      icon: <Calendar size={18} strokeWidth={2} aria-hidden />,
       title: formatSlotLong(state.slotIso),
     });
   }
@@ -180,7 +154,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'service',
-      icon: <CheckCircle2 size={16} strokeWidth={2.25} aria-hidden />,
+      icon: <CheckCircle2 size={18} strokeWidth={2} aria-hidden />,
       title: serviceLine,
       rightAmount:
         priceBreakdown.serviceLinePence > 0
