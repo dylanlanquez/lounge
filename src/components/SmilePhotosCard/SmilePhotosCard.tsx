@@ -144,6 +144,24 @@ export function SmilePhotosCard({
 
   const promoteOne = async (kind: Kind, row: IntakePhotoRow) => {
     if (!patientId || !patientName) return;
+    // If the slot already carries a smile photo (either added in
+    // this session or in a previous one), re-promotion overwrites
+    // the existing canonical row on the patient profile. The
+    // patient's earlier photo stays in patient_files history (the
+    // version stamp keeps the trail), but the LIVE smile photo
+    // becomes the one we're about to copy. Confirm before doing
+    // that — staff opening a returning patient's new appointment
+    // shouldn't accidentally swap the old smile photo with the
+    // new one without a moment of "yes, that's what I want".
+    if (promote[kind].state === 'done') {
+      const slotLabel = SLOTS.find((s) => s.kind === kind)?.label.toLowerCase() ?? kind;
+      const confirmed = typeof window !== 'undefined'
+        ? window.confirm(
+            `Replace the patient's existing ${slotLabel} photo with this one? The previous photo will stay in their file history but the live smile photo on the profile will become this one.`,
+          )
+        : true;
+      if (!confirmed) return;
+    }
     setKindState(kind, { state: 'busy', message: null });
     try {
       const result = await promoteIntakePhotosToPatientProfile({
@@ -535,7 +553,11 @@ function PromoteTileLink({
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const showShift = hovered && !disabled && state.state === 'idle';
+  // Hover shift signals interactivity. Fires in any non-busy /
+  // non-disabled state — including 'done', because re-clicking a
+  // promoted tile is the documented "replace existing photo"
+  // path (with a confirm prompt before commit).
+  const showShift = hovered && !disabled && state.state !== 'busy';
   const labelColor =
     state.state === 'error'
       ? theme.color.alert
@@ -557,17 +579,22 @@ function PromoteTileLink({
         : state.state === 'error'
           ? state.message ?? "Couldn't add"
           : 'Add to profile';
-  // Once promoted the affordance is read-only — clicking again
-  // would be a no-op (the row already exists), so we kill the
-  // hover lift, the cursor, and the click handler entirely. Same
-  // for any disabled / in-flight state.
-  const inactive = disabled || state.state === 'busy' || state.state === 'done';
+  // The button stays clickable in the 'done' state — re-clicking
+  // is the path to overwrite the existing smile photo with a new
+  // one (e.g., a returning patient who uploaded fresh intake
+  // photos for a follow-up appointment). The handler shows a
+  // confirm prompt before actually replacing, so an accidental
+  // tap doesn't silently swap the patient's canonical smile
+  // photo. We only kill interactivity for the disabled and
+  // in-flight states.
+  const inactive = disabled || state.state === 'busy';
   return (
     <button
       type="button"
       onClick={inactive ? undefined : onClick}
       disabled={inactive}
       aria-label={labelText}
+      title={state.state === 'done' ? 'Tap to replace with this photo' : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={() => setHovered(true)}
@@ -587,7 +614,7 @@ function PromoteTileLink({
         alignItems: 'center',
         gap: theme.space[2],
         cursor: inactive ? 'default' : 'pointer',
-        opacity: disabled && state.state !== 'done' ? 0.55 : 1,
+        opacity: disabled ? 0.55 : 1,
         WebkitTapHighlightColor: 'transparent',
         textAlign: 'left',
         // Soft-fade the label between states so the text swap feels
