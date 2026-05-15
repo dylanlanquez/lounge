@@ -659,16 +659,16 @@ export function StepTitle({
   return (
     <h2
       style={{
-        // Tight title/subtitle pair. Title pulls up 7.5px from the
-        // earlier 30px top so the heading sits closer to the
-        // progress bar; bottom drops to 6px so the step's intro
-        // paragraph reads as a direct continuation rather than a
-        // separate region.
+        // Title pulls up 7.5px from the earlier 30px top so the
+        // heading sits closer to the progress bar. Bottom margin
+        // is sourced from QUIZ.STEP_TITLE_BOTTOM_SPACE so every
+        // step's title-to-body breathing room matches — tweak in
+        // one place when the rhythm wants adjusting.
         // `align='left'` keeps the same 720px centred column the
         // form below uses but flushes the text to the left so the
         // h2 sits over the first input — used on Details + Payment
         // where the body is form/card-like rather than option-grid.
-        margin: '22px auto 6px',
+        margin: `22px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
         maxWidth: 720,
         textAlign: align,
         fontSize: 28,

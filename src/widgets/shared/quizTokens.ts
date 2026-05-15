@@ -76,6 +76,12 @@ export const QUIZ = {
   STEP_BOTTOM_OFFSET: 108,      // px from card bottom (sticky footer height)
   STEP_TOP_OFFSET_MOBILE: 80,
   STEP_BOTTOM_OFFSET_MOBILE: 88,
+  // Breathing room beneath every step's H2 title before the option
+  // grid / form below. Tuned so the title reads as a section heading
+  // with its own visual weight rather than crowding the first card.
+  // Threaded through one token so the shell-rendered StepTitle and
+  // each step that renders its own inline h2 stay in sync.
+  STEP_TITLE_BOTTOM_SPACE: 32,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────

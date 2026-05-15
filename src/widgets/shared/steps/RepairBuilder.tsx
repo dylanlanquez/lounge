@@ -186,7 +186,12 @@ export function RepairLinesStep({
           can see at a glance which arch they're answering for. */}
       <h2
         style={{
-          margin: '32px auto 0',
+          // Bottom margin sourced from QUIZ.STEP_TITLE_BOTTOM_SPACE
+          // so this inline title's breathing room matches the shell-
+          // rendered StepTitle on every other step. Top margin
+          // (32px) stays — it's clearance from the StickyArchHeader
+          // chip pinned above, not a step-title rhythm value.
+          margin: `32px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
           maxWidth: 720,
           textAlign: 'center',
           fontSize: 28,
