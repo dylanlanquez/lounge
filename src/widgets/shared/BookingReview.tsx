@@ -6,7 +6,7 @@ import {
 } from '../../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
 import type { BookingStateApi, RepairLine, WidgetState } from './state.ts';
-import { formatPrice } from './state.ts';
+import { customerRepairLabel, formatPrice } from './state.ts';
 import type { WidgetCopy } from './copy.ts';
 import { QUIZ } from './quizTokens.ts';
 
@@ -126,16 +126,20 @@ export function BookingReview({
       subtitle: state.location.addressLine,
     });
   }
-  if (state.service && serviceLine) {
+  // Denture-repair skips the type-only service row entirely — the
+  // per-arch breakdown rendered below carries the booking story by
+  // itself, and a bare "Denture Repair" header was reading as
+  // redundant noise above the same information. Every other service
+  // (retainers, click-in veneers, etc.) still surfaces its service
+  // row so the patient sees what they booked.
+  if (state.service && serviceLine && !isRepair) {
     rows.push({
       kind: 'item',
       key: 'service',
       icon: <Award size={20} aria-hidden style={{ color: accent }} />,
       title: serviceLine,
-      // Repair bookings sum prices per-line below; the type-only
-      // service row shouldn't carry a duplicate aggregate price.
       rightAmount:
-        !isRepair && priceBreakdown.serviceLinePence > 0
+        priceBreakdown.serviceLinePence > 0
           ? formatPrice(priceBreakdown.serviceLinePence)
           : undefined,
     });
@@ -172,7 +176,7 @@ export function BookingReview({
           kind: 'extra',
           key: `repair-${line.lineId}`,
           icon: <BadgeCheck size={16} aria-hidden style={{ color: accent }} />,
-          title: `${line.name}${qtySuffix}`,
+          title: `${customerRepairLabel(line.name)}${qtySuffix}`,
           rightAmount: formatPrice(line.lineTotalPence),
         });
       }

@@ -59,12 +59,14 @@ export type StepKey =
   | 'service'
   | 'upgrades'
   | 'time'
-  // Combined details + summary step. The form fields sit on top,
-  // the booking-summary cards below, and the footer hosts the
-  // terms checkbox + Today / On-the-day price preview. Avoids
-  // the extra click the previous standalone summary step
-  // demanded — customer fills + reviews on one screen.
+  // Details captures only the patient's identity (name / email /
+  // phone / notes). Review (next step) carries the booking summary
+  // + payment-option selector. Splitting them keeps the payment
+  // choice on its own screen — when both lived on Details the
+  // selector sat below-the-fold on phones and the customer thought
+  // the form was broken.
   | 'details'
+  | 'review'
   | 'payment'
   | `axis:${AxisKey}`
   | 'repair:arch'
@@ -288,15 +290,21 @@ export function activeStepsFor(
   }
   if (hasUpgrades) out.push('upgrades');
   out.push('time');
-  // Details now also hosts the booking summary + price card — one
-  // screen the customer reviews and commits on. Previous standalone
-  // 'summary' step removed.
+  // Identity capture (form). Strictly form fields — no summary, no
+  // payment selector — so the customer is asked one focused thing
+  // per screen.
   out.push('details');
-  // Payment step is gated on the patient's choice from the details
-  // footer. Either 'pay_full' or 'pay_deposit' enters the Stripe step
-  // (the only difference being the amount the PI is created for);
-  // 'pay_on_the_day' bypasses it. Free services (subtotal === 0)
-  // stay paymentless because the choice never surfaces.
+  // Review screen carries the booking summary + payment-option
+  // selector. Always present for non-zero-price bookings; for free
+  // services the review still appears so the patient can confirm
+  // what they're booking before committing. Free services route
+  // straight from Review's "Book appointment" to submit (no Stripe).
+  out.push('review');
+  // Payment step is gated on the patient's choice from the review
+  // selector. Either 'pay_full' or 'pay_deposit' enters the Stripe
+  // step (the only difference being the amount the PI is created
+  // for); 'pay_on_the_day' bypasses it. Free services stay
+  // paymentless because the choice never surfaces.
   if (
     state.service &&
     (state.paymentChoice === 'pay_full' || state.paymentChoice === 'pay_deposit')
@@ -839,6 +847,8 @@ export function stepTitle(
       return copy.timeTitle;
     case 'details':
       return copy.detailsTitle;
+    case 'review':
+      return 'Review your booking';
     case 'payment':
       return copy.paymentTitle;
     case 'repair:arch':
@@ -975,6 +985,33 @@ export function formatPrice(pence: number): string {
   // services read as e.g. £1,248.00 instead of £1248. Per Dylan's
   // rule: every non-phone financial number gets Intl.NumberFormat.
   return GBP_FORMATTER.format(pence / 100);
+}
+
+/** Strip the redundant "denture" token from a repair catalogue
+ *  name when it's about to render under a "Your upper denture" /
+ *  "Your lower denture" subheader. "Snapped Denture" → "Snapped",
+ *  "Add tooth to denture" → "Add tooth", "Reline" → "Reline". Keeps
+ *  the first letter capitalised so the line still reads as a
+ *  proper noun phrase. Case-insensitive match; preserves the
+ *  original casing of the surviving stem.
+ *
+ *  Mirrored byte-for-byte in supabase/functions/send-appointment-
+ *  confirmation/index.ts (Deno can't import from src/). Update both
+ *  if you change the rules. */
+export function customerRepairLabel(name: string): string {
+  let out = name.trim();
+  // Drop a trailing " to denture" or " denture" so the catalogue
+  // name reads naturally beneath the "Your upper denture" heading.
+  out = out.replace(/\s+(?:to\s+)?denture\b\.?$/i, '').trim();
+  // Some catalogue rows historically have "denture" mid-phrase
+  // ("Cracked denture base") — strip the bare token if it's
+  // grammatically optional (followed by a space + lowercase word).
+  out = out.replace(/\bdenture\s+/i, '').trim();
+  // Re-capitalise the first letter if the strip left it lower-case.
+  if (out.length > 0) out = out.charAt(0).toUpperCase() + out.slice(1);
+  // Defensive: if the strip left an empty string (e.g. the catalogue
+  // row was literally "Denture"), fall back to the original.
+  return out.length > 0 ? out : name;
 }
 
 const GBP_FORMATTER_SHORT = new Intl.NumberFormat('en-GB', {
@@ -1130,11 +1167,10 @@ export function isNextEnabled(api: BookingStateApi): boolean {
     case 'time':
       return !!api.state.slotIso;
     case 'details': {
-      // Combined details + summary step. The customer must have
-      // filled all identity fields; the previous terms-checkbox
-      // gate has been removed in favour of bundling the terms link
-      // into the secondary copy below the Pay-now / Pay-on-the-day
-      // buttons.
+      // Identity-only step. The four required fields must validate;
+      // the booking summary + payment selector live on the next step
+      // (Review) so the customer always sees the choice before
+      // committing.
       const d = api.state.details;
       return (
         !validateFirstName(d.firstName) &&
@@ -1142,6 +1178,15 @@ export function isNextEnabled(api: BookingStateApi): boolean {
         !validateEmail(d.email) &&
         !validatePhone(d.phoneNumber, d.phoneCountry)
       );
+    }
+    case 'review': {
+      // Review step. Free service → always commit-ready. Paid service
+      // → requires a payment choice (PaymentChoiceCard auto-selects a
+      // default on mount, so this guard usually trips only during the
+      // brief render window before the effect lands).
+      const total = api.priceBreakdown.subtotalPence;
+      if (total === 0) return true;
+      return api.state.paymentChoice !== null;
     }
     case 'payment':
       // Stripe owns submission via its own button inside the iframe.

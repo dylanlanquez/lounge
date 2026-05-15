@@ -659,7 +659,9 @@ function formatBookingItemsBlock(items: BookingItemsSnapshot): string {
           r.unit_label === 'per tooth' && r.quantity > 1
             ? ` × ${r.quantity} teeth`
             : '';
-        lines.push(`- ${r.name}${qtySuffix} · ${formatGbpPence(r.line_total_pence)}`);
+        lines.push(
+          `- ${customerRepairLabel(r.name)}${qtySuffix} · ${formatGbpPence(r.line_total_pence)}`,
+        );
       }
       sections.push(lines.join('\n'));
     }
@@ -685,6 +687,19 @@ const GBP_FORMATTER_EMAIL = new Intl.NumberFormat('en-GB', {
 });
 function formatGbpPence(pence: number): string {
   return GBP_FORMATTER_EMAIL.format(pence / 100);
+}
+
+// Byte-for-byte mirror of customerRepairLabel in
+// src/widgets/shared/state.ts — Deno can't import from src/. If you
+// change the stripping rules in one, change the other. The unit
+// test on the browser side gives the regex coverage; this copy is
+// just kept consistent by hand.
+function customerRepairLabel(name: string): string {
+  let out = name.trim();
+  out = out.replace(/\s+(?:to\s+)?denture\b\.?$/i, '').trim();
+  out = out.replace(/\bdenture\s+/i, '').trim();
+  if (out.length > 0) out = out.charAt(0).toUpperCase() + out.slice(1);
+  return out.length > 0 ? out : name;
 }
 
 // Threshold in minutes — if any passive phase runs at least this

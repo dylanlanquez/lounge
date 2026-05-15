@@ -10,7 +10,12 @@ import {
   Loader2,
   MapPin,
 } from 'lucide-react';
-import { formatBookingSuccessTitle, type RepairLine, type WidgetState } from '../state.ts';
+import {
+  customerRepairLabel,
+  formatBookingSuccessTitle,
+  type RepairLine,
+  type WidgetState,
+} from '../state.ts';
 import type { WidgetUpgrade } from '../data.ts';
 import type { WidgetBrand } from '../Widget.tsx';
 import { QUIZ } from '../quizTokens.ts';
@@ -526,7 +531,7 @@ function BookedItemsRow({
                       fontWeight: 500,
                     }}
                   >
-                    {line.name}
+                    {customerRepairLabel(line.name)}
                     {qtySuffix}
                   </span>
                 );

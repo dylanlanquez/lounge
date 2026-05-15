@@ -103,6 +103,13 @@ function ArchTile({
 }) {
   const [hovered, setHovered] = useState(false);
   const dimmed = anySelected && !selected;
+  // Focus no longer pipes into hovered state — that was making a tile
+  // look "highlighted" the moment it received focus (e.g. after the
+  // step transitions in and the browser drops focus on the first
+  // button), which Dylan saw as a glitchy pre-select. The accent
+  // border now strictly tracks `selected` (true selection) or `hovered`
+  // (mouse-over on desktop only). Mobile taps no longer trigger a
+  // ghost-selected border because there's no hover event.
   const showLift = hovered && !selected;
   return (
     <button
@@ -112,15 +119,19 @@ function ArchTile({
       aria-label={`${title}, ${subtitle}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={() => setHovered(false)}
       style={{
         position: 'relative',
         background: QUIZ.SURFACE,
-        border: `2px solid ${selected || hovered ? accent : 'transparent'}`,
+        // Border ONLY follows selected (or mouse-hover on desktop).
+        // Previously included `hovered` for keyboard focus too, which
+        // made tapped-but-not-selected tiles look selected on mobile.
+        border: `2px solid ${selected ? accent : hovered ? accent : 'transparent'}`,
         borderRadius: QUIZ.R_CARD,
-        padding: '24px 20px',
-        minHeight: 140,
+        // Shorter tiles so three of them fit above the fold on phones
+        // alongside the step heading + sticky header. Padding tightens
+        // proportionally so the text still breathes inside.
+        padding: '16px 16px',
+        minHeight: 86,
         textAlign: 'center',
         cursor: 'pointer',
         fontFamily: 'inherit',
@@ -133,12 +144,12 @@ function ArchTile({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
+        gap: 4,
       }}
     >
       <span
         style={{
-          fontSize: 22,
+          fontSize: 19,
           fontWeight: 600,
           color: QUIZ.INK,
           letterSpacing: '-0.01em',
@@ -149,7 +160,7 @@ function ArchTile({
       </span>
       <span
         style={{
-          fontSize: 14,
+          fontSize: 13,
           color: selected ? accent : QUIZ.MUTED,
           fontWeight: 500,
           lineHeight: 1.4,
@@ -339,8 +350,6 @@ function RepairLineTile({
         onClick={onToggle}
         aria-pressed={selected}
         aria-label={title}
-        onFocus={() => setHovered(true)}
-        onBlur={() => setHovered(false)}
         style={{
           appearance: 'none',
           border: 'none',

@@ -9,8 +9,6 @@ import {
 } from '../validation.ts';
 import { CountryPicker } from '../CountryPicker.tsx';
 import { QUIZ } from '../quizTokens.ts';
-import { BookingReview } from '../BookingReview.tsx';
-import { PaymentChoiceCard } from '../PaymentChoiceCard.tsx';
 import type { WidgetCopy } from '../copy.ts';
 
 // Details step — first name, last name, email, phone, notes.
@@ -41,12 +39,11 @@ const ALL_UNTOUCHED: TouchedMap = {
 export function DetailsStep({
   api,
   copy,
-  accent = QUIZ.ACCENT,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
-  accent?: string;
 }) {
+  void copy;
   const d = api.state.details;
   const [touched, setTouched] = useState<TouchedMap>(ALL_UNTOUCHED);
 
@@ -173,23 +170,10 @@ export function DetailsStep({
 
       </div>
 
-      {/* Booking review — appointment summary + price total.
-          16px above the card (matches the form's internal row gap)
-          so the textarea bottom and the card top read as a tight
-          continuation of the same column, not as two disconnected
-          regions. The card's own 20px top padding gives the
-          "Your booking" heading enough breathing room from the
-          card border. */}
-      <div style={{ marginTop: 16 }}>
-        <BookingReview api={api} copy={copy} accent={accent} />
-      </div>
-
-      {/* Payment selector — only renders when the booking type has
-          two or more enabled payment options (deposit / pay-in-full /
-          pay-on-the-day). Renders nothing for free services and for
-          single-option bookings, where the footer's Next button
-          carries the action by itself. */}
-      <PaymentChoiceCard api={api} accent={accent} />
+      {/* Booking summary + payment selector both live on the next
+          step ('review') now. Splitting kept the payment choice off
+          the below-the-fold zone on phones, where it was getting
+          missed by customers who thought the form was broken. */}
     </div>
   );
 }

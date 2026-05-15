@@ -28,6 +28,7 @@ import { RepairArchStep, RepairLinesStep } from './steps/RepairBuilder.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
+import { ReviewStep } from './steps/Review.tsx';
 // PaymentStep imports statically. Previously this was lazy() +
 // dynamic import to save ~7 KB gzipped on the initial bundle, but
 // the cost was a chunk-mismatch 404 if a Vercel deploy landed
@@ -392,17 +393,19 @@ function WidgetReady({
 
   // Determine what the Next button does on this step.
   // - 'payment' → call paymentRef.current.pay()
-  // - 'details' → routes on api.state.paymentChoice (set by the in-
-  //   form PaymentChoiceCard): full / deposit walks into the Stripe
-  //   step, on-the-day submits directly. Free services fall through
-  //   the same branch — paymentChoice stays null and we submit.
+  // - 'review'  → routes on api.state.paymentChoice (set by the
+  //   PaymentChoiceCard inside the review step): full / deposit
+  //   walks into the Stripe step, on-the-day submits directly.
+  //   Free services fall through the same branch — paymentChoice
+  //   stays null and we submit.
+  // - 'details' → plain advance to 'review' via goNext
   // - other steps → goNext
   const onFooterNext = () => {
     if (api.stepKey === 'payment') {
       paymentRef.current?.pay();
       return;
     }
-    if (api.stepKey === 'details') {
+    if (api.stepKey === 'review') {
       const total = api.priceBreakdown.subtotalPence;
       if (total === 0) {
         // Free service — no choice, commit directly.
@@ -788,7 +791,9 @@ function StepRouter({
     case 'time':
       return <TimeStep api={api} />;
     case 'details':
-      return <DetailsStep api={api} copy={copy} accent={accent} />;
+      return <DetailsStep api={api} copy={copy} />;
+    case 'review':
+      return <ReviewStep api={api} copy={copy} accent={accent} />;
     case 'payment':
       return (
         <PaymentStep
@@ -829,29 +834,31 @@ function Footer({
 }) {
   const isPaymentStep = api.stepKey === 'payment';
   const isDetailsStep = api.stepKey === 'details';
+  const isReviewStep = api.stepKey === 'review';
   const breakdown = api.priceBreakdown;
   const fullAmount = breakdown.subtotalPence;
   // Deposit info still surfaces on earlier-step FooterPrice as an
   // "if you'd like to pay the deposit only" preview. The actual
-  // payment selector lives on the Details step (PaymentChoiceCard)
+  // payment selector lives on the Review step (PaymentChoiceCard)
   // so the customer commits there, not here.
   const depositPence = api.state.service?.depositPence ?? 0;
   const showDepositCta = depositPence > 0;
-  // Footer total line: hidden on Details (BookingReview shows the
-  // full breakdown inline) and Payment (PayHeader spells it out
-  // and the Pay button carries the amount). Everywhere else we
-  // surface a single "Total" so the patient sees the running cost
-  // as soon as the price is resolvable from the catalogue.
-  const showPrice = !isDetailsStep && !isPaymentStep && fullAmount > 0;
+  // Footer total line: hidden on Review (BookingReview shows the
+  // full breakdown inline), Details (form-only, no commercial
+  // context needed) and Payment (PayHeader spells it out and the
+  // Pay button carries the amount). Everywhere else we surface a
+  // single "Total" so the patient sees the running cost as soon as
+  // the price is resolvable from the catalogue.
+  const showPrice = !isDetailsStep && !isReviewStep && !isPaymentStep && fullAmount > 0;
 
   const detailsValid = isNextEnabled(api);
-  const summaryFree = isDetailsStep && fullAmount === 0;
-  // Paid-service details step needs a payment choice picked before
+  const summaryFree = isReviewStep && fullAmount === 0;
+  // Paid-service Review step needs a payment choice picked before
   // Next commits. PaymentChoiceCard pre-selects a default on mount,
   // so this only blocks Next in the rare race window before the
   // effect lands.
   const summaryPaidWithoutChoice =
-    isDetailsStep && fullAmount > 0 && api.state.paymentChoice === null;
+    isReviewStep && fullAmount > 0 && api.state.paymentChoice === null;
 
   const nextDisabled = isPaymentStep
     ? !paymentReady || paymentPaying || submitting
@@ -868,7 +875,7 @@ function Footer({
       return 'Book appointment';
     }
     if (submitting) return 'Booking…';
-    if (isDetailsStep) {
+    if (isReviewStep) {
       // Free service — single commit action.
       if (fullAmount === 0) return copy.summaryCtaBook;
       const choice = api.state.paymentChoice;
@@ -933,7 +940,7 @@ function Footer({
         >
           {submitting ? (
             nextLabel
-          ) : isPaymentStep || summaryFree || (isDetailsStep && api.state.paymentChoice === 'pay_on_the_day') ? (
+          ) : isPaymentStep || summaryFree || (isReviewStep && api.state.paymentChoice === 'pay_on_the_day') ? (
             <span
               style={{
                 display: 'inline-flex',
