@@ -1,10 +1,4 @@
-import { MapPin, Award, BadgeCheck, Calendar, Check } from 'lucide-react';
-import {
-  axesForService,
-  axisValueLabel,
-  type AxisKey,
-} from '../../lib/queries/bookingTypeAxes.ts';
-import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
+import { MapPin, BadgeCheck, Calendar, Check } from 'lucide-react';
 import type { BookingStateApi, RepairLine, WidgetState } from './state.ts';
 import { customerRepairLabel, formatPrice } from './state.ts';
 import type { WidgetCopy } from './copy.ts';
@@ -51,12 +45,13 @@ export function BookingReview({
   const isRepair = state.service?.serviceType === 'denture_repair';
   // For denture-repair the service line is just the type label (per-
   // arch breakdown follows in its own section); for everything else
-  // the legacy axis-appending behaviour stays so the line still reads
-  // "Retainers, Upper" etc.
+  // we produce a natural-language description like "Same-day upper
+  // retainer" / "Upper click-in veneers" instead of the previous
+  // comma-joined backend jargon "Same-day appliance, Retainer, Upper".
   const serviceLine = state.service
     ? isRepair
       ? state.service.label.replace(/<[^>]*>/g, '').trim()
-      : buildServiceLine(state, state.service.label)
+      : formatSummaryServiceLine(state)
     : null;
 
   // Build the row set in order so we can render hairlines between
@@ -79,7 +74,11 @@ export function BookingReview({
     | {
         kind: 'item';
         key: string;
-        icon: React.ReactNode;
+        /** Optional leading icon. Pass null on rows that shouldn't
+         *  carry one (e.g. the service line). The icon column space
+         *  is reserved either way so titles still align across the
+         *  row stack. */
+        icon: React.ReactNode | null;
         title: string;
         subtitle?: string;
         rightAmount?: string;
@@ -126,30 +125,39 @@ export function BookingReview({
       subtitle: state.location.addressLine,
     });
   }
-  // Denture-repair skips the type-only service row entirely — the
-  // per-arch breakdown rendered below carries the booking story by
-  // itself, and a bare "Denture Repair" header was reading as
-  // redundant noise above the same information. Every other service
-  // (retainers, click-in veneers, etc.) still surfaces its service
-  // row so the patient sees what they booked.
-  if (state.service && serviceLine && !isRepair) {
-    rows.push({
-      kind: 'item',
-      key: 'service',
-      icon: <Award size={20} aria-hidden style={{ color: accent }} />,
-      title: serviceLine,
-      rightAmount:
-        priceBreakdown.serviceLinePence > 0
-          ? formatPrice(priceBreakdown.serviceLinePence)
-          : undefined,
-    });
-  }
+  // Date / time row sits above the service line so the patient
+  // reads the booking chronologically: "where, when, what". Dylan
+  // moved this above the service line because the previous order
+  // (service first) left the date floating between service and
+  // upgrades and made the receipt harder to scan top-to-bottom.
   if (state.slotIso) {
     rows.push({
       kind: 'item',
       key: 'slot',
       icon: <Calendar size={20} aria-hidden style={{ color: accent }} />,
       title: formatSlotLong(state.slotIso),
+    });
+  }
+  // Denture-repair skips the type-only service row entirely — the
+  // per-arch breakdown rendered below carries the booking story by
+  // itself, and a bare "Denture Repair" header was reading as
+  // redundant noise above the same information. Every other service
+  // (retainers, click-in veneers, etc.) still surfaces its service
+  // row so the patient sees what they booked.
+  // Icon is null on this row — the previous Award (ribbon/medal)
+  // glyph read as a marketing flourish that didn't belong in the
+  // receipt-style row stack. The icon-column space stays reserved
+  // so the service title aligns with the date and location rows.
+  if (state.service && serviceLine && !isRepair) {
+    rows.push({
+      kind: 'item',
+      key: 'service',
+      icon: null,
+      title: serviceLine,
+      rightAmount:
+        priceBreakdown.serviceLinePence > 0
+          ? formatPrice(priceBreakdown.serviceLinePence)
+          : undefined,
     });
   }
   // Denture-repair per-arch breakdown. Each pinned arch gets its own
@@ -323,7 +331,11 @@ function ItemRow({
   rightAmountColour,
   isLast,
 }: {
-  icon: React.ReactNode;
+  /** Pass null to reserve the icon-column space without rendering
+   *  anything in it. Used by the service row, which is intentionally
+   *  iconless — title still aligns with the iconed location / date
+   *  rows above. */
+  icon: React.ReactNode | null;
   title: string;
   subtitle?: string;
   rightAmount?: string;
@@ -720,24 +732,102 @@ export function formatSlotLong(iso: string): string {
   return `${day}, ${display}:${String(minute).padStart(2, '0')} ${period}`;
 }
 
-function buildServiceLine(state: WidgetState, serviceLabel: string): string {
-  const cleanLabel = serviceLabel.replace(/<[^>]*>/g, '');
-  if (!state.service) return cleanLabel;
-  const axes = axesForService(state.service.serviceType as BookingServiceType);
-  if (axes.length === 0) return cleanLabel;
-  const pieces: string[] = [];
-  for (const axis of axes) {
-    const value = readAxisPin(state, axis.key);
-    if (!value) continue;
-    pieces.push(axisValueLabel(axis, value));
+// Compose the summary card's service line in natural-language form
+// (lower-case appliance, arch interpolated, "Same-day" prefix only
+// where it earns its place) rather than the previous comma-joined
+// backend jargon like "Same-day appliance, Retainer, Upper".
+//
+// Examples it produces:
+//   same_day_appliance + retainer + upper   → "Same-day upper retainer"
+//   same_day_appliance + retainer + both    → "Same-day upper and lower retainers"
+//   same_day_appliance + night_guard + lower→ "Same-day lower night guard"
+//   click_in_veneers + upper                → "Upper click-in veneers"
+//   click_in_veneers + both                 → "Upper and lower click-in veneers"
+//   whitening_kit (no axes)                 → "Whitening kit"
+//
+// For services with axes but unknown to the wording rules, falls back
+// to "{Arch} {service.label.toLowerCase()}" so a new service type
+// added without updating this helper still reads as a sentence
+// instead of leaking the comma-joined raw axes through.
+function formatSummaryServiceLine(state: WidgetState): string | null {
+  const svc = state.service;
+  if (!svc) return null;
+  const type = svc.serviceType;
+  const archKey = state.axes.arch;
+  const isBoth = archKey === 'both';
+  const archLower =
+    archKey === 'upper'
+      ? 'upper'
+      : archKey === 'lower'
+        ? 'lower'
+        : archKey === 'both'
+          ? 'upper and lower'
+          : null;
+
+  if (type === 'same_day_appliance') {
+    const productKey = state.axes.product_key;
+    const baseAppliance = productKey
+      ? (SUMMARY_APPLIANCE_LOWER[productKey] ?? 'appliance')
+      : 'appliance';
+    const appliance = isBoth
+      ? pluraliseLowerApplianceForBoth(baseAppliance)
+      : baseAppliance;
+    const parts = ['Same-day'];
+    if (archLower) parts.push(archLower);
+    parts.push(appliance);
+    return parts.join(' ');
   }
-  if (pieces.length === 0) return cleanLabel;
-  return `${cleanLabel}, ${pieces.join(', ')}`;
+
+  if (type === 'click_in_veneers') {
+    const parts: string[] = [];
+    if (archLower) parts.push(capitaliseFirst(archLower));
+    parts.push('click-in veneers');
+    return parts.join(' ');
+  }
+
+  // Fallback for services without bespoke wording — strip HTML from
+  // the configured display_label and prefix arch when set. This
+  // keeps a new service type added to lng_widget_booking_types
+  // readable even before this helper learns about it.
+  const cleanLabel = svc.label.replace(/<[^>]*>/g, '').trim();
+  if (archLower) {
+    return `${capitaliseFirst(archLower)} ${cleanLabel.toLowerCase()}`;
+  }
+  return cleanLabel;
 }
 
-function readAxisPin(state: WidgetState, key: AxisKey): string | undefined {
-  if (key === 'repair_variant') return state.axes.repair_variant;
-  if (key === 'product_key') return state.axes.product_key;
-  if (key === 'arch') return state.axes.arch;
-  return undefined;
+// Capitalise only the first letter, leaving the rest intact ("upper
+// and lower" → "Upper and lower"). The `&` rendering you might want
+// on a hero stays the responsibility of the hero formatter — here
+// the running-prose form ("upper and lower") fits the summary card's
+// inline copy register better.
+function capitaliseFirst(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Lowercase appliance nouns for the summary card running prose.
+// Differs from APPLIANCE_TITLE in state.ts (which is Title Case for
+// headlines) — kept local so the wording surfaces can diverge
+// without one having to chase the other.
+const SUMMARY_APPLIANCE_LOWER: Record<string, string> = {
+  retainer: 'retainer',
+  night_guard: 'night guard',
+  day_guard: 'day guard',
+  click_in_veneers: 'click-in veneers',
+  missing_tooth: 'missing-tooth appliance',
+  aligner: 'replacement aligner',
+  whitening_tray: 'whitening tray',
+  whitening_kit: 'whitening kit',
+};
+
+// Pluralise the lower-case appliance noun for both-arches bookings.
+// Same rule the success-screen helper uses: catalogue labels stored
+// as singular get a +s suffix; words already ending in 's' (e.g.
+// "click-in veneers") pass through untouched.
+function pluraliseLowerApplianceForBoth(label: string): string {
+  const trimmed = label.trim();
+  if (trimmed.length === 0) return trimmed;
+  if (trimmed.endsWith('s')) return trimmed;
+  return `${trimmed}s`;
 }
