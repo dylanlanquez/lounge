@@ -10,7 +10,7 @@ import { Calendar, CalendarClock, Mail, MapPin } from 'lucide-react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import type { BookingStateApi } from '../state.ts';
-import { formatPriceShort } from '../state.ts';
+import { formatPrice } from '../state.ts';
 import { formatSlotLong } from '../BookingReview.tsx';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
@@ -628,57 +628,64 @@ function PayHeader({
   fullAmount: number;
   slotIso: string | null;
 }) {
-  // Title — slot — separator — assurance copy. The slot line
-  // surfaces "what they're paying for" right under the headline so
-  // there's no doubt the £X is for THIS appointment. Hairline
-  // separates the transactional line from the assurance paragraph.
+  // Standard checkout summary — "Total" label on the left, amount on
+  // the right, hairline below, date subline beneath. Replaces the
+  // earlier verbose headline ("Pay £70 and book appointment") which
+  // was repeating what the StepTitle ("Payment") and the footer Book
+  // button already said. The "After you pay" card below the form
+  // carries the post-payment expectations, so this header stays a
+  // clean one-glance summary the patient confirms before tapping
+  // through.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 4 }}>
-      <h2
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 4 }}>
+      <div
         style={{
-          margin: 0,
-          fontSize: 20,
-          fontWeight: 700,
-          color: QUIZ.INK,
-          letterSpacing: '-0.01em',
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 12,
+          paddingBottom: 12,
+          borderBottom: `1px solid ${QUIZ.BORDER}`,
         }}
       >
-        Pay {formatPriceShort(fullAmount)} and book appointment
-      </h2>
+        <span
+          style={{
+            fontSize: 15,
+            fontWeight: 500,
+            color: QUIZ.MUTED_2,
+            letterSpacing: '-0.005em',
+          }}
+        >
+          Total
+        </span>
+        <span
+          style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: QUIZ.INK,
+            letterSpacing: '-0.015em',
+            fontVariantNumeric: 'tabular-nums',
+            lineHeight: 1.1,
+          }}
+        >
+          {formatPrice(fullAmount)}
+        </span>
+      </div>
       {slotIso ? (
         <div
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 8,
-            fontSize: 15,
-            fontWeight: 600,
-            color: QUIZ.ACCENT,
+            fontSize: 14,
+            color: QUIZ.MUTED_2,
+            lineHeight: 1.3,
           }}
         >
-          <Calendar size={16} aria-hidden />
-          <span>{formatSlotLong(slotIso)}</span>
+          <Calendar size={14} strokeWidth={1.75} aria-hidden />
+          <span>For your appointment on {formatSlotLong(slotIso)}</span>
         </div>
       ) : null}
-      <hr
-        style={{
-          border: 'none',
-          borderTop: `1px solid ${QUIZ.BORDER}`,
-          margin: '4px 0 2px',
-          width: '100%',
-        }}
-      />
-      <p
-        style={{
-          margin: 0,
-          fontSize: 15,
-          color: QUIZ.MUTED_2,
-          lineHeight: 1.45,
-        }}
-      >
-        Your appointment is paid in full once the card clears. Nothing extra to pay
-        at the clinic. We'll send a confirmation email with everything you need.
-      </p>
     </div>
   );
 }
