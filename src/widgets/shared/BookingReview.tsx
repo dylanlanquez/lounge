@@ -120,7 +120,23 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'location',
-      icon: <MapPin size={16} strokeWidth={2} aria-hidden />,
+      // MapPin's pin head sits in the top half of its 24x24 viewBox
+      // (the bulb of the pin is bigger than the tail), so its visual
+      // centre is ~2px ABOVE the geometric centre of the viewBox.
+      // translateY(2px) lands the visual centre on the badge centre
+      // — without this nudge the pin glyph reads as drifting up
+      // inside the badge even though the badge itself is perfectly
+      // centred with the text. Calendar and CheckCircle2 don't need
+      // this correction because their visual centres match their
+      // viewBox geometric centres.
+      icon: (
+        <MapPin
+          size={16}
+          strokeWidth={2}
+          aria-hidden
+          style={{ transform: 'translateY(2px)' }}
+        />
+      ),
       title: state.location.name,
       subtitle: state.location.addressLine,
     });
@@ -352,23 +368,24 @@ function ItemRow({
   // 24×24 viewBoxes, every row column lines up at the same y
   // because every badge is the same identical 30×30 circle.
   //
-  // This is the pattern Stripe Checkout, Linear, Notion's list rows
-  // all use; the staff-app AppointmentExtras already uses it too,
-  // so the widget summary now matches the system. Earlier attempts
-  // (alignItems tweaks, marginTop nudges) chased symptoms — the
-  // root cause was that aligning bounding boxes doesn't align
-  // visual centres when the glyphs inside have asymmetric weight.
-  // Wrapping in a consistent shape moots the entire problem.
+  // alignItems: 'center' on the outer row pairs the badge's visual
+  // centre with the content block's visual centre — for a 1-line
+  // row that's just the title's centre; for a 2-line row
+  // (location: name + address) the badge sits at the mid-point
+  // between the two lines so the column always reads as "centred"
+  // rather than top-aligned with first line.
   //
-  // First-line container shares the badge's height (30px) so the
-  // badge centre and the title visual centre are in the same y
-  // band. Subtitle hangs below, unaffected.
+  // Combined with the consistent badge shape this makes the icon
+  // column impossible to misalign: every badge is the same y-
+  // offset from the row's vertical centre, every row's vertical
+  // centre is the content block's vertical centre, badges are
+  // identical circles regardless of which glyph they carry.
   const BADGE_SIZE = 30;
   return (
     <div
       style={{
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         gap: 12,
         padding: '14px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
@@ -396,6 +413,7 @@ function ItemRow({
           minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
+          justifyContent: 'center',
         }}
       >
         <div
@@ -404,7 +422,6 @@ function ItemRow({
             justifyContent: 'space-between',
             alignItems: 'center',
             gap: 12,
-            minHeight: BADGE_SIZE,
           }}
         >
           <p
