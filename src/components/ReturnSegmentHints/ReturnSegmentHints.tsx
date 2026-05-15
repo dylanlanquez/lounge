@@ -65,9 +65,8 @@ export function ReturnSegmentHints({ phases, startIso }: ReturnSegmentHintsProps
     >
       {segments.map((s, i) => (
         <InlineHint key={i} tone="muted">
-          Patient back at <strong>~{s.time}</strong> for {s.label}
-          {s.durationMinutes > 0 ? ` (${s.durationMinutes} min)` : ''}
-          {' '}— estimate.
+          Patient estimated to arrive back at <strong>{s.time}</strong> for {s.label}
+          {s.durationMinutes > 0 ? ` (${s.durationMinutes} min)` : ''}.
         </InlineHint>
       ))}
     </div>
