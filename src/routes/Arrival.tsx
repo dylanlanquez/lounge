@@ -314,15 +314,27 @@ export function Arrival() {
   // below to seed the staging basket with everything the patient
   // committed to online; without this the receptionist had to re-pick
   // every upgrade and repair line by hand.
-  const { upgrades: widgetUpgrades, repairItems: widgetRepairItems } =
-    useAppointmentExtras(mode === 'appointment' ? (id ?? null) : null);
+  const {
+    upgrades: widgetUpgrades,
+    repairItems: widgetRepairItems,
+    loading: widgetExtrasLoading,
+  } = useAppointmentExtras(mode === 'appointment' ? (id ?? null) : null);
   // Map each widget-upgrade id → its lwo_catalogue.id so the
   // pre-population effect can stage upgrades as catalogue lines without
   // a runtime join inside the effect itself. Empty when no upgrades
-  // were ticked.
-  const widgetUpgradeCatalogueIds = useUpgradeCatalogueIds(
-    widgetUpgrades.map((u) => u.upgradeId),
-  );
+  // were ticked. We MUST wait for both this lookup AND the appointment-
+  // extras query before prefilling — the previous one-shot ref fired
+  // on the first render when widgetUpgrades was still an empty array
+  // and the catalogue-id map hadn't resolved yet, so the upgrades
+  // silently never attached to the basket. The combined loading flag
+  // below is what gates the prefill effect now.
+  const { map: widgetUpgradeCatalogueIds, loading: upgradeCatalogueLoading } =
+    useUpgradeCatalogueIds(widgetUpgrades.map((u) => u.upgradeId));
+  // Widget-side picks are loaded once BOTH the snapshot query and the
+  // upgrade-id → catalogue-id resolver have settled. For walk-ins
+  // (mode !== 'appointment') the hook short-circuits to loading=false
+  // immediately, so this is FALSE the moment the page mounts.
+  const widgetPicksReady = !widgetExtrasLoading && !upgradeCatalogueLoading;
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
@@ -519,6 +531,13 @@ export function Arrival() {
     if (catalogueRows.length === 0) return;
     if (prePopulatedRef.current) return;
     if (stagedItems.length > 0) return;
+    // Wait for the widget-side picks to finish loading before
+    // committing the prefill. Setting the ref before this gate
+    // would cause us to stage the primary catalogue line on the
+    // first render — when widgetUpgrades / widgetRepairItems were
+    // still empty arrays — and never re-run, so the upgrades and
+    // repair items would silently never attach to the basket.
+    if (!widgetPicksReady) return;
 
     prePopulatedRef.current = true;
 
@@ -691,7 +710,7 @@ export function Arrival() {
         setStagedItems([{ key: `${sole.id}-prefill`, catalogue: sole, qty: 1, options: { arch } }]);
       }
     }
-  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length, widgetUpgrades, widgetRepairItems, widgetUpgradeCatalogueIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length, widgetUpgrades, widgetRepairItems, widgetUpgradeCatalogueIds, widgetPicksReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
