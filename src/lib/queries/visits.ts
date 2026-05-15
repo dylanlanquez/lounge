@@ -426,6 +426,24 @@ export interface AppointmentDeposit {
   paidInFullAtBooking: boolean;
 }
 
+/** Bracketed suffix shown after a deposit line on every staff
+ *  surface (Pay screen, VisitDetail Cart, waiver PDF) — e.g.
+ *  "Stripe via Calendly" / "Stripe via venneir.com" / "PayPal via
+ *  denture-services.co.uk". Source 'native' means the online widget,
+ *  with the brand id picking the customer-facing domain. Calendly
+ *  deposits keep the legacy label so historical receipts stay
+ *  consistent; null source defaults to Calendly so legacy rows
+ *  written before the source/brand columns existed don't suddenly
+ *  relabel. */
+export function formatDepositSourceSuffix(deposit: AppointmentDeposit | null): string {
+  const provider = deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal';
+  if (deposit?.source === 'native') {
+    const brand = deposit.brandId === 'denture' ? 'denture-services.co.uk' : 'venneir.com';
+    return `${provider} via ${brand}`;
+  }
+  return `${provider} via Calendly`;
+}
+
 // Shopify-paid order linked to an appointment at booking time. The
 // total credits against the cart at checkout the same way the
 // Calendly deposit does, and surfaces on the waiver as

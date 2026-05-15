@@ -22,23 +22,7 @@ import {
 import { patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
-import type { AppointmentDeposit } from '../lib/queries/visits.ts';
-
-// Compose the bracketed suffix shown after the deposit line on the Pay
-// screen ("(Stripe via Calendly)" / "(Stripe via venneir.com)" /
-// "(PayPal via denture-services.co.uk)"). source='native' means the
-// online widget — the brand id picks the customer-facing domain so a
-// widget deposit doesn't read as a Calendly one. Calendly deposits keep
-// their existing label; legacy rows missing source default to Calendly
-// so old payments don't suddenly relabel.
-function formatDepositSourceSuffix(deposit: AppointmentDeposit | null): string {
-  const provider = deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal';
-  if (deposit?.source === 'native') {
-    const brand = deposit.brandId === 'denture' ? 'denture-services.co.uk' : 'venneir.com';
-    return `${provider} via ${brand}`;
-  }
-  return `${provider} via Calendly`;
-}
+import { formatDepositSourceSuffix } from '../lib/queries/visits.ts';
 
 type Stage = 'choose' | 'cash' | 'card' | 'bnpl' | 'success';
 type Journey = 'standard' | 'klarna' | 'clearpay';

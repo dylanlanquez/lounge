@@ -72,6 +72,7 @@ import {
   endVisitEarly,
   formatVisitCrumb,
   removeCartLineWithReason,
+  formatDepositSourceSuffix,
   reverseUnsuitability,
   updateVisitFulfilmentMethod,
   useLatestUnsuitability,
@@ -80,6 +81,7 @@ import {
   type VisitFulfilmentMethod,
 } from '../lib/queries/visits.ts';
 import type {
+  AppointmentDeposit,
   VisitAppointmentContext,
   VisitEndReason,
   VisitRow,
@@ -102,6 +104,7 @@ import {
 } from '../lib/queries/carts.ts';
 import {
   useCartPayments,
+  useVisitPaidStatus,
   type CartPaymentRow,
   type PaymentMethod,
 } from '../lib/queries/payments.ts';
@@ -140,6 +143,12 @@ export function VisitDetail() {
   // the operator should see WHICH methods landed (cash + card split,
   // etc.) and WHEN, not just the final total.
   const { data: succeededPayments } = useCartPayments(cart?.id ?? null);
+  // Single source of truth for "how much has actually been collected
+  // for this visit" — sums the paid Calendly/widget deposit, every
+  // succeeded lng_payments row, and any linked Shopify pre-paid order.
+  // Used for the Cart card's outstanding balance so this page agrees
+  // with the Take Payment screen.
+  const { data: paidStatus } = useVisitPaidStatus(id);
   const paidPayments = useMemo(
     () => succeededPayments.filter((p) => p.status === 'succeeded'),
     [succeededPayments],
@@ -532,11 +541,30 @@ export function VisitDetail() {
   // so it nets against the bill the same way the deposit does — the
   // till only collects whatever's left over.
   const shopifyCreditPence = shopifyOrder?.pence ?? 0;
-  // Balance is what the receptionist will collect at the till after
-  // every pre-paid credit is applied. Floor at 0 — over-pays are
-  // handled by manual refund flows, so we never produce a negative
-  // charge here.
-  const total = Math.max(0, subtotal - discount - depositPence - shopifyCreditPence);
+  // Outstanding balance: read amount_paid_pence from the canonical
+  // lng_visit_paid_status view (which already sums deposit + Shopify
+  // credit + every succeeded lng_payments row) and subtract from the
+  // discount-adjusted subtotal. This is the SAME formula Pay.tsx uses,
+  // so the "To collect / Outstanding" number on this card and the
+  // Take Payment screen always agree.
+  //
+  // The previous shape `subtotal - discount - deposit - shopify`
+  // ignored till payments entirely, so a partially-paid cart on this
+  // page still showed the gross-of-payments balance. A patient who
+  // had paid £248 cash on a £298 cart with £25 deposit saw "To
+  // collect £273" here while the Take Payment screen correctly
+  // showed "Outstanding £25" — staff could collect £273 again,
+  // double-charging by the £248 already in the till.
+  const subtotalAfterDiscount = Math.max(0, subtotal - discount);
+  const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
+  const total = Math.max(0, subtotalAfterDiscount - amountPaidPence);
+  // Pence collected at the till today, separate from the deposit and
+  // any Shopify pre-paid credit. Used in the Totals card breakdown
+  // so we can show "Deposit -£X · Collected -£Y" without overlap.
+  const tillCollectedPence = Math.max(
+    0,
+    amountPaidPence - depositPence - shopifyCreditPence,
+  );
   const cartLocked = cart?.status === 'paid' || cart?.status === 'voided';
   // Primary action toggles between Take payment and Complete visit
   // based on whether there's a balance to collect. Free visits and
@@ -1241,21 +1269,21 @@ export function VisitDetail() {
                   subtotal={subtotal}
                   discount={discount}
                   depositPence={depositPence}
-                  depositProvider={deposit?.provider ?? null}
+                  deposit={deposit}
                   shopifyCreditPence={shopifyCreditPence}
                   shopifyOrderName={shopifyOrder?.name ?? null}
+                  tillCollectedPence={tillCollectedPence}
                   total={total}
-                  // Suppress the giant "Total £X.XX" row when the cart
-                  // is paid — the PaidHeader above already carries that
-                  // amount, and showing it twice (once as a hero "what
-                  // they owe" number, once as a settled fact) was the
-                  // exact ambiguity that made it impossible to tell at
-                  // a glance whether the visit was paid or outstanding.
+                  // Suppress the giant "Outstanding £X.XX" row when the
+                  // cart is paid — the PaidHeader above already carries
+                  // that amount, and showing it twice was the exact
+                  // ambiguity that made it impossible to tell at a
+                  // glance whether the visit was paid or outstanding.
                   hideTotalRow={cart?.status === 'paid'}
-                  // Once paid, Subtotal / Discount / Deposit rows are
-                  // reference-only — keep them readable but step them
-                  // back so the eye stays on the PaidHeader as the
-                  // headline fact.
+                  // Once paid, Subtotal / Discount / Deposit / Collected
+                  // rows are reference-only — keep them readable but
+                  // step them back so the eye stays on the PaidHeader
+                  // as the headline fact.
                   dim={cart?.status === 'paid'}
                 />
               ) : null}
@@ -3120,9 +3148,10 @@ function Totals({
   subtotal,
   discount,
   depositPence,
-  depositProvider,
+  deposit,
   shopifyCreditPence,
   shopifyOrderName,
+  tillCollectedPence,
   total,
   hideTotalRow = false,
   dim = false,
@@ -3130,18 +3159,31 @@ function Totals({
   subtotal: number;
   discount: number;
   depositPence: number;
-  depositProvider: 'paypal' | 'stripe' | null;
+  /** Full deposit row so we can render a brand-aware suffix
+   *  ("Stripe via venneir.com" for widget bookings vs the legacy
+   *  "Stripe via Calendly"). Null when no deposit was taken. */
+  deposit: AppointmentDeposit | null;
   shopifyCreditPence: number;
   shopifyOrderName: string | null;
+  /** Pence already collected at the till (cash + card + BNPL combined),
+   *  separate from the deposit and Shopify credit. Surfaces as an
+   *  explicit "Collected -£X" line so the breakdown reconciles to
+   *  the new outstanding number. */
+  tillCollectedPence: number;
   total: number;
-  /** When true, suppress the bottom "Total £X.XX" hero row — used when
-   * the cart is paid and the PaidHeader already states the amount. */
+  /** When true, suppress the bottom "Outstanding £X.XX" hero row —
+   * used when the cart is paid and the PaidHeader already states the
+   * amount. */
   hideTotalRow?: boolean;
   /** When true, fade the breakdown rows so the eye stays on the
    * PaidHeader. Used when the cart is paid. */
   dim?: boolean;
 }) {
-  const hasCredit = depositPence > 0 || shopifyCreditPence > 0;
+  // Any credit at all on the bill flips the headline label from
+  // "Total" (full bill) to "Outstanding" (what's left after credits +
+  // till payments). Includes till payments — a £248 cash payment on
+  // a £298 cart is itself a credit even when no deposit exists.
+  const hasCredit = depositPence > 0 || shopifyCreditPence > 0 || tillCollectedPence > 0;
   return (
     <div
       style={{
@@ -3158,7 +3200,7 @@ function Totals({
       {discount > 0 ? <Row label="Discount" value={`-${formatPence(discount)}`} /> : null}
       {depositPence > 0 ? (
         <Row
-          label={`Deposit (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`}
+          label={`${deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} (${formatDepositSourceSuffix(deposit)})`}
           value={`-${formatPence(depositPence)}`}
           accent
         />
@@ -3167,6 +3209,13 @@ function Totals({
         <Row
           label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
           value={`-${formatPence(shopifyCreditPence)}`}
+          accent
+        />
+      ) : null}
+      {tillCollectedPence > 0 ? (
+        <Row
+          label="Collected at till"
+          value={`-${formatPence(tillCollectedPence)}`}
           accent
         />
       ) : null}
@@ -3182,7 +3231,7 @@ function Totals({
           }}
         >
           <span style={{ fontSize: theme.type.size.md, color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>
-            {hasCredit ? 'To collect' : 'Total'}
+            {hasCredit ? 'Outstanding' : 'Total'}
           </span>
           <span style={{ fontSize: theme.type.size.xxl, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
             {formatPence(total)}
