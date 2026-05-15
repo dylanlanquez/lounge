@@ -188,7 +188,25 @@ export function RepairLinesStep({
   const selectedHere = api.state.repairItems.filter((r) => r.arch === arch);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <ArchContextChip arch={arch} accent={accent} />
+      <StickyArchHeader arch={arch} accent={accent} />
+      {/* Inline step title — StepBody skips its own title render for
+          these steps so the sticky chip above can be first in the
+          DOM. Styling matches StepTitle so the look is consistent. */}
+      <h2
+        style={{
+          margin: '8px auto 0',
+          maxWidth: 720,
+          textAlign: 'center',
+          fontSize: 28,
+          lineHeight: 1.2,
+          fontWeight: 500,
+          color: QUIZ.INK,
+          letterSpacing: '-0.01em',
+          animation: `vlounge-fadeInDown 0.3s ${QUIZ.EASE_BOUNCE}`,
+        }}
+      >
+        What needs fixing?
+      </h2>
       <p
         style={{
           margin: 0,
@@ -579,9 +597,63 @@ function StepperButton({
 
 // ─────────────────────────────────────────────────────────────────────
 // Arch-context chip — persistent reminder of which arch this step is
-// asking about. Sits at the very top of the step body so an elderly
-// patient never has to scroll up to the title to remember.
+// asking about. Wrapped in StickyArchHeader so it pins right under
+// the header progress bar as the patient scrolls through the tiles —
+// they never lose track of which page they're on.
 // ─────────────────────────────────────────────────────────────────────
+
+// Absolute URLs because the widget bundle runs on denture-services.co.uk
+// (and venneir.com), not on the host that serves the PNGs. The Lounge
+// app deploys public/* to https://lounge.venneir.com/* — same pattern
+// the brand logo uses at denture/brand.ts:logoSrc.
+const ARCH_ICON: Record<'upper' | 'lower', string> = {
+  upper: 'https://lounge.venneir.com/top-denture.png',
+  lower: 'https://lounge.venneir.com/bottom-denture.png',
+};
+
+function StickyArchHeader({
+  arch,
+  accent,
+}: {
+  arch: 'upper' | 'lower';
+  accent: string;
+}) {
+  // The step body has padding '8px 20px 24px' on its inner container
+  // (see Widget.tsx ChromeShell). Negative margins absorb that
+  // padding so the sticky bar:
+  //   • sits flush against the header (no 8px gap above)
+  //   • bleeds its background to the full scroll width (no 20px
+  //     left/right gutter where the underlying tiles would show
+  //     through as they scroll past)
+  // Internal padding restores the 20px horizontal alignment for the
+  // chip itself so it stays in the same column as the tiles.
+  return (
+    <div
+      style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 3,
+        marginTop: -8,
+        marginLeft: -20,
+        marginRight: -20,
+        paddingTop: 12,
+        paddingBottom: 14,
+        paddingLeft: 20,
+        paddingRight: 20,
+        background: QUIZ.BG,
+        display: 'flex',
+        justifyContent: 'center',
+        // Hairline separation between the sticky chip and the
+        // scrolling content below — visible even when the scroll
+        // is at the top so the chip always reads as a distinct
+        // header band rather than blending into the body.
+        boxShadow: '0 1px 0 rgba(0, 0, 0, 0.04)',
+      }}
+    >
+      <ArchContextChip arch={arch} accent={accent} />
+    </div>
+  );
+}
 
 function ArchContextChip({
   arch,
@@ -592,47 +664,37 @@ function ArchContextChip({
 }) {
   const label = arch === 'upper' ? 'My top denture' : 'My bottom denture';
   return (
-    <div
+    <span
+      aria-label={label}
       style={{
-        display: 'flex',
-        justifyContent: 'center',
-        marginTop: -4,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 10,
+        background: QUIZ.SOFT_BG_HIGHLIGHT,
+        color: accent,
+        fontSize: 14,
+        fontWeight: 600,
+        padding: '6px 16px 6px 8px',
+        borderRadius: 999,
+        border: `1px solid ${QUIZ.BORDER_SOFT}`,
       }}
     >
-      <span
-        aria-label={label}
+      <img
+        src={ARCH_ICON[arch]}
+        alt=""
+        aria-hidden
+        // height fixed; width auto preserves the PNG's aspect ratio
+        // so the upper and lower icons sit at the same vertical
+        // weight even though one is wider than the other.
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          background: QUIZ.SOFT_BG_HIGHLIGHT,
-          color: accent,
-          fontSize: 14,
-          fontWeight: 600,
-          padding: '8px 14px 8px 10px',
-          borderRadius: 999,
-          border: `1px solid ${QUIZ.BORDER_SOFT}`,
+          height: 26,
+          width: 'auto',
+          display: 'block',
+          flexShrink: 0,
         }}
-      >
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 20,
-            height: 20,
-            borderRadius: '50%',
-            background: accent,
-            color: '#fff',
-            flexShrink: 0,
-          }}
-        >
-          <Check size={13} strokeWidth={3.5} aria-hidden />
-        </span>
-        {label}
-      </span>
-    </div>
+      />
+      {label}
+    </span>
   );
 }
 

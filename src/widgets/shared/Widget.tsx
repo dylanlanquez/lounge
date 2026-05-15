@@ -709,9 +709,17 @@ function StepBody({
   // left-flush reads better above an input than centred does.
   const titleAlign: 'center' | 'left' =
     api.stepKey === 'details' || api.stepKey === 'payment' ? 'left' : 'center';
+  // Repair per-arch steps render their own title inline so the
+  // arch-context chip can sit ABOVE the title in the DOM and stick
+  // to the top of the scroll container. If we let StepBody render
+  // the default title here, the chip would have to live below it.
+  const stepOwnsTitle =
+    api.stepKey === 'repair:top' || api.stepKey === 'repair:bottom';
   return (
     <>
-      <StepTitle align={titleAlign}>{stepTitle(api.stepKey, copy, api.state)}</StepTitle>
+      {stepOwnsTitle ? null : (
+        <StepTitle align={titleAlign}>{stepTitle(api.stepKey, copy, api.state)}</StepTitle>
+      )}
       {submissionError ? (
         <ErrorBanner message={submissionError} onDismiss={onDismissError} />
       ) : null}
