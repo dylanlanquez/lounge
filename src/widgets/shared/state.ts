@@ -43,6 +43,17 @@ import {
 // step engine inserts one per axis declared on the chosen service.
 // The widget shell branches on the `axis:` prefix to render the
 // AxisStep component.
+//
+// Denture-repair has its own custom flow that doesn't run through the
+// generic axis registry (kept untouched so the staff-app override
+// pickers still validate correctly). It uses three dedicated keys:
+//
+//   repair:arch    — "Which denture needs fixing? Top / Bottom / Both"
+//   repair:top     — multi-select repair tiles for the top arch
+//   repair:bottom  — multi-select repair tiles for the bottom arch
+//
+// Top-only / Bottom-only arch answers run one repair step; Both runs
+// repair:top then repair:bottom.
 export type StepKey =
   | 'location'
   | 'service'
@@ -55,7 +66,10 @@ export type StepKey =
   // demanded — customer fills + reviews on one screen.
   | 'details'
   | 'payment'
-  | `axis:${AxisKey}`;
+  | `axis:${AxisKey}`
+  | 'repair:arch'
+  | 'repair:top'
+  | 'repair:bottom';
 
 export interface AxisPinState {
   repair_variant?: string;
@@ -238,19 +252,30 @@ export function activeStepsFor(
   if (locationCount > 1) out.push('location');
   out.push('service');
   if (state.service) {
-    const axes = axesForService(state.service.serviceType as BookingServiceType);
-    for (const axis of axes) {
-      // Conditional skip: if the patient picked a product whose
-      // arch_match is anything other than 'single', the arch step
-      // is meaningless and we drop it.
-      if (
-        axis.key === 'arch' &&
-        state.axes.product_arch_match &&
-        state.axes.product_arch_match !== 'single'
-      ) {
-        continue;
+    if (state.service.serviceType === 'denture_repair') {
+      // Custom denture-repair flow: ask which denture needs fixing
+      // first, then run one or two per-arch multi-select steps
+      // depending on the answer. Kept off the generic axis registry
+      // so the staff-app override system isn't disturbed.
+      out.push('repair:arch');
+      const arch = state.axes.arch;
+      if (arch === 'upper' || arch === 'both') out.push('repair:top');
+      if (arch === 'lower' || arch === 'both') out.push('repair:bottom');
+    } else {
+      const axes = axesForService(state.service.serviceType as BookingServiceType);
+      for (const axis of axes) {
+        // Conditional skip: if the patient picked a product whose
+        // arch_match is anything other than 'single', the arch step
+        // is meaningless and we drop it.
+        if (
+          axis.key === 'arch' &&
+          state.axes.product_arch_match &&
+          state.axes.product_arch_match !== 'single'
+        ) {
+          continue;
+        }
+        out.push(`axis:${axis.key}`);
       }
-      out.push(`axis:${axis.key}`);
     }
   }
   if (hasUpgrades) out.push('upgrades');
@@ -473,49 +498,127 @@ export function useBookingState(
     }));
   };
 
-  /** Add one line to the denture-repair cart. Called from
-   *  RepairBuilder after the patient confirms arch + quantity in the
-   *  slide-up sheet. Mirrors the line's code into axes.repair_variant
-   *  the first time the cart fills so downstream queries (slot
-   *  duration, upgrades) still resolve against a single repair_variant.
-   *  Multi-line submission is wired in a separate phase. */
-  const addRepairItem = (line: Omit<RepairLine, 'lineId'>) => {
+  /** Set which denture(s) need fixing (the answer to repair:arch).
+   *  Prunes repair lines that no longer belong to the chosen arch
+   *  set — if the patient walks back and switches "Both" to "Top
+   *  only", any bottom-arch lines they'd picked are dropped. The
+   *  axes.repair_variant mirror is recomputed from the surviving
+   *  first line so the downstream slot / upgrade queries don't
+   *  point at a removed variant. */
+  const setRepairArch = (arch: 'upper' | 'lower' | 'both') => {
     setState((prev) => {
-      const lineId = newLineId();
-      const next: RepairLine = { lineId, ...line };
-      const repairItems = [...prev.repairItems, next];
-      // Mirror the FIRST line's repair_variant into axes (not the
-      // line just added) — the downstream resolver, slot RPC and
-      // upgrades all key off a single repair_variant and the
-      // first-line choice is the stable anchor across adds.
+      const keepUpper = arch === 'upper' || arch === 'both';
+      const keepLower = arch === 'lower' || arch === 'both';
+      const repairItems = prev.repairItems.filter(
+        (r) =>
+          (r.arch === 'upper' && keepUpper) ||
+          (r.arch === 'lower' && keepLower),
+      );
       const firstVariant = repairItems[0]?.repairVariant;
       return {
         ...prev,
+        axes: { ...prev.axes, arch, repair_variant: firstVariant },
         repairItems,
-        axes: { ...prev.axes, repair_variant: firstVariant },
-        // Adding a repair invalidates the per-variant upgrades that
-        // the previous repair_variant might have loaded — keeps the
-        // upgrade selection consistent with the cart's first line.
         upgradeIds: [],
       };
     });
   };
 
-  /** Remove one line from the repair cart by lineId. If that empties
-   *  the cart, clears the mirrored axes.repair_variant; otherwise
-   *  rebinds it to the new first line so downstream queries keep
-   *  resolving. */
-  const removeRepairItem = (lineId: string) => {
+  /** Toggle a repair on/off for a specific arch. Adds a new
+   *  RepairLine when turning ON (with quantity = 1 and the line
+   *  total resolved against the catalogue); removes the matching
+   *  line when turning OFF. Mirrors the first line's repair_variant
+   *  into axes so the legacy single-variant plumbing keeps working
+   *  for slot resolution and upgrade gating. */
+  const setRepairSelected = (params: {
+    arch: 'upper' | 'lower';
+    catalogueId: string;
+    code: string;
+    repairVariant: string;
+    name: string;
+    unitLabel: string | null;
+    unitPricePence: number;
+    bothArchesPricePence: number | null;
+    selected: boolean;
+  }) => {
     setState((prev) => {
-      const repairItems = prev.repairItems.filter((r) => r.lineId !== lineId);
-      const firstVariant = repairItems[0]?.repairVariant ?? undefined;
-      return {
-        ...prev,
-        repairItems,
-        axes: { ...prev.axes, repair_variant: firstVariant },
-        upgradeIds: [],
-      };
+      const existing = prev.repairItems.find(
+        (r) => r.arch === params.arch && r.code === params.code,
+      );
+      if (params.selected && !existing) {
+        const quantity = 1;
+        const lineTotalPence = resolveLineTotal({
+          unitLabel: params.unitLabel,
+          unitPricePence: params.unitPricePence,
+          bothArchesPricePence: params.bothArchesPricePence,
+          arch: params.arch,
+          quantity,
+        });
+        const next: RepairLine = {
+          lineId: newLineId(),
+          catalogueId: params.catalogueId,
+          code: params.code,
+          repairVariant: params.repairVariant,
+          name: params.name,
+          unitLabel: params.unitLabel,
+          arch: params.arch,
+          quantity,
+          unitPricePence: params.unitPricePence,
+          bothArchesPricePence: params.bothArchesPricePence,
+          lineTotalPence,
+        };
+        const repairItems = [...prev.repairItems, next];
+        return {
+          ...prev,
+          repairItems,
+          axes: {
+            ...prev.axes,
+            repair_variant: repairItems[0]?.repairVariant,
+          },
+          upgradeIds: [],
+        };
+      }
+      if (!params.selected && existing) {
+        const repairItems = prev.repairItems.filter(
+          (r) => r.lineId !== existing.lineId,
+        );
+        return {
+          ...prev,
+          repairItems,
+          axes: {
+            ...prev.axes,
+            repair_variant: repairItems[0]?.repairVariant,
+          },
+          upgradeIds: [],
+        };
+      }
+      return prev;
     });
+  };
+
+  /** Update the quantity on an existing repair line and recompute
+   *  its line total. No-op when no matching line exists; the
+   *  per-tooth stepper in RepairLinesStep guards this by only
+   *  rendering when the tile is selected. */
+  const setRepairQuantity = (
+    arch: 'upper' | 'lower',
+    code: string,
+    quantity: number,
+  ) => {
+    setState((prev) => ({
+      ...prev,
+      repairItems: prev.repairItems.map((r) => {
+        if (r.arch !== arch || r.code !== code) return r;
+        const lineTotalPence = resolveLineTotal({
+          unitLabel: r.unitLabel,
+          unitPricePence: r.unitPricePence,
+          bothArchesPricePence: r.bothArchesPricePence,
+          arch: r.arch,
+          quantity,
+        });
+        return { ...r, quantity, lineTotalPence };
+      }),
+    }));
   };
 
   return {
@@ -524,8 +627,9 @@ export function useBookingState(
     setService,
     setAxisPin,
     toggleUpgrade,
-    addRepairItem,
-    removeRepairItem,
+    setRepairArch,
+    setRepairSelected,
+    setRepairQuantity,
     upgrades,
     resolvedRow: resolvedResult.data,
     priceBreakdown,
@@ -543,11 +647,10 @@ export function useBookingState(
   };
 }
 
-/** Stable, unique line id for repair-cart entries. Uses
+/** Stable, unique line id for repair-line entries. Uses
  *  crypto.randomUUID() when available (every browser the widget
  *  targets, Safari 15.4+), falling back to a Date+Math composite
- *  for ancient WebViews so the cart never silently dedupes lines
- *  on key collisions. */
+ *  for ancient WebViews so React keys never collide. */
 function newLineId(): string {
   if (
     typeof crypto !== 'undefined' &&
@@ -556,6 +659,28 @@ function newLineId(): string {
     return crypto.randomUUID();
   }
   return `line_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Per-line price resolution. Per-tooth lines scale with quantity;
+ *  per-arch and flat lines stay at unit price. The both-arches
+ *  override only fires when arch='both' on a per-arch row, which the
+ *  current arch-first flow never produces (each line is single-arch),
+ *  but the branch stays so the helper is reusable if we ever surface
+ *  a "both arches at once" affordance again. */
+function resolveLineTotal(input: {
+  unitLabel: string | null;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  arch: 'upper' | 'lower' | 'both';
+  quantity: number;
+}): number {
+  if (input.unitLabel === 'per tooth') {
+    return input.quantity * input.unitPricePence;
+  }
+  if (input.unitLabel === 'per arch' && input.arch === 'both') {
+    return input.bothArchesPricePence ?? input.unitPricePence * 2;
+  }
+  return input.unitPricePence;
 }
 
 export type BookingStateApi = ReturnType<typeof useBookingState>;
@@ -598,13 +723,22 @@ function initialStepFor(prefill: ResolvedPrefill, locationCount: number): StepKe
       const axisKey = step.slice(5) as AxisKey;
       if (axisKey === 'product_key' && prefill.axes.product_key) continue;
       if (axisKey === 'arch' && prefill.axes.arch) continue;
-      // repair_variant prefill is a hint of which repair tile the
-      // patient clicked on the host page; it does NOT auto-add the
-      // cart line (arch + quantity are still unknown). Always land
-      // on the repair step so the patient confirms.
       if (axisKey === 'repair_variant' && prefill.axes.repair_variant) {
         return step;
       }
+      return step;
+    }
+    if (step === 'repair:arch') {
+      // A host-page trigger can pin the arch (top / bottom / both).
+      // If it did, skip past this question and land on the per-arch
+      // repair selection. If not, this is where the patient starts.
+      if (prefill.axes.arch) continue;
+      return step;
+    }
+    if (step === 'repair:top' || step === 'repair:bottom') {
+      // No host-page mechanism for prefilling repair lines yet, so
+      // these steps always ask. Future: a richer trigger could pin
+      // specific repairs per arch and skip past these too.
       return step;
     }
     return step;
@@ -648,9 +782,15 @@ function initialLockedIdxFor(
       const axisKey = step.slice(5) as AxisKey;
       if (axisKey === 'product_key' && prefill.axes.product_key) { idx++; continue; }
       if (axisKey === 'arch' && prefill.axes.arch) { idx++; continue; }
-      // repair_variant prefill never advances past the repair step —
-      // the patient still needs to confirm arch + quantity on the
-      // cart builder, so the step stays in play (not locked).
+      return idx;
+    }
+    if (step === 'repair:arch') {
+      // Locked when the trigger pinned arch — the back arrow can't
+      // walk into a question the host page already answered.
+      if (prefill.axes.arch) { idx++; continue; }
+      return idx;
+    }
+    if (step === 'repair:top' || step === 'repair:bottom') {
       return idx;
     }
     return idx;
@@ -687,6 +827,12 @@ export function stepTitle(
       return copy.detailsTitle;
     case 'payment':
       return copy.paymentTitle;
+    case 'repair:arch':
+      return 'Which denture needs fixing?';
+    case 'repair:top':
+      return 'What needs fixing on your top denture?';
+    case 'repair:bottom':
+      return 'What needs fixing on your bottom denture?';
     default:
       return '';
   }
@@ -953,14 +1099,16 @@ export function isNextEnabled(api: BookingStateApi): boolean {
     case 'axis:arch':
       return !!api.state.axes.arch;
     case 'axis:repair_variant':
-      // Denture-repair uses the cart builder, so Continue lights up
-      // once the patient has at least one line. Any other service
-      // that ever declares the repair_variant axis would fall back
-      // to the legacy single-pin gate.
-      if (api.state.service?.serviceType === 'denture_repair') {
-        return api.state.repairItems.length > 0;
-      }
+      // Denture-repair runs its own flow (repair:arch / repair:top /
+      // repair:bottom) so this branch is only reached if a future
+      // service ever declares the repair_variant axis.
       return !!api.state.axes.repair_variant;
+    case 'repair:arch':
+      return !!api.state.axes.arch;
+    case 'repair:top':
+      return api.state.repairItems.some((r) => r.arch === 'upper');
+    case 'repair:bottom':
+      return api.state.repairItems.some((r) => r.arch === 'lower');
     case 'upgrades':
       // Upgrades are optional — Next is always live so the customer
       // can pass through without picking anything.

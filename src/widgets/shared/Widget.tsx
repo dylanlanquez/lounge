@@ -25,7 +25,7 @@ import {
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
-import { RepairBuilder } from './steps/RepairBuilder.tsx';
+import { RepairArchStep, RepairLinesStep } from './steps/RepairBuilder.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
@@ -753,16 +753,18 @@ function StepRouter({
 }) {
   if (api.stepKey.startsWith('axis:')) {
     const axisKey = api.stepKey.slice(5) as AxisKey;
-    // Denture-repair gets the cart-style builder (multi-line, with
-    // arch + quantity per line). Every other axis step keeps the
-    // single-select option-card pattern in AxisStep.
-    if (
-      axisKey === 'repair_variant' &&
-      api.state.service?.serviceType === 'denture_repair'
-    ) {
-      return <RepairBuilder api={api} accent={accent} />;
-    }
     return <AxisStep api={api} axisKey={axisKey} accent={accent} />;
+  }
+  // Denture-repair custom step keys. These never overlap with the
+  // generic axis flow — see activeStepsFor in state.ts.
+  if (api.stepKey === 'repair:arch') {
+    return <RepairArchStep api={api} accent={accent} />;
+  }
+  if (api.stepKey === 'repair:top') {
+    return <RepairLinesStep api={api} arch="upper" accent={accent} />;
+  }
+  if (api.stepKey === 'repair:bottom') {
+    return <RepairLinesStep api={api} arch="lower" accent={accent} />;
   }
   switch (api.stepKey) {
     case 'location':
