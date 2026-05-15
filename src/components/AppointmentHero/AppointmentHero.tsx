@@ -47,8 +47,11 @@ export interface AppointmentHeroPill {
 export interface AppointmentHeroWhen {
   /** "Monday 8th June 2026" — already humanised by the caller. */
   dateLong: string;
-  /** "09:00 — 09:45" or "Walked in 09:43" — the time anchor. */
-  timeLine: string;
+  /** "09:00 — 09:45" / "Walked in 09:43" / a fragment carrying the
+   *  time anchor plus an inline affordance (e.g. an "Estimated
+   *  appointment length" link). ReactNode so callers can compose
+   *  text + interactive content without flattening to a string. */
+  timeLine: ReactNode;
   /** Phrase or interactive element next to the time anchor:
    * "In 5 days" / "Ready to finish" / a button taking the user to a
    * related row. Rendered in the accent colour so action affordances

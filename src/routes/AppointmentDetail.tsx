@@ -38,6 +38,7 @@ import {
   DepositGlyph,
   DropdownSelect,
   EmptyState,
+  PhaseTimeline,
   RescheduleSheet,
   Section,
   Skeleton,
@@ -61,6 +62,7 @@ import type { AppointmentStatus } from '../components/AppointmentCard/Appointmen
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
 import {
   formatDateLongOrdinal,
+  formatTime,
   formatTimeRange,
   relativeDay,
 } from '../lib/dateFormat.ts';
@@ -721,6 +723,23 @@ function Hero({
   tone: StatusTone;
 }) {
   const navigate = useNavigate();
+  // Sheet state for the phase timeline. Lives in the hero because
+  // the "Estimated appointment length" affordance lives in the
+  // hero's timeLine. Sheet itself renders via portal so DOM position
+  // doesn't matter.
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  // Only offer the link when the breakdown is non-trivial — i.e.
+  // the appointment has more than one phase. A single-phase booking
+  // (no passive lab gap) has a contiguous 09:15 → 09:45 window where
+  // the legacy timeRange line is honest; swapping to "Booked for
+  // 09:15 + link" would lose information without explaining anything
+  // new. Multi-phase bookings (Click-in veneers: Book-in + Impression
+  // + Manufacture + Try In) are exactly the case the original line
+  // misrepresents, so this is where the timeline link earns its
+  // place. Legacy rows with zero materialised phases also skip the
+  // link so it never points at a dead modal.
+  const onShowTimeline =
+    appt.phases.length > 1 ? () => setTimelineOpen(true) : null;
   // Source label — "Native" reads as developer jargon to the
   // reception team. For widget-originated bookings we know which
   // storefront the patient booked through (brand_id is written by
@@ -762,7 +781,7 @@ function Hero({
   // where the row's start_at is the OLD slot — without a prefix the
   // big bold date reads as the active booking date and confuses the
   // operator about which row this is.
-  const ribbon = buildApptRibbon(appt);
+  const ribbon = buildApptRibbon(appt, onShowTimeline);
   const dateLong = ribbon.dateLong ?? formatDateLongOrdinal(appt.start_at);
 
   // For rescheduled rows the relative slot becomes a one-tap link to
@@ -807,19 +826,36 @@ function Hero({
   }
 
   return (
-    <AppointmentHero
-      patient={{ name: fullName, avatarSrc: appt.patient.avatar_data }}
-      pills={pills}
-      subtitle={refLine}
-      when={{
-        dateLong,
-        timeLine: ribbon.timeLine,
-        relative,
-        service,
-        tone: ribbon.tone,
-        icon: ribbon.icon,
-      }}
-    />
+    <>
+      <AppointmentHero
+        patient={{ name: fullName, avatarSrc: appt.patient.avatar_data }}
+        pills={pills}
+        subtitle={refLine}
+        when={{
+          dateLong,
+          timeLine: ribbon.timeLine,
+          relative,
+          service,
+          tone: ribbon.tone,
+          icon: ribbon.icon,
+        }}
+      />
+      <BottomSheet
+        open={timelineOpen}
+        onClose={() => setTimelineOpen(false)}
+        title="Estimated appointment length"
+        description={
+          service ? (
+            <span>
+              How long {service} typically takes, and when you're free
+              to step away.
+            </span>
+          ) : null
+        }
+      >
+        <PhaseTimeline phases={appt.phases} />
+      </BottomSheet>
+    </>
   );
 }
 
@@ -860,25 +896,84 @@ function RibbonNavLink({
   );
 }
 
+// Inline "Estimated appointment length" affordance rendered next to
+// the booked-for time on the hero ribbon. Same chrome as RibbonNavLink
+// but with the accent colour locked to the ribbon's accent so it's
+// recognisably a link even when the surrounding span colours flex
+// per ribbon tone. Trailing arrow signals "this opens something",
+// matching the pattern Linear / Vercel use for inline contextual
+// links.
+function TimelineLink({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        margin: 0,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.accent,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        textUnderlineOffset: 3,
+        textDecoration: 'underline',
+      }}
+    >
+      Estimated appointment length
+      <ArrowRight size={12} aria-hidden />
+    </button>
+  );
+}
+
 // One source of truth for what the ribbon says + which icon it shows
 // for every appointment status. Each branch returns a fully-formed
 // "what's going on now, in plain English" — no shared scaffolding
 // across statuses, because the language for "did not turn up" should
 // not look like the language for "rescheduled to a new slot".
-function buildApptRibbon(appt: AppointmentDetailRow): {
+function buildApptRibbon(
+  appt: AppointmentDetailRow,
+  onShowTimeline: (() => void) | null,
+): {
   icon: ReactNode;
   /** Optional override for the big bold date heading. Most states
    * keep the appointment's own start_at (formatted long); rescheduled
    * uses this to label the date as past so the operator never thinks
    * the OLD slot is the live one. */
   dateLong?: string;
-  timeLine: string;
+  timeLine: ReactNode;
   relative: string | null;
   tone: AppointmentHeroTone;
 } {
   const startMs = new Date(appt.start_at).getTime();
   const now = Date.now();
   const timeRange = formatTimeRange(appt.start_at, appt.end_at);
+  const startStr = formatTime(appt.start_at);
+  // For 'booked' rows we replace the misleading "09:15 — 09:45" range
+  // with just the start time + an inline link that opens the full
+  // phase timeline. The end of the appointment can be hours later if
+  // the booking has a passive lab phase mid-flow (e.g. Click-in
+  // veneers: Book-in 10m + Impression 5m + Manufacture 4h + Try In
+  // 10m), so the patient and the receptionist were both reading a
+  // dishonest single-block window. We only swap when the timeline is
+  // actually available (phases.length > 0 and a callback is wired) —
+  // legacy rows fall back to the original range string.
+  const canShowTimeline =
+    onShowTimeline !== null && appt.phases.length > 1;
+  const bookedForLine: ReactNode = canShowTimeline ? (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+      <span>Booked for {startStr}</span>
+      <TimelineLink onClick={onShowTimeline!} />
+    </span>
+  ) : (
+    `Booked for ${timeRange}`
+  );
 
   switch (appt.status) {
     case 'booked': {
@@ -890,14 +985,14 @@ function buildApptRibbon(appt: AppointmentDetailRow): {
       if (startMs > now) {
         return {
           icon: <CalendarClock size={16} aria-hidden />,
-          timeLine: `Booked for ${timeRange}`,
+          timeLine: bookedForLine,
           relative: relativeDay(appt.start_at),
           tone: 'accent',
         };
       }
       return {
         icon: <AlertTriangle size={16} aria-hidden />,
-        timeLine: `Booked for ${timeRange}`,
+        timeLine: bookedForLine,
         relative: 'Patient overdue',
         tone: 'warn',
       };

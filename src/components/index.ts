@@ -183,6 +183,9 @@ export { FinalDeliveries } from './FinalDeliveries/FinalDeliveries.tsx';
 export { PhaseRibbon } from './PhaseRibbon/PhaseRibbon.tsx';
 export type { PhaseRibbonProps, PhaseRibbonPhase } from './PhaseRibbon/PhaseRibbon.tsx';
 
+export { PhaseTimeline } from './PhaseTimeline/PhaseTimeline.tsx';
+export type { PhaseTimelineProps } from './PhaseTimeline/PhaseTimeline.tsx';
+
 export { PhaseEditor } from './PhaseEditor/PhaseEditor.tsx';
 export type {
   PhaseEditorProps,
