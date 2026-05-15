@@ -710,12 +710,14 @@ function mapEvent(
           provider ? `via ${humaniseProvider(provider)}` : null,
           externalId ? `ref ${externalId}` : null,
         ),
-        // Dedicated `deposit` hint → renders the shared DepositGlyph
-        // dashed-arc-and-tick mark, matching the AppointmentDetail
-        // hero pill / Deposit card / Ledger row. Previously this used
-        // the generic `card` (CreditCard) hint which didn't tie back
-        // to the deposit-specific surface.
-        hint: 'deposit',
+        // Two-state icon: `deposit` (dashed DepositGlyph) for partial
+        // settlements where a balance is still owed at the till;
+        // `paid_in_full` (solid BadgeCheck) when the customer chose
+        // the widget's "Pay now" path and the booking is fully
+        // settled. Mirrors the AppointmentDetail Deposit card + hero
+        // pill so the timeline reads consistently with the surfaces
+        // above it.
+        hint: paidInFull ? 'paid_in_full' : 'deposit',
         tone: 'accent',
       };
     }

@@ -1,5 +1,6 @@
 import { type ReactNode, useMemo, useState } from 'react';
 import {
+  BadgeCheck,
   Box,
   CalendarCheck,
   CreditCard,
@@ -578,6 +579,13 @@ function iconFor(event: TimelineEvent): ReactNode {
       return <CreditCard size={size} />;
     case 'deposit':
       return <DepositGlyph size={18} />;
+    case 'paid_in_full':
+      // Solid badge-with-check — the same mark the AppointmentDetail
+      // Deposit card and the Schedule popup use for fully-settled
+      // bookings. The visual contrast against the dashed DepositGlyph
+      // is intentional: dashed = balance still owed; solid = nothing
+      // to collect.
+      return <BadgeCheck size={size + 2} />;
     case 'discount':
       return <DiscountIcon size={16} />;
     case 'box':

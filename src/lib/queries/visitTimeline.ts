@@ -63,7 +63,23 @@ export interface TimelineEvent {
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
   actor?: string;
-  hint: 'calendar' | 'cart' | 'check' | 'signature' | 'card' | 'flag' | 'box' | 'mail' | 'deposit' | 'discount';
+  // Visual hint the timeline renderer maps to an icon. 'deposit'
+  // renders the dashed DepositGlyph (partial-settlement mark);
+  // 'paid_in_full' renders a solid BadgeCheck so a glance at the
+  // timeline tells staff whether there's a balance still owed or
+  // the booking was settled in full at booking.
+  hint:
+    | 'calendar'
+    | 'cart'
+    | 'check'
+    | 'signature'
+    | 'card'
+    | 'flag'
+    | 'box'
+    | 'mail'
+    | 'deposit'
+    | 'paid_in_full'
+    | 'discount';
   // Optional tone override. When set, the icon dot uses this tone
   // directly instead of the type-derived fallback. Lets producers
   // (e.g. AppointmentTimeline) opt out of the visit-centric heuristics

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  BadgeCheck,
   CalendarCheck,
   CalendarClock,
   CalendarDays,
@@ -1963,7 +1964,12 @@ function DepositLine({
     >
       {isPaid ? (
         <span aria-hidden style={{ color: badgeColor, display: 'inline-flex', flexShrink: 0 }}>
-          <DepositGlyph size={16} />
+          {/* paidInFull swaps the dashed DepositGlyph (partial-settlement
+              mark) for a solid BadgeCheck — same swap the AppointmentDetail
+              Deposit card and hero pill make. Keeps the dashed glyph
+              reserved for "money in, balance still owed" so a glance
+              tells the receptionist whether to expect another charge. */}
+          {paidInFull ? <BadgeCheck size={16} /> : <DepositGlyph size={16} />}
         </span>
       ) : (
         <span
