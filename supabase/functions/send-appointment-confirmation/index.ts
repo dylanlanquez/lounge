@@ -316,10 +316,15 @@ async function handle(req: Request): Promise<Response> {
 
   // Phase data feeds the segmented schedule. Best-effort — empty
   // array degrades to the duration label.
-  const [phases, segmentedThresholdMinutes, brandingAndContact] = await Promise.all([
+  // bookingItems are the widget-time picks the patient committed to
+  // (per-arch denture-repair lines + paid upgrades). Joined into the
+  // {{bookingItemsBlock}} template variable so the email lists the
+  // exact basket the patient saw on the summary screen.
+  const [phases, segmentedThresholdMinutes, brandingAndContact, bookingItems] = await Promise.all([
     fetchAppointmentPhases(admin, apt.id),
     resolveSegmentedThresholdMinutes(admin),
     loadBrandingAndContact(admin),
+    fetchAppointmentBookingItems(admin, apt.id),
   ]);
 
   const variables = buildVariables({
@@ -332,6 +337,7 @@ async function handle(req: Request): Promise<Response> {
     phases,
     segmentedThresholdMinutes,
     contact: brandingAndContact.contact,
+    bookingItems,
   });
   const subject = substituteVariables(template.subject, variables);
   const bodyAfterVars = substituteVariables(template.body_syntax, variables);
@@ -554,6 +560,127 @@ async function fetchAppointmentPhases(
     .order('phase_index', { ascending: true });
   if (error || !Array.isArray(data)) return [];
   return data as AppointmentPhase[];
+}
+
+// Widget-time picks for an appointment — per-arch denture-repair
+// lines + paid upgrades. Read straight from the snapshot tables
+// written by widget-create-appointment. Empty arrays for any
+// booking that didn't ship through the widget (Calendly imports) or
+// for services that don't expose either picker.
+interface AppointmentRepairItemSnapshot {
+  name: string;
+  arch: 'upper' | 'lower' | 'both';
+  unit_label: string | null;
+  quantity: number;
+  line_total_pence: number;
+}
+interface AppointmentUpgradeSnapshot {
+  name: string;
+  resolved_price_pence: number;
+}
+interface BookingItemsSnapshot {
+  repairItems: AppointmentRepairItemSnapshot[];
+  upgrades: AppointmentUpgradeSnapshot[];
+}
+async function fetchAppointmentBookingItems(
+  admin: SupabaseClient,
+  appointmentId: string,
+): Promise<BookingItemsSnapshot> {
+  const [repairsRes, upgradesRes] = await Promise.all([
+    admin
+      .from('lng_appointment_repair_items')
+      .select('name, arch, unit_label, quantity, line_total_pence')
+      .eq('appointment_id', appointmentId)
+      .order('created_at', { ascending: true }),
+    admin
+      .from('lng_appointment_upgrade_selections')
+      .select('name, resolved_price_pence')
+      .eq('appointment_id', appointmentId)
+      .order('created_at', { ascending: true }),
+  ]);
+  const repairItems = Array.isArray(repairsRes.data)
+    ? (repairsRes.data as AppointmentRepairItemSnapshot[])
+    : [];
+  const upgrades = Array.isArray(upgradesRes.data)
+    ? (upgradesRes.data as AppointmentUpgradeSnapshot[])
+    : [];
+  return { repairItems, upgrades };
+}
+
+// Compose the markdown block the template engine substitutes into
+// {{bookingItemsBlock}}. Returns "" when both lists are empty so the
+// surrounding template lines collapse to a normal paragraph break.
+//
+// Shape (denture repair with upgrades — covers every combination):
+//
+//   **Upper**
+//   - Reline · £120.00
+//   - Broken tooth × 2 teeth · £80.00
+//
+//   **Lower**
+//   - Snapped denture · £150.00
+//
+//   **Upgrades**
+//   - Scalloped · £45.00
+//
+// Per-tooth lines suffix the quantity ("× N teeth") so the line
+// reads correctly when more than one tooth was picked. Per-arch
+// lines stay flat (qty is always 1). Upgrades have their own
+// section heading regardless of whether repairs are present.
+function formatBookingItemsBlock(items: BookingItemsSnapshot): string {
+  const hasRepairs = items.repairItems.length > 0;
+  const hasUpgrades = items.upgrades.length > 0;
+  if (!hasRepairs && !hasUpgrades) return '';
+
+  const sections: string[] = [];
+  if (hasRepairs) {
+    const byArch = new Map<'upper' | 'lower' | 'both', AppointmentRepairItemSnapshot[]>();
+    for (const r of items.repairItems) {
+      const list = byArch.get(r.arch) ?? [];
+      list.push(r);
+      byArch.set(r.arch, list);
+    }
+    const archOrder: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+    const archLabel: Record<'upper' | 'lower' | 'both', string> = {
+      upper: 'Upper',
+      lower: 'Lower',
+      both: 'Both arches',
+    };
+    for (const arch of archOrder) {
+      const rows = byArch.get(arch);
+      if (!rows || rows.length === 0) continue;
+      const lines = [`**${archLabel[arch]}**`];
+      for (const r of rows) {
+        const qtySuffix =
+          r.unit_label === 'per tooth' && r.quantity > 1
+            ? ` × ${r.quantity} teeth`
+            : '';
+        lines.push(`- ${r.name}${qtySuffix} · ${formatGbpPence(r.line_total_pence)}`);
+      }
+      sections.push(lines.join('\n'));
+    }
+  }
+  if (hasUpgrades) {
+    const lines = ['**Upgrades**'];
+    for (const u of items.upgrades) {
+      lines.push(`- ${u.name} · ${formatGbpPence(u.resolved_price_pence)}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+  return sections.join('\n\n');
+}
+
+// One-place GBP formatter for the email's item-list block. Mirrors
+// the formatPence helper in src/lib/queries/carts.ts so prices in
+// emails read identically to prices on the staff app's cart line.
+const GBP_FORMATTER_EMAIL = new Intl.NumberFormat('en-GB', {
+  style: 'currency',
+  currency: 'GBP',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+function formatGbpPence(pence: number): string {
+  return GBP_FORMATTER_EMAIL.format(pence / 100);
 }
 
 // Threshold in minutes — if any passive phase runs at least this
@@ -840,6 +967,11 @@ interface VariableContext {
   // {{bookingLink}}, {{mapUrl}}, {{openingHoursToday}}, and
   // {{openingHoursWeek}} placeholders.
   contact: ContactSettings;
+  // Widget-time picks for this appointment — per-arch denture-repair
+  // lines + paid upgrades. Feeds {{bookingItemsBlock}}. Empty arrays
+  // for bookings that didn't pick either (every Calendly import, plus
+  // every native booking on a service that doesn't offer them).
+  bookingItems: BookingItemsSnapshot;
 }
 
 function buildVariables(ctx: VariableContext): Record<string, string> {
@@ -915,6 +1047,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
       time24,
     ),
     joinMeetingUrl: apt.join_url ?? '',
+    bookingItemsBlock: formatBookingItemsBlock(ctx.bookingItems),
   };
 
   if (oldApt) {

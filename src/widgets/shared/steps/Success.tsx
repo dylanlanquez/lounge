@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Calendar, Check, CheckCircle2, Copy, Hash, ImageIcon, Loader2, MapPin } from 'lucide-react';
-import { formatBookingSuccessTitle, type WidgetState } from '../state.ts';
+import {
+  Calendar,
+  Check,
+  CheckCircle2,
+  ClipboardCheck,
+  Copy,
+  Hash,
+  ImageIcon,
+  Loader2,
+  MapPin,
+} from 'lucide-react';
+import { formatBookingSuccessTitle, type RepairLine, type WidgetState } from '../state.ts';
+import type { WidgetUpgrade } from '../data.ts';
 import type { WidgetBrand } from '../Widget.tsx';
 import { QUIZ } from '../quizTokens.ts';
 import { env } from '../../../lib/env.ts';
@@ -23,12 +34,17 @@ import { env } from '../../../lib/env.ts';
 
 export function SuccessScreen({
   state,
+  upgrades,
   appointmentRef,
   appointmentId,
   manageToken,
   brand,
 }: {
   state: WidgetState;
+  /** The full upgrade rows loaded by the booking-state hook. Used to
+   *  resolve the names of `state.upgradeIds` for the "What you booked"
+   *  section. Empty array for services without upgrades. */
+  upgrades: ReadonlyArray<WidgetUpgrade>;
   appointmentRef: string | null;
   appointmentId: string | null;
   manageToken: string | null;
@@ -145,6 +161,10 @@ export function SuccessScreen({
                 secondary={locationAddress ?? undefined}
               />
             ) : null}
+            <BookedItemsRow
+              state={state}
+              upgrades={upgrades.filter((u) => state.upgradeIds.includes(u.id))}
+            />
           </div>
 
           {appointmentRef ? (
@@ -402,6 +422,147 @@ function hexWithAlpha(hex: string, alpha: number): string {
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// "What you booked" row — surfaces the patient's per-arch denture-
+// repair lines + any paid upgrades so the success card reflects the
+// full basket (not just service type + date). Labels only — the
+// confirmation email below carries the full price breakdown so the
+// success card stays a concise visual receipt.
+//
+// Returns null when there are neither repair lines nor upgrades, so
+// every other service still renders the previous two-row card chrome
+// untouched.
+function BookedItemsRow({
+  state,
+  upgrades,
+}: {
+  state: WidgetState;
+  /** Already filtered to the upgrades the patient ticked. */
+  upgrades: ReadonlyArray<WidgetUpgrade>;
+}) {
+  const repairItems =
+    state.service?.serviceType === 'denture_repair' ? state.repairItems : [];
+  if (repairItems.length === 0 && upgrades.length === 0) return null;
+
+  // Group repairs by arch so the patient sees the same hierarchy the
+  // staff AppointmentExtras card uses. Order matches widget arch
+  // tile ordering: upper → lower → both.
+  const repairsByArch = new Map<'upper' | 'lower' | 'both', RepairLine[]>();
+  for (const line of repairItems) {
+    const list = repairsByArch.get(line.arch) ?? [];
+    list.push(line);
+    repairsByArch.set(line.arch, list);
+  }
+  const archOrder: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+  const archLabel: Record<'upper' | 'lower' | 'both', string> = {
+    upper: 'Upper',
+    lower: 'Lower',
+    both: 'Both arches',
+  };
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 12,
+      }}
+    >
+      <span
+        style={{
+          flexShrink: 0,
+          width: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: QUIZ.MUTED_2,
+          paddingTop: 2,
+        }}
+        aria-hidden
+      >
+        <ClipboardCheck size={16} strokeWidth={1.75} />
+      </span>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          fontSize: 14,
+          lineHeight: 1.4,
+          minWidth: 0,
+          flex: 1,
+        }}
+      >
+        {archOrder.map((arch) => {
+          const rows = repairsByArch.get(arch);
+          if (!rows || rows.length === 0) return null;
+          return (
+            <div
+              key={arch}
+              style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: QUIZ.SUBTLE,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                }}
+              >
+                {archLabel[arch]}
+              </span>
+              {rows.map((line) => {
+                const qtySuffix =
+                  line.unitLabel === 'per tooth' && line.quantity > 1
+                    ? ` × ${line.quantity} teeth`
+                    : '';
+                return (
+                  <span
+                    key={line.lineId}
+                    style={{
+                      color: QUIZ.INK,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {line.name}
+                    {qtySuffix}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        })}
+        {upgrades.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: QUIZ.SUBTLE,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+              }}
+            >
+              Upgrades
+            </span>
+            {upgrades.map((u) => (
+              <span
+                key={u.id}
+                style={{
+                  color: QUIZ.INK,
+                  fontWeight: 500,
+                }}
+              >
+                {u.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function DetailRow({

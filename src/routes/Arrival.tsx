@@ -46,6 +46,7 @@ import {
 import {
   addCatalogueItemsToCart,
   formatPence,
+  type AppliedUpgrade,
   type CatalogueAddOptions,
   type CartRow,
 } from '../lib/queries/carts.ts';
@@ -538,6 +539,33 @@ export function Arrival() {
       // lng_appointment_repair_items maps to its own catalogue line.
       // Skip the legacy single-row pre-fill for repair bookings — the
       // line items below are the authoritative basket.
+      // Group widget upgrades by their parent catalogue_id (the
+      // lwo_catalogue row the upgrade belongs to). Each staged line
+      // whose catalogue.id matches a key here adopts the upgrades
+      // as `options.upgrades` so they ride the parent line as
+      // attached options (matches the retainer-cart pattern where
+      // "Scalloped" sits on the retainer line, not as its own row).
+      // Price comes from resolvedPricePence — already arch-resolved
+      // server-side when widget-create-appointment wrote the snapshot.
+      const upgradesByParentCatalogueId = new Map<string, AppliedUpgrade[]>();
+      for (const u of widgetUpgrades) {
+        const catId = widgetUpgradeCatalogueIds.get(u.upgradeId);
+        if (!catId) continue;
+        const list = upgradesByParentCatalogueId.get(catId) ?? [];
+        list.push({
+          upgrade_id: u.upgradeId,
+          code: u.upgradeCode,
+          name: u.name,
+          price_pence: u.resolvedPricePence,
+        });
+        upgradesByParentCatalogueId.set(catId, list);
+      }
+      // Tracks which parent catalogue_ids were consumed by a staged
+      // line so any orphan upgrades (no matching parent) can still
+      // surface — they get their own line as a defence-in-depth
+      // fallback rather than vanishing silently.
+      const attachedParentCatalogueIds = new Set<string>();
+
       const isRepair = criteria.service_type === 'denture_repair';
       if (!isRepair) {
         let matches = findMatches(catalogueRows, criteria);
@@ -549,42 +577,57 @@ export function Arrival() {
         }
         const best = matches[0];
         if (best) {
+          const attachedUpgrades = upgradesByParentCatalogueId.get(best.id);
+          if (attachedUpgrades) attachedParentCatalogueIds.add(best.id);
           newStaged.push({
             key: `${best.id}-prefill`,
             catalogue: best,
             qty: 1,
-            options: { arch },
+            options: {
+              arch,
+              ...(attachedUpgrades ? { upgrades: attachedUpgrades } : {}),
+            },
           });
         }
       }
 
       // Repair lines from the widget's per-arch builder. Each row maps
       // to a catalogue id directly so no re-resolution is needed.
+      // Upgrades whose parent catalogue_id matches the repair line's
+      // catalogue ride along — denture_repair upgrades are rare today
+      // but the parity keeps the model consistent.
       for (const r of widgetRepairItems) {
         const cat = catalogueRows.find((c) => c.id === r.catalogueId && c.active);
         if (!cat) continue;
+        const attachedUpgrades = upgradesByParentCatalogueId.get(cat.id);
+        if (attachedUpgrades) attachedParentCatalogueIds.add(cat.id);
         newStaged.push({
           key: `${cat.id}-${r.arch}-prefill`,
           catalogue: cat,
           qty: r.quantity,
-          options: { arch: r.arch },
+          options: {
+            arch: r.arch,
+            ...(attachedUpgrades ? { upgrades: attachedUpgrades } : {}),
+          },
         });
       }
 
-      // Upgrades the patient ticked. We resolved the upgrade-row
-      // catalogue_id mapping once into widgetUpgradeCatalogueIds so
-      // each upgrade can be staged as its own line with the booking's
-      // arch carried through.
-      for (const u of widgetUpgrades) {
-        const catId = widgetUpgradeCatalogueIds.get(u.upgradeId);
-        if (!catId) continue;
-        const cat = catalogueRows.find((c) => c.id === catId && c.active);
+      // Orphan fallback — any widget upgrades whose parent catalogue
+      // wasn't staged above (e.g. the matched primary row resolved
+      // differently than the upgrade's parent) still appear in the
+      // basket so staff can see what the patient picked. Each orphan
+      // goes onto its own line carrying the booking's arch.
+      for (const [parentCatalogueId, upgradeList] of upgradesByParentCatalogueId) {
+        if (attachedParentCatalogueIds.has(parentCatalogueId)) continue;
+        const cat = catalogueRows.find(
+          (c) => c.id === parentCatalogueId && c.active,
+        );
         if (!cat) continue;
         newStaged.push({
-          key: `${cat.id}-upgrade-${u.id}-prefill`,
+          key: `${cat.id}-orphan-upgrade-prefill`,
           catalogue: cat,
           qty: 1,
-          options: { arch },
+          options: { arch, upgrades: upgradeList },
         });
       }
 

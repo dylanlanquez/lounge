@@ -418,6 +418,14 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
       'Self-serve reschedule / cancel URL for the patient. Empty for older appointments that predate the manage_token column. Use inside [Reschedule or cancel]({{manageUrl}}).',
     sample: 'https://book.venneir.com/manage?token=abc123',
   },
+  {
+    name: 'bookingItemsBlock',
+    label: 'What the patient booked',
+    description:
+      'Per-arch denture-repair lines + selected upgrades captured at booking, formatted as a bold-headed bullet list with prices. Renders as nothing when the booking has neither, so the variable can sit on its own line in the template without leaving an empty heading behind.',
+    sample:
+      '**Upper**\n- Reline · £120.00\n- Broken tooth × 2 teeth · £80.00\n\n**Lower**\n- Snapped denture · £150.00\n\n**Upgrades**\n- Scalloped · £45.00',
+  },
 ];
 
 // Virtual-appointment-specific variables — layered on APPOINTMENT_VARIABLES

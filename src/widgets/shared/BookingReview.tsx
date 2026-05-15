@@ -1,11 +1,11 @@
-import { MapPin, Award, Calendar, Sparkles } from 'lucide-react';
+import { MapPin, Award, Calendar, Sparkles, Wrench } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
   type AxisKey,
 } from '../../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
-import type { BookingStateApi, WidgetState } from './state.ts';
+import type { BookingStateApi, RepairLine, WidgetState } from './state.ts';
 import { formatPrice } from './state.ts';
 import type { WidgetCopy } from './copy.ts';
 import { QUIZ } from './quizTokens.ts';
@@ -48,19 +48,34 @@ export function BookingReview({
   const total = priceBreakdown.subtotalPence;
   void copy;
 
+  const isRepair = state.service?.serviceType === 'denture_repair';
+  // For denture-repair the service line is just the type label (per-
+  // arch breakdown follows in its own section); for everything else
+  // the legacy axis-appending behaviour stays so the line still reads
+  // "Retainers, Upper" etc.
   const serviceLine = state.service
-    ? buildServiceLine(state, state.service.label)
+    ? isRepair
+      ? state.service.label.replace(/<[^>]*>/g, '').trim()
+      : buildServiceLine(state, state.service.label)
     : null;
 
   // Build the row set in order so we can render hairlines between
   // rows but never after the final row (mirrors IncludedPerksCard).
-  // Three row kinds:
+  // Four row kinds:
+  //   subheader — uppercase muted section divider (UPPER / LOWER /
+  //               UPGRADES). No hairline below; the rows that follow
+  //               carry their own.
   //   item  — full-size icon row (location / service / when / extra)
   //   total — emphasised summary row with heavier top hairline
   //   split — smaller payment-split row (deposit today / balance)
   //           that sits after the Total to break the headline into
   //           how much is paid now vs at the appointment.
   type Row =
+    | {
+        kind: 'subheader';
+        key: string;
+        label: string;
+      }
     | {
         kind: 'item';
         key: string;
@@ -103,8 +118,10 @@ export function BookingReview({
       key: 'service',
       icon: <Award size={20} aria-hidden style={{ color: accent }} />,
       title: serviceLine,
+      // Repair bookings sum prices per-line below; the type-only
+      // service row shouldn't carry a duplicate aggregate price.
       rightAmount:
-        priceBreakdown.serviceLinePence > 0
+        !isRepair && priceBreakdown.serviceLinePence > 0
           ? formatPrice(priceBreakdown.serviceLinePence)
           : undefined,
     });
@@ -117,15 +134,52 @@ export function BookingReview({
       title: formatSlotLong(state.slotIso),
     });
   }
-  for (const u of selectedUpgrades) {
+  // Denture-repair per-arch breakdown. Each pinned arch gets its own
+  // subheader followed by its repair lines (qty suffix for per-tooth).
+  // Mirrors AppointmentExtras on the staff side so the patient and
+  // receptionist see the same shape.
+  if (isRepair && state.repairItems.length > 0) {
+    const repairsByArch = groupRepairsByArch(state.repairItems);
+    const archOrder: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+    for (const arch of archOrder) {
+      const lines = repairsByArch.get(arch);
+      if (!lines || lines.length === 0) continue;
+      rows.push({
+        kind: 'subheader',
+        key: `repair-${arch}-header`,
+        label: ARCH_LABEL[arch],
+      });
+      for (const line of lines) {
+        const qtySuffix =
+          line.unitLabel === 'per tooth' && line.quantity > 1
+            ? ` × ${line.quantity} teeth`
+            : '';
+        rows.push({
+          kind: 'item',
+          key: `repair-${line.lineId}`,
+          icon: <Wrench size={20} aria-hidden style={{ color: accent }} />,
+          title: `${line.name}${qtySuffix}`,
+          rightAmount: formatPrice(line.lineTotalPence),
+        });
+      }
+    }
+  }
+  if (selectedUpgrades.length > 0) {
     rows.push({
-      kind: 'item',
-      key: `upgrade-${u.id}`,
-      icon: <Sparkles size={20} aria-hidden style={{ color: QUIZ.LAVENDER }} />,
-      title: u.name,
-      rightAmount: `+${formatPrice(upgradePrice(u.id))}`,
-      rightAmountColour: QUIZ.LAVENDER,
+      kind: 'subheader',
+      key: 'upgrades-header',
+      label: 'Upgrades',
     });
+    for (const u of selectedUpgrades) {
+      rows.push({
+        kind: 'item',
+        key: `upgrade-${u.id}`,
+        icon: <Sparkles size={20} aria-hidden style={{ color: QUIZ.LAVENDER }} />,
+        title: u.name,
+        rightAmount: `+${formatPrice(upgradePrice(u.id))}`,
+        rightAmountColour: QUIZ.LAVENDER,
+      });
+    }
   }
   if (total > 0) {
     rows.push({
@@ -170,9 +224,18 @@ export function BookingReview({
         // Suppress the bottom hairline on the row immediately
         // before the Total row — the Total carries its own
         // (heavier) top hairline, so without this we'd stack two
-        // 1px lines on top of each other.
+        // 1px lines on top of each other. Subheaders never carry
+        // a bottom hairline (the row they introduce owns it), and
+        // the row before a subheader keeps its own hairline so
+        // the section break reads cleanly.
         const next = rows[i + 1];
         const nextIsTotal = next?.kind === 'total';
+        const nextIsSubheader = next?.kind === 'subheader';
+        if (row.kind === 'subheader') {
+          return (
+            <SubheaderRow key={row.key} label={row.label} accent={accent} />
+          );
+        }
         if (row.kind === 'item') {
           return (
             <ItemRow
@@ -182,7 +245,7 @@ export function BookingReview({
               subtitle={row.subtitle}
               rightAmount={row.rightAmount}
               rightAmountColour={row.rightAmountColour}
-              isLast={isLast || nextIsTotal}
+              isLast={isLast || nextIsTotal || nextIsSubheader}
             />
           );
         }
@@ -455,9 +518,65 @@ function SplitRow({
   );
 }
 
+// SubheaderRow — uppercase muted section divider used inside the
+// summary card for the per-arch repair groups (UPPER / LOWER) and
+// the "UPGRADES" header. Mirrors the AppointmentExtras ArchHeader
+// pattern on the staff app so the patient + receptionist see the
+// same section hierarchy. No bottom hairline — the row beneath
+// inherits the section visually rather than via a divider line.
+function SubheaderRow({
+  label,
+  accent,
+}: {
+  label: string;
+  accent: string;
+}) {
+  void accent;
+  return (
+    <div
+      role="row"
+      style={{
+        padding: '14px 0 4px',
+      }}
+    >
+      <span
+        role="cell"
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: QUIZ.SUBTLE,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          lineHeight: 1.2,
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
+
+const ARCH_LABEL: Record<'upper' | 'lower' | 'both', string> = {
+  upper: 'Upper',
+  lower: 'Lower',
+  both: 'Both arches',
+};
+
+function groupRepairsByArch(
+  items: ReadonlyArray<RepairLine>,
+): Map<'upper' | 'lower' | 'both', RepairLine[]> {
+  const byArch = new Map<'upper' | 'lower' | 'both', RepairLine[]>();
+  for (const line of items) {
+    const list = byArch.get(line.arch) ?? [];
+    list.push(line);
+    byArch.set(line.arch, list);
+  }
+  return byArch;
+}
 
 export function formatSlotLong(iso: string): string {
   const d = new Date(iso);
