@@ -105,13 +105,19 @@ export function TimePicker({
   const animId = useId().replace(/:/g, '');
 
   // ─── Desktop popover positioning ─────────────────────────────────
-  // Auto-flip and adaptive max-height. When the trigger sits near
-  // the bottom of the viewport, the popover would otherwise extend
-  // past the visible area — instead we either cap the list height
-  // to the available space below the trigger, or flip up entirely
-  // if there's substantially more room above.
+  // Anchor the popover by its EDGE nearest the trigger, not by its
+  // top corner. The slot list grows / shrinks asynchronously (e.g.
+  // availableSlots arrives a beat after the picker mounts and
+  // filters the list down), and computing `top = rect.top - height`
+  // bakes the height in at first paint — when the list shrinks
+  // afterwards the popover stays anchored at the original tall
+  // position, leaving a visible gap between it and the trigger.
+  // Using `bottom: window.innerHeight - rect.top` for the flip-up
+  // case (and `top: rect.bottom` for normal) keeps the popover
+  // glued to the trigger edge no matter how its content reflows.
   const [popoverPos, setPopoverPos] = useState<{
-    top: number;
+    top?: number;
+    bottom?: number;
     left?: number;
     right?: number;
     listMaxHeight: number;
@@ -131,7 +137,8 @@ export function TimePicker({
 
       // Header + paddings + list. The list is the only flexible piece;
       // everything else is roughly HEADER_H tall. We cap the list so
-      // the panel as a whole stays inside the viewport.
+      // the panel as a whole stays inside the viewport even when the
+      // upstream allow-list is unfiltered.
       const HEADER_AND_PADDING = 76;
       const MIN_LIST_HEIGHT = SLOT_HEIGHT * 3;
       const PREFERRED_LIST_HEIGHT = SLOT_HEIGHT * VISIBLE_SLOTS;
@@ -148,9 +155,6 @@ export function TimePicker({
         ? Math.min(PREFERRED_LIST_HEIGHT, availAbove)
         : Math.min(PREFERRED_LIST_HEIGHT, availBelow || PREFERRED_LIST_HEIGHT);
 
-      const top = flipUp
-        ? rect.top - 8 - HEADER_AND_PADDING - listMaxHeight
-        : rect.bottom + 8;
       const transformOrigin = flipUp
         ? fitsOnRight
           ? 'bottom left'
@@ -158,8 +162,15 @@ export function TimePicker({
         : fitsOnRight
         ? 'top left'
         : 'top right';
+      // flipUp: pin the popover's BOTTOM edge 8px above the trigger
+      // top — content can grow / shrink upward without changing the
+      // distance to the trigger. Otherwise pin the TOP edge 8px
+      // below the trigger bottom — same idea, growing downward.
+      const vertical = flipUp
+        ? { bottom: window.innerHeight - rect.top + 8 }
+        : { top: rect.bottom + 8 };
       setPopoverPos({
-        top,
+        ...vertical,
         ...horizontal,
         listMaxHeight: Math.max(MIN_LIST_HEIGHT, listMaxHeight),
         transformOrigin,
@@ -233,6 +244,7 @@ export function TimePicker({
           style={{
             position: 'fixed',
             top: popoverPos.top,
+            bottom: popoverPos.bottom,
             left: popoverPos.left,
             right: popoverPos.right,
             zIndex: 9000,
