@@ -1,4 +1,4 @@
-import { MapPin, Award, BadgeCheck, Calendar, Sparkles } from 'lucide-react';
+import { MapPin, Award, BadgeCheck, Calendar, Check } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -192,7 +192,12 @@ export function BookingReview({
       rows.push({
         kind: 'extra',
         key: `upgrade-${u.id}`,
-        icon: <Sparkles size={16} aria-hidden style={{ color: QUIZ.LAVENDER }} />,
+        // Plain accent check — matches the visual register of the
+        // repair-row checks and the staff app's "you picked this"
+        // pattern. The lavender Sparkles read as a decorative
+        // marketing flourish next to the rest of the summary card's
+        // calm accent column.
+        icon: <Check size={16} strokeWidth={2.5} aria-hidden style={{ color: accent }} />,
         title: u.name,
         rightAmount: `+${formatPrice(upgradePrice(u.id))}`,
         rightAmountColour: QUIZ.LAVENDER,
