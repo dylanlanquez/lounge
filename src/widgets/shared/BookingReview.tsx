@@ -344,19 +344,38 @@ function ItemRow({
   rightAmountColour?: string;
   isLast: boolean;
 }) {
+  // Structural alignment: pair the icon with the title's FIRST LINE
+  // specifically, not with the whole content block. Both the icon
+  // container and the first-line container share the same fixed
+  // height (24px) — the icon centres in its 24px box, the title +
+  // rightAmount row centres in its matching 24px box, and the two
+  // are flex-start aligned at the row top. Subtitle (when present)
+  // flows beneath the first-line row without affecting alignment.
+  //
+  // Why this works where the previous attempts didn't:
+  //   • alignItems:'center' on the outer row centred the icon
+  //     against the WHOLE content block — fine for 1-line rows,
+  //     but for the 2-line location row that put the icon between
+  //     the two lines, breaking visual consistency between rows.
+  //   • alignItems:'flex-start' got rows aligned by content top,
+  //     but icon SVGs draw their glyph from y=2 of a 24x24 viewBox
+  //     while font ascenders sit ~3-4px below the line-box top —
+  //     so the icons floated visibly above the text.
+  //   • Adding a marginTop hack to the icon span over-corrected
+  //     for asymmetric icons (MapPin) and under-corrected for
+  //     symmetric ones (CheckCircle2).
+  //
+  // Pairing icon + first-line by giving them matching 24px heights
+  // lets the browser centre both in the same y-band — icon glyph
+  // centre at y=12, text glyph centre at y=12, regardless of the
+  // icon's internal asymmetry. The 2-line case is then ALSO
+  // correct: the icon is paired with the first line specifically,
+  // and the subtitle hangs below.
+  const ROW_LINE_HEIGHT = 24;
   return (
     <div
       style={{
         display: 'flex',
-        // flex-start (not center) so every icon top-aligns with its
-        // title's first line. With alignItems: 'center', a 2-line
-        // location row centred its icon BETWEEN the two text lines,
-        // while a 1-line service row centred its icon AT the line
-        // — making the icon column look offset between rows. With
-        // flex-start the location pin sits next to "Vennir", the
-        // calendar sits next to the date line, the service tick
-        // sits next to "Same-day upper retainer" — all at the same
-        // relative position to the first line of their title.
         alignItems: 'flex-start',
         gap: 14,
         padding: '14px 0',
@@ -369,21 +388,8 @@ function ItemRow({
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          // Icon span height matches the title's line-height (15px ×
-          // 1.3 ≈ 20px) so the icon's vertical centre lines up with
-          // the title's visual midpoint when the outer row is
-          // flex-start aligned. marginTop:2 compensates for the
-          // leading inside the title's line-box: text glyphs sit
-          // ~3-4px below the line-box top (font ascender + leading
-          // adjustment), while icon glyphs sit close to the icon's
-          // own viewBox top. Without the nudge the icon visual
-          // sits HIGHER than the title visual and reads as floating
-          // above the row — most noticeable on perfectly-symmetric
-          // glyphs like CheckCircle2 where there's no asymmetric
-          // top-weight to compensate.
           width: 24,
-          height: 20,
-          marginTop: 2,
+          height: ROW_LINE_HEIGHT,
           flexShrink: 0,
         }}
       >
@@ -394,52 +400,58 @@ function ItemRow({
           flex: 1,
           minWidth: 0,
           display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 12,
+          flexDirection: 'column',
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            minHeight: ROW_LINE_HEIGHT,
+          }}
+        >
           <p
             style={{
               margin: 0,
               fontSize: 15,
               fontWeight: 600,
               color: QUIZ.INK,
-              lineHeight: 1.3,
+              lineHeight: 1.2,
               wordBreak: 'break-word',
             }}
           >
             {title}
           </p>
-          {subtitle ? (
-            <p
+          {rightAmount ? (
+            <span
               style={{
-                margin: '4px 0 0',
-                fontSize: 13,
-                color: QUIZ.SUBTLE,
-                lineHeight: 1.3,
-                wordBreak: 'break-word',
+                fontSize: 14,
+                fontWeight: 600,
+                color: rightAmountColour ?? QUIZ.INK,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: '0.02em',
               }}
             >
-              {subtitle}
-            </p>
+              {rightAmount}
+            </span>
           ) : null}
         </div>
-        {rightAmount ? (
-          <span
+        {subtitle ? (
+          <p
             style={{
-              fontSize: 14,
-              fontWeight: 600,
-              color: rightAmountColour ?? QUIZ.INK,
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-              fontVariantNumeric: 'tabular-nums',
-              letterSpacing: '0.02em',
+              margin: '4px 0 0',
+              fontSize: 13,
+              color: QUIZ.SUBTLE,
+              lineHeight: 1.3,
+              wordBreak: 'break-word',
             }}
           >
-            {rightAmount}
-          </span>
+            {subtitle}
+          </p>
         ) : null}
       </div>
     </div>
