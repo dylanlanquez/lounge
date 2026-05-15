@@ -285,6 +285,24 @@ export function ensureQuizKeyframes(): void {
       }
     }
 
+    /* Option cards (Location / Service / Axis steps): mobile-first
+       sizing is set inline so the cards hug their title +
+       description on phone-sized viewports — the earlier 130px
+       minHeight floor left 30-40px of dead space below short
+       cards like Top / Bottom / Both. On tablet+ (≥768px) the
+       generous footprint reads better: bigger padding, taller
+       minimum height, more breathing between the title and the
+       description so the cards feel like polished cards rather
+       than tightly-packed list rows. !important is required to
+       defeat the inline mobile defaults the button carries. */
+    @media (min-width: 768px) {
+      .vlounge-option-card {
+        padding: 20px !important;
+        padding-right: 52px !important;
+        min-height: 130px !important;
+      }
+    }
+
     /* Success-screen smile-photo grid:
        • Desktop: 3 columns, square tiles side-by-side.
        • Mobile (≤520px): horizontal-snap row so three large

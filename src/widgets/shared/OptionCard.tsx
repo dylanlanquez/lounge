@@ -62,6 +62,12 @@ export function OptionCard({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={ariaLabel}
+      // className lets a @media (min-width: 768px) rule in
+      // quizTokens.ts restore the original desktop padding +
+      // minHeight. Mobile sticks with the tight inline defaults
+      // below; desktop gets the more generous footprint Dylan
+      // confirmed reads better at that viewport.
+      className="vlounge-option-card"
       onMouseEnter={canHover ? () => setHovered(true) : undefined}
       onMouseLeave={canHover ? () => setHovered(false) : undefined}
       // Focus deliberately does NOT pipe into hovered state. Letting
