@@ -24,6 +24,7 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   deposit_currency: null,
   deposit_provider: null,
   deposit_status: null,
+  paid_in_full_at_booking: false,
   patient_first_name: 'Sandra',
   patient_last_name: 'Denyer',
   patient_email: null,

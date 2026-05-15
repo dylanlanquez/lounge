@@ -845,6 +845,7 @@ export function Schedule() {
                   status={selected.deposit_status}
                   amountPence={selected.deposit_pence}
                   provider={selected.deposit_provider}
+                  paidInFull={selected.paid_in_full_at_booking}
                 />
               ) : null}
               </div>
@@ -1918,14 +1919,24 @@ function formatTime12h(d: Date): string {
 // detail sheet. Filled green circle with a white tick when paid; filled
 // red circle with a white cross when the payment failed (Calendly attempt
 // recorded, money not collected — receptionist needs to chase).
+//
+// paidInFull flips the copy from "deposit paid" → "paid in full" when
+// the customer settled the entire price via the widget's "Pay now"
+// path. The amount_pence value is the same in both cases — what
+// changes is what the receptionist needs to remember about the
+// remaining balance. The hero pill on AppointmentDetail does the
+// same flip; this surface stays in sync so the schedule pop-over
+// reads identically to the full detail page.
 function DepositLine({
   status,
   amountPence,
   provider,
+  paidInFull,
 }: {
   status: 'paid' | 'failed';
   amountPence: number;
   provider: 'paypal' | 'stripe' | null;
+  paidInFull: boolean;
 }) {
   const isPaid = status === 'paid';
   // Sage green — partial-payment colour, distinct from the dark forest
@@ -1936,7 +1947,7 @@ function DepositLine({
   const labelColor = isPaid ? theme.color.ink : theme.color.alert;
   const labelWeight = isPaid ? theme.type.weight.medium : theme.type.weight.semibold;
   const text = isPaid
-    ? `${formatGbp(amountPence)} deposit paid${provider ? ` · ${capitalise(provider)}` : ''}`
+    ? `${formatGbp(amountPence)} ${paidInFull ? 'paid in full' : 'deposit paid'}${provider ? ` · ${capitalise(provider)}` : ''}`
     : `${formatGbp(amountPence)} deposit failed${provider ? ` · ${capitalise(provider)}` : ''}`;
   return (
     <div

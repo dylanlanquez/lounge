@@ -55,6 +55,13 @@ export interface AppointmentRow {
   deposit_currency: string | null;
   deposit_provider: 'paypal' | 'stripe' | null;
   deposit_status: 'paid' | 'failed' | null;
+  /** TRUE when the customer paid the full price at booking via the
+   *  widget's "Pay now" choice. Distinct from deposit_pence — the
+   *  deposit_pence value still equals the amount charged, but the
+   *  flag flips the surfaces that say "Deposit paid" → "Paid in
+   *  full" so the reception team never reads a £400 booking as
+   *  having a £400 outstanding balance. */
+  paid_in_full_at_booking: boolean;
   patient_first_name: string | null;
   patient_last_name: string | null;
   patient_email: string | null;
