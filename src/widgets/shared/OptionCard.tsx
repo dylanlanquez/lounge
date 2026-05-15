@@ -56,13 +56,16 @@ export function OptionCard({
       aria-label={ariaLabel}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={() => setHovered(false)}
+      // Focus deliberately does NOT pipe into hovered state. Letting
+      // it would mean the moment the modal opens (or the step renders
+      // and the browser drops focus on the first focusable card) the
+      // card flashes "selected"-looking even though the patient hasn't
+      // tapped it. Border tracks selected (true) + mouse-hover only.
       style={{
         position: 'relative',
         background: QUIZ.SURFACE,
         border: `2px solid ${
-          selected || hovered ? accent : 'transparent'
+          selected ? accent : hovered ? accent : 'transparent'
         }`,
         borderRadius: QUIZ.R_CARD,
         padding: '20px',
