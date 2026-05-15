@@ -120,7 +120,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'location',
-      icon: <MapPin size={20} aria-hidden style={{ color: accent }} />,
+      icon: <MapPin size={16} strokeWidth={2} aria-hidden />,
       title: state.location.name,
       subtitle: state.location.addressLine,
     });
@@ -134,7 +134,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'slot',
-      icon: <Calendar size={20} aria-hidden style={{ color: accent }} />,
+      icon: <Calendar size={16} strokeWidth={2} aria-hidden />,
       title: formatSlotLong(state.slotIso),
     });
   }
@@ -154,7 +154,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'service',
-      icon: <CheckCircle2 size={20} aria-hidden style={{ color: accent }} />,
+      icon: <CheckCircle2 size={16} strokeWidth={2.25} aria-hidden />,
       title: serviceLine,
       rightAmount:
         priceBreakdown.serviceLinePence > 0
@@ -344,40 +344,32 @@ function ItemRow({
   rightAmountColour?: string;
   isLast: boolean;
 }) {
-  // Structural alignment: pair the icon with the title's FIRST LINE
-  // specifically, not with the whole content block. Both the icon
-  // container and the first-line container share the same fixed
-  // height (24px) — the icon centres in its 24px box, the title +
-  // rightAmount row centres in its matching 24px box, and the two
-  // are flex-start aligned at the row top. Subtitle (when present)
-  // flows beneath the first-line row without affecting alignment.
+  // Icon column = a fixed-size circular accent-bg badge that wraps
+  // every icon. The BADGE is the visual anchor, not the glyph
+  // inside it — so even though MapPin (narrow + top-weighted),
+  // Calendar (square, balanced) and CheckCircle2 (perfect circle,
+  // fills the box) all have different visual extents inside their
+  // 24×24 viewBoxes, every row column lines up at the same y
+  // because every badge is the same identical 30×30 circle.
   //
-  // Why this works where the previous attempts didn't:
-  //   • alignItems:'center' on the outer row centred the icon
-  //     against the WHOLE content block — fine for 1-line rows,
-  //     but for the 2-line location row that put the icon between
-  //     the two lines, breaking visual consistency between rows.
-  //   • alignItems:'flex-start' got rows aligned by content top,
-  //     but icon SVGs draw their glyph from y=2 of a 24x24 viewBox
-  //     while font ascenders sit ~3-4px below the line-box top —
-  //     so the icons floated visibly above the text.
-  //   • Adding a marginTop hack to the icon span over-corrected
-  //     for asymmetric icons (MapPin) and under-corrected for
-  //     symmetric ones (CheckCircle2).
+  // This is the pattern Stripe Checkout, Linear, Notion's list rows
+  // all use; the staff-app AppointmentExtras already uses it too,
+  // so the widget summary now matches the system. Earlier attempts
+  // (alignItems tweaks, marginTop nudges) chased symptoms — the
+  // root cause was that aligning bounding boxes doesn't align
+  // visual centres when the glyphs inside have asymmetric weight.
+  // Wrapping in a consistent shape moots the entire problem.
   //
-  // Pairing icon + first-line by giving them matching 24px heights
-  // lets the browser centre both in the same y-band — icon glyph
-  // centre at y=12, text glyph centre at y=12, regardless of the
-  // icon's internal asymmetry. The 2-line case is then ALSO
-  // correct: the icon is paired with the first line specifically,
-  // and the subtitle hangs below.
-  const ROW_LINE_HEIGHT = 24;
+  // First-line container shares the badge's height (30px) so the
+  // badge centre and the title visual centre are in the same y
+  // band. Subtitle hangs below, unaffected.
+  const BADGE_SIZE = 30;
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'flex-start',
-        gap: 14,
+        gap: 12,
         padding: '14px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
@@ -388,9 +380,12 @@ function ItemRow({
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 24,
-          height: ROW_LINE_HEIGHT,
+          width: BADGE_SIZE,
+          height: BADGE_SIZE,
           flexShrink: 0,
+          borderRadius: '50%',
+          background: 'rgba(8, 55, 88, 0.08)',
+          color: QUIZ.ACCENT,
         }}
       >
         {icon}
@@ -409,7 +404,7 @@ function ItemRow({
             justifyContent: 'space-between',
             alignItems: 'center',
             gap: 12,
-            minHeight: ROW_LINE_HEIGHT,
+            minHeight: BADGE_SIZE,
           }}
         >
           <p
