@@ -1,4 +1,4 @@
-import { MapPin, BadgeCheck, Calendar, Check } from 'lucide-react';
+import { MapPin, BadgeCheck, Calendar, Check, CheckCircle2 } from 'lucide-react';
 import type { BookingStateApi, RepairLine, WidgetState } from './state.ts';
 import { customerRepairLabel, formatPrice } from './state.ts';
 import type { WidgetCopy } from './copy.ts';
@@ -144,15 +144,17 @@ export function BookingReview({
   // redundant noise above the same information. Every other service
   // (retainers, click-in veneers, etc.) still surfaces its service
   // row so the patient sees what they booked.
-  // Icon is null on this row — the previous Award (ribbon/medal)
-  // glyph read as a marketing flourish that didn't belong in the
-  // receipt-style row stack. The icon-column space stays reserved
-  // so the service title aligns with the date and location rows.
+  // CheckCircle2 (clean circle outline + tick inside) ties the
+  // service row into the booking-confirmation theme without
+  // shouting the way the previous Award (ribbon / medal) glyph
+  // did. Sits in the same accent navy the location pin + calendar
+  // use so the icon column reads as one cohesive column rather
+  // than a parade of different shapes.
   if (state.service && serviceLine && !isRepair) {
     rows.push({
       kind: 'item',
       key: 'service',
-      icon: null,
+      icon: <CheckCircle2 size={20} aria-hidden style={{ color: accent }} />,
       title: serviceLine,
       rightAmount:
         priceBreakdown.serviceLinePence > 0
