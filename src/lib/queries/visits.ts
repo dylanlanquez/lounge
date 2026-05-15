@@ -497,6 +497,11 @@ export interface VisitAppointmentContext {
   service_type: string | null;
   arch: string | null;
   product_key: string | null;
+  /** Denture-repair axis pin. Threaded through so the visit-page
+   *  phase-timeline modal can resolve the correct child-override
+   *  phase shape (denture_repair has per-variant overrides). Null
+   *  for any service that doesn't index by repair variant. */
+  repair_variant: string | null;
 }
 
 // Visits currently in progress at the receptionist's location. RLS scopes
@@ -668,7 +673,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key'
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -696,6 +701,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               service_type: string | null;
               arch: string | null;
               product_key: string | null;
+              repair_variant: string | null;
             };
             setAppointment({
               event_type_label: a.event_type_label,
@@ -710,6 +716,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               service_type: a.service_type ?? null,
               arch: a.arch ?? null,
               product_key: a.product_key ?? null,
+              repair_variant: a.repair_variant ?? null,
             });
             if (
               a.deposit_pence != null &&
@@ -781,6 +788,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               service_type: w.service_type ?? null,
               arch: null,
               product_key: null,
+              repair_variant: null,
             });
             setDeposit(null);
           } else {

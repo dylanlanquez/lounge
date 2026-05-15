@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  ArrowRight,
   BadgeCheck,
   Ban,
   CalendarClock,
@@ -38,6 +39,7 @@ import {
   Input,
   MarketingGallery,
   MultiSelectDropdown,
+  PhaseTimeline,
   Section,
   AppointmentExtras,
   ContinuousTimeline,
@@ -48,6 +50,7 @@ import {
   WaiverSheet,
 } from '../components/index.ts';
 import { useAppointmentExtras } from '../lib/queries/appointmentExtras.ts';
+import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
 import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
@@ -137,6 +140,27 @@ export function VisitDetail() {
   const { visit, patient, deposit, shopifyOrder, appointment, receptionistName, loading } = useVisitDetail(id);
   const { upgrades: appointmentUpgrades, repairItems: appointmentRepairItems } =
     useAppointmentExtras(visit?.appointment_id ?? null);
+  // Live booking-type phases for the appointment, projected onto
+  // the visit's actual arrival time (visit.opened_at). The customer
+  // walked in at the arrival time so the timeline reflects how the
+  // service unfolds from THIS moment, not from the originally booked
+  // slot. Returns an empty list for walk-ins (no appointment context)
+  // and for services with zero or one configured phases. Anchoring on
+  // arrival rather than start_at is the difference between the
+  // appointment page (forward-looking) and the visit page (already
+  // in-progress).
+  const visitLivePhasesState = useAppointmentLivePhases(
+    appointment && visit
+      ? {
+          service_type: appointment.service_type,
+          repair_variant: appointment.repair_variant,
+          product_key: appointment.product_key,
+          arch: appointment.arch,
+          start_at: visit.opened_at,
+        }
+      : null,
+  );
+  const visitLivePhases = visitLivePhasesState.phases ?? [];
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
@@ -266,6 +290,15 @@ export function VisitDetail() {
     useState<VisitFulfilmentMethod>('in_person');
   const [changeFulfilmentBusy, setChangeFulfilmentBusy] = useState(false);
   const [changeFulfilmentError, setChangeFulfilmentError] = useState<string | null>(null);
+
+  // Estimated appointment length sheet — same modal AppointmentDetail
+  // surfaces from its booked-for line. On the visit page the timeline
+  // anchors on visit.opened_at (the actual arrival time) so the
+  // projection reads as "from where the patient stands right now"
+  // rather than rewinding to the original booked slot. Live phase
+  // shape from the booking-type config — see appointmentLivePhases.ts
+  // for why we read live vs the materialised snapshot.
+  const [visitTimelineOpen, setVisitTimelineOpen] = useState(false);
 
   // Cart-level discount state. Apply / Remove share the same sheet
   // shape — picker for the manager, password for the manager,
@@ -1172,6 +1205,9 @@ export function VisitDetail() {
                   items.length > 0,
                   total,
                   openChangeFulfilment,
+                  visitLivePhases.length > 1
+                    ? () => setVisitTimelineOpen(true)
+                    : null,
                 )}
                 trailing={
                   patient ? (
@@ -1198,6 +1234,23 @@ export function VisitDetail() {
                   ) : undefined
                 }
               />
+              <BottomSheet
+                open={visitTimelineOpen}
+                onClose={() => setVisitTimelineOpen(false)}
+                title="Estimated appointment length"
+                description={
+                  appointment ? (
+                    <span>
+                      Anchored on the patient's arrival time
+                      ({formatTime(visit.opened_at)}) — when each
+                      phase happens from this point, and when they're
+                      free to step away.
+                    </span>
+                  ) : null
+                }
+              >
+                <PhaseTimeline phases={visitLivePhases} />
+              </BottomSheet>
             </div>
 
             {/* Online-order banner — only renders for visits where the
@@ -2866,6 +2919,7 @@ function buildVisitHeroProps(
   hasItems: boolean,
   outstandingPence: number,
   onChangeFulfilment: () => void,
+  onShowTimeline: (() => void) | null,
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
@@ -2896,7 +2950,15 @@ function buildVisitHeroProps(
   // anchor + action prompt. The relative slot lands in the accent
   // colour, so action prompts there pull the operator's eye to the
   // next thing on the page (Add item / Take payment / Finish visit).
-  const ribbon = buildVisitRibbon({ visit, appointment, isWalkIn, cart, hasItems, outstandingPence });
+  const ribbon = buildVisitRibbon({
+    visit,
+    appointment,
+    isWalkIn,
+    cart,
+    hasItems,
+    outstandingPence,
+    onShowTimeline,
+  });
 
   // Pills row — visit status always; cart status when one exists and
   // the visit isn't terminated (a "Cart open" pill on an unsuitable
@@ -2986,6 +3048,7 @@ function buildVisitRibbon({
   cart,
   hasItems,
   outstandingPence,
+  onShowTimeline,
 }: {
   visit: VisitRow;
   appointment: VisitAppointmentContext | null;
@@ -2999,9 +3062,15 @@ function buildVisitRibbon({
   // literally nothing to collect, so the prompt must not say
   // "Take payment" or staff will tap into a £0 till flow.
   outstandingPence: number;
+  /** When non-null, the active-visit ribbon appends an inline
+   *  "Estimated appointment length" link that opens the phase
+   *  timeline modal. Caller passes null when the live config has
+   *  zero or one phase (no useful breakdown to show) or for walk-ins
+   *  (no service-specific phase shape to project). */
+  onShowTimeline: (() => void) | null;
 }): {
   icon: ReactNode;
-  timeLine: string;
+  timeLine: ReactNode;
   relative: string | null;
   tone: AppointmentHeroTone;
 } {
@@ -3059,14 +3128,43 @@ function buildVisitRibbon({
     };
   }
 
-  // Cart is open (or absent). Anchor stays as the chronological fact
-  // (when the patient walked in / what slot they were booked into),
-  // relative becomes the next-step prompt the bottom CTA echoes.
-  const anchor = isWalkIn
-    ? `Walked in ${formatTime(visit.opened_at)}`
-    : appointment
-      ? `Scheduled ${formatTime(appointment.start_at)}`
-      : 'Patient in clinic';
+  // Cart is open (or absent). Anchor reads the chronological fact —
+  // when the patient walked in plus, for scheduled visits, the slot
+  // they were booked into. Scheduled visits show BOTH times so the
+  // reception team and the patient can see at a glance how arrival
+  // tracked against the booking ("Booked for 09:15 · Arrived 09:23").
+  // Walk-ins show only the arrival time because there's no booking
+  // slot to compare against. An "Estimated appointment length" link
+  // sits after the times for scheduled visits whose service has a
+  // multi-phase config — clicking opens the timeline modal anchored
+  // on the actual arrival time (not the original booked time) so
+  // the projection reflects reality from the moment the patient
+  // walked in.
+  const arrivedStr = formatTime(visit.opened_at);
+  const anchor: ReactNode = isWalkIn ? (
+    `Walked in ${arrivedStr}`
+  ) : appointment ? (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+        gap: 6,
+      }}
+    >
+      <span>Booked for {formatTime(appointment.start_at)}</span>
+      <span style={{ color: theme.color.inkSubtle }}>·</span>
+      <span>Arrived {arrivedStr}</span>
+      {onShowTimeline ? (
+        <>
+          <span style={{ color: theme.color.inkSubtle }}>·</span>
+          <VisitTimelineLink onClick={onShowTimeline} />
+        </>
+      ) : null}
+    </span>
+  ) : (
+    'Patient in clinic'
+  );
   // Three-way prompt:
   //   • Empty cart → "Build the cart"
   //   • Cart has items but nothing left to collect (paid in full at
@@ -3085,6 +3183,39 @@ function buildVisitRibbon({
     relative: prompt,
     tone: 'accent',
   };
+}
+
+// Inline "Estimated appointment length" affordance. Same chrome as
+// the AppointmentDetail TimelineLink — accent underlined pill with
+// a trailing chevron — but defined locally on the visit page so the
+// two surfaces evolve independently if they ever need to diverge.
+function VisitTimelineLink({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        margin: 0,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.accent,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        textUnderlineOffset: 3,
+        textDecoration: 'underline',
+      }}
+    >
+      Estimated appointment length
+      <ArrowRight size={12} aria-hidden />
+    </button>
+  );
 }
 
 // Filters out internal placeholders and empty refs. Anything starting
