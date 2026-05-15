@@ -44,8 +44,12 @@ import {
   checkBookingConflict,
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
+import {
+  useAvailableDates,
+  useFirstAvailableSlot,
+} from '../../lib/queries/bookingAvailability.ts';
 import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
-import { addDaysIso, todayIso } from '../../lib/calendarMonth.ts';
+import { todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
@@ -175,35 +179,26 @@ export function NewBookingSheet({
   const [dateOpen, setDateOpen] = useState(false);
   const [timeOpen, setTimeOpen] = useState(false);
 
-  // True while we're auto-walking forward from the initial date to
-  // the first day with any available slot. Suppresses the
-  // "outside working hours" / "past time" banners while the search
-  // is in flight — those would otherwise flash up on every probed
-  // day and read as glitchy. Reset to false as soon as the slots
-  // load lands on a non-empty day (or we exhaust the search cap).
+  // True while we're waiting on lng_widget_first_available to tell
+  // us where the first bookable slot lives. The single round-trip
+  // pre-pins date+time to a settled value, so the operator never
+  // sees the form in a half-resolved state and we don't need any
+  // client-side day-by-day probing. Reset to false the moment the
+  // RPC returns (with a hit OR with nothing in the 60-day window).
   const [searchingFirstSlot, setSearchingFirstSlot] = useState(false);
-  // Tracks how many days we've probed forward in the auto-search.
-  // Capped so a clinic with no availability for weeks doesn't loop
-  // forever — the operator can still pick a date manually after the
-  // cap to break out.
-  const searchAttemptsRef = useRef(0);
-  const MAX_SEARCH_DAYS = 60;
 
   // Reset form when the sheet opens at a fresh slot. We don't reset
   // on close so the operator's last patient pick survives a
-  // backdrop-mistap. The initial date is clamped to today (the
-  // caller may pass a slot the receptionist tapped on a past
-  // schedule day) so the search starts from a valid baseline; the
-  // searching-first-slot effect then walks forward from there.
+  // backdrop-mistap. Date + time are deliberately blanked here; the
+  // useFirstAvailableSlot hook below populates them from the
+  // server's "first bookable slot" answer once the service is
+  // picked. Clamping or seeding from initialIso would leak a stale
+  // date into the form for a flash before the live answer arrived.
   useEffect(() => {
     if (!open) return;
-    const i = splitIso(initialIso);
-    const today = todayIso();
-    const startDate = i.date < today ? today : i.date;
-    setDate(startDate);
-    setTime(i.time);
+    setDate('');
+    setTime('');
     setSearchingFirstSlot(true);
-    searchAttemptsRef.current = 0;
     setPatient(null);
     setPatientCreate(null);
     setCreatePatientError(null);
@@ -477,6 +472,58 @@ export function NewBookingSheet({
     axisValues.arch,
   ]);
 
+  // ── First-available slot lookup (one round-trip, server-side) ──
+  // Once the operator picks a service (and any required axes), ask
+  // the server for the very first bookable date+time. Pre-pinning
+  // the form to that result means the operator never sees a
+  // "Closed on this day" / "no free times" intermediate state and
+  // we don't need a client-side day-by-day probe loop.
+  //
+  // The hook only fires when serviceType is set, so the sheet stays
+  // empty (mask up) until the service step is complete. When the
+  // RPC returns null (no availability in the 60-day window), we
+  // drop out of the searching state and fall back to the operator
+  // picking manually — the date picker's available-dates whitelist
+  // (also empty in that case) means every cell is dimmed, which is
+  // an honest "nothing here" signal.
+  const firstAvailable = useFirstAvailableSlot({
+    locationId,
+    serviceType: serviceType || null,
+    repairVariant: axisValues.repair_variant,
+    productKey: axisValues.product_key,
+    arch: axisValues.arch,
+  });
+  useEffect(() => {
+    if (!open) return;
+    if (!searchingFirstSlot) return;
+    if (firstAvailable.loading) return;
+    if (firstAvailable.data) {
+      setDate(firstAvailable.data.dateIso);
+      setTime(firstAvailable.data.timeHm);
+    }
+    setSearchingFirstSlot(false);
+  }, [open, searchingFirstSlot, firstAvailable.loading, firstAvailable.data]);
+
+  // ── Available dates for the visible calendar month ─────────────
+  // Drives the DatePicker's per-cell enabled state so closed days
+  // (clinic shut) and empty days (everything booked / outside
+  // working hours) can't be tapped. The DatePicker tells us which
+  // window it's currently rendering via onVisibleMonthChange; we
+  // ask the server for that window's bookable set and feed it back.
+  const [calendarWindow, setCalendarWindow] = useState<{
+    fromIso: string | null;
+    toIso: string | null;
+  }>({ fromIso: null, toIso: null });
+  const monthAvailability = useAvailableDates({
+    locationId,
+    serviceType: serviceType || null,
+    repairVariant: axisValues.repair_variant,
+    productKey: axisValues.product_key,
+    arch: axisValues.arch,
+    fromIso: calendarWindow.fromIso,
+    toIso: calendarWindow.toIso,
+  });
+
   // ── Available slots for the picked day/service ─────────────────
   // The TimePicker is fed an explicit allow-list of HH:MM strings
   // so the operator can only land on slots that pass the same
@@ -523,40 +570,14 @@ export function NewBookingSheet({
             })
           : rawSlots;
         setAvailableSlots(slots);
-        // Auto-advance / auto-snap. Two states share this branch:
-        //
-        //   1) searchingFirstSlot — the sheet just opened. Walk
-        //      forward day-by-day until we land on a date with at
-        //      least one free slot, then snap the time to that
-        //      first slot and stop searching. Capped at MAX_SEARCH_DAYS
-        //      so a clinic with no availability for weeks can't
-        //      lock the operator out.
-        //
-        //   2) operator picked a date manually — keep the existing
-        //      "snap to first slot when the current one isn't in
-        //      the list" behaviour. No auto-advance; if the picked
-        //      date is empty we just show the "no free times"
-        //      empty state.
+        // Operator-driven date change snap. Initial open is
+        // handled by useFirstAvailableSlot which pre-pins date+time
+        // server-side. Here we just keep the time field consistent
+        // when the operator picks a different day from the
+        // calendar — if their previous time doesn't fit the new
+        // day's allow-list, snap to that day's first free slot.
         const first = slots[0];
-        if (searchingFirstSlot) {
-          if (first) {
-            setTime(first);
-            setSearchingFirstSlot(false);
-            searchAttemptsRef.current = 0;
-          } else if (searchAttemptsRef.current < MAX_SEARCH_DAYS) {
-            searchAttemptsRef.current += 1;
-            setDate((d) => addDaysIso(d, 1));
-          } else {
-            // Exhausted the search window — give up gracefully so
-            // the operator can pick manually. The empty-state copy
-            // ("Closed on this day." / "No free times that day.")
-            // explains the silence.
-            setSearchingFirstSlot(false);
-          }
-        } else if (first && !slots.includes(time)) {
-          // Operator-driven date change. Snap to the first
-          // available slot when their previous time doesn't fit
-          // the new day's allow-list.
+        if (!searchingFirstSlot && first && !slots.includes(time)) {
           setTime(first);
         }
       } catch {
@@ -1175,11 +1196,21 @@ export function NewBookingSheet({
               onChange={(iso) => setDate(iso)}
               anchorRef={dateTriggerRef}
               title="Pick the booking date"
-              // Block past dates from the calendar entirely. Mirrors
-              // the customer widget — bookings always sit in the
-              // future. A typed value or a stale state could still
-              // slip through; isPastSlot below catches that.
+              // Whitelist drives every cell's enabled state. Closed
+              // days and empty days dim from the moment the picker
+              // opens — the operator can't tap a dead cell, so the
+              // "Outside working hours" / "Closed on this day"
+              // warnings that used to surface after the fact are
+              // structurally impossible to reach. minIso=today is
+              // a defence-in-depth backstop for the moment between
+              // mount and the first available-dates fetch.
               minIso={todayIso()}
+              availableDates={
+                monthAvailability.loading ? undefined : monthAvailability.dates
+              }
+              onVisibleMonthChange={(fromIso, toIso) =>
+                setCalendarWindow({ fromIso, toIso })
+              }
             />
             <TimePicker
               open={timeOpen}
@@ -1220,26 +1251,14 @@ export function NewBookingSheet({
                 startIso={composeIso(date, time)}
               />
             ) : null}
-            {/* Warning banners stay hidden while the auto-search for
-                the first available slot is in flight (and while
-                slot availability is mid-load). Without that gate,
-                each probed day briefly renders an "Outside working
-                hours" / "Past time" banner before snapping to the
-                next day — the visible churn read as glitchy. */}
-            {!searchingFirstSlot && !availabilityLoading && !inWorkingHours && date && time && hoursForDate ? (
-              <div style={{ marginTop: theme.space[3] }}>
-                <StatusBanner tone="warning" title="Outside working hours">
-                  This service runs {hoursForDate.open} to {hoursForDate.close} on the day you picked.
-                </StatusBanner>
-              </div>
-            ) : null}
-            {!searchingFirstSlot && !availabilityLoading && isPastSlot ? (
-              <div style={{ marginTop: theme.space[3] }}>
-                <StatusBanner tone="warning" title="That time has already passed">
-                  Pick a future date and time. Bookings can't be created in the past.
-                </StatusBanner>
-              </div>
-            ) : null}
+            {/* Warning banners that used to surface here ("Outside
+                working hours" / "That time has already passed") are
+                now structurally impossible to reach: the date
+                picker's whitelist hides closed/empty days, and the
+                time picker's allow-list omits past times on
+                today's date. Conflicts (last-millisecond race
+                with another concurrent booking) still flow through
+                the ConflictBlock below. */}
             {searchingFirstSlot ? null : (
               <div style={{ marginTop: theme.space[3] }}>
                 <ConflictBlock

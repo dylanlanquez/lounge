@@ -50,6 +50,22 @@ export interface DatePickerProps {
   // and aren't clickable. Either or both can be omitted.
   minIso?: string;
   maxIso?: string;
+  // Optional whitelist. When set, ONLY cells whose iso is in this
+  // set render as clickable; everything else dims regardless of
+  // the min/max bounds. Used by the booking sheets to disable
+  // closed days (clinic closed) and empty days (no slots free)
+  // up-front instead of letting the operator tap a dead day.
+  // Combined with onMonthChange so the parent can refetch the set
+  // for whichever month the user navigates to. Omit to fall back
+  // to min/max-only behaviour.
+  availableDates?: ReadonlySet<string>;
+  // Called whenever the visible month changes (initial mount, prev
+  // / next month nav). The parent uses it to refetch
+  // `availableDates` for the newly visible window. Args are the
+  // first and last YYYY-MM-DD cells the picker is about to render
+  // — wider than the calendar month itself because the grid spills
+  // into the previous + next month rows.
+  onVisibleMonthChange?: (firstIso: string, lastIso: string) => void;
 }
 
 const POPOVER_PAD = 16;
@@ -63,6 +79,8 @@ export function DatePicker({
   title = 'Pick a date',
   minIso,
   maxIso,
+  availableDates,
+  onVisibleMonthChange,
 }: DatePickerProps) {
   const isMobile = useIsMobile(720);
   const today = useMemo(() => todayIso(), []);
@@ -124,6 +142,21 @@ export function DatePicker({
     };
   }, [open, isMobile, anchorRef]);
 
+  // Fire onVisibleMonthChange whenever the displayed month changes
+  // (or when the picker opens). Args are the first/last day of the
+  // visible 6-row grid — wider than the calendar month itself
+  // because the grid spills into the previous + next month rows.
+  // The parent uses this to refetch availability for the newly
+  // visible window.
+  useEffect(() => {
+    if (!open || !onVisibleMonthChange) return;
+    const cells = buildMonthCells(year, month);
+    if (cells.length === 0) return;
+    const firstIso = cells[0]!.iso;
+    const lastIso = cells[cells.length - 1]!.iso;
+    onVisibleMonthChange(firstIso, lastIso);
+  }, [open, year, month, onVisibleMonthChange]);
+
   if (!open) return null;
 
   const stepMonth = (delta: number) => {
@@ -135,6 +168,7 @@ export function DatePicker({
   const handlePick = (iso: string) => {
     if (minIso && iso < minIso) return;
     if (maxIso && iso > maxIso) return;
+    if (availableDates && !availableDates.has(iso)) return;
     onChange(iso);
     onClose();
   };
@@ -178,6 +212,7 @@ export function DatePicker({
             today={today}
             minIso={minIso}
             maxIso={maxIso}
+            availableDates={availableDates}
             onPrev={() => stepMonth(-1)}
             onNext={() => stepMonth(+1)}
             onPick={handlePick}
@@ -367,6 +402,7 @@ function MonthGrid({
   today,
   minIso,
   maxIso,
+  availableDates,
   onPrev,
   onNext,
   onPick,
@@ -378,6 +414,11 @@ function MonthGrid({
   today: string;
   minIso?: string;
   maxIso?: string;
+  /** When provided, only cells whose iso is in this set render
+   *  enabled — every other cell dims. Combined with min/max bounds:
+   *  a cell that fails ANY check is disabled. Omit to fall back to
+   *  min/max-only behaviour. */
+  availableDates?: ReadonlySet<string>;
   onPrev: () => void;
   onNext: () => void;
   onPick: (iso: string) => void;
@@ -453,7 +494,13 @@ function MonthGrid({
             disabled={
               cell.outside ||
               (minIso ? cell.iso < minIso : false) ||
-              (maxIso ? cell.iso > maxIso : false)
+              (maxIso ? cell.iso > maxIso : false) ||
+              // availableDates whitelist: when present, anything
+              // not in the set is closed/empty and shouldn't be
+              // clickable. Cells outside the visible month
+              // (cell.outside) already short-circuit above so we
+              // don't have to special-case the gutter rows here.
+              (availableDates ? !availableDates.has(cell.iso) : false)
             }
             onPick={onPick}
           />
