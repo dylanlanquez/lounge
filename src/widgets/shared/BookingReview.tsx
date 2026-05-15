@@ -1,4 +1,4 @@
-import { MapPin, Award, Calendar } from 'lucide-react';
+import { MapPin, Award, BadgeCheck, Calendar, Sparkles } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -86,13 +86,15 @@ export function BookingReview({
         rightAmountColour?: string;
       }
     | {
-        // Iconless row used under a subheader (per-arch repair lines,
-        // upgrade lines). Matches the staff AppointmentExtras pattern
-        // — section header carries the context, rows below are flat
-        // label + price. Visual break with the icon-led rows above is
-        // intentional and signals "you're now reading the breakdown".
+        // Sub-row used under a subheader (per-arch repair lines,
+        // upgrade lines). Leading icon is small and tinted to match
+        // its section semantic — tick-style for repair lines, sparkle
+        // for upgrades. The icon column is narrower than the top-row
+        // icon column so the rows still feel "indented" under the
+        // section heading without losing their visual cue.
         kind: 'extra';
         key: string;
+        icon: React.ReactNode;
         title: string;
         rightAmount?: string;
         rightAmountColour?: string;
@@ -169,6 +171,7 @@ export function BookingReview({
         rows.push({
           kind: 'extra',
           key: `repair-${line.lineId}`,
+          icon: <BadgeCheck size={16} aria-hidden style={{ color: accent }} />,
           title: `${line.name}${qtySuffix}`,
           rightAmount: formatPrice(line.lineTotalPence),
         });
@@ -185,6 +188,7 @@ export function BookingReview({
       rows.push({
         kind: 'extra',
         key: `upgrade-${u.id}`,
+        icon: <Sparkles size={16} aria-hidden style={{ color: QUIZ.LAVENDER }} />,
         title: u.name,
         rightAmount: `+${formatPrice(upgradePrice(u.id))}`,
         rightAmountColour: QUIZ.LAVENDER,
@@ -263,6 +267,7 @@ export function BookingReview({
           return (
             <ExtraRow
               key={row.key}
+              icon={row.icon}
               title={row.title}
               rightAmount={row.rightAmount}
               rightAmountColour={row.rightAmountColour}
@@ -546,11 +551,13 @@ function SplitRow({
 // service / slot) provide the visual anchor; once a subheader breaks
 // the rhythm we drop into the unfussy listing pattern.
 function ExtraRow({
+  icon,
   title,
   rightAmount,
   rightAmountColour,
   isLast,
 }: {
+  icon: React.ReactNode;
   title: string;
   rightAmount?: string;
   rightAmountColour?: string;
@@ -561,53 +568,76 @@ function ExtraRow({
       role="row"
       style={{
         display: 'flex',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        gap: 12,
+        alignItems: 'center',
+        gap: 10,
         padding: '10px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
       <span
-        role="cell"
+        aria-hidden
         style={{
-          fontSize: 14,
-          color: QUIZ.INK,
-          fontWeight: 500,
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          lineHeight: 1.3,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 18,
+          height: 18,
+          flexShrink: 0,
         }}
       >
-        {title}
+        {icon}
       </span>
-      {rightAmount ? (
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 12,
+        }}
+      >
         <span
           role="cell"
           style={{
             fontSize: 14,
-            fontWeight: 600,
-            color: rightAmountColour ?? QUIZ.INK,
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: '0.02em',
+            color: QUIZ.INK,
+            fontWeight: 500,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            lineHeight: 1.3,
           }}
         >
-          {rightAmount}
+          {title}
         </span>
-      ) : null}
+        {rightAmount ? (
+          <span
+            role="cell"
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: rightAmountColour ?? QUIZ.INK,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.02em',
+            }}
+          >
+            {rightAmount}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-// SubheaderRow — uppercase muted section divider used inside the
-// summary card for the per-arch repair groups (UPPER / LOWER) and
-// the "UPGRADES" header. Mirrors the AppointmentExtras ArchHeader
-// pattern on the staff app so the patient + receptionist see the
-// same section hierarchy. No bottom hairline — the row beneath
-// inherits the section visually rather than via a divider line.
+// SubheaderRow — sentence-case section heading inside the summary
+// card. Used for the per-arch denture-repair groups ("Your upper
+// denture") and the "Upgrades" header. Bold ink rather than the
+// uppercase eyebrow style — reads as a friendly section title at
+// customer-facing copy register without shouting at the patient.
+// No bottom hairline; the row beneath inherits the section.
 function SubheaderRow({
   label,
   accent,
@@ -620,18 +650,17 @@ function SubheaderRow({
     <div
       role="row"
       style={{
-        padding: '14px 0 4px',
+        padding: '14px 0 6px',
       }}
     >
       <span
         role="cell"
         style={{
-          fontSize: 12,
+          fontSize: 14,
           fontWeight: 600,
-          color: QUIZ.SUBTLE,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          lineHeight: 1.2,
+          color: QUIZ.INK,
+          letterSpacing: '-0.005em',
+          lineHeight: 1.3,
         }}
       >
         {label}
@@ -644,10 +673,16 @@ function SubheaderRow({
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 
+// Customer-facing per-arch headings. Denture-repair-specific phrasing
+// (the only service today that surfaces repair items in the summary
+// card) — "Your upper denture" reads naturally where a bare "Upper"
+// left the customer asking "upper what?". If a future service ever
+// surfaces per-arch rows under this card, swap to a context-aware
+// mapping that takes the service type.
 const ARCH_LABEL: Record<'upper' | 'lower' | 'both', string> = {
-  upper: 'Upper',
-  lower: 'Lower',
-  both: 'Both arches',
+  upper: 'Your upper denture',
+  lower: 'Your lower denture',
+  both: 'Your upper and lower dentures',
 };
 
 function groupRepairsByArch(

@@ -641,10 +641,14 @@ function formatBookingItemsBlock(items: BookingItemsSnapshot): string {
       byArch.set(r.arch, list);
     }
     const archOrder: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+    // Customer-facing arch labels — denture-repair is the only
+    // service today that surfaces per-arch repair items, so the
+    // labels can refer to "your denture" directly. Keeps the email
+    // copy in sync with the widget summary + success card.
     const archLabel: Record<'upper' | 'lower' | 'both', string> = {
-      upper: 'Upper',
-      lower: 'Lower',
-      both: 'Both arches',
+      upper: 'Your upper denture',
+      lower: 'Your lower denture',
+      both: 'Your upper and lower dentures',
     };
     for (const arch of archOrder) {
       const rows = byArch.get(arch);

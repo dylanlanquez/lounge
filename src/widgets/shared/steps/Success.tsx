@@ -456,9 +456,9 @@ function BookedItemsRow({
   }
   const archOrder: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
   const archLabel: Record<'upper' | 'lower' | 'both', string> = {
-    upper: 'Upper',
-    lower: 'Lower',
-    both: 'Both arches',
+    upper: 'Your upper denture',
+    lower: 'Your lower denture',
+    both: 'Your upper and lower dentures',
   };
 
   return (
@@ -504,11 +504,11 @@ function BookedItemsRow({
             >
               <span
                 style={{
-                  fontSize: 11,
+                  fontSize: 13,
                   fontWeight: 600,
-                  color: QUIZ.SUBTLE,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
+                  color: QUIZ.INK,
+                  letterSpacing: '-0.005em',
+                  lineHeight: 1.3,
                 }}
               >
                 {archLabel[arch]}
