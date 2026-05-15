@@ -674,7 +674,7 @@ async function fetchAppointmentEvents(
     const { data, error: err } = await supabase
       .from('lng_appointments')
       .select(
-        'id, source, created_at, start_at, calendly_event_uri, deposit_pence, deposit_provider, deposit_paid_at, event_type_label, appointment_ref, intake, notes'
+        'id, source, created_at, start_at, calendly_event_uri, deposit_pence, deposit_provider, deposit_paid_at, event_type_label, appointment_ref, intake, notes, paid_in_full_at_booking'
       )
       .eq('id', visit.appointment_id)
       .maybeSingle();
@@ -688,9 +688,11 @@ async function fetchAppointmentEvents(
       id: `appt-${appt.id}-created`,
       type: 'appointment_created',
       timestamp: appt.created_at,
-      title: appt.calendly_event_uri
-        ? 'Appointment booked on Calendly'
-        : 'Appointment created',
+      // Title matches the appointment-side composer's "Booking placed"
+      // so the same row reads identically across the appointment page
+      // (pre-arrival) and the visit page (post-arrival), instead of
+      // flipping to "Appointment created" once the visit opens.
+      title: appt.calendly_event_uri ? 'Booking placed on Calendly' : 'Booking placed',
       detail: joinDetail(
         appt.event_type_label,
         `scheduled ${formatAppointmentSlot(appt.start_at)}`,
@@ -700,11 +702,15 @@ async function fetchAppointmentEvents(
       hint: 'calendar',
     });
     if (appt.deposit_paid_at && appt.deposit_pence) {
+      // paid_in_full_at_booking flips the title from "Deposit paid"
+      // to "Paid in full" — the deposit_* columns get populated for
+      // both paths, so the only distinguishing field is this flag.
+      const paidInFull = (appt as { paid_in_full_at_booking?: boolean | null }).paid_in_full_at_booking === true;
       out.push({
         id: `appt-${appt.id}-deposit`,
         type: 'deposit_paid',
         timestamp: appt.deposit_paid_at,
-        title: 'Deposit paid',
+        title: paidInFull ? 'Paid in full' : 'Deposit paid',
         detail: joinDetail(
           PENCE(appt.deposit_pence),
           appt.deposit_provider ? `via ${HUMAN_PROVIDER(appt.deposit_provider)}` : null

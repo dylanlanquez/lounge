@@ -538,6 +538,7 @@ Deno.serve(async (req) => {
         provider: depositFields.deposit_provider,
         external_id: depositFields.deposit_external_id,
         source: 'widget',
+        paid_in_full: paidInFullAtBooking,
       },
     });
   }

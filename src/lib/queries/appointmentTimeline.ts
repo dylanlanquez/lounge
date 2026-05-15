@@ -88,6 +88,11 @@ interface RawAppointmentRow {
   // type / appliance / arch) lives on the walk-in row itself, fetched
   // separately when this is non-null.
   walk_in_id: string | null;
+  // True when the patient paid the full price at booking through the
+  // widget (not just a deposit). Flips the deposit_paid timeline row
+  // from "Deposit captured" to "Paid in full" so staff don't read a
+  // £149 full payment as a £149 deposit.
+  paid_in_full_at_booking: boolean | null;
 }
 
 interface RawWalkInRow {
@@ -133,7 +138,7 @@ export function useAppointmentTimeline(
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, source, brand_id, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id',
+            'id, source, brand_id, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id, paid_in_full_at_booking',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -437,7 +442,12 @@ function mapEvent(
   walkIn: RawWalkInRow | null,
 ): TimelineEvent | null {
   const actor = row.actor_account_id ? actorById.get(row.actor_account_id) : undefined;
-  const base = { id: row.id, timestamp: row.created_at, actor };
+  // ID prefix matches visitTimeline's patient-event-* shape so when
+  // both hooks surface the same patient_events row (which happens on
+  // the visit page via useContinuousTimeline), the ID dedupe in
+  // useContinuousTimeline collapses them to one entry instead of
+  // showing the email twice.
+  const base = { id: `patient-event-${row.id}`, timestamp: row.created_at, actor };
 
   switch (row.event_type) {
     case 'appointment_booked': {
@@ -672,10 +682,16 @@ function mapEvent(
       const pence = readNumber(row.payload, 'amount_pence') ?? readNumber(row.payload, 'pence');
       const provider = readString(row.payload, 'provider');
       const externalId = readString(row.payload, 'external_id');
+      // Widget paid-in-full bookings populate the same deposit_*
+      // columns (so the cart credit logic doesn't need a parallel
+      // path), but the row carries paid_in_full_at_booking=true.
+      // Switch the title so staff don't read a £149 full payment as a
+      // £149 deposit.
+      const paidInFull = appt.paid_in_full_at_booking === true;
       return {
         ...base,
         type: 'deposit_paid',
-        title: 'Deposit captured',
+        title: paidInFull ? 'Paid in full' : 'Deposit captured',
         detail: joinDetail(
           pence != null ? formatGBP(pence) : null,
           provider ? `via ${humaniseProvider(provider)}` : null,
