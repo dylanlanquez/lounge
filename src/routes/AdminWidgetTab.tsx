@@ -762,6 +762,9 @@ function ServiceCardBody({
   const [depositText, setDepositText] = useState(formatPoundsText(service.widgetDepositPence));
   const [allowFull, setAllowFull] = useState(service.widgetAllowPayInFull);
   const [allowOTD, setAllowOTD] = useState(service.widgetAllowPayOnTheDay);
+  const [hideRunningTotal, setHideRunningTotal] = useState(
+    service.widgetHideRunningTotal,
+  );
   const [productVis, setProductVis] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
   );
@@ -784,6 +787,7 @@ function ServiceCardBody({
     setDepositText(formatPoundsText(service.widgetDepositPence));
     setAllowFull(service.widgetAllowPayInFull);
     setAllowOTD(service.widgetAllowPayOnTheDay);
+    setHideRunningTotal(service.widgetHideRunningTotal);
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
     );
@@ -802,6 +806,7 @@ function ServiceCardBody({
     service.widgetDepositPence,
     service.widgetAllowPayInFull,
     service.widgetAllowPayOnTheDay,
+    service.widgetHideRunningTotal,
     service.products,
   ]);
 
@@ -824,6 +829,7 @@ function ServiceCardBody({
     depositPence !== service.widgetDepositPence ||
     allowFull !== service.widgetAllowPayInFull ||
     allowOTD !== service.widgetAllowPayOnTheDay ||
+    hideRunningTotal !== service.widgetHideRunningTotal ||
     changedProductIds.length > 0 ||
     changedUpgradeIds.length > 0;
 
@@ -861,6 +867,7 @@ function ServiceCardBody({
     setDepositText(formatPoundsText(service.widgetDepositPence));
     setAllowFull(service.widgetAllowPayInFull);
     setAllowOTD(service.widgetAllowPayOnTheDay);
+    setHideRunningTotal(service.widgetHideRunningTotal);
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
     );
@@ -897,6 +904,7 @@ function ServiceCardBody({
           widgetDepositPence: depositPence,
           widgetAllowPayInFull: allowFull,
           widgetAllowPayOnTheDay: allowOTD,
+          widgetHideRunningTotal: hideRunningTotal,
         }),
         ...changedProductIds.map((id) =>
           saveProductVisibility({ id, widgetVisible: productVis[id] === true }),
@@ -989,6 +997,18 @@ function ServiceCardBody({
           onChange={setAllowOTD}
           onLabel="Patients can choose 'Pay on the day'"
           offLabel="Hidden — patients must pay at booking"
+        />
+      </Section>
+
+      <Section
+        title="Hide running total in the widget?"
+        description="When on, the small 'Total · £X' pill at the bottom of the booking widget is hidden on every step before the Review screen. The customer still sees the full price breakdown on the Review screen and the receipt email. Default on — Dylan prefers the running total stay out of sight until the customer reaches the summary."
+      >
+        <Toggle
+          checked={hideRunningTotal}
+          onChange={setHideRunningTotal}
+          onLabel="Hidden — price reveals on the Review screen"
+          offLabel="Patients see the running total throughout the flow"
         />
       </Section>
 

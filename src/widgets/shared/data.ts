@@ -46,6 +46,15 @@ export interface WidgetBookingType {
    *  require a deposit and don't expose this option. Denture-repair
    *  has it on. */
   allowPayOnTheDay: boolean;
+  /** When TRUE the booking widget hides the running-total pill from
+   *  the sticky footer on every step before Review. Mirrored from
+   *  lng_booking_type_config.widget_hide_running_total. Defaults to
+   *  TRUE — Dylan prefers the price stay out of sight until the
+   *  customer reaches the Review summary screen so they don't anchor
+   *  on a partial total while still picking arches / repairs /
+   *  upgrades. Admin can flip it off per booking type if a service
+   *  benefits from the running total. */
+  hideRunningTotal: boolean;
   /** Default appointment length. Phase 2c will resolve this to the
    *  most-specific lng_booking_type_config row once axes are pinned. */
   durationMinutes: number;
@@ -188,7 +197,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_widget_booking_types')
-        .select('id, service_type, label, description, deposit_pence, allow_pay_in_full, allow_pay_on_the_day, duration_minutes')
+        .select('id, service_type, label, description, deposit_pence, allow_pay_in_full, allow_pay_on_the_day, hide_running_total, duration_minutes')
         .order('label', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -207,6 +216,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
         // Lounge admin → Widget per booking type.
         allowPayInFull: (r.allow_pay_in_full as boolean) ?? true,
         allowPayOnTheDay: (r.allow_pay_on_the_day as boolean) ?? false,
+        hideRunningTotal: (r.hide_running_total as boolean) ?? true,
         durationMinutes: (r.duration_minutes as number) ?? 30,
       }));
       setData(shaped);

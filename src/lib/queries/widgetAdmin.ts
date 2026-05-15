@@ -75,6 +75,13 @@ export interface WidgetAdminService {
    *  pill alongside (or replaces the deposit CTA when
    *  widget_deposit_pence is 0). Set per booking type. */
   widgetAllowPayOnTheDay: boolean;
+  /** Hides the running-total pill from the booking widget's sticky
+   *  footer on every step before Review. Default ON — Dylan prefers
+   *  the price stay out of sight until the customer reaches the
+   *  summary screen, so they don't anchor on a partial total while
+   *  still picking arches / repairs / upgrades. Admin can flip this
+   *  off per booking type to expose the running total. */
+  widgetHideRunningTotal: boolean;
   /** Whether the admin should see a per-option list. True when the
    *  service has an axis that indexes catalogue rows (`product_key`
    *  for same-day-appliance / virtual-impression, `repair_variant`
@@ -120,7 +127,7 @@ export function useWidgetAdminServices(): ReadResult {
         supabase
           .from('lng_booking_type_config')
           .select(
-            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence, widget_allow_pay_in_full, widget_allow_pay_on_the_day',
+            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence, widget_allow_pay_in_full, widget_allow_pay_on_the_day, widget_hide_running_total',
           )
           .is('repair_variant', null)
           .is('product_key', null)
@@ -260,6 +267,7 @@ export function useWidgetAdminServices(): ReadResult {
           widgetDepositPence: (bt.widget_deposit_pence as number) ?? 0,
           widgetAllowPayInFull: (bt.widget_allow_pay_in_full as boolean) ?? true,
           widgetAllowPayOnTheDay: (bt.widget_allow_pay_on_the_day as boolean) ?? false,
+          widgetHideRunningTotal: (bt.widget_hide_running_total as boolean) ?? true,
           hasOptions,
           optionsLabel,
           products: allProducts,
@@ -290,6 +298,7 @@ export async function saveServiceConfig(input: {
   widgetDepositPence: number;
   widgetAllowPayInFull: boolean;
   widgetAllowPayOnTheDay: boolean;
+  widgetHideRunningTotal: boolean;
 }): Promise<void> {
   const { error } = await supabase
     .from('lng_booking_type_config')
@@ -299,6 +308,7 @@ export async function saveServiceConfig(input: {
       widget_deposit_pence: input.widgetDepositPence,
       widget_allow_pay_in_full: input.widgetAllowPayInFull,
       widget_allow_pay_on_the_day: input.widgetAllowPayOnTheDay,
+      widget_hide_running_total: input.widgetHideRunningTotal,
     })
     .eq('id', input.id);
   if (error) throw new Error(`Couldn't save: ${error.message}`);

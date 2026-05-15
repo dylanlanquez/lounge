@@ -851,10 +851,20 @@ function Footer({
   // Footer total line: hidden on Review (BookingReview shows the
   // full breakdown inline), Details (form-only, no commercial
   // context needed) and Payment (PayHeader spells it out and the
-  // Pay button carries the amount). Everywhere else we surface a
+  // Pay button carries the amount). Everywhere else we'd surface a
   // single "Total" so the patient sees the running cost as soon as
-  // the price is resolvable from the catalogue.
-  const showPrice = !isDetailsStep && !isReviewStep && !isPaymentStep && fullAmount > 0;
+  // the price is resolvable from the catalogue — UNLESS the booking
+  // type's widget config has hideRunningTotal set, in which case the
+  // price stays out of sight until the Review step. Default is
+  // hidden (the seed migration ships every booking type with the
+  // flag on); admin can opt a service in via the Widget tab.
+  const hideRunningTotal = api.state.service?.hideRunningTotal ?? true;
+  const showPrice =
+    !isDetailsStep &&
+    !isReviewStep &&
+    !isPaymentStep &&
+    !hideRunningTotal &&
+    fullAmount > 0;
 
   const detailsValid = isNextEnabled(api);
   const summaryFree = isReviewStep && fullAmount === 0;
