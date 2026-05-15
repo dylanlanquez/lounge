@@ -37,12 +37,14 @@ export interface ConflictBlockProps {
   slotIsValid: boolean;
   durationMinutes: number | null;
   // Body text shown when the slot is free. Differs by consumer:
-  // new-booking reads "Saving will add it to the schedule.";
   // reschedule reads "Saving will move the appointment and email
   // the patient.". Centralising the visual pattern but letting
   // each sheet phrase its own commit-action keeps the copy
-  // accurate to what's about to happen.
-  freeBody: string;
+  // accurate to what's about to happen. Omit (or pass null) to
+  // suppress the success banner entirely — the new-booking sheet
+  // does this because its slot picker already restricts the
+  // operator to free times, so re-confirming "free" reads as noise.
+  freeBody?: string | null;
 }
 
 export function ConflictBlock({
@@ -69,6 +71,7 @@ export function ConflictBlock({
     );
   }
   if (conflicts.length === 0) {
+    if (!freeBody) return null;
     return <StatusBanner tone="success">{freeBody}</StatusBanner>;
   }
   return (

@@ -1099,30 +1099,75 @@ export function NewBookingSheet({
             title="When"
             info="The slot is checked live against the service's working hours and any other bookings claiming the same resources. Save is disabled until the slot is in hours and conflict-free."
           >
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
-              <FieldTrigger
-                ref={dateTriggerRef}
-                icon={<CalendarClock size={16} aria-hidden />}
-                value={date ? formatDateLong(date) : ''}
-                placeholder="Pick a date"
-                open={dateOpen}
-                onClick={() => {
-                  setTimeOpen(false);
-                  setDateOpen((v) => !v);
+            {searchingFirstSlot ? (
+              /* Auto-search placeholder. The slots-load effect is
+                 walking forward day-by-day looking for the first
+                 free slot; without this mask the date FieldTrigger
+                 flashed through every probed day, reading as
+                 glitchy. Single skeleton row in place of the
+                 date+time pair while the search settles. */
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                  borderRadius: theme.radius.input,
+                  border: `1px solid ${theme.color.border}`,
+                  background: theme.color.surface,
+                  color: theme.color.inkMuted,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  minHeight: 44,
                 }}
-              />
-              <FieldTrigger
-                ref={timeTriggerRef}
-                icon={<Clock size={16} aria-hidden />}
-                value={time}
-                placeholder="Pick a time"
-                open={timeOpen}
-                onClick={() => {
-                  setDateOpen(false);
-                  setTimeOpen((v) => !v);
-                }}
-              />
-            </div>
+                aria-live="polite"
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: '50%',
+                    border: `2px solid ${theme.color.border}`,
+                    borderTopColor: theme.color.accent,
+                    animation: 'lng-newbooking-search-spin 0.9s linear infinite',
+                    flexShrink: 0,
+                  }}
+                />
+                Finding the next available slot…
+                <style>{`
+                  @keyframes lng-newbooking-search-spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                  }
+                `}</style>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3] }}>
+                <FieldTrigger
+                  ref={dateTriggerRef}
+                  icon={<CalendarClock size={16} aria-hidden />}
+                  value={date ? formatDateLong(date) : ''}
+                  placeholder="Pick a date"
+                  open={dateOpen}
+                  onClick={() => {
+                    setTimeOpen(false);
+                    setDateOpen((v) => !v);
+                  }}
+                />
+                <FieldTrigger
+                  ref={timeTriggerRef}
+                  icon={<Clock size={16} aria-hidden />}
+                  value={time}
+                  placeholder="Pick a time"
+                  open={timeOpen}
+                  onClick={() => {
+                    setDateOpen(false);
+                    setTimeOpen((v) => !v);
+                  }}
+                />
+              </div>
+            )}
             <DatePicker
               open={dateOpen}
               onClose={() => setDateOpen(false)}
@@ -1153,7 +1198,7 @@ export function NewBookingSheet({
                   : 'Closed on this day.'
               }
             />
-            {config ? (
+            {config && !searchingFirstSlot ? (
               <InlineHint
                 tone={hoursForDate || !date ? 'muted' : 'alert'}
               >
@@ -1169,7 +1214,7 @@ export function NewBookingSheet({
                   : '.'}
               </InlineHint>
             ) : null}
-            {config && date && time ? (
+            {config && date && time && !searchingFirstSlot ? (
               <ReturnSegmentHints
                 phases={config.phases}
                 startIso={composeIso(date, time)}
@@ -1195,16 +1240,22 @@ export function NewBookingSheet({
                 </StatusBanner>
               </div>
             ) : null}
-            <div style={{ marginTop: theme.space[3] }}>
-              <ConflictBlock
-                checking={checkingConflicts}
-                conflicts={conflicts}
-                error={conflictError}
-                slotIsValid={slotIsValid}
-                durationMinutes={config?.duration_default ?? null}
-                freeBody="Slot is free. Saving will add it to the schedule."
-              />
-            </div>
+            {searchingFirstSlot ? null : (
+              <div style={{ marginTop: theme.space[3] }}>
+                <ConflictBlock
+                  checking={checkingConflicts}
+                  conflicts={conflicts}
+                  error={conflictError}
+                  slotIsValid={slotIsValid}
+                  durationMinutes={config?.duration_default ?? null}
+                  /* No freeBody — the time picker only surfaces free
+                   * slots, so re-confirming "free" beneath the date
+                   * row was visual noise. Conflicts (race vs another
+                   * concurrent edit) and RPC errors still surface
+                   * via the other ConflictBlock states. */
+                />
+              </div>
+            )}
           </Section>
           ) : null}
 
