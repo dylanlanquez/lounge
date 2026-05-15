@@ -848,19 +848,29 @@ function Footer({
   const isDetailsStep = api.stepKey === 'details';
   const breakdown = api.priceBreakdown;
   const fullAmount = breakdown.subtotalPence;
-  // Per-booking-type payment options. depositPence > 0 surfaces a
-  // "Pay deposit £X" CTA on the summary footer (and switches the
-  // running-total preview into a TODAY/ON THE DAY split). The
-  // allowPayOnTheDay flag (Lounge admin → Widget tab) surfaces the
-  // "Pay on the day" CTA. "Pay in full" is always shown when there's
-  // a non-zero amount. Three combos in practice:
-  //   • deposit only        (click-in, same-day): Deposit + Full
-  //   • on-the-day only     (denture-repair):     Full + On the day
-  //   • both flags set                            Deposit + Full + On the day
+  // Per-booking-type payment options. The Lounge admin (Widget tab)
+  // sets each flag independently:
+  //
+  //   widget_deposit_pence        > 0       → "Pay deposit £X"
+  //   widget_allow_pay_in_full    = TRUE    → "Pay in full"
+  //   widget_allow_pay_on_the_day = TRUE    → "Pay on the day"
+  //
+  // Defaults: pay-in-full TRUE (historical universal option),
+  // pay-on-the-day FALSE (legacy deposit-only). Deposit follows
+  // depositPence > 0. If a misconfigured booking type has every
+  // flag off + no deposit, fall back to the pay-in-full CTA so the
+  // customer can still book.
   const depositPence = api.state.service?.depositPence ?? 0;
+  const allowFull = api.state.service?.allowPayInFull !== false; // default TRUE
   const allowOTD = api.state.service?.allowPayOnTheDay === true;
   const showDepositCta = depositPence > 0;
   const showOTDCta = allowOTD;
+  // Pay-in-full has to surface unless the admin explicitly turned it
+  // off AND another option exists. Without this the footer would
+  // render zero CTAs for a booking type that was misconfigured to
+  // disable every option, locking the customer out of paying.
+  const wouldHaveAnyCta = showDepositCta || showOTDCta || allowFull;
+  const showFullCta = allowFull || !wouldHaveAnyCta;
 
   // "Pay on the day" needs a confirmation beat — clicking it
   // shouldn't book the appointment outright; the customer needs a
@@ -987,15 +997,15 @@ function Footer({
               )}
             </NextButton>
           ) : (
-            // Per-booking-type CTA row. The right-most button is
-            // always the primary commit ("Pay £X" — the larger
-            // single-figure number, either deposit when configured
-            // or the full amount). When the deposit flow is active
-            // the deposit CTA takes the primary slot and "Pay in
-            // full" sits to its left as the secondary; on services
-            // that allow pay-on-the-day, the OTD pill appears on
-            // the far left. All buttons share the disabled state
-            // so the row only lights up once the form is valid.
+            // Per-booking-type CTA row. Picks the primary commit
+            // (right-most NextButton) and zero or more secondary
+            // outlined pills (left of primary) from the three flags
+            // the admin sets per booking type. Primary priority is
+            // deposit > pay-in-full > pay-on-the-day; remaining
+            // enabled options surface as secondary pills, OTD
+            // furthest-left when present. All buttons share the
+            // disabled state so the row only lights up once the
+            // form is valid.
             <div
               style={{
                 flex: 1,
@@ -1005,59 +1015,96 @@ function Footer({
                 minWidth: 0,
               }}
             >
-              {showOTDCta ? (
-                <PayOnTheDayButton
-                  disabled={nextDisabled}
-                  onClick={() => setConfirmOTD(true)}
-                  accent={accent}
-                >
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    <CalendarClock size={14} aria-hidden />
-                    Pay on the day
-                  </span>
-                </PayOnTheDayButton>
-              ) : null}
-              {showDepositCta ? (
-                <>
-                  {/* Secondary outlined pill matches the pay-on-the-day
-                      pill chrome — same height, same border, same
-                      typography — so the row reads as a balanced pair.
-                      "Pay deposit £X" is the historical primary path
-                      for click-in / same-day so it stays in the
-                      right-hand primary slot. */}
-                  <PayOnTheDayButton
-                    disabled={nextDisabled}
-                    onClick={onPayInFull}
-                    accent={accent}
-                  >
-                    {`Pay in full · ${formatPriceShort(fullAmount)}`}
-                  </PayOnTheDayButton>
-                  <NextButton
-                    disabled={nextDisabled}
-                    onClick={onPayDeposit}
-                    accent={accent}
-                    shimmer={false}
-                  >
-                    {`Pay deposit · ${formatPriceShort(depositPence)}`}
-                  </NextButton>
-                </>
-              ) : (
-                <NextButton
-                  disabled={nextDisabled}
-                  onClick={onPayInFull}
-                  accent={accent}
-                  shimmer={false}
-                >
-                  {`Pay ${formatPriceShort(fullAmount)} now`}
-                </NextButton>
-              )}
+              {(() => {
+                // Primary picker: deposit beats full beats OTD. The
+                // primary slot is the visual anchor that commits the
+                // booking; secondaries are alternatives the customer
+                // can pick instead.
+                const primary: 'deposit' | 'full' | 'otd' = showDepositCta
+                  ? 'deposit'
+                  : showFullCta
+                    ? 'full'
+                    : 'otd';
+                // Secondary slot: pay-in-full when deposit is the
+                // primary AND pay-in-full is also enabled.
+                const showFullSecondary = primary === 'deposit' && showFullCta;
+                return (
+                  <>
+                    {showOTDCta && primary !== 'otd' ? (
+                      <PayOnTheDayButton
+                        disabled={nextDisabled}
+                        onClick={() => setConfirmOTD(true)}
+                        accent={accent}
+                      >
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                        >
+                          <CalendarClock size={14} aria-hidden />
+                          Pay on the day
+                        </span>
+                      </PayOnTheDayButton>
+                    ) : null}
+                    {showFullSecondary ? (
+                      // Secondary outlined pill matches the OTD pill
+                      // chrome so the row reads as a balanced set.
+                      <PayOnTheDayButton
+                        disabled={nextDisabled}
+                        onClick={onPayInFull}
+                        accent={accent}
+                      >
+                        {`Pay in full · ${formatPriceShort(fullAmount)}`}
+                      </PayOnTheDayButton>
+                    ) : null}
+                    {primary === 'deposit' ? (
+                      <NextButton
+                        disabled={nextDisabled}
+                        onClick={onPayDeposit}
+                        accent={accent}
+                        shimmer={false}
+                      >
+                        {`Pay deposit · ${formatPriceShort(depositPence)}`}
+                      </NextButton>
+                    ) : primary === 'full' ? (
+                      <NextButton
+                        disabled={nextDisabled}
+                        onClick={onPayInFull}
+                        accent={accent}
+                        shimmer={false}
+                      >
+                        {`Pay ${formatPriceShort(fullAmount)} now`}
+                      </NextButton>
+                    ) : (
+                      // OTD-only: the primary commit. The single-tap
+                      // confirmation beat (confirmOTD) still applies
+                      // — confirmOTD === true above swaps this row for
+                      // a "Book appointment" Next button.
+                      <NextButton
+                        disabled={nextDisabled}
+                        onClick={() => setConfirmOTD(true)}
+                        accent={accent}
+                        shimmer={false}
+                      >
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 6,
+                          }}
+                        >
+                          <CalendarClock size={14} aria-hidden />
+                          Pay on the day
+                        </span>
+                      </NextButton>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )
         ) : summaryFree ? (

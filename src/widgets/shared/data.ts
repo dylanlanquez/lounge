@@ -32,6 +32,12 @@ export interface WidgetBookingType {
    *  same value also drives the FooterPrice TODAY/ON THE DAY split.
    *  Sourced from lng_booking_type_config.widget_deposit_pence. */
   depositPence: number;
+  /** When TRUE the details footer surfaces a "Pay in full" CTA. Set
+   *  per booking type in the Lounge admin Widget tab. Defaults to
+   *  TRUE — historically every service offered the option. Turning
+   *  it off lets a clinic restrict a service to deposit-only or
+   *  on-the-day-only flows. */
+  allowPayInFull: boolean;
   /** When TRUE the details footer surfaces a "Pay on the day" CTA in
    *  addition to (or instead of) the deposit / pay-in-full pair. Set
    *  per booking type in the Lounge admin Widget tab. Mirrored from
@@ -182,7 +188,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_widget_booking_types')
-        .select('id, service_type, label, description, deposit_pence, allow_pay_on_the_day, duration_minutes')
+        .select('id, service_type, label, description, deposit_pence, allow_pay_in_full, allow_pay_on_the_day, duration_minutes')
         .order('label', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -196,6 +202,10 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
         label: (r.label as string) ?? '',
         description: (r.description as string) ?? '',
         depositPence: (r.deposit_pence as number) ?? 0,
+        // Defaults: pay-in-full TRUE (historical default), OTD FALSE
+        // (legacy deposit-only behaviour). Both can be toggled in
+        // Lounge admin → Widget per booking type.
+        allowPayInFull: (r.allow_pay_in_full as boolean) ?? true,
         allowPayOnTheDay: (r.allow_pay_on_the_day as boolean) ?? false,
         durationMinutes: (r.duration_minutes as number) ?? 30,
       }));

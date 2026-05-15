@@ -760,6 +760,7 @@ function ServiceCardBody({
   const [visible, setVisible] = useState(service.widgetVisible);
   const [description, setDescription] = useState(service.widgetDescription);
   const [depositText, setDepositText] = useState(formatPoundsText(service.widgetDepositPence));
+  const [allowFull, setAllowFull] = useState(service.widgetAllowPayInFull);
   const [allowOTD, setAllowOTD] = useState(service.widgetAllowPayOnTheDay);
   const [productVis, setProductVis] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
@@ -781,6 +782,7 @@ function ServiceCardBody({
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
+    setAllowFull(service.widgetAllowPayInFull);
     setAllowOTD(service.widgetAllowPayOnTheDay);
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
@@ -798,6 +800,7 @@ function ServiceCardBody({
     service.widgetVisible,
     service.widgetDescription,
     service.widgetDepositPence,
+    service.widgetAllowPayInFull,
     service.widgetAllowPayOnTheDay,
     service.products,
   ]);
@@ -819,6 +822,7 @@ function ServiceCardBody({
     visible !== service.widgetVisible ||
     description !== service.widgetDescription ||
     depositPence !== service.widgetDepositPence ||
+    allowFull !== service.widgetAllowPayInFull ||
     allowOTD !== service.widgetAllowPayOnTheDay ||
     changedProductIds.length > 0 ||
     changedUpgradeIds.length > 0;
@@ -855,6 +859,7 @@ function ServiceCardBody({
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
+    setAllowFull(service.widgetAllowPayInFull);
     setAllowOTD(service.widgetAllowPayOnTheDay);
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
@@ -890,6 +895,7 @@ function ServiceCardBody({
           widgetVisible: visible,
           widgetDescription: description,
           widgetDepositPence: depositPence,
+          widgetAllowPayInFull: allowFull,
           widgetAllowPayOnTheDay: allowOTD,
         }),
         ...changedProductIds.map((id) =>
@@ -960,6 +966,18 @@ function ServiceCardBody({
         description="Captured upfront via Stripe. £0 means no deposit option."
       >
         <PoundsInput value={depositText} onChange={setDepositText} />
+      </Section>
+
+      <Section
+        title="Allow pay in full?"
+        description="Adds a 'Pay in full' option to the widget's payment screen so the patient can settle the full price at booking. Default on; turn off if you only want this service paid via deposit or on the day."
+      >
+        <Toggle
+          checked={allowFull}
+          onChange={setAllowFull}
+          onLabel="Patients can choose 'Pay in full'"
+          offLabel="Hidden — pay-in-full is not offered"
+        />
       </Section>
 
       <Section

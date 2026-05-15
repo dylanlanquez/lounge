@@ -64,6 +64,11 @@ export interface WidgetAdminService {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
+  /** Surfaces the "Pay in full" CTA on the booking widget's details
+   *  footer. Default ON — every service historically offered the
+   *  option. Turn off to restrict a service to deposit-only or
+   *  on-the-day-only flows. Set per booking type. */
+  widgetAllowPayInFull: boolean;
   /** Surfaces the "Pay on the day" CTA on the booking widget's
    *  details footer. Default off — services with a deposit show
    *  "Pay deposit / Pay in full"; turning this on adds the OTD
@@ -115,7 +120,7 @@ export function useWidgetAdminServices(): ReadResult {
         supabase
           .from('lng_booking_type_config')
           .select(
-            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence, widget_allow_pay_on_the_day',
+            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence, widget_allow_pay_in_full, widget_allow_pay_on_the_day',
           )
           .is('repair_variant', null)
           .is('product_key', null)
@@ -253,6 +258,7 @@ export function useWidgetAdminServices(): ReadResult {
           widgetVisible: (bt.widget_visible as boolean) ?? false,
           widgetDescription: (bt.widget_description as string | null) ?? '',
           widgetDepositPence: (bt.widget_deposit_pence as number) ?? 0,
+          widgetAllowPayInFull: (bt.widget_allow_pay_in_full as boolean) ?? true,
           widgetAllowPayOnTheDay: (bt.widget_allow_pay_on_the_day as boolean) ?? false,
           hasOptions,
           optionsLabel,
@@ -282,6 +288,7 @@ export async function saveServiceConfig(input: {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
+  widgetAllowPayInFull: boolean;
   widgetAllowPayOnTheDay: boolean;
 }): Promise<void> {
   const { error } = await supabase
@@ -290,6 +297,7 @@ export async function saveServiceConfig(input: {
       widget_visible: input.widgetVisible,
       widget_description: input.widgetDescription.trim() || null,
       widget_deposit_pence: input.widgetDepositPence,
+      widget_allow_pay_in_full: input.widgetAllowPayInFull,
       widget_allow_pay_on_the_day: input.widgetAllowPayOnTheDay,
     })
     .eq('id', input.id);
