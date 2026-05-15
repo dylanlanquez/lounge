@@ -10,7 +10,6 @@ import {
   type BookingStateApi,
   type ResolvedPrefill,
   formatPrice,
-  formatPriceShort,
   isNextEnabled,
   stepTitle,
   useBookingState,
@@ -393,9 +392,10 @@ function WidgetReady({
 
   // Determine what the Next button does on this step.
   // - 'payment' → call paymentRef.current.pay()
-  // - 'details' → handled inline by the two-button summary footer
-  //   (Pay now / Pay on the day); for free services the footer
-  //   falls back to a single Book button that submits directly.
+  // - 'details' → routes on api.state.paymentChoice (set by the in-
+  //   form PaymentChoiceCard): full / deposit walks into the Stripe
+  //   step, on-the-day submits directly. Free services fall through
+  //   the same branch — paymentChoice stays null and we submit.
   // - other steps → goNext
   const onFooterNext = () => {
     if (api.stepKey === 'payment') {
@@ -403,33 +403,30 @@ function WidgetReady({
       return;
     }
     if (api.stepKey === 'details') {
-      // Free-service path. Paid services route through onPayNow /
-      // onPayOnTheDay below, never through this branch.
-      submit(null, null);
+      const total = api.priceBreakdown.subtotalPence;
+      if (total === 0) {
+        // Free service — no choice, commit directly.
+        submit(null, null);
+        return;
+      }
+      const choice = api.state.paymentChoice;
+      if (choice === 'pay_full' || choice === 'pay_deposit') {
+        api.goTo('payment');
+        return;
+      }
+      if (choice === 'pay_on_the_day') {
+        submit(null, 'on_the_day');
+        return;
+      }
+      // Defensive: paid service with no choice picked. The footer's
+      // disabled state should prevent this branch from firing, but
+      // if it ever does, do nothing — the user can pick an option
+      // in the PaymentChoiceCard and try again.
       return;
     }
     api.goNext();
   };
 
-  // The summary-footer CTAs. Each sets api.state.paymentChoice (so
-  // activeSteps recalcs and the back-arrow knows where to land) and
-  // either advances to the Payment step or fires submit straight
-  // away. paymentMode is passed to submit explicitly because the
-  // setState above hasn't propagated by the time we call it.
-  //
-  // Three choices map to two routes:
-  //   • Pay in full / Pay deposit  → Payment step (Stripe form)
-  //   • Pay on the day             → submit immediately, no PI
-  const onPayInFull = () => {
-    api.choosePayment('pay_full');
-  };
-  const onPayDeposit = () => {
-    api.choosePayment('pay_deposit');
-  };
-  const onPayOnTheDay = () => {
-    api.choosePayment('pay_on_the_day');
-    submit(null, 'on_the_day');
-  };
   const submitting = submission.state === 'submitting';
 
   return (
@@ -439,9 +436,6 @@ function WidgetReady({
       brand={brand}
       locations={locations}
       onNext={onFooterNext}
-      onPayInFull={onPayInFull}
-      onPayDeposit={onPayDeposit}
-      onPayOnTheDay={onPayOnTheDay}
       onSubmit={submit}
       submitting={submitting}
       submissionError={submission.error}
@@ -467,9 +461,6 @@ function ChromeShell({
   brand,
   locations,
   onNext,
-  onPayInFull,
-  onPayDeposit,
-  onPayOnTheDay,
   onSubmit,
   submitting,
   submissionError,
@@ -485,9 +476,6 @@ function ChromeShell({
   brand?: WidgetBrand;
   locations: WidgetLocation[];
   onNext: () => void;
-  onPayInFull: () => void;
-  onPayDeposit: () => void;
-  onPayOnTheDay: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
   submissionError: string | null;
@@ -590,9 +578,6 @@ function ChromeShell({
         accent={accent}
         onNext={onNext}
         onBack={api.goBack}
-        onPayInFull={onPayInFull}
-        onPayDeposit={onPayDeposit}
-        onPayOnTheDay={onPayOnTheDay}
         submitting={submitting}
         paymentReady={paymentReady}
         paymentPaying={paymentPaying}
@@ -829,9 +814,6 @@ function Footer({
   accent,
   onNext,
   onBack,
-  onPayInFull,
-  onPayDeposit,
-  onPayOnTheDay,
   submitting,
   paymentReady,
   paymentPaying,
@@ -841,9 +823,6 @@ function Footer({
   accent: string;
   onNext: () => void;
   onBack: () => void;
-  onPayInFull: () => void;
-  onPayDeposit: () => void;
-  onPayOnTheDay: () => void;
   submitting: boolean;
   paymentReady: boolean;
   paymentPaying: boolean;
@@ -852,47 +831,12 @@ function Footer({
   const isDetailsStep = api.stepKey === 'details';
   const breakdown = api.priceBreakdown;
   const fullAmount = breakdown.subtotalPence;
-  // Per-booking-type payment options. The Lounge admin (Widget tab)
-  // sets each flag independently:
-  //
-  //   widget_deposit_pence        > 0       → "Pay deposit £X"
-  //   widget_allow_pay_in_full    = TRUE    → "Pay in full"
-  //   widget_allow_pay_on_the_day = TRUE    → "Pay on the day"
-  //
-  // Defaults: pay-in-full TRUE (historical universal option),
-  // pay-on-the-day FALSE (legacy deposit-only). Deposit follows
-  // depositPence > 0. If a misconfigured booking type has every
-  // flag off + no deposit, fall back to the pay-in-full CTA so the
-  // customer can still book.
+  // Deposit info still surfaces on earlier-step FooterPrice as an
+  // "if you'd like to pay the deposit only" preview. The actual
+  // payment selector lives on the Details step (PaymentChoiceCard)
+  // so the customer commits there, not here.
   const depositPence = api.state.service?.depositPence ?? 0;
-  const allowFull = api.state.service?.allowPayInFull !== false; // default TRUE
-  const allowOTD = api.state.service?.allowPayOnTheDay === true;
   const showDepositCta = depositPence > 0;
-  const showOTDCta = allowOTD;
-  // Pay-in-full has to surface unless the admin explicitly turned it
-  // off AND another option exists. Without this the footer would
-  // render zero CTAs for a booking type that was misconfigured to
-  // disable every option, locking the customer out of paying.
-  const wouldHaveAnyCta = showDepositCta || showOTDCta || allowFull;
-  const showFullCta = allowFull || !wouldHaveAnyCta;
-
-  // "Pay on the day" needs a confirmation beat — clicking it
-  // shouldn't book the appointment outright; the customer needs a
-  // moment of "right, this is going to commit me". When confirmOTD
-  // is true the two-CTA row collapses into one full-width "Book
-  // appointment" button. The back arrow rolls back to the two-button
-  // view instead of navigating to the previous step (handled by
-  // effectiveOnBack below) so there's no separate "Change" link
-  // cluttering the footer. Local state (not api.state) because the
-  // intent is a transient UI mode, not a piece of the booking the
-  // server cares about until the customer hits Book.
-  const [confirmOTD, setConfirmOTD] = useState(false);
-  // Reset the confirmation flag any time the customer leaves the
-  // details step (Back arrow, etc.) so they land in the
-  // two-button view next time they reach the summary.
-  useEffect(() => {
-    if (!isDetailsStep) setConfirmOTD(false);
-  }, [isDetailsStep]);
   // Footer total line: hidden on Details (BookingReview shows the
   // full breakdown inline) and Payment (PayHeader spells it out
   // and the Pay button carries the amount). Everywhere else we
@@ -901,27 +845,17 @@ function Footer({
   const showPrice = !isDetailsStep && !isPaymentStep && fullAmount > 0;
 
   const detailsValid = isNextEnabled(api);
-  const summaryPaid = isDetailsStep && fullAmount > 0;
   const summaryFree = isDetailsStep && fullAmount === 0;
-
-  // Back-arrow behaviour: when the user has tapped "Pay on the day"
-  // and is sitting on the Book-appointment confirmation, the arrow
-  // rolls back the confirmation rather than navigating to the
-  // previous step. Two presses still walk them all the way back
-  // (first rolls confirmOTD off, second goes to the prior step).
-  const inOTDConfirm = summaryPaid && confirmOTD;
-  const backEnabled = inOTDConfirm || api.canGoBack;
-  const effectiveOnBack = () => {
-    if (inOTDConfirm) {
-      setConfirmOTD(false);
-      return;
-    }
-    onBack();
-  };
+  // Paid-service details step needs a payment choice picked before
+  // Next commits. PaymentChoiceCard pre-selects a default on mount,
+  // so this only blocks Next in the rare race window before the
+  // effect lands.
+  const summaryPaidWithoutChoice =
+    isDetailsStep && fullAmount > 0 && api.state.paymentChoice === null;
 
   const nextDisabled = isPaymentStep
     ? !paymentReady || paymentPaying || submitting
-    : !detailsValid || submitting;
+    : !detailsValid || submitting || summaryPaidWithoutChoice;
 
   const nextLabel = (() => {
     if (isPaymentStep) {
@@ -934,7 +868,17 @@ function Footer({
       return 'Book appointment';
     }
     if (submitting) return 'Booking…';
-    if (isDetailsStep) return copy.summaryCtaBook;
+    if (isDetailsStep) {
+      // Free service — single commit action.
+      if (fullAmount === 0) return copy.summaryCtaBook;
+      const choice = api.state.paymentChoice;
+      // Pay-on-the-day commits directly without a Stripe step, so the
+      // verb is the booking commit. Full / deposit walk into the
+      // Payment step, so the verb is "Next" — the actual commit lives
+      // on the Pay button inside the Stripe card form.
+      if (choice === 'pay_on_the_day') return copy.summaryCtaBook;
+      return 'Next';
+    }
     return 'Next';
   })();
 
@@ -969,257 +913,44 @@ function Footer({
           maxWidth: 600,
         }}
       >
-        <BackButton disabled={!backEnabled} onClick={effectiveOnBack} />
+        <BackButton disabled={!api.canGoBack} onClick={onBack} />
 
-        {summaryPaid ? (
-          confirmOTD ? (
-            // Confirmation beat — Pay-on-the-day was tapped once;
-            // surfacing the explicit "Book appointment" makes the
-            // commit step obvious. The back arrow (now overridden by
-            // effectiveOnBack) rolls this confirmation off without
-            // needing a separate "Change" link.
-            <NextButton
-              disabled={nextDisabled}
-              onClick={onPayOnTheDay}
-              accent={accent}
-              shimmer={!submitting}
-            >
-              {submitting ? (
-                'Booking…'
-              ) : (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                  }}
-                >
-                  Book appointment
-                  <BookCheckIcon size={16} />
-                </span>
-              )}
-            </NextButton>
-          ) : (
-            // Per-booking-type CTA row. Picks the primary commit
-            // (right-most NextButton) and zero or more secondary
-            // outlined pills (left of primary) from the three flags
-            // the admin sets per booking type. Primary priority is
-            // deposit > pay-in-full > pay-on-the-day; remaining
-            // enabled options surface as secondary pills, OTD
-            // furthest-left when present. All buttons share the
-            // disabled state so the row only lights up once the
-            // form is valid.
-            <div
+        {/* Single context-aware Next / Book button. The label and
+            commit verb flex on stepKey + paymentChoice (see
+            nextLabel above); the click handler upstream routes to
+            the payment step or fires submit based on the same
+            choice. Pay-now / Pay-on-the-day live inside the
+            details form (PaymentChoiceCard) so the footer stays a
+            clean one-button commit row at every viewport. The
+            shield icon + shimmer treatment is reserved for actual
+            commit moments (free-service Book and Stripe Pay) — a
+            mere "advance to Stripe step" Next doesn't earn it. */}
+        <NextButton
+          disabled={nextDisabled}
+          onClick={onNext}
+          accent={accent}
+          shimmer={(summaryFree || isPaymentStep) && !submitting}
+        >
+          {submitting ? (
+            nextLabel
+          ) : isPaymentStep || summaryFree || (isDetailsStep && api.state.paymentChoice === 'pay_on_the_day') ? (
+            <span
               style={{
-                flex: 1,
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
+                justifyContent: 'center',
                 gap: 8,
-                minWidth: 0,
               }}
             >
-              {(() => {
-                // Primary picker: deposit beats full beats OTD. The
-                // primary slot is the visual anchor that commits the
-                // booking; secondaries are alternatives the customer
-                // can pick instead.
-                const primary: 'deposit' | 'full' | 'otd' = showDepositCta
-                  ? 'deposit'
-                  : showFullCta
-                    ? 'full'
-                    : 'otd';
-                // Secondary slot: pay-in-full when deposit is the
-                // primary AND pay-in-full is also enabled.
-                const showFullSecondary = primary === 'deposit' && showFullCta;
-                return (
-                  <>
-                    {showOTDCta && primary !== 'otd' ? (
-                      <PayOnTheDayButton
-                        disabled={nextDisabled}
-                        onClick={() => setConfirmOTD(true)}
-                        accent={accent}
-                      >
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 6,
-                          }}
-                        >
-                          <PayLaterIcon size={14} />
-                          Pay on the day
-                        </span>
-                      </PayOnTheDayButton>
-                    ) : null}
-                    {showFullSecondary ? (
-                      // Secondary outlined pill matches the OTD pill
-                      // chrome so the row reads as a balanced set.
-                      <PayOnTheDayButton
-                        disabled={nextDisabled}
-                        onClick={onPayInFull}
-                        accent={accent}
-                      >
-                        {`Pay in full · ${formatPriceShort(fullAmount)}`}
-                      </PayOnTheDayButton>
-                    ) : null}
-                    {primary === 'deposit' ? (
-                      // When deposit is the ONLY option (no Pay-in-full
-                      // pill, no OTD pill) the button reads as a
-                      // generic "Next" — there's no choice to make,
-                      // tapping just walks the patient into the Stripe
-                      // step where the deposit amount + secure-card
-                      // chrome carries the price + verb context. When
-                      // a secondary CTA also exists the deposit row
-                      // keeps its explicit "Pay deposit · £X" label so
-                      // the choice between options stays unambiguous.
-                      <NextButton
-                        disabled={nextDisabled}
-                        onClick={onPayDeposit}
-                        accent={accent}
-                        shimmer={false}
-                      >
-                        {showFullCta || showOTDCta
-                          ? `Pay deposit · ${formatPriceShort(depositPence)}`
-                          : 'Next'}
-                      </NextButton>
-                    ) : primary === 'full' ? (
-                      <NextButton
-                        disabled={nextDisabled}
-                        onClick={onPayInFull}
-                        accent={accent}
-                        shimmer={false}
-                      >
-                        {`Pay ${formatPriceShort(fullAmount)} now`}
-                      </NextButton>
-                    ) : (
-                      // OTD-only: the primary commit. The single-tap
-                      // confirmation beat (confirmOTD) still applies
-                      // — confirmOTD === true above swaps this row for
-                      // a "Book appointment" Next button.
-                      <NextButton
-                        disabled={nextDisabled}
-                        onClick={() => setConfirmOTD(true)}
-                        accent={accent}
-                        shimmer={false}
-                      >
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 6,
-                          }}
-                        >
-                          <PayLaterIcon size={14} />
-                          Pay on the day
-                        </span>
-                      </NextButton>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          )
-        ) : summaryFree ? (
-          // Free-service path — there's no payment step, the Book
-          // button on Details IS the commit. Same shimmer + shield
-          // treatment as every other Book-appointment commit so the
-          // conversion moment reads the same regardless of price.
-          <NextButton
-            disabled={nextDisabled}
-            onClick={onNext}
-            accent={accent}
-            shimmer={!submitting}
-          >
-            {submitting ? (
-              nextLabel
-            ) : (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                {nextLabel}
-                <BookCheckIcon size={16} />
-              </span>
-            )}
-          </NextButton>
-        ) : (
-          <NextButton
-            disabled={nextDisabled}
-            onClick={onNext}
-            accent={accent}
-            shimmer={isPaymentStep}
-          >
-            {isPaymentStep && !paymentPaying && !submitting ? (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                {nextLabel}
-                <BookCheckIcon size={16} />
-              </span>
-            ) : (
-              nextLabel
-            )}
-          </NextButton>
-        )}
+              {nextLabel}
+              <BookCheckIcon size={16} />
+            </span>
+          ) : (
+            nextLabel
+          )}
+        </NextButton>
       </div>
     </footer>
-  );
-}
-
-function PayOnTheDayButton({
-  children,
-  disabled,
-  onClick,
-  accent,
-}: {
-  children: React.ReactNode;
-  disabled: boolean;
-  onClick: () => void;
-  accent: string;
-}) {
-  // Secondary pill. Matches NextButton's geometry (same height,
-  // pill radius) so the two CTAs read as a balanced pair; outlined
-  // chrome (white fill, 1.5px accent border, accent text) keeps
-  // the primary "Pay £X now" as the visual anchor.
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        flex: 1,
-        minWidth: 0,
-        height: 52,
-        borderRadius: 26,
-        border: `1.5px solid ${accent}`,
-        background: '#fff',
-        color: accent,
-        fontFamily: 'inherit',
-        fontSize: 15,
-        fontWeight: 600,
-        letterSpacing: '-0.005em',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.45 : 1,
-        transition: 'background 120ms ease, transform 120ms ease',
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-      }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -1423,30 +1154,6 @@ function BookCheckIcon({ size = 16 }: { size?: number }) {
     >
       <path d="M9.22,20.43C4.17,20.02.31,15.97.02,10.81c-.11-1.86.27-3.65,1.11-5.32C2.75,2.29,5.8.24,9.3.02,9.51,0,9.71,0,9.92,0,15.1,0,19.43,4.2,19.77,9.57l.02,1.3c-.02.15-.03.22-.03.3-.02.23-.05.52-.25.82-.25.36-.65.58-1.07.58-.15,0-.3-.03-.44-.08-.57-.21-.91-.79-.85-1.41.29-2.62-.79-5.24-2.82-6.83-1.29-1.01-2.82-1.55-4.43-1.55-1,0-1.96.21-2.88.61-1.89.84-3.31,2.4-4,4.4-.68,1.97-.53,4.17.41,6.02,1.26,2.49,3.74,4.03,6.47,4.03,1.37,0,2.72-.4,3.89-1.17.21-.14.46-.21.71-.21.42,0,.8.2,1.05.56.21.3.29.68.22,1.05-.06.35-.25.65-.53.84-1.33.89-2.89,1.44-4.53,1.59l-.15.03h-1.34Z" />
       <path d="M8.47,14.23c-.33,0-.64-.13-.87-.37l-2.37-2.44c-.25-.25-.38-.59-.37-.95,0-.37.16-.72.42-.97.24-.23.55-.36.87-.36.35,0,.69.15.96.42l1.37,1.42,4.23-4.37c.24-.25.56-.38.9-.38s.69.15.93.4c.52.54.5,1.37-.04,1.92l-5.09,5.26c-.26.27-.61.42-.96.42Z" />
-    </svg>
-  );
-}
-
-// PayLaterIcon — bespoke "deferred clock" mark used on every Pay on
-// the day CTA. Custom artwork (a clock face with a counterclockwise
-// arrow over its top-left, suggesting "later") replaces Lucide's
-// CalendarClock so the secondary path carries the same brand
-// identity as the primary commit. Same currentColor convention as
-// BookCheckIcon — paints accent inside the outlined pill, white
-// inside the primary NextButton, no per-call-site overrides.
-function PayLaterIcon({ size = 14 }: { size?: number }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 19.79 20.44"
-      width={size}
-      height={size}
-      fill="currentColor"
-      aria-hidden
-      focusable="false"
-    >
-      <path d="M9.91,20.44c-.58,0-1.17-.05-1.75-.16-2.79-.51-5.23-2.23-6.71-4.72C-.09,12.97-.43,9.83.51,6.94,1.87,2.79,5.65,0,9.9,0,11.48,0,12.99.38,14.42,1.13c3.3,1.74,5.41,5.33,5.39,9.13-.04,5.61-4.47,10.18-9.89,10.18ZM9.89,2.73c-1.18,0-2.37.31-3.42.89-3.56,1.98-4.86,6.56-2.91,10.23,1.27,2.39,3.7,3.87,6.34,3.87,1.24,0,2.46-.34,3.55-.97,3.46-2.02,4.7-6.59,2.77-10.17-1.28-2.37-3.7-3.85-6.33-3.85Z" />
-      <path d="M12.44,14.24c-.34,0-.65-.13-.89-.38l-2.62-2.7c-.23-.24-.37-.57-.37-.9v-5.39c0-.73.6-1.32,1.33-1.32.76.02,1.33.62,1.33,1.36v4.75l2.2,2.29c.49.51.48,1.34-.01,1.87-.25.27-.61.43-.98.43Z" />
     </svg>
   );
 }

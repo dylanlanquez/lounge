@@ -441,19 +441,18 @@ export function useBookingState(
     if (activeSteps.includes(key)) setStepKey(key);
   };
 
-  /** Pick the payment path from the details footer CTAs. Sets the
-   *  choice in state AND advances atomically — by the time React
-   *  commits, paymentChoice is set, activeSteps reflects it, and
-   *  the new stepKey is consistent.
+  /** Pick the payment path. Sets state.paymentChoice and nothing
+   *  else — navigation is decoupled now that the customer picks the
+   *  option inside the details form and commits with the footer's
+   *  single Next button. The Next handler reads state.paymentChoice
+   *  to decide whether to advance to the Payment step (full /
+   *  deposit) or submit directly (pay-on-the-day, free services).
    *
-   *  • 'pay_full'        → walk into the Payment step (full price PI)
-   *  • 'pay_deposit'     → walk into the Payment step (deposit PI)
-   *  • 'pay_on_the_day'  → stay on details; caller fires submit() */
+   *  • 'pay_full'        → footer Next reads "Continue to payment"
+   *  • 'pay_deposit'     → footer Next reads "Continue to payment"
+   *  • 'pay_on_the_day'  → footer Next reads "Book appointment" */
   const choosePayment = (choice: 'pay_full' | 'pay_deposit' | 'pay_on_the_day') => {
     setState((prev) => ({ ...prev, paymentChoice: choice }));
-    if (choice === 'pay_full' || choice === 'pay_deposit') {
-      setStepKey('payment');
-    }
   };
 
   // Choosing a service resets axis pins and upgrades (previous

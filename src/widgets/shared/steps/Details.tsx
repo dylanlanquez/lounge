@@ -10,6 +10,7 @@ import {
 import { CountryPicker } from '../CountryPicker.tsx';
 import { QUIZ } from '../quizTokens.ts';
 import { BookingReview } from '../BookingReview.tsx';
+import { PaymentChoiceCard } from '../PaymentChoiceCard.tsx';
 import type { WidgetCopy } from '../copy.ts';
 
 // Details step — first name, last name, email, phone, notes.
@@ -182,6 +183,13 @@ export function DetailsStep({
       <div style={{ marginTop: 16 }}>
         <BookingReview api={api} copy={copy} accent={accent} />
       </div>
+
+      {/* Payment selector — only renders when the booking type has
+          two or more enabled payment options (deposit / pay-in-full /
+          pay-on-the-day). Renders nothing for free services and for
+          single-option bookings, where the footer's Next button
+          carries the action by itself. */}
+      <PaymentChoiceCard api={api} accent={accent} />
     </div>
   );
 }

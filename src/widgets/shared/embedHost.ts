@@ -101,21 +101,21 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     cursor: 'pointer',
   } as Partial<CSSStyleDeclaration>);
 
-  // Card. Mirrors venneir.com retainer-cart quiz modal dimensions
-  // verbatim (.modal-content-vt at line 3 of the template): the
-  // same 97.5vw × 90vh sheet at every viewport, with a 1.25vh top
-  // margin so the modal floats inside the backdrop instead of
-  // bleeding to the edges. No mobile breakpoint — the template
-  // doesn't have one, and the previous mobile-fullscreen branch
-  // was triggering inside Shopify's narrow preview pane and
-  // making the modal look like it had crashed back to fullscreen.
+  // Card. The card floats inside the backdrop with comfortable
+  // edge breathing room on every viewport. Previous 97.5vw × 90vh
+  // sized mirrored the venneir.com retainer-cart template but read
+  // as edge-to-edge on phones (Dylan flagged this — the ~1.25vw
+  // horizontal gap is invisible at 360–430px viewport widths).
+  // 92vw × 88vh gives roughly 16px / 30px breathing on a 390px /
+  // 844px viewport while staying inside the maxWidth cap on
+  // desktop. Top margin sits above an auto-calc'd bottom margin so
+  // the card centres vertically with the chosen height.
   const card = document.createElement('div');
   Object.assign(card.style, {
     position: 'relative',
     background: '#F4F4F4',
-    width: '97.5vw',
-    height: '90vh',
-    margin: '1.25vh auto',
+    width: '92vw',
+    height: '88vh',
     maxWidth: '100vw',
     maxHeight: '100dvh',
     borderRadius: '12px',

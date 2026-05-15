@@ -1,4 +1,4 @@
-import { MapPin, Award, Calendar, Sparkles, Wrench } from 'lucide-react';
+import { MapPin, Award, Calendar } from 'lucide-react';
 import {
   axesForService,
   axisValueLabel,
@@ -86,6 +86,18 @@ export function BookingReview({
         rightAmountColour?: string;
       }
     | {
+        // Iconless row used under a subheader (per-arch repair lines,
+        // upgrade lines). Matches the staff AppointmentExtras pattern
+        // — section header carries the context, rows below are flat
+        // label + price. Visual break with the icon-led rows above is
+        // intentional and signals "you're now reading the breakdown".
+        kind: 'extra';
+        key: string;
+        title: string;
+        rightAmount?: string;
+        rightAmountColour?: string;
+      }
+    | {
         kind: 'total';
         key: string;
         label: string;
@@ -155,9 +167,8 @@ export function BookingReview({
             ? ` × ${line.quantity} teeth`
             : '';
         rows.push({
-          kind: 'item',
+          kind: 'extra',
           key: `repair-${line.lineId}`,
-          icon: <Wrench size={20} aria-hidden style={{ color: accent }} />,
           title: `${line.name}${qtySuffix}`,
           rightAmount: formatPrice(line.lineTotalPence),
         });
@@ -172,9 +183,8 @@ export function BookingReview({
     });
     for (const u of selectedUpgrades) {
       rows.push({
-        kind: 'item',
+        kind: 'extra',
         key: `upgrade-${u.id}`,
-        icon: <Sparkles size={20} aria-hidden style={{ color: QUIZ.LAVENDER }} />,
         title: u.name,
         rightAmount: `+${formatPrice(upgradePrice(u.id))}`,
         rightAmountColour: QUIZ.LAVENDER,
@@ -243,6 +253,17 @@ export function BookingReview({
               icon={row.icon}
               title={row.title}
               subtitle={row.subtitle}
+              rightAmount={row.rightAmount}
+              rightAmountColour={row.rightAmountColour}
+              isLast={isLast || nextIsTotal || nextIsSubheader}
+            />
+          );
+        }
+        if (row.kind === 'extra') {
+          return (
+            <ExtraRow
+              key={row.key}
+              title={row.title}
               rightAmount={row.rightAmount}
               rightAmountColour={row.rightAmountColour}
               isLast={isLast || nextIsTotal || nextIsSubheader}
@@ -514,6 +535,69 @@ function SplitRow({
         <span style={labelStyle}>{label}</span>
         <span style={amountStyle}>{amount}</span>
       </div>
+    </div>
+  );
+}
+
+// ExtraRow — flat label + amount row used under a subheader for the
+// per-arch repair lines + selected upgrades. Mirrors AppointmentExtras
+// on the staff side: a hairline-separated full-width row, no icon
+// column. The icon-led rows above the first subheader (location /
+// service / slot) provide the visual anchor; once a subheader breaks
+// the rhythm we drop into the unfussy listing pattern.
+function ExtraRow({
+  title,
+  rightAmount,
+  rightAmountColour,
+  isLast,
+}: {
+  title: string;
+  rightAmount?: string;
+  rightAmountColour?: string;
+  isLast: boolean;
+}) {
+  return (
+    <div
+      role="row"
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: 12,
+        padding: '10px 0',
+        borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
+      }}
+    >
+      <span
+        role="cell"
+        style={{
+          fontSize: 14,
+          color: QUIZ.INK,
+          fontWeight: 500,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          lineHeight: 1.3,
+        }}
+      >
+        {title}
+      </span>
+      {rightAmount ? (
+        <span
+          role="cell"
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: rightAmountColour ?? QUIZ.INK,
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: '0.02em',
+          }}
+        >
+          {rightAmount}
+        </span>
+      ) : null}
     </div>
   );
 }
