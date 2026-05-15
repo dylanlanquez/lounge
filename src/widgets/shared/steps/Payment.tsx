@@ -624,7 +624,7 @@ function PayHeader({ fullAmount }: { fullAmount: number }) {
           letterSpacing: '-0.01em',
         }}
       >
-        Pay the full {formatPriceShort(fullAmount)} and book in
+        Pay the full {formatPriceShort(fullAmount)} and book appointment
       </h2>
       <p
         style={{

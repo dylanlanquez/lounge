@@ -889,7 +889,7 @@ function Footer({
       // "pay AND book", not just "pay". Without the second verb the
       // patient can tap thinking they're only authorising the card
       // and still have a separate Book step to go.
-      return `Pay ${formatPriceShort(fullAmount)} and book in`;
+      return `Pay ${formatPriceShort(fullAmount)} and book appointment`;
     }
     if (submitting) return 'Booking…';
     if (isDetailsStep) return copy.summaryCtaBook;
