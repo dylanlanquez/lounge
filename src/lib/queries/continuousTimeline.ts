@@ -88,11 +88,25 @@ export function useContinuousTimeline(
   }, [apptResult.events, apptResult.loading, apptResult.error, visitResult.events, visitResult.loading, visitResult.error]);
 }
 
-// Event types where each underlying fact may be surfaced multiple
-// times across the two hooks (visit synth + appointment patient_events
-// + lng_payments). Outside this set every event is treated as
-// independent — patient_events of cart/waiver/email types legitimately
-// fire many times in a single minute and must not collapse.
+// Event types that fire AT MOST ONCE per booking lifecycle: the
+// booking row, the deposit row, the visit open + close. The two
+// hooks each surface them from a different source (visit hook
+// synthesises from raw tables, appointment hook surfaces the
+// patient_events row), so the merger sees both copies. We dedupe
+// to the single richest occurrence per type.
+//
+// Timestamp is intentionally NOT part of the bucket key. The two
+// sources can disagree on time by minutes or even days — for
+// Calendly bookings, lng_appointments.deposit_paid_at is the
+// Stripe charge time (could be days before the booking is created)
+// while patient_events.deposit_paid.created_at is the webhook
+// processing time. A minute-window key collapsed only when the
+// timestamps lined up by accident; ignoring time entirely is the
+// only way to catch every collision.
+//
+// Outside this set every event passes through independently —
+// cart edits, emails, waiver signatures legitimately fire many
+// times per booking and must not collapse.
 const SEMANTIC_DEDUPE_TYPES = new Set<TimelineEvent['type']>([
   'appointment_created',
   'deposit_paid',
@@ -101,11 +115,6 @@ const SEMANTIC_DEDUPE_TYPES = new Set<TimelineEvent['type']>([
 ]);
 
 function collapseSemantically(events: TimelineEvent[]): TimelineEvent[] {
-  // Bucket key: type + the minute the event landed in. A 60-second
-  // window catches the small write-order skew between the appointment
-  // INSERT and the patient_events INSERT (always <1s in practice)
-  // without bleeding into legitimately separate events that happen
-  // an hour apart.
   const bestByKey = new Map<string, TimelineEvent>();
   const order: string[] = []; // preserves first-seen order so the final sort is stable
   for (const ev of events) {
@@ -117,8 +126,9 @@ function collapseSemantically(events: TimelineEvent[]): TimelineEvent[] {
       order.push(key);
       continue;
     }
-    const minute = Math.floor(new Date(ev.timestamp).getTime() / 60_000);
-    const key = `${ev.type}|${minute}`;
+    // Singleton-per-booking types: bucket on type alone so every
+    // duplicate (regardless of timestamp gap) collapses into one.
+    const key = ev.type;
     const incumbent = bestByKey.get(key);
     if (!incumbent) {
       bestByKey.set(key, ev);
