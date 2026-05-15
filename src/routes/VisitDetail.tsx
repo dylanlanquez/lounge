@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   BadgeCheck,
   Ban,
+  CalendarClock,
   CheckCircle2,
   CheckCircle,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   RotateCcw,
   ShoppingCart,
   StickyNote,
+  User as UserIcon,
   UserCheck,
   X,
 } from 'lucide-react';
@@ -36,6 +38,7 @@ import {
   Input,
   MarketingGallery,
   MultiSelectDropdown,
+  RescheduleSheet,
   Section,
   AppointmentExtras,
   ContinuousTimeline,
@@ -46,6 +49,7 @@ import {
   WaiverSheet,
 } from '../components/index.ts';
 import { useAppointmentExtras } from '../lib/queries/appointmentExtras.ts';
+import type { BookingServiceType } from '../lib/queries/bookingTypes.ts';
 import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
 import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
@@ -188,6 +192,11 @@ export function VisitDetail() {
   );
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Reschedule sheet for the underlying appointment row. Powers the
+  // Reschedule action surfaced in the post-arrival actions block
+  // above the smile photos card. Same flow AppointmentDetail uses
+  // pre-arrival, so the operator UX matches at either end.
+  const [rescheduling, setRescheduling] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1466,6 +1475,33 @@ export function VisitDetail() {
                   }}
                 />
                 <div style={{ marginTop: theme.space[6], display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+                  {/* Quick actions block — mirrors the AppointmentDetail
+                      action stack so the same destinations (Patient
+                      profile, Reschedule) stay one tap away after the
+                      patient has been marked arrived. The Reschedule
+                      action only shows when we have the appointment
+                      row data needed to seed the RescheduleSheet
+                      (walk-ins fall through). */}
+                  {patient ? (
+                    <VisitActionStack
+                      onPatientProfile={() =>
+                        navigate(`/patient/${patient.id}`, {
+                          state: {
+                            from: 'visit',
+                            visitId: visit.id,
+                            visitOpenedAt: visit.opened_at,
+                            patientName: patientFullName(patient),
+                            visitEntry: location.state,
+                          },
+                        })
+                      }
+                      onReschedule={
+                        visit.appointment_id && appointment?.location_id && appointment?.start_at && appointment?.end_at
+                          ? () => setRescheduling(true)
+                          : null
+                      }
+                    />
+                  ) : null}
                   {visit.dispatch_ref ? (
                     <ShippedItemsCard visit={visit} onPrintLabel={() => printLabel(visit.label_data)} />
                   ) : null}
@@ -1552,6 +1588,36 @@ export function VisitDetail() {
         visitId={visit?.id ?? null}
         patientEmail={patient?.email ?? null}
       />
+
+      {/* RescheduleSheet for the underlying appointment row. Same
+          sheet AppointmentDetail uses pre-arrival; the action card
+          above only enables its trigger when we have the location +
+          slot data needed to seed the form, so we never mount with
+          a null-shaped appointment. */}
+      {rescheduling && visit && visit.appointment_id && patient && appointment?.location_id && appointment?.start_at && appointment?.end_at ? (
+        <RescheduleSheet
+          open
+          onClose={() => setRescheduling(false)}
+          appointment={{
+            id: visit.appointment_id,
+            patient_id: patient.id,
+            location_id: appointment.location_id,
+            service_type: (appointment.service_type as BookingServiceType | null) ?? null,
+            source: (appointment.source as 'calendly' | 'manual' | 'native') ?? 'manual',
+            start_at: appointment.start_at,
+            end_at: appointment.end_at,
+            patient_first_name: patient.first_name,
+            patient_last_name: patient.last_name,
+          }}
+          onRescheduled={() => {
+            setRescheduling(false);
+            // Bounce the user to the new appointment — same UX
+            // AppointmentDetail provides. The receptionist can navigate
+            // back to the visit via the breadcrumb.
+            navigate(0);
+          }}
+        />
+      ) : null}
 
       {visit && patient ? (
         <ShipVisitSheet
@@ -3792,5 +3858,113 @@ function ShippedItemsCard({
         </div>
       </div>
     </CollapsibleCard>
+  );
+}
+
+// VisitActionStack — quick-actions block surfaced above the
+// post-arrival info cards. Mirrors AppointmentDetail's pre-arrival
+// action list so the same destinations stay one tap away whether
+// the patient is still booked or already in clinic. Currently
+// surfaces Patient profile + Reschedule; further actions can drop
+// in here without touching the parent page.
+function VisitActionStack({
+  onPatientProfile,
+  onReschedule,
+}: {
+  onPatientProfile: () => void;
+  /** Null hides the row — used for walk-ins (no underlying
+   *  appointment row) or when the appointment context hasn't
+   *  loaded the location/slot data the RescheduleSheet needs. */
+  onReschedule: (() => void) | null;
+}) {
+  return (
+    <section
+      aria-label="Visit actions"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        overflow: 'hidden',
+      }}
+    >
+      <VisitActionRow
+        first
+        icon={<UserIcon size={16} aria-hidden />}
+        label="Patient profile"
+        onClick={onPatientProfile}
+      />
+      {onReschedule ? (
+        <VisitActionRow
+          icon={<CalendarClock size={16} aria-hidden />}
+          label="Reschedule"
+          onClick={onReschedule}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function VisitActionRow({
+  icon,
+  label,
+  onClick,
+  first = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  first?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        borderTop: first ? 'none' : `1px solid ${theme.color.border}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        width: '100%',
+        textAlign: 'left',
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.ink,
+        cursor: 'pointer',
+        WebkitTapHighlightColor: 'transparent',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = theme.color.bg;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 32,
+          height: 32,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+      <ChevronRight size={16} color={theme.color.inkSubtle} aria-hidden />
+    </button>
   );
 }

@@ -477,6 +477,12 @@ export interface VisitAppointmentContext {
   // truly-pre-booked rows — VisitDetail gates on arrival_type to
   // decide whether to render this line.
   start_at: string;
+  // End of the scheduled slot — needed by the Reschedule sheet,
+  // which seeds the duration field from end_at - start_at.
+  end_at: string | null;
+  // Location the appointment was booked into. Threaded through so
+  // the Reschedule sheet can carry it without a second round-trip.
+  location_id: string | null;
   // Source of the booking ('calendly', 'manual', etc.). Used to
   // tweak the "Booked" copy when shown.
   source: string | null;
@@ -662,7 +668,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key'
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -682,6 +688,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               jb_ref: string | null;
               created_at: string;
               start_at: string;
+              end_at: string | null;
+              location_id: string | null;
               source: string | null;
               brand_id: 'venneir' | 'denture' | null;
               paid_in_full_at_booking: boolean | null;
@@ -696,6 +704,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               jb_ref: a.jb_ref ?? null,
               created_at: a.created_at,
               start_at: a.start_at,
+              end_at: a.end_at,
+              location_id: a.location_id,
               source: a.source,
               service_type: a.service_type ?? null,
               arch: a.arch ?? null,
@@ -759,6 +769,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               // lines off the page for walk-ins.
               created_at: w.created_at,
               start_at: w.created_at,
+              end_at: null,
+              location_id: null,
               source: 'walk_in',
               // Walk-ins have no axis pins. service_type carries
               // the picked service label for cart suggestions; arch
