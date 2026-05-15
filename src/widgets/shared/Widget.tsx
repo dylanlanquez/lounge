@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarClock } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -1044,7 +1044,7 @@ function Footer({
                             gap: 6,
                           }}
                         >
-                          <CalendarClock size={14} aria-hidden />
+                          <PayLaterIcon size={14} />
                           Pay on the day
                         </span>
                       </PayOnTheDayButton>
@@ -1108,7 +1108,7 @@ function Footer({
                             gap: 6,
                           }}
                         >
-                          <CalendarClock size={14} aria-hidden />
+                          <PayLaterIcon size={14} />
                           Pay on the day
                         </span>
                       </NextButton>
@@ -1419,6 +1419,30 @@ function BookCheckIcon({ size = 16 }: { size?: number }) {
     >
       <path d="M335.97,59.57l.1,238.96c0,20.87-16.06,36.87-36.93,36.86H36.91c-20.31,0-36.85-15.56-36.86-36.09L0,60.77C0,39.98,16,23.88,36.84,23.91l47.2.07-.07-11.3c-.04-6.99,4.96-12.47,11.72-12.68s12.29,4.95,12.33,11.93l.06,12.02h119.92s-.03-11.27-.03-11.27c-.02-7,4.93-12.47,11.73-12.69s12.31,4.96,12.32,11.93l.02,12.05,47.29-.08c19.58-.03,36.63,15.06,36.64,35.65ZM312.01,95.82l.04-35.93c-.24-6.71-5.13-11.89-12.15-11.97H36.16c-6.9.07-12.12,5.24-12.12,11.97v35.94s287.97,0,287.97,0ZM300.27,311.4c7.02-.48,11.76-5.4,11.76-12.09V119.78s-287.99,0-287.99,0l-.02,179.54c0,6.97,5.26,11.89,12.14,12.08h264.1Z" />
       <path d="M100.1,212.7c-5.09-5.08-5.22-12.34-.56-17.24,4.3-4.53,12.11-5.06,16.94-.24l28.16,28.06,76.88-65.7c5.12-4.37,13.18-1.82,16.43,2.67,3.93,5.42,2.92,12.23-2.29,16.68l-83.45,71.39c-5.36,4.59-12.26,4.15-17.1-.68l-35.02-34.94Z" />
+    </svg>
+  );
+}
+
+// PayLaterIcon — bespoke "deferred clock" mark used on every Pay on
+// the day CTA. Custom artwork (a clock face with a counterclockwise
+// arrow over its top-left, suggesting "later") replaces Lucide's
+// CalendarClock so the secondary path carries the same brand
+// identity as the primary commit. Same currentColor convention as
+// BookCheckIcon — paints accent inside the outlined pill, white
+// inside the primary NextButton, no per-call-site overrides.
+function PayLaterIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 19.79 20.44"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+      focusable="false"
+    >
+      <path d="M9.56,20.44c-2.7,0-5.25-1.04-7.18-2.92-.51-.5-.58-1.21-.16-1.74.23-.29.6-.46.98-.46.33,0,.62.12.84.34,1.47,1.47,3.43,2.28,5.51,2.28s3.92-.76,5.37-2.15c3.04-2.92,3.16-7.79.29-10.86-1.45-1.55-3.52-2.44-5.66-2.44-1.94,0-3.8.72-5.23,2.03l-.29.29h1.74c.33,0,.64.14.88.38.24.24.36.58.35.91-.02.68-.58,1.21-1.26,1.21H1.29c-.34,0-.66-.12-.9-.35C.14,6.73,0,6.41,0,6.06V1.57c0-.67.53-1.22,1.2-1.25h0c.74,0,1.3.56,1.3,1.24v1.24s.1-.1.1-.1C4.5.96,6.96,0,9.55,0s5.2,1.01,7.11,2.86c1.98,1.91,3.09,4.47,3.13,7.22.04,2.75-1,5.35-2.93,7.31-1.93,1.97-4.53,3.05-7.3,3.05Z" />
+      <path d="M13.69,14.48c-.25,0-.48-.08-.68-.23l-3.86-3.08c-.27-.21-.44-.58-.44-.94v-4.49c0-.68.53-1.23,1.21-1.25h0c.64,0,1.28.48,1.28,1.2v3.93s3.27,2.61,3.27,2.61c.51.41.63,1.13.27,1.68-.22.34-.65.58-1.06.58Z" />
     </svg>
   );
 }
