@@ -131,7 +131,7 @@ export function SmilePhotosCard({
         // pristine idle placeholder; never overwrite a busy/error
         // state mid-promotion or roll back a freshly-completed one.
         if (existingKinds.has(k) && next[k].state === 'idle') {
-          next[k] = { state: 'done', message: 'Added' };
+          next[k] = { state: 'done', message: 'Added to patients profile' };
         }
       }
       return next;
@@ -167,7 +167,7 @@ export function SmilePhotosCard({
         });
         return;
       }
-      setKindState(kind, { state: 'done', message: 'Added' });
+      setKindState(kind, { state: 'done', message: 'Added to patients profile' });
       onPromoted?.();
       // No auto-revert — once promoted the tile stays "Added"
       // for the life of the page so staff can't accidentally
@@ -553,7 +553,7 @@ function PromoteTileLink({
     state.state === 'busy'
       ? 'Adding…'
       : state.state === 'done'
-        ? state.message ?? 'Added'
+        ? state.message ?? 'Added to patients profile'
         : state.state === 'error'
           ? state.message ?? "Couldn't add"
           : 'Add to profile';
