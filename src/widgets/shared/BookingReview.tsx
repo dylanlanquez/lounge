@@ -120,23 +120,7 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'location',
-      // MapPin's pin head sits in the top half of its 24x24 viewBox
-      // (the bulb of the pin is bigger than the tail), so its visual
-      // centre is ~2px ABOVE the geometric centre of the viewBox.
-      // translateY(2px) lands the visual centre on the badge centre
-      // — without this nudge the pin glyph reads as drifting up
-      // inside the badge even though the badge itself is perfectly
-      // centred with the text. Calendar and CheckCircle2 don't need
-      // this correction because their visual centres match their
-      // viewBox geometric centres.
-      icon: (
-        <MapPin
-          size={16}
-          strokeWidth={2}
-          aria-hidden
-          style={{ transform: 'translateY(2px)' }}
-        />
-      ),
+      icon: <MapPin size={16} strokeWidth={2} aria-hidden />,
       title: state.location.name,
       subtitle: state.location.addressLine,
     });
@@ -360,64 +344,62 @@ function ItemRow({
   rightAmountColour?: string;
   isLast: boolean;
 }) {
-  // Icon column = a fixed-size circular accent-bg badge that wraps
-  // every icon. The BADGE is the visual anchor, not the glyph
-  // inside it — so even though MapPin (narrow + top-weighted),
-  // Calendar (square, balanced) and CheckCircle2 (perfect circle,
-  // fills the box) all have different visual extents inside their
-  // 24×24 viewBoxes, every row column lines up at the same y
-  // because every badge is the same identical 30×30 circle.
+  // Layout rule: the badge is centred with the TITLE LINE, never with
+  // the entire content block. A 1-line row (no subtitle) and a 2-line
+  // row (Location: name + address) must put the badge at the same y
+  // relative to the title text — otherwise the icon column "wobbles"
+  // as the eye scrolls down the receipt.
   //
-  // alignItems: 'center' on the outer row pairs the badge's visual
-  // centre with the content block's visual centre — for a 1-line
-  // row that's just the title's centre; for a 2-line row
-  // (location: name + address) the badge sits at the mid-point
-  // between the two lines so the column always reads as "centred"
-  // rather than top-aligned with first line.
+  // Structure:
+  //   outer       — block wrapper carrying padding + hairline only
+  //   title-row   — flex row, alignItems: center, contains the
+  //                 badge + title + optional rightAmount. Because
+  //                 this row contains ONLY the title (no subtitle),
+  //                 'center' alignment lands the badge centre on the
+  //                 title's line-box centre.
+  //   subtitle    — block under the title-row, with left padding
+  //                 equal to badge width + gap so it hangs under
+  //                 the title's left edge.
   //
-  // Combined with the consistent badge shape this makes the icon
-  // column impossible to misalign: every badge is the same y-
-  // offset from the row's vertical centre, every row's vertical
-  // centre is the content block's vertical centre, badges are
-  // identical circles regardless of which glyph they carry.
+  // Result: identical icon-column geometry across 1-line and 2-line
+  // rows, no translateY hacks, no alignment drift between rows of
+  // different content heights.
   const BADGE_SIZE = 30;
+  const TITLE_GAP = 12;
   return (
     <div
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
         padding: '14px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: BADGE_SIZE,
-          height: BADGE_SIZE,
-          flexShrink: 0,
-          borderRadius: '50%',
-          background: 'rgba(8, 55, 88, 0.08)',
-          color: QUIZ.ACCENT,
-        }}
-      >
-        {icon}
-      </span>
       <div
         style={{
-          flex: 1,
-          minWidth: 0,
           display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
+          alignItems: 'center',
+          gap: TITLE_GAP,
         }}
       >
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: BADGE_SIZE,
+            height: BADGE_SIZE,
+            flexShrink: 0,
+            borderRadius: '50%',
+            background: 'rgba(8, 55, 88, 0.08)',
+            color: QUIZ.ACCENT,
+          }}
+        >
+          {icon}
+        </span>
         <div
           style={{
+            flex: 1,
+            minWidth: 0,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -452,20 +434,21 @@ function ItemRow({
             </span>
           ) : null}
         </div>
-        {subtitle ? (
-          <p
-            style={{
-              margin: '4px 0 0',
-              fontSize: 13,
-              color: QUIZ.SUBTLE,
-              lineHeight: 1.3,
-              wordBreak: 'break-word',
-            }}
-          >
-            {subtitle}
-          </p>
-        ) : null}
       </div>
+      {subtitle ? (
+        <p
+          style={{
+            margin: '6px 0 0',
+            paddingLeft: BADGE_SIZE + TITLE_GAP,
+            fontSize: 13,
+            color: QUIZ.SUBTLE,
+            lineHeight: 1.3,
+            wordBreak: 'break-word',
+          }}
+        >
+          {subtitle}
+        </p>
+      ) : null}
     </div>
   );
 }
