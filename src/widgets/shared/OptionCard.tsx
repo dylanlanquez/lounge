@@ -78,9 +78,15 @@ export function OptionCard({
           selected ? accent : canHover && hovered ? accent : 'transparent'
         }`,
         borderRadius: QUIZ.R_CARD,
-        padding: '20px',
+        // Padding tightened from 20 → 16 vertical and 20 → 18 horizontal
+        // so the card hugs the title + description without the
+        // generous breathing the original retainer-cart template
+        // baked in. minHeight dropped from 130 → 0 so the card
+        // sizes to its content — Top / Bottom / Both rows had ~40px
+        // of dead space below the description before, which read
+        // as a sea of empty white.
+        padding: '16px 18px',
         paddingRight: '52px', // room for the radio indicator
-        minHeight: 130,
         width: '100%',
         textAlign: 'left',
         cursor: 'pointer',
