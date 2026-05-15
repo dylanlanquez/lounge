@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Camera, ChevronDown } from 'lucide-react';
+import { ArrowRight, Camera, ChevronDown, Loader2 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
 import { theme } from '../../theme/index.ts';
 import {
@@ -7,6 +7,11 @@ import {
   useBookingIntakePhotos,
   type IntakePhotoRow,
 } from '../../lib/queries/bookingIntakePhotos.ts';
+import {
+  promoteIntakePhotosToPatientProfile,
+  type IntakePhotoKindForPromotion,
+} from '../../lib/queries/promoteIntakePhotos.ts';
+import { logFailure } from '../../lib/failureLog.ts';
 
 // SmilePhotosCard — collapsible card that surfaces the pre-visit
 // smile photos the patient uploaded from the booking-confirmation
@@ -29,6 +34,18 @@ import {
 
 export interface SmilePhotosCardProps {
   appointmentId: string;
+  // Optional promotion target. When all three are provided AND at least
+  // one intake photo has been uploaded, the card surfaces an "Add to
+  // patient profile as smile photos" link that copies the intake images
+  // into the patient's canonical Smile Photo slots (Front / Left /
+  // Right) on the patient profile. Omit to render the card read-only.
+  patientId?: string;
+  patientName?: string;
+  uploaderAccountId?: string | null;
+  // Called when promotion succeeds. Lets the parent refresh the patient
+  // files grid (or any other dependent surface) so the new smile-photo
+  // rows appear without a manual reload.
+  onPromoted?: () => void;
 }
 
 const SLOTS: Array<{ kind: 'front' | 'left' | 'right'; label: string }> = [
@@ -37,7 +54,13 @@ const SLOTS: Array<{ kind: 'front' | 'left' | 'right'; label: string }> = [
   { kind: 'right', label: 'Right side' },
 ];
 
-export function SmilePhotosCard({ appointmentId }: SmilePhotosCardProps) {
+export function SmilePhotosCard({
+  appointmentId,
+  patientId,
+  patientName,
+  uploaderAccountId,
+  onPromoted,
+}: SmilePhotosCardProps) {
   const { rows, loading, error } = useBookingIntakePhotos(appointmentId);
   const byKind = new Map(rows.map((r) => [r.kind, r] as const));
   const uploadedCount = rows.length;
@@ -63,6 +86,84 @@ export function SmilePhotosCard({ appointmentId }: SmilePhotosCardProps) {
   const toggle = () => {
     userToggledRef.current = true;
     setOpen((o) => !o);
+  };
+
+  // Promotion state for the "Add to patient profile as smile photos"
+  // link. Idle until the user clicks; busy while photos are downloading
+  // + uploading; done shows a 3s confirmation; error surfaces a loud
+  // message (no silent fallbacks per CLAUDE.md). The link is gated
+  // behind: patient context provided, at least one intake photo
+  // uploaded, and not already in flight.
+  const [promoteState, setPromoteState] =
+    useState<'idle' | 'busy' | 'done' | 'error'>('idle');
+  const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
+  const canPromote =
+    !!patientId &&
+    !!patientName &&
+    uploadedCount > 0 &&
+    promoteState !== 'busy';
+
+  const handlePromote = async () => {
+    if (!patientId || !patientName) return;
+    setPromoteState('busy');
+    setPromoteMessage(null);
+    const sources = rows.map((r) => ({
+      kind: r.kind as IntakePhotoKindForPromotion,
+      filePath: r.filePath,
+      mimeType: r.mimeType,
+    }));
+    try {
+      const result = await promoteIntakePhotosToPatientProfile({
+        patientId,
+        patientName,
+        uploaderAccountId: uploaderAccountId ?? null,
+        sources,
+      });
+      if (result.errors.length > 0) {
+        const which = result.errors.map((e) => e.kind).join(', ');
+        const detail = result.errors[0]!.message;
+        setPromoteState('error');
+        setPromoteMessage(
+          `Couldn't copy ${which}: ${detail}. ${result.promoted.length > 0 ? `${result.promoted.length} added.` : ''}`,
+        );
+        await logFailure({
+          source: 'smile_photo_promote_partial',
+          severity: 'warning',
+          message: detail,
+          context: {
+            appointmentId,
+            patientId,
+            promoted: result.promoted,
+            errors: result.errors,
+          },
+        });
+        return;
+      }
+      setPromoteState('done');
+      setPromoteMessage(
+        result.promoted.length === 1
+          ? 'Added 1 photo to patient profile.'
+          : `Added ${result.promoted.length} photos to patient profile.`,
+      );
+      onPromoted?.();
+      // Auto-revert to idle after 3s so the link reads as "ready to
+      // re-run" again. The 3s tracks Toast's standard dwell time
+      // elsewhere in the app.
+      setTimeout(() => {
+        setPromoteState('idle');
+        setPromoteMessage(null);
+      }, 3000);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not add photos.';
+      setPromoteState('error');
+      setPromoteMessage(message);
+      await logFailure({
+        source: 'smile_photo_promote_failed',
+        severity: 'error',
+        message,
+        context: { appointmentId, patientId },
+      });
+    }
   };
 
   const panelId = `lng-smile-photos-${appointmentId}`;
@@ -176,10 +277,135 @@ export function SmilePhotosCard({ appointmentId }: SmilePhotosCardProps) {
                 );
               })}
             </div>
+            {canPromote || promoteState !== 'idle' ? (
+              <PromoteToProfileLink
+                state={promoteState}
+                message={promoteMessage}
+                disabled={!canPromote}
+                onClick={handlePromote}
+              />
+            ) : null}
           </div>
         </div>
       </div>
     </Card>
+  );
+}
+
+// Plain text link with a trailing arrow-in-pill, matching the Patient
+// Files Grid "View history" affordance — no background, no pill chrome
+// on the label itself, just bold ink type plus a 22px accent-tinted
+// circle holding a Lucide ArrowRight. Surfaced beneath the photo grid
+// when the parent passed enough patient context to copy the photos
+// across. Empty state (no patient context, no upload yet) hides the
+// link entirely so the read-only render is unchanged.
+function PromoteToProfileLink({
+  state,
+  message,
+  disabled,
+  onClick,
+}: {
+  state: 'idle' | 'busy' | 'done' | 'error';
+  message: string | null;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const showShift = hovered && !disabled && state === 'idle';
+  const labelColor =
+    state === 'error'
+      ? theme.color.alert
+      : state === 'done'
+        ? theme.color.accent
+        : theme.color.ink;
+  // No theme.color.alertBg token (yet) so use a tinted alert wash for
+  // the error state. accentBg drives every other state — calm green
+  // pill, white arrow.
+  const trailingTint =
+    state === 'error'
+      ? { bg: 'rgba(184, 58, 42, 0.12)', fg: theme.color.alert }
+      : { bg: theme.color.accentBg, fg: theme.color.accent };
+  const labelText =
+    state === 'busy'
+      ? 'Adding to patient profile…'
+      : state === 'done'
+        ? message ?? 'Added to patient profile'
+        : state === 'error'
+          ? message ?? "Couldn't add to patient profile"
+          : 'Add to patient profile as smile photos';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'flex-start',
+        marginTop: theme.space[5],
+      }}
+    >
+      <button
+        type="button"
+        onClick={disabled || state === 'busy' ? undefined : onClick}
+        disabled={disabled || state === 'busy'}
+        aria-label={labelText}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
+        style={{
+          appearance: 'none',
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          margin: 0,
+          fontFamily: 'inherit',
+          color: labelColor,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.tight,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          cursor: disabled || state === 'busy' ? 'default' : 'pointer',
+          opacity: disabled ? 0.55 : 1,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <span>{labelText}</span>
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 22,
+            height: 22,
+            borderRadius: theme.radius.pill,
+            background: trailingTint.bg,
+            color: trailingTint.fg,
+            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            transform: showShift ? 'translateX(3px)' : 'translateX(0)',
+            flexShrink: 0,
+          }}
+        >
+          {state === 'busy' ? (
+            <Loader2
+              size={14}
+              aria-hidden
+              style={{
+                animation: 'lng-smile-promote-spin 0.9s linear infinite',
+              }}
+            />
+          ) : (
+            <ArrowRight size={14} aria-hidden />
+          )}
+        </span>
+      </button>
+      <style>{`
+        @keyframes lng-smile-promote-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
   );
 }
 

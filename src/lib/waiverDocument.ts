@@ -63,6 +63,21 @@ export interface WaiverDocPaymentSummary {
   // Mirrors the same model VisitDetail's Totals component uses.
   depositPence: number;                          // 0 when no paid deposit
   depositProvider: 'paypal' | 'stripe' | null;
+  // Origin of the deposit. 'native' = online widget; 'calendly' (or
+  // null/legacy) = Calendly booking. Picks the suffix on the deposit
+  // line ("via venneir.com" vs "via Calendly") so a widget deposit
+  // doesn't get mislabelled as a Calendly one. Null defaults to the
+  // legacy Calendly suffix so historical PDFs render unchanged.
+  depositSource?: string | null;
+  // brand_id of the booking (for native bookings only). Drives the
+  // customer-facing domain in the deposit suffix — 'venneir' →
+  // venneir.com, 'denture' → denture-services.co.uk. Ignored when
+  // depositSource is 'calendly'.
+  depositBrandId?: 'venneir' | 'denture' | null;
+  // True when the widget collected the FULL service price up-front
+  // rather than a partial deposit. Switches the line label from
+  // "Deposit" to "Paid in full". Always false for Calendly bookings.
+  depositPaidInFullAtBooking?: boolean;
   // Shopify-paid order linked to the appointment. Total credits
   // against the bill the same way a Calendly deposit does and
   // surfaces on the waiver as:
@@ -135,6 +150,20 @@ export interface WaiverDocInput {
   // signs at arrival and the credit is already a fact of the booking.
   shopifyCreditPence?: number;
   shopifyOrderName?: string | null;
+  // Deposit / paid-in-full collected at booking, threaded as a
+  // top-level field for the SAME reason as shopifyCreditPence: the
+  // waiver is signed at arrival, BEFORE the till closes the cart, so
+  // the deposit must surface in the totals regardless of cart status.
+  // Previous shape only sourced this from `payment` (which only
+  // exists when cart.status === 'paid'), so widget + Calendly
+  // deposits silently disappeared from every unpaid-cart waiver. The
+  // renderer prefers these top-level fields and falls back to
+  // payment.deposit* for backwards compatibility.
+  depositPence?: number;
+  depositProvider?: 'paypal' | 'stripe' | null;
+  depositSource?: string | null;
+  depositBrandId?: 'venneir' | 'denture' | null;
+  depositPaidInFullAtBooking?: boolean;
   notes: string | null;
   sections: WaiverDocSection[];
   // Full SVG document string from lng_waiver_signatures.signature_svg
@@ -463,8 +492,17 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
       0,
     );
     const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
-    const depositPence = input.payment?.depositPence ?? 0;
-    const depositProvider = input.payment?.depositProvider ?? null;
+    // Prefer top-level deposit fields (always available, populated by
+    // the appointment row) over the legacy payment.deposit* path
+    // (only populated once the cart has closed paid). This ensures
+    // the deposit / paid-in-full credit shows on the waiver during
+    // arrival signing, not just on the post-payment receipt copy.
+    const depositPence = Math.max(
+      0,
+      input.depositPence ?? input.payment?.depositPence ?? 0,
+    );
+    const depositProvider =
+      input.depositProvider ?? input.payment?.depositProvider ?? null;
     // Credit shows whenever the booking carries a Shopify order,
     // regardless of whether the cart's been paid yet — the patient
     // signs the waiver at arrival, before the till closes, but the
@@ -494,10 +532,20 @@ export function buildWaiverDocument(input: WaiverDocInput): string {
              <span class="value">−${formatGbp(cartDiscountPence)}</span>
            </div>`
         : '';
+    const depositSource = input.depositSource ?? input.payment?.depositSource ?? null;
+    const depositBrandId = input.depositBrandId ?? input.payment?.depositBrandId ?? null;
+    const depositPaidInFull =
+      (input.depositPaidInFullAtBooking ?? input.payment?.depositPaidInFullAtBooking) === true;
+    const depositLineLabel = depositPaidInFull ? 'Paid in full' : 'Deposit';
+    const depositSuffix = depositProvider
+      ? depositSource === 'native'
+        ? ` (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via ${depositBrandId === 'denture' ? 'denture-services.co.uk' : 'venneir.com'})`
+        : ` (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`
+      : '';
     const depositRow =
       depositPence > 0
         ? `<div class="row deposit">
-             <span class="label">Deposit${depositProvider ? ' (' + (depositProvider === 'stripe' ? 'Stripe' : 'PayPal') + ' via Calendly)' : ''}</span>
+             <span class="label">${depositLineLabel}${depositSuffix}</span>
              <span class="value">−${formatGbp(depositPence)}</span>
            </div>`
         : '';

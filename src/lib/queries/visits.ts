@@ -409,6 +409,21 @@ export interface AppointmentDeposit {
   currency: string;
   provider: 'paypal' | 'stripe';
   status: 'paid' | 'failed';
+  // Where the booking + deposit originated. 'native' means the online
+  // widget (venneir.com / denture-services.co.uk); 'calendly' means a
+  // Calendly checkout. Drives the "via …" suffix on Pay screen and
+  // waiver so a widget deposit doesn't read as a Calendly one.
+  source: string | null;
+  // brand_id of the booking — 'venneir' or 'denture'. Picks the
+  // customer-facing domain in the source suffix ("venneir.com" vs
+  // "denture-services.co.uk"). Null when the column wasn't populated
+  // (legacy rows); callers default to 'venneir' for safety.
+  brandId: 'venneir' | 'denture' | null;
+  // True when the widget collected the FULL service price up-front,
+  // not just a deposit. Pay screen + waiver use this to switch the
+  // line label from "Deposit" to "Paid in full". Always false for
+  // Calendly bookings (Calendly only takes deposits).
+  paidInFullAtBooking: boolean;
 }
 
 // Shopify-paid order linked to an appointment at booking time. The
@@ -629,7 +644,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, source, service_type, arch, product_key'
+              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -650,6 +665,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               created_at: string;
               start_at: string;
               source: string | null;
+              brand_id: 'venneir' | 'denture' | null;
+              paid_in_full_at_booking: boolean | null;
               service_type: string | null;
               arch: string | null;
               product_key: string | null;
@@ -677,6 +694,9 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
                 currency: a.deposit_currency ?? 'GBP',
                 provider: a.deposit_provider,
                 status: a.deposit_status,
+                source: a.source,
+                brandId: a.brand_id,
+                paidInFullAtBooking: a.paid_in_full_at_booking ?? false,
               });
             } else {
               setDeposit(null);

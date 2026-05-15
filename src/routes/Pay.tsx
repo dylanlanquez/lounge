@@ -22,6 +22,23 @@ import {
 import { patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
+import type { AppointmentDeposit } from '../lib/queries/visits.ts';
+
+// Compose the bracketed suffix shown after the deposit line on the Pay
+// screen ("(Stripe via Calendly)" / "(Stripe via venneir.com)" /
+// "(PayPal via denture-services.co.uk)"). source='native' means the
+// online widget — the brand id picks the customer-facing domain so a
+// widget deposit doesn't read as a Calendly one. Calendly deposits keep
+// their existing label; legacy rows missing source default to Calendly
+// so old payments don't suddenly relabel.
+function formatDepositSourceSuffix(deposit: AppointmentDeposit | null): string {
+  const provider = deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal';
+  if (deposit?.source === 'native') {
+    const brand = deposit.brandId === 'denture' ? 'denture-services.co.uk' : 'venneir.com';
+    return `${provider} via ${brand}`;
+  }
+  return `${provider} via Calendly`;
+}
 
 type Stage = 'choose' | 'cash' | 'card' | 'bnpl' | 'success';
 type Journey = 'standard' | 'klarna' | 'clearpay';
@@ -108,26 +125,32 @@ export function Pay() {
 
   // Subtotal = sum of line items (after any per-line discount). Cart-
   // level discount (lng_carts.discount_pence — applied via the manager-
-  // approved Apply Discount sheet on VisitDetail) comes off next, then
-  // the Calendly deposit. Only PAID deposits credit the bill; a failed
-  // deposit is informational (red badge in the schedule sheet) and the
-  // till still collects the full balance. Floor at 0 so a deposit
-  // larger than the bill doesn't produce a negative charge — refund
-  // handled manually in PayPal.
+  // approved Apply Discount sheet on VisitDetail) comes off next.
+  //
+  // The deposit is NOT subtracted again here. lng_visit_paid_status's
+  // amount_paid_pence already credits paid deposits + Shopify-prepaid
+  // orders alongside succeeded lng_payments, so the outstanding is
+  // simply subtotal-after-discount minus that single combined credit.
+  // (The previous shape did `subtotal − deposit − amount_paid` and
+  // double-subtracted every deposit pound.)
   const subtotal = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
   const cartDiscount = cart?.discount_pence ?? 0;
   const subtotalAfterDiscount = Math.max(0, subtotal - cartDiscount);
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
-  const billAfterDeposit = Math.max(0, subtotalAfterDiscount - depositPence);
 
   // Split-payment plumbing. Read the visit's paid-status view so we
-  // know how much has already been collected on this cart (cash +
-  // card + BNPL combined). Outstanding = bill - amount paid so far.
-  // Refresh after each successful payment so the next method picker
-  // sees the new balance.
+  // know how much has already been collected on this cart (deposit +
+  // succeeded payments + any linked Shopify order). Outstanding is
+  // the only number we need to compute against — the view does the
+  // summing. Refresh after each successful payment so the next method
+  // picker sees the new balance.
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
-  const outstandingPence = Math.max(0, billAfterDeposit - amountPaidPence);
+  const outstandingPence = Math.max(0, subtotalAfterDiscount - amountPaidPence);
+  // Pence collected at the till today, separate from the deposit and
+  // any Shopify pre-paid credit. Used in the visible breakdown so we
+  // can show "Deposit −£X · Collected −£Y" without double-counting.
+  const tillCollectedPence = Math.max(0, amountPaidPence - depositPence);
   // Captured payments on this cart, used for the "Already collected"
   // list with per-row Void buttons. Refreshes alongside paidStatus
   // after a successful void / new payment.
@@ -392,10 +415,10 @@ export function Pay() {
               marginLeft: theme.space[2],
             }}
           >
-            {amountPaidPence > 0 ? 'outstanding' : depositPence > 0 ? 'to collect' : ''}
+            {tillCollectedPence > 0 ? 'outstanding' : depositPence > 0 ? 'to collect' : ''}
           </span>
         </h1>
-        {cartDiscount > 0 || depositPence > 0 || amountPaidPence > 0 ? (
+        {cartDiscount > 0 || depositPence > 0 || tillCollectedPence > 0 ? (
           <p
             style={{
               margin: `0 0 ${theme.space[3]}px`,
@@ -417,19 +440,19 @@ export function Pay() {
               <>
                 <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
                 <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
-                  Deposit −{formatPence(depositPence)}
+                  {deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} −{formatPence(depositPence)}
                 </span>
                 <span style={{ color: theme.color.inkSubtle }}>
                   {' '}
-                  ({deposit?.provider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)
+                  ({formatDepositSourceSuffix(deposit)})
                 </span>
               </>
             ) : null}
-            {amountPaidPence > 0 ? (
+            {tillCollectedPence > 0 ? (
               <>
                 <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
                 <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
-                  Collected −{formatPence(amountPaidPence)}
+                  Collected −{formatPence(tillCollectedPence)}
                 </span>
               </>
             ) : null}

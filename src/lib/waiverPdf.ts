@@ -454,8 +454,17 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
     0,
   );
   const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
-  const depositPence = input.payment?.depositPence ?? 0;
-  const depositProvider = input.payment?.depositProvider ?? null;
+  // Prefer top-level deposit fields over the legacy payment.deposit*
+  // path: same reason as the HTML renderer. The deposit is a fact of
+  // the booking, so it should render on the waiver before the cart
+  // closes — sourcing only from `payment` made every unpaid-cart
+  // waiver miss the deposit credit.
+  const depositPence = Math.max(
+    0,
+    input.depositPence ?? input.payment?.depositPence ?? 0,
+  );
+  const depositProvider =
+    input.depositProvider ?? input.payment?.depositProvider ?? null;
   // Top-level fields take precedence so the credit lands on the
   // waiver regardless of whether the cart's been paid yet — matches
   // the HTML renderer's behaviour.
@@ -496,12 +505,24 @@ function renderTotals(c: Cursor, input: WaiverDocInput): void {
     c.y += 5;
   }
 
-  // Optional deposit row
+  // Optional deposit row. Source-aware suffix: Calendly bookings keep
+  // the legacy "via Calendly" label; widget bookings (source='native')
+  // get a brand-specific "via venneir.com" / "via denture-services.co.uk"
+  // suffix. paid_in_full_at_booking flips the line label from "Deposit"
+  // to "Paid in full" so the patient understands the entire bill is
+  // already settled.
   if (depositPence > 0) {
     setText(pdf, 9.5, MUTED, 'normal');
+    const depositSource = input.depositSource ?? input.payment?.depositSource ?? null;
+    const depositBrandId = input.depositBrandId ?? input.payment?.depositBrandId ?? null;
+    const depositPaidInFull =
+      (input.depositPaidInFullAtBooking ?? input.payment?.depositPaidInFullAtBooking) === true;
+    const lineLabel = depositPaidInFull ? 'Paid in full' : 'Deposit';
     const depositLabel = depositProvider
-      ? `Deposit (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`
-      : 'Deposit';
+      ? depositSource === 'native'
+        ? `${lineLabel} (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via ${depositBrandId === 'denture' ? 'denture-services.co.uk' : 'venneir.com'})`
+        : `${lineLabel} (${depositProvider === 'stripe' ? 'Stripe' : 'PayPal'} via Calendly)`
+      : lineLabel;
     pdf.text(depositLabel, xL, c.y);
     setText(pdf, 9.5, c.accent, 'bold');
     pdf.text(`−${formatGbp(depositPence)}`, xR, c.y, { align: 'right' });
@@ -564,7 +585,10 @@ function renderPaymentRow(c: Cursor, input: WaiverDocInput): void {
     0,
   );
   const cartDiscountPence = Math.max(0, input.cartDiscountPence ?? 0);
-  const depositPence = input.payment?.depositPence ?? 0;
+  const depositPence = Math.max(
+    0,
+    input.depositPence ?? input.payment?.depositPence ?? 0,
+  );
   const shopifyCreditPence = Math.max(
     0,
     input.shopifyCreditPence ?? input.payment?.shopifyCreditPence ?? 0,

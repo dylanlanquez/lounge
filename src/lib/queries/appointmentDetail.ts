@@ -148,6 +148,39 @@ export interface AppointmentDetailRow {
     id: string;
     opened_at: string;
   } | null;
+  // Snapshot of the patient's widget-side picks. Empty arrays for
+  // bookings that didn't go through the widget (Calendly imports) and
+  // for services that don't expose either picker (most services have
+  // no upgrades; only denture_repair has repair items).
+  upgrades: AppointmentUpgradeRow[];
+  repairItems: AppointmentRepairItemRow[];
+}
+
+export interface AppointmentUpgradeRow {
+  id: string;
+  upgradeId: string;
+  upgradeCode: string;
+  name: string;
+  unitLabel: string | null;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  resolvedPricePence: number;
+  createdAt: string;
+}
+
+export interface AppointmentRepairItemRow {
+  id: string;
+  catalogueId: string;
+  code: string;
+  repairVariant: string;
+  name: string;
+  unitLabel: string | null;
+  arch: 'upper' | 'lower' | 'both';
+  quantity: number;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  lineTotalPence: number;
+  createdAt: string;
 }
 
 export type AppointmentDetailResult =
@@ -267,7 +300,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         // so the page paints with everything on first useable render.
         // Host fetch returns null when meet_host_id is unset (legacy /
         // Calendly-imported rows).
-        const [patientRes, locationRes, staffRes, visitRes, hostRes] = await Promise.all([
+        const [patientRes, locationRes, staffRes, visitRes, hostRes, upgradesRes, repairsRes] = await Promise.all([
           supabase
             .from('patients')
             .select('id, first_name, last_name, email, phone, avatar_data, internal_ref, lwo_ref')
@@ -312,6 +345,20 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
                 .eq('id', appt.meet_host_id)
                 .maybeSingle()
             : Promise.resolve({ data: null, error: null }),
+          // Widget-side picks. Empty arrays for bookings that came
+          // through Calendly or pre-date the snapshot tables — both
+          // surfaces (booking detail card + waiver items) gate on
+          // .length so an empty result is invisible UI-side.
+          supabase
+            .from('lng_appointment_upgrade_selections')
+            .select('id, upgrade_id, upgrade_code, name, unit_label, unit_price_pence, both_arches_price_pence, resolved_price_pence, created_at')
+            .eq('appointment_id', appt.id)
+            .order('created_at', { ascending: true }),
+          supabase
+            .from('lng_appointment_repair_items')
+            .select('id, catalogue_id, code, repair_variant, name, unit_label, arch, quantity, unit_price_pence, both_arches_price_pence, line_total_pence, created_at')
+            .eq('appointment_id', appt.id)
+            .order('created_at', { ascending: true }),
         ]);
         if (cancelled) return;
 
@@ -423,6 +470,54 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
             null,
           visit:
             (visitRes.data as { id: string; opened_at: string } | null) ?? null,
+          upgrades: ((upgradesRes.data ?? []) as Array<{
+            id: string;
+            upgrade_id: string;
+            upgrade_code: string;
+            name: string;
+            unit_label: string | null;
+            unit_price_pence: number;
+            both_arches_price_pence: number | null;
+            resolved_price_pence: number;
+            created_at: string;
+          }>).map((r) => ({
+            id: r.id,
+            upgradeId: r.upgrade_id,
+            upgradeCode: r.upgrade_code,
+            name: r.name,
+            unitLabel: r.unit_label,
+            unitPricePence: r.unit_price_pence,
+            bothArchesPricePence: r.both_arches_price_pence,
+            resolvedPricePence: r.resolved_price_pence,
+            createdAt: r.created_at,
+          })),
+          repairItems: ((repairsRes.data ?? []) as Array<{
+            id: string;
+            catalogue_id: string;
+            code: string;
+            repair_variant: string;
+            name: string;
+            unit_label: string | null;
+            arch: 'upper' | 'lower' | 'both';
+            quantity: number;
+            unit_price_pence: number;
+            both_arches_price_pence: number | null;
+            line_total_pence: number;
+            created_at: string;
+          }>).map((r) => ({
+            id: r.id,
+            catalogueId: r.catalogue_id,
+            code: r.code,
+            repairVariant: r.repair_variant,
+            name: r.name,
+            unitLabel: r.unit_label,
+            arch: r.arch,
+            quantity: r.quantity,
+            unitPricePence: r.unit_price_pence,
+            bothArchesPricePence: r.both_arches_price_pence,
+            lineTotalPence: r.line_total_pence,
+            createdAt: r.created_at,
+          })),
         };
 
         setResult({ state: 'loaded', data: row, error: null });

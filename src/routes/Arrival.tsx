@@ -73,6 +73,8 @@ import {
   type ArrivalIntakeSnapshot,
   type JbAvailabilityResult,
 } from '../lib/queries/arrivalIntake.ts';
+import { useAppointmentExtras } from '../lib/queries/appointmentExtras.ts';
+import { useUpgradeCatalogueIds } from '../lib/queries/upgradeCatalogue.ts';
 import {
   inferServiceTypeFromEventLabel,
   requiredSectionsForCart,
@@ -306,6 +308,20 @@ export function Arrival() {
 
   const { rows: catalogueRows } = useCatalogueActive();
   const { byQuestionAnswer: answerMapByQA } = useCalendlyAnswerMap();
+  // Widget-side picks captured at booking — paid upgrades + the
+  // per-arch denture-repair lines. Used by the pre-population effect
+  // below to seed the staging basket with everything the patient
+  // committed to online; without this the receptionist had to re-pick
+  // every upgrade and repair line by hand.
+  const { upgrades: widgetUpgrades, repairItems: widgetRepairItems } =
+    useAppointmentExtras(mode === 'appointment' ? (id ?? null) : null);
+  // Map each widget-upgrade id → its lwo_catalogue.id so the
+  // pre-population effect can stage upgrades as catalogue lines without
+  // a runtime join inside the effect itself. Empty when no upgrades
+  // were ticked.
+  const widgetUpgradeCatalogueIds = useUpgradeCatalogueIds(
+    widgetUpgrades.map((u) => u.upgradeId),
+  );
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
@@ -514,17 +530,67 @@ export function Arrival() {
         repair_variant: appointment.repair_variant ?? null,
         arch:           appointment.arch           ?? null,
       };
-      let matches = findMatches(catalogueRows, criteria);
-      if (matches.length === 0 && criteria.service_type) {
-        const byService = catalogueRows.filter(
-          (r) => r.active && r.service_type === criteria.service_type
-        );
-        if (byService.length === 1) matches = byService;
-      }
-      const best = matches[0];
-      if (!best) return;
       const arch = (criteria.arch ?? null) as 'upper' | 'lower' | 'both' | null;
-      setStagedItems([{ key: `${best.id}-prefill`, catalogue: best, qty: 1, options: { arch } }]);
+      const newStaged: StagedItem[] = [];
+
+      // Denture-repair multi-line cart: when the patient picked
+      // multiple repairs through the widget builder, each row in
+      // lng_appointment_repair_items maps to its own catalogue line.
+      // Skip the legacy single-row pre-fill for repair bookings — the
+      // line items below are the authoritative basket.
+      const isRepair = criteria.service_type === 'denture_repair';
+      if (!isRepair) {
+        let matches = findMatches(catalogueRows, criteria);
+        if (matches.length === 0 && criteria.service_type) {
+          const byService = catalogueRows.filter(
+            (r) => r.active && r.service_type === criteria.service_type
+          );
+          if (byService.length === 1) matches = byService;
+        }
+        const best = matches[0];
+        if (best) {
+          newStaged.push({
+            key: `${best.id}-prefill`,
+            catalogue: best,
+            qty: 1,
+            options: { arch },
+          });
+        }
+      }
+
+      // Repair lines from the widget's per-arch builder. Each row maps
+      // to a catalogue id directly so no re-resolution is needed.
+      for (const r of widgetRepairItems) {
+        const cat = catalogueRows.find((c) => c.id === r.catalogueId && c.active);
+        if (!cat) continue;
+        newStaged.push({
+          key: `${cat.id}-${r.arch}-prefill`,
+          catalogue: cat,
+          qty: r.quantity,
+          options: { arch: r.arch },
+        });
+      }
+
+      // Upgrades the patient ticked. We resolved the upgrade-row
+      // catalogue_id mapping once into widgetUpgradeCatalogueIds so
+      // each upgrade can be staged as its own line with the booking's
+      // arch carried through.
+      for (const u of widgetUpgrades) {
+        const catId = widgetUpgradeCatalogueIds.get(u.upgradeId);
+        if (!catId) continue;
+        const cat = catalogueRows.find((c) => c.id === catId && c.active);
+        if (!cat) continue;
+        newStaged.push({
+          key: `${cat.id}-upgrade-${u.id}-prefill`,
+          catalogue: cat,
+          qty: 1,
+          options: { arch },
+        });
+      }
+
+      if (newStaged.length > 0) {
+        setStagedItems(newStaged);
+      }
       return;
     }
 
@@ -582,7 +648,7 @@ export function Arrival() {
         setStagedItems([{ key: `${sole.id}-prefill`, catalogue: sole, qty: 1, options: { arch } }]);
       }
     }
-  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length, widgetUpgrades, widgetRepairItems, widgetUpgradeCatalogueIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;

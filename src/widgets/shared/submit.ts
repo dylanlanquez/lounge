@@ -67,6 +67,23 @@ export async function submitBooking(
     productKey: state.axes.product_key ?? null,
     arch: state.axes.arch ?? null,
     upgradeIds: state.upgradeIds,
+    // Per-arch denture-repair lines from the multi-line cart. Only
+    // populated for denture_repair bookings; every other service ships
+    // an empty array. The server re-resolves prices against the
+    // catalogue before writing — these client-supplied prices are for
+    // optimistic display only and are NOT trusted by the backend.
+    repairItems: state.repairItems.map((r) => ({
+      catalogueId: r.catalogueId,
+      code: r.code,
+      repairVariant: r.repairVariant,
+      name: r.name,
+      unitLabel: r.unitLabel,
+      arch: r.arch,
+      quantity: r.quantity,
+      unitPricePence: r.unitPricePence,
+      bothArchesPricePence: r.bothArchesPricePence,
+      lineTotalPence: r.lineTotalPence,
+    })),
     paymentIntentId,
     // The brand the customer booked through. Stored on the
     // appointment row so the confirmation email + downstream

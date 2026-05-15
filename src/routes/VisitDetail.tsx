@@ -37,13 +37,15 @@ import {
   MarketingGallery,
   MultiSelectDropdown,
   Section,
+  AppointmentExtras,
+  ContinuousTimeline,
   ShipVisitSheet,
   Skeleton,
   SmilePhotosCard,
   Toast,
-  VisitTimeline,
   WaiverSheet,
 } from '../components/index.ts';
+import { useAppointmentExtras } from '../lib/queries/appointmentExtras.ts';
 import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewerDialog.tsx';
 import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
@@ -128,6 +130,8 @@ export function VisitDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const { visit, patient, deposit, shopifyOrder, appointment, receptionistName, loading } = useVisitDetail(id);
+  const { upgrades: appointmentUpgrades, repairItems: appointmentRepairItems } =
+    useAppointmentExtras(visit?.appointment_id ?? null);
   const { data: galleryFiles, loading: galleryFilesLoading, refresh: refreshGalleryFiles } =
     usePatientProfileFiles(patient?.id ?? null);
   const { cart, items, loading: cartLoading, refresh, ensureOpen } = useCart(id);
@@ -442,6 +446,18 @@ export function VisitDetail() {
       // is already covered online.
       shopifyCreditPence: shopifyOrder?.pence ?? 0,
       shopifyOrderName: shopifyOrder?.name ?? null,
+      // Same reasoning for the deposit / paid-in-full collected at
+      // booking. Top-level fields render on every waiver render
+      // (arrival signing, post-payment receipt) regardless of cart
+      // status. The previous shape only sourced these from `payment`
+      // (set when cart.status='paid'), so an unpaid cart's waiver
+      // missed the deposit credit entirely.
+      depositPence: deposit?.status === 'paid' ? deposit.pence : 0,
+      depositProvider: deposit?.status === 'paid' ? deposit.provider : null,
+      depositSource: deposit?.status === 'paid' ? deposit.source : null,
+      depositBrandId: deposit?.status === 'paid' ? deposit.brandId : null,
+      depositPaidInFullAtBooking:
+        deposit?.status === 'paid' ? deposit.paidInFullAtBooking : false,
       notes: visit.notes,
       sections: docSections,
       signatureSvg: latestSig?.signature_svg ?? null,
@@ -470,6 +486,10 @@ export function VisitDetail() {
               depositPence: deposit?.status === 'paid' ? deposit.pence : 0,
               depositProvider:
                 deposit?.status === 'paid' ? deposit.provider : null,
+              depositSource: deposit?.status === 'paid' ? deposit.source : null,
+              depositBrandId: deposit?.status === 'paid' ? deposit.brandId : null,
+              depositPaidInFullAtBooking:
+                deposit?.status === 'paid' ? deposit.paidInFullAtBooking : false,
               shopifyCreditPence: shopifyOrder?.pence ?? 0,
               shopifyOrderName: shopifyOrder?.name ?? null,
             }
@@ -1421,6 +1441,15 @@ export function VisitDetail() {
                   {visit.dispatch_ref ? (
                     <ShippedItemsCard visit={visit} onPrintLabel={() => printLabel(visit.label_data)} />
                   ) : null}
+                  {/* What the patient picked at booking — paid upgrades
+                      and (for denture-repair bookings) the per-arch
+                      repair lines. Renders nothing when both lists are
+                      empty so the visit page doesn't grow a placeholder
+                      for every booking. */}
+                  <AppointmentExtras
+                    upgrades={appointmentUpgrades}
+                    repairItems={appointmentRepairItems}
+                  />
                   {/* Pre-visit smile photos — the intake photos the
                       patient uploaded from the booking-confirmation
                       screen, sitting just above the before/after
@@ -1428,7 +1457,13 @@ export function VisitDetail() {
                       progress shots read as one media block. Click-in
                       veneers only. */}
                   {visit.appointment_id && appointment?.service_type === 'click_in_veneers' ? (
-                    <SmilePhotosCard appointmentId={visit.appointment_id} />
+                    <SmilePhotosCard
+                      appointmentId={visit.appointment_id}
+                      patientId={patient?.id}
+                      patientName={patient ? patientFullName(patient) : undefined}
+                      uploaderAccountId={user?.id ?? null}
+                      onPromoted={refreshGalleryFiles}
+                    />
                   ) : null}
                   <BeforeAfterGallery
                     patient={patient}
@@ -1444,7 +1479,10 @@ export function VisitDetail() {
                     refresh={refreshGalleryFiles}
                     isMobile={isMobile}
                   />
-                  <VisitTimeline visitId={visit.id} />
+                  <ContinuousTimeline
+                    appointmentId={visit.appointment_id ?? null}
+                    visitId={visit.id}
+                  />
                 </div>
               </>
             ) : null}

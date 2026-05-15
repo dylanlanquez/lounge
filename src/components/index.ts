@@ -156,6 +156,12 @@ export type { EmailPreviewModalProps } from './EmailPreviewModal/EmailPreviewMod
 export { AppointmentTimeline } from './AppointmentTimeline/AppointmentTimeline.tsx';
 export type { AppointmentTimelineProps } from './AppointmentTimeline/AppointmentTimeline.tsx';
 
+export { ContinuousTimeline } from './ContinuousTimeline/ContinuousTimeline.tsx';
+export type { ContinuousTimelineProps } from './ContinuousTimeline/ContinuousTimeline.tsx';
+
+export { AppointmentExtras } from './AppointmentExtras/AppointmentExtras.tsx';
+export type { AppointmentExtrasProps } from './AppointmentExtras/AppointmentExtras.tsx';
+
 export { MeetAttendanceCard } from './MeetAttendanceCard/MeetAttendanceCard.tsx';
 export type { MeetAttendanceCardProps } from './MeetAttendanceCard/MeetAttendanceCard.tsx';
 

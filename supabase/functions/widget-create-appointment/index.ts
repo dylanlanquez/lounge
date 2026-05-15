@@ -72,6 +72,19 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
 };
 
+interface SubmitRepairItemBody {
+  catalogueId: string;
+  code: string;
+  repairVariant: string;
+  name: string;
+  unitLabel: string | null;
+  arch: 'upper' | 'lower' | 'both';
+  quantity: number;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  lineTotalPence: number;
+}
+
 interface SubmitBody {
   locationId: string;
   serviceType: string;
@@ -80,6 +93,12 @@ interface SubmitBody {
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
   upgradeIds?: string[];
+  /** Denture-repair line items the patient piled into the cart on
+   *  the per-arch repair step. Each line carries the catalogue id +
+   *  code + arch + quantity. We re-resolve every line server-side
+   *  against lwo_catalogue before writing to lng_appointment_repair_items
+   *  so a tampered client body can't claim £0 for an expensive repair. */
+  repairItems?: SubmitRepairItemBody[];
   /** Set when the service has a deposit and the patient has just
    *  confirmed a Stripe PaymentIntent. The endpoint verifies the PI
    *  with Stripe before populating the appointment's deposit_*
@@ -421,6 +440,26 @@ Deno.serve(async (req) => {
   const apptRow = appt as { id: string; appointment_ref: string | null; manage_token: string | null };
   const appointmentId = apptRow.id;
   const manageToken = apptRow.manage_token;
+
+  // ── Persist widget-side picks (upgrades + repair items) ─────────
+  // The widget captures these in state and ships them in the body, but
+  // before this block they had no destination. Each is re-resolved
+  // server-side against lwo_catalogue / lng_widget_upgrades so a
+  // tampered client body can't claim £0 for a £79 upgrade or shrink a
+  // 6-tooth Broken Tooth line into a single-tooth charge.
+  //
+  // Failure here is loud (logFailure + 500) per CLAUDE.md "no silent
+  // fallbacks" — we'd rather fail the booking than silently drop the
+  // upgrades and confuse the staff later.
+  await persistAppointmentExtras(supabase, {
+    appointmentId,
+    arch: body.arch ?? null,
+    serviceType: body.serviceType,
+    productKey: body.productKey ?? null,
+    repairVariant: body.repairVariant ?? null,
+    upgradeIds: body.upgradeIds ?? [],
+    repairItems: body.repairItems ?? [],
+  });
 
   // ── Google Meet (virtual impression only) ──────────────────────
   // Create the calendar event inline so the join_url is present before
@@ -770,4 +809,221 @@ async function logFailure(
   } catch {
     // best-effort
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// persistAppointmentExtras — write the patient's widget-side picks
+// (paid upgrades + denture-repair line items) into the two
+// snapshot tables introduced in 20260515000003. Both tables snapshot
+// price + name at insert time so a catalogue edit later can never
+// retroactively change the appointment's commitment.
+//
+// Server-side resolution: every price comes from a fresh fetch of
+// lwo_catalogue / lng_widget_upgrades, NOT the body. The client
+// already shipped prices in the payload but trusting them would let
+// a tampered request claim £0 for a £79 upgrade.
+//
+// Failures inside this function throw so the caller surfaces them as
+// 500. The booking is already written; we don't roll it back, but the
+// failure logs to lng_system_failures and the staff app can re-add
+// the missing items by hand — better than the current behaviour of
+// silently dropping every selection.
+// ─────────────────────────────────────────────────────────────────────
+
+async function persistAppointmentExtras(
+  supabase: SupabaseClient,
+  args: {
+    appointmentId: string;
+    arch: 'upper' | 'lower' | 'both' | null;
+    serviceType: string;
+    productKey: string | null;
+    repairVariant: string | null;
+    upgradeIds: string[];
+    repairItems: SubmitRepairItemBody[];
+  },
+) {
+  // ── Upgrades ──────────────────────────────────────────────────────
+  // Each ticked upgrade resolves against lng_widget_upgrades, then
+  // prices itself using the SERVICE catalogue's arch_match (mirrors
+  // the widget's price preview rule at state.ts:computePriceBreakdown).
+  if (args.upgradeIds.length > 0) {
+    // Service row gives us arch_match for the price-resolution rule.
+    let serviceArchMatch: 'any' | 'single' | 'both' = 'any';
+    {
+      let q = supabase
+        .from('lwo_catalogue')
+        .select('arch_match')
+        .eq('service_type', args.serviceType)
+        .eq('active', true);
+      if (args.productKey) q = q.eq('product_key', args.productKey);
+      if (args.repairVariant) q = q.eq('repair_variant', args.repairVariant);
+      const { data: rows, error } = await q.limit(1);
+      if (error) {
+        await logFailure('upgrade_service_arch_match_failed', {
+          appointmentId: args.appointmentId,
+          error: error.message,
+        });
+        throw new Error(`Could not resolve service arch_match: ${error.message}`);
+      }
+      const row = (rows ?? [])[0] as { arch_match?: string } | undefined;
+      if (row?.arch_match === 'single' || row?.arch_match === 'both' || row?.arch_match === 'any') {
+        serviceArchMatch = row.arch_match;
+      }
+    }
+
+    const { data: upgradeRows, error: upgradeReadErr } = await supabase
+      .from('lng_widget_upgrades')
+      .select('id, code, name, unit_price, both_arches_price')
+      .in('id', args.upgradeIds);
+    if (upgradeReadErr) {
+      await logFailure('upgrade_resolve_failed', {
+        appointmentId: args.appointmentId,
+        upgradeIds: args.upgradeIds,
+        error: upgradeReadErr.message,
+      });
+      throw new Error(`Could not resolve upgrades: ${upgradeReadErr.message}`);
+    }
+    const archIsBoth = args.arch === 'both';
+    const upgradeInserts = (upgradeRows ?? []).map((r) => {
+      const unitPence = Math.round(Number(r.unit_price) * 100);
+      const bothPence =
+        r.both_arches_price === null || r.both_arches_price === undefined
+          ? null
+          : Math.round(Number(r.both_arches_price) * 100);
+      const resolvedPence =
+        serviceArchMatch === 'single' && archIsBoth && bothPence !== null
+          ? bothPence
+          : unitPence;
+      return {
+        appointment_id: args.appointmentId,
+        upgrade_id: r.id as string,
+        // Prefer the catalogue's stable text code (e.g. 'titanium_nightguard');
+        // fall back to the uuid if the row hasn't been backfilled yet so
+        // the unique constraint still has something to hash on.
+        upgrade_code: (r.code as string) || (r.id as string),
+        name: (r.name as string) ?? '',
+        unit_label: null,
+        unit_price_pence: unitPence,
+        both_arches_price_pence: bothPence,
+        resolved_price_pence: resolvedPence,
+      };
+    });
+    if (upgradeInserts.length > 0) {
+      const { error: upgradeWriteErr } = await supabase
+        .from('lng_appointment_upgrade_selections')
+        .insert(upgradeInserts);
+      if (upgradeWriteErr) {
+        await logFailure('upgrade_insert_failed', {
+          appointmentId: args.appointmentId,
+          upgradeIds: args.upgradeIds,
+          error: upgradeWriteErr.message,
+        });
+        throw new Error(`Could not write upgrade selections: ${upgradeWriteErr.message}`);
+      }
+    }
+  }
+
+  // ── Repair items ──────────────────────────────────────────────────
+  if (args.repairItems.length > 0) {
+    const catalogueIds = Array.from(new Set(args.repairItems.map((r) => r.catalogueId)));
+    const { data: catalogueRows, error: catErr } = await supabase
+      .from('lwo_catalogue')
+      .select('id, name, unit_price, both_arches_price, unit_label, repair_variant, code')
+      .in('id', catalogueIds);
+    if (catErr) {
+      await logFailure('repair_catalogue_resolve_failed', {
+        appointmentId: args.appointmentId,
+        catalogueIds,
+        error: catErr.message,
+      });
+      throw new Error(`Could not resolve repair catalogue rows: ${catErr.message}`);
+    }
+    const catalogueById = new Map<string, {
+      id: string;
+      name: string;
+      unitPence: number;
+      bothPence: number | null;
+      unitLabel: string | null;
+      repairVariant: string;
+      code: string;
+    }>();
+    for (const r of catalogueRows ?? []) {
+      catalogueById.set(r.id as string, {
+        id: r.id as string,
+        name: (r.name as string) ?? '',
+        unitPence: Math.round(Number(r.unit_price) * 100),
+        bothPence:
+          r.both_arches_price === null || r.both_arches_price === undefined
+            ? null
+            : Math.round(Number(r.both_arches_price) * 100),
+        unitLabel: (r.unit_label as string | null) ?? null,
+        repairVariant: (r.repair_variant as string) ?? '',
+        code: (r.code as string) ?? '',
+      });
+    }
+    const repairInserts: Array<Record<string, unknown>> = [];
+    for (const item of args.repairItems) {
+      const cat = catalogueById.get(item.catalogueId);
+      if (!cat) {
+        await logFailure('repair_item_unknown_catalogue', {
+          appointmentId: args.appointmentId,
+          catalogueId: item.catalogueId,
+        }, 'warning');
+        continue;
+      }
+      const quantity = Math.max(1, Math.min(14, Math.round(item.quantity)));
+      const lineTotalPence = resolveRepairLineTotalPence({
+        unitLabel: cat.unitLabel,
+        unitPricePence: cat.unitPence,
+        bothArchesPricePence: cat.bothPence,
+        arch: item.arch,
+        quantity,
+      });
+      repairInserts.push({
+        appointment_id: args.appointmentId,
+        catalogue_id: cat.id,
+        code: cat.code || item.code,
+        repair_variant: cat.repairVariant || item.repairVariant,
+        name: cat.name || item.name,
+        unit_label: cat.unitLabel,
+        arch: item.arch,
+        quantity,
+        unit_price_pence: cat.unitPence,
+        both_arches_price_pence: cat.bothPence,
+        line_total_pence: lineTotalPence,
+      });
+    }
+    if (repairInserts.length > 0) {
+      const { error: repairWriteErr } = await supabase
+        .from('lng_appointment_repair_items')
+        .insert(repairInserts);
+      if (repairWriteErr) {
+        await logFailure('repair_items_insert_failed', {
+          appointmentId: args.appointmentId,
+          rowCount: repairInserts.length,
+          error: repairWriteErr.message,
+        });
+        throw new Error(`Could not write repair items: ${repairWriteErr.message}`);
+      }
+    }
+  }
+}
+
+// Server-side mirror of the widget's resolveLineTotal helper
+// (state.ts). Keep both in sync; if the widget's pricing rule ever
+// changes, the server is the source of truth.
+function resolveRepairLineTotalPence(input: {
+  unitLabel: string | null;
+  unitPricePence: number;
+  bothArchesPricePence: number | null;
+  arch: 'upper' | 'lower' | 'both';
+  quantity: number;
+}): number {
+  if (input.unitLabel === 'per tooth') {
+    return input.quantity * input.unitPricePence;
+  }
+  if (input.unitLabel === 'per arch' && input.arch === 'both') {
+    return input.bothArchesPricePence ?? input.unitPricePence * 2;
+  }
+  return input.unitPricePence;
 }

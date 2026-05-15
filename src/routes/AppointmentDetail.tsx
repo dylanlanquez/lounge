@@ -25,10 +25,11 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  AppointmentExtras,
   AppointmentHero,
   type AppointmentHeroPill,
   type AppointmentHeroTone,
-  AppointmentTimeline,
+  ContinuousTimeline,
   MeetAttendanceCard,
   BottomSheet,
   Breadcrumb,
@@ -275,6 +276,7 @@ function Loaded({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
@@ -486,8 +488,21 @@ function Loaded({
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : null}
         <BookingFactsCard appt={appt} />
+        <AppointmentExtras
+          upgrades={appt.upgrades}
+          repairItems={appt.repairItems}
+        />
         {appt.service_type === 'click_in_veneers' ? (
-          <SmilePhotosCard appointmentId={appt.id} />
+          <SmilePhotosCard
+            appointmentId={appt.id}
+            patientId={appt.patient_id}
+            patientName={patientFullDisplayName({
+              patient_first_name: appt.patient.first_name,
+              patient_last_name: appt.patient.last_name,
+            } as never)}
+            uploaderAccountId={user?.id ?? null}
+            onPromoted={onChanged}
+          />
         ) : null}
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
@@ -593,7 +608,14 @@ function Loaded({
       ) : null}
 
       <section style={{ marginTop: theme.space[5] }}>
-        <AppointmentTimeline appointmentId={appt.id} />
+        {/* ContinuousTimeline drives both pre- and post-arrival pages,
+            so the patient's audit trail reads as one stream regardless
+            of which surface a receptionist is on. visitId is null
+            here — when a visit exists, AppointmentDetail redirects to
+            /visit/:id (above) and VisitDetail mounts the same hook
+            with visitId set, picking up the post-arrival events on
+            top of the same pre-arrival history. */}
+        <ContinuousTimeline appointmentId={appt.id} visitId={null} />
       </section>
 
       {rescheduling ? (
