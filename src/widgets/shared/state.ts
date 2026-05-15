@@ -921,21 +921,47 @@ const APPLIANCE_TITLE: Record<string, string> = {
 const ARCH_TITLE: Record<string, string> = {
   upper: 'Upper',
   lower: 'Lower',
-  both: 'Both',
+  // Both arches reads naturally as a coordinated pair, not a count.
+  // "Both Retainer" was confusing — a quantity-sounding word in
+  // front of a singular noun. "Upper & Lower Retainers" reads as a
+  // proper noun phrase and tells the patient exactly what they
+  // booked. The pluralisation of the appliance happens inside
+  // formatBookingSuccessTitle so the same map can drive both arches.
+  both: 'Upper & Lower',
 };
+
+// Pluralise an appliance noun when arch=both. Catalogue labels are
+// stored as singular ("Retainer", "Night Guard", "Missing-tooth
+// Appliance") so we add 's' to the last word for the both-arches
+// title. Labels that are already plural ("Click-in Veneers") pass
+// through untouched. Mirrors the simple rule the staff app uses for
+// staged-item labels; if a future appliance name needs irregular
+// plural handling, special-case it here.
+function pluraliseApplianceForBoth(label: string): string {
+  const trimmed = label.trim();
+  if (trimmed.length === 0) return trimmed;
+  if (trimmed.endsWith('s') || trimmed.endsWith('S')) return trimmed;
+  return `${trimmed}s`;
+}
 
 /**
  * Compose the headline service title shown on the success card.
- * Same-day services (click_in_veneers + same_day_appliance) get a
- * "Same-day" prefix; arch + appliance follow. Everything else falls
- * back to the booking type's display label with arch prefixed when
- * present.
  *
  * Examples:
- *   click_in_veneers + arch=upper                  → "Same-day Upper Click-in Veneers"
- *   same_day_appliance + product=retainer + lower  → "Same-day Lower Retainer"
+ *   click_in_veneers + arch=upper                  → "Upper Click-in Veneers"
+ *   click_in_veneers + arch=both                   → "Upper & Lower Click-in Veneers"
+ *   same_day_appliance + product=retainer + lower  → "Lower Retainer"
+ *   same_day_appliance + product=retainer + both   → "Upper & Lower Retainers"
  *   denture_repair + arch=upper                    → "Upper Denture repair"
  *   whitening_kit (no axes)                        → "Whitening kit"
+ *
+ * Two rules of thumb baked in:
+ *   • arch='both' reads as "Upper & Lower" rather than "Both"
+ *     so the headline is a noun phrase, not a count.
+ *   • when arch='both' AND the appliance has a singular catalogue
+ *     name (Retainer, Night Guard, Missing-tooth Appliance), the
+ *     headline pluralises the appliance so subject/verb agreement
+ *     reads correctly to the patient.
  *
  * Strips any HTML tags from the booking-type label before composing
  * — `lng_widget_booking_types.display_label` is rendered with
@@ -947,20 +973,26 @@ export function formatBookingSuccessTitle(state: WidgetState): string {
   if (!svc) return '';
   const type = svc.serviceType;
   const archKey = state.axes.arch;
+  const isBoth = archKey === 'both';
   const arch = archKey ? ARCH_TITLE[archKey] : null;
 
   if (type === 'click_in_veneers') {
-    const parts = ['Same-day'];
+    // Click-in Veneers is already plural in its singular form, so
+    // pluralisation is a no-op. Arch first, name second.
+    const parts: string[] = [];
     if (arch) parts.push(arch);
     parts.push('Click-in Veneers');
     return parts.join(' ');
   }
 
   if (type === 'same_day_appliance') {
-    const appliance = state.axes.product_key
+    const baseAppliance = state.axes.product_key
       ? (APPLIANCE_TITLE[state.axes.product_key] ?? 'Appliance')
       : 'Appliance';
-    const parts = ['Same-day'];
+    const appliance = isBoth
+      ? pluraliseApplianceForBoth(baseAppliance)
+      : baseAppliance;
+    const parts: string[] = [];
     if (arch) parts.push(arch);
     parts.push(appliance);
     return parts.join(' ');
