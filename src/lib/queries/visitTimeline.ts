@@ -92,19 +92,6 @@ type RawTimelineEvent = Omit<TimelineEvent, 'actor'> & {
   actorAccountId?: string | null;
 };
 
-interface AppointmentRow {
-  id: string;
-  source: string;
-  created_at: string;
-  start_at: string;
-  calendly_event_uri: string | null;
-  deposit_pence: number | null;
-  deposit_provider: string | null;
-  deposit_paid_at: string | null;
-  event_type_label: string | null;
-  appointment_ref: string | null;
-}
-
 interface VisitRow {
   id: string;
   patient_id: string;
@@ -209,13 +196,6 @@ const PAYMENT_JOURNEY_LABEL: Record<string, string> = {
   clearpay_legacy_shopify: 'Clearpay (Shopify)',
 };
 
-const HUMAN_PROVIDER = (p: string | null | undefined): string => {
-  if (!p) return '';
-  if (p === 'stripe') return 'Stripe';
-  if (p === 'paypal') return 'PayPal';
-  return p;
-};
-
 // Patient_events titles. Anything that already gets surfaced by a
 // dedicated stream (deposit_paid, walk_in_arrived) is filtered out
 // in fetchPatientEvents — these labels apply to the rest.
@@ -259,33 +239,6 @@ function accountDisplayName(a: AccountRow): string {
   return a.name?.trim() ?? '';
 }
 
-// Builds the structured fact list for a scheduled-booking timeline
-// row. Service is intentionally NOT included — it already lives on
-// the event's inline detail line ("Denture Repair · scheduled Mon
-// 9 May · LAP-00001"), so duplicating it in the facts block
-// produces a single-row card that reads as redundant. Facts here
-// are the intake-style answers (repair type, contact number,
-// appliance, etc.) and any free-text booking notes.
-function bookingFactsForScheduled(appt: {
-  event_type_label: string | null;
-  intake: ReadonlyArray<{ question: string; answer: string }> | null;
-  notes: string | null;
-}): TimelineFact[] {
-  const facts: TimelineFact[] = [];
-  if (appt.intake) {
-    for (const item of appt.intake) {
-      const rawValue = item.answer?.trim();
-      if (!rawValue) continue;
-      const label = humaniseIntakeQuestion(item.question);
-      facts.push({ label, value: humaniseIntakeAnswer(label, rawValue) });
-    }
-  }
-  if (appt.notes?.trim()) {
-    facts.push({ label: 'Booking notes', value: appt.notes.trim() });
-  }
-  return facts;
-}
-
 // Same idea for walk-ins, minus the service field — already in the
 // detail line. Pulls structured columns from lng_walk_ins one at a
 // time so the timeline shows what the receptionist captured at
@@ -322,111 +275,9 @@ function humaniseLikelySlug(value: string | null): string | null {
   return trimmed;
 }
 
-// Mirrors AppointmentDetail's intake humaniser. Two surfaces share
-// the same Calendly-flavoured questions; keep the rewrites in sync
-// when adding new ones.
-function humaniseIntakeQuestion(question: string): string {
-  const trimmed = question.trim().replace(/[?:]+$/, '');
-  if (!trimmed) return '';
-  const lower = trimmed.toLowerCase();
-  switch (lower) {
-    case 'what is the type of repair you would like done':
-    case 'what type of repair would you like done':
-    case 'type of repair':
-      return 'Repair type';
-    case 'contact number':
-    case 'phone number':
-    case "what's your contact number":
-      return 'Contact number';
-    case 'what is the name of the dentures':
-    case 'what is the brand of the dentures':
-      return 'Denture brand';
-    case 'where did you buy the dentures':
-      return 'Where the dentures were bought';
-    case 'how old are the dentures':
-      return 'Age of the dentures';
-    case 'which arch':
-    case 'what arch':
-    case 'arch':
-    case 'which arch is affected':
-      return 'Arch';
-    case 'shade':
-    case 'tooth shade':
-    case 'desired shade':
-      return 'Shade';
-    case 'what product is the impression for':
-    case 'what product is this impression for':
-    case 'product the impression is for':
-      return 'Product';
-    default:
-      // Pass-through so already-friendly Calendly questions render
-      // as the operator typed them. Add a rewrite case above when
-      // a recurring question reads badly through the eyebrow's
-      // uppercase styling.
-      return trimmed;
-  }
-}
-
-// Normalise common intake answer values so receptionists see the
-// terms used elsewhere in the app. Most answers pass through; only
-// the ones with a colloquial form ("Top" / "Bottom" for arches,
-// "yes"/"no" for booleans) get rewritten.
-function humaniseIntakeAnswer(label: string, value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return trimmed;
-  const lower = trimmed.toLowerCase();
-
-  // Arch answers — Calendly forms commonly offer Top / Bottom /
-  // Both as the picker options. Map to Upper / Lower / Upper and
-  // lower so the value matches the lng_walk_ins.arch enum and the
-  // language used in the IntakeCard.
-  if (label === 'Arch') {
-    switch (lower) {
-      case 'top':
-      case 'upper':
-        return 'Upper';
-      case 'bottom':
-      case 'lower':
-        return 'Lower';
-      case 'both':
-      case 'both arches':
-      case 'top and bottom':
-      case 'upper and lower':
-        return 'Upper and lower';
-      default:
-        return trimmed;
-    }
-  }
-
-  // Yes / no normalisation. Calendly checkbox answers come through
-  // as a literal "Yes" / "No" already in most cases; this catches
-  // the edge cases of "y" / "n" / lowercase / mixed.
-  if (lower === 'yes' || lower === 'y' || lower === 'true') return 'Yes';
-  if (lower === 'no' || lower === 'n' || lower === 'false') return 'No';
-
-  return trimmed;
-}
-
 function joinDetail(...bits: Array<string | null | undefined>): string | undefined {
   const filtered = bits.filter((b): b is string => !!b && b.trim().length > 0);
   return filtered.length > 0 ? filtered.join(' · ') : undefined;
-}
-
-// Format the visit's appointment time for the booking-row detail.
-// The booking row's *timestamp* is when the booking was created on
-// Calendly; the appointment's *start_at* is when the patient is
-// expected to arrive — that's the contextually useful fact, so we
-// include it in the detail line.
-function formatAppointmentSlot(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-GB', {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult {
@@ -670,60 +521,18 @@ async function fetchAppointmentEvents(
   // list mirroring the appointment-detail timeline's enrichment.
   const out: RawTimelineEvent[] = [];
 
-  if (visit.appointment_id) {
-    const { data, error: err } = await supabase
-      .from('lng_appointments')
-      .select(
-        'id, source, created_at, start_at, calendly_event_uri, deposit_pence, deposit_provider, deposit_paid_at, event_type_label, appointment_ref, intake, notes, paid_in_full_at_booking'
-      )
-      .eq('id', visit.appointment_id)
-      .maybeSingle();
-    if (err) throw new Error(err.message);
-    if (!data) return [];
-    const appt = data as AppointmentRow & {
-      intake: ReadonlyArray<{ question: string; answer: string }> | null;
-      notes: string | null;
-    };
-    out.push({
-      id: `appt-${appt.id}-created`,
-      type: 'appointment_created',
-      timestamp: appt.created_at,
-      // Title matches the appointment-side composer's "Booking placed"
-      // so the same row reads identically across the appointment page
-      // (pre-arrival) and the visit page (post-arrival), instead of
-      // flipping to "Appointment created" once the visit opens.
-      title: appt.calendly_event_uri ? 'Booking placed on Calendly' : 'Booking placed',
-      detail: joinDetail(
-        appt.event_type_label,
-        `scheduled ${formatAppointmentSlot(appt.start_at)}`,
-        appt.appointment_ref
-      ),
-      facts: bookingFactsForScheduled(appt),
-      hint: 'calendar',
-    });
-    if (appt.deposit_paid_at && appt.deposit_pence) {
-      // paid_in_full_at_booking flips the title from "Deposit paid"
-      // to "Paid in full" — the deposit_* columns get populated for
-      // both paths, so the only distinguishing field is this flag.
-      const paidInFull = (appt as { paid_in_full_at_booking?: boolean | null }).paid_in_full_at_booking === true;
-      out.push({
-        id: `appt-${appt.id}-deposit`,
-        type: 'deposit_paid',
-        timestamp: appt.deposit_paid_at,
-        title: paidInFull ? 'Paid in full' : 'Deposit paid',
-        detail: joinDetail(
-          PENCE(appt.deposit_pence),
-          appt.deposit_provider ? `via ${HUMAN_PROVIDER(appt.deposit_provider)}` : null
-        ),
-        // `deposit` hint → renders the shared DepositGlyph mark
-        // used by the rest of the deposit-paid surfaces (hero pill,
-        // Deposit card, Ledger row). The earlier `card`
-        // (CreditCard) hint was generic — this one ties the timeline
-        // event back to the deposit surface visually.
-        hint: 'deposit',
-      });
-    }
-  }
+  // Booking placed + Deposit captured / Paid in full are owned by the
+  // appointment timeline hook (single source of truth). On the visit
+  // page they arrive via useContinuousTimeline → useAppointmentTimeline,
+  // not from this synthesis. Two-source synthesis with a dedupe layer
+  // was fragile — once the two writers disagreed (different titles,
+  // different facts) we'd have to read both rows to know which was
+  // "true". This file no longer touches lng_appointments for events
+  // the appointment hook already produces.
+  //
+  // Walk-ins are different: they have no lng_appointments row, so the
+  // appointment hook never runs for them. The visit hook continues to
+  // synthesise the Walk-in created row from lng_walk_ins below.
 
   if (visit.walk_in_id) {
     const { data, error: wkErr } = await supabase
@@ -1031,27 +840,23 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
   // Visit-scoped slice of patient_events. Every Lounge writer that
   // emits a visit-level event puts the visit's id into payload.visit_id
   // (cart_line_removed, visit_ended_early, patient_unsuitable_reversed,
-  // walk_in_arrived, visit_arrived). We also pull appointment-scoped
-  // rows keyed by payload.appointment_id when the visit has one —
-  // confirmation / cancellation / reminder emails record themselves
-  // against the appointment, not the visit (the visit doesn't exist
-  // yet when the booking confirmation fires). The receptionist looking
-  // at the visit timeline should see EVERY email that touched this
-  // patient's journey through this booking, so OR both axes.
+  // walk_in_arrived, visit_arrived). Visit hook ONLY fetches by visit_id
+  // — appointment-scoped patient_events (confirmation / cancellation /
+  // reminder emails, deposit_paid, appointment_booked) are owned by the
+  // appointment hook. On the visit page useContinuousTimeline runs both
+  // hooks and concatenates the disjoint streams, so the patient still
+  // sees the full audit trail without two writers fighting over the
+  // same event.
   //
   // Patient-level events with no visit context AND no appointment
   // context (registration, no_show, deposit failures) intentionally do
   // NOT appear on a visit timeline; they belong on the patient profile
   // instead.
-  const orClauses = [`payload->>visit_id.eq.${visit.id}`];
-  if (visit.appointment_id) {
-    orClauses.push(`payload->>appointment_id.eq.${visit.appointment_id}`);
-  }
   const { data, error: err } = await supabase
     .from('patient_events')
     .select('id, event_type, notes, payload, actor_account_id, created_at')
     .eq('patient_id', visit.patient_id)
-    .or(orClauses.join(','))
+    .filter('payload->>visit_id', 'eq', visit.id)
     .order('created_at', { ascending: true });
   if (err) throw new Error(err.message);
   const rows = (data ?? []) as PatientEventRow[];

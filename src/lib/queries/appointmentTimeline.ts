@@ -84,6 +84,12 @@ interface RawAppointmentRow {
   event_type_label: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   notes: string | null;
+  // LAP ref carried into the Booking placed detail line so the
+  // appointment's reference reads identically across the
+  // appointment + visit pages (visit-side used to add it via its
+  // own synth; that synth was retired in favour of single-source
+  // appointment-side composition).
+  appointment_ref: string | null;
   // Walk-in marker rows have walk_in_id set; the rich intake (repair
   // type / appliance / arch) lives on the walk-in row itself, fetched
   // separately when this is non-null.
@@ -138,7 +144,7 @@ export function useAppointmentTimeline(
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, source, brand_id, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id, paid_in_full_at_booking',
+            'id, source, brand_id, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id, paid_in_full_at_booking, appointment_ref',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -442,12 +448,7 @@ function mapEvent(
   walkIn: RawWalkInRow | null,
 ): TimelineEvent | null {
   const actor = row.actor_account_id ? actorById.get(row.actor_account_id) : undefined;
-  // ID prefix matches visitTimeline's patient-event-* shape so when
-  // both hooks surface the same patient_events row (which happens on
-  // the visit page via useContinuousTimeline), the ID dedupe in
-  // useContinuousTimeline collapses them to one entry instead of
-  // showing the email twice.
-  const base = { id: `patient-event-${row.id}`, timestamp: row.created_at, actor };
+  const base = { id: row.id, timestamp: row.created_at, actor };
 
   switch (row.event_type) {
     case 'appointment_booked': {
@@ -457,11 +458,21 @@ function mapEvent(
       // value so the brand-aware "via venneir.com" mapping fires.
       const payloadSource = readString(row.payload, 'source');
       const effectiveSource = payloadSource === 'widget' ? appt.source : (payloadSource ?? appt.source);
+      // Detail chain mirrors what the visit-side synth used to
+      // emit — service label, scheduled slot, LAP ref, source —
+      // so dropping the duplicate visit-side row doesn't lose any
+      // information. Single source of truth: this case is the
+      // canonical Booking placed event for both pages.
       return {
         ...base,
         type: 'appointment_created',
         title: 'Booking placed',
-        detail: humaniseSource(effectiveSource, appt.brand_id),
+        detail: joinDetail(
+          appt.event_type_label,
+          `scheduled ${formatBookingSlot(appt.start_at)}`,
+          appt.appointment_ref,
+          humaniseSource(effectiveSource, appt.brand_id),
+        ),
         facts: bookingFacts(appt, walkIn),
         hint: 'calendar',
         tone: 'accent',
@@ -610,18 +621,6 @@ function mapEvent(
         hint: 'check',
         tone: 'neutral',
       };
-
-    case 'visit_arrived': {
-      const visitId = readString(row.payload, 'visit_id');
-      return {
-        ...base,
-        type: 'visit_opened',
-        title: 'Patient arrived',
-        detail: visitId ? 'Visit opened' : undefined,
-        hint: 'check',
-        tone: 'accent',
-      };
-    }
 
     case 'appointment_confirmation_sent':
     case 'appointment_cancellation_sent': {
@@ -809,6 +808,24 @@ function readObject(
 function joinDetail(...bits: Array<string | null | undefined>): string | undefined {
   const filtered = bits.filter((b): b is string => !!b && b.trim().length > 0);
   return filtered.length > 0 ? filtered.join(' · ') : undefined;
+}
+
+// Mirrors visitTimeline.formatAppointmentSlot — kept local rather
+// than cross-imported because it's a one-line helper and the two
+// timeline files already maintain parallel humaniser tables. The
+// format ("Mon 18 May, 10:15") is what the visit page used to
+// emit; appointment-side now owns the Booking placed row, so it
+// formats the same way.
+function formatBookingSlot(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-GB', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 // "12 May at 11:00" — used for sibling appointment timestamps inside
