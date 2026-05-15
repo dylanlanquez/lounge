@@ -358,7 +358,10 @@ export function useAppointmentTimeline(
         // Synthesised "Booking placed" — when no patient_events row
         // logs the creation (older Calendly imports pre-date the
         // logging). Always falls at the appointment's created_at so
-        // the timeline opens cleanly.
+        // the timeline opens cleanly. Detail mirrors the patient-
+        // event composer above so a synthesised row reads identically
+        // to a logged one — same scheduled slot, same LAP ref, same
+        // "By customer via Calendly" source.
         const hasBookedEvent = rows.some((r) => r.event_type === 'appointment_booked');
         if (!hasBookedEvent) {
           out.push({
@@ -366,7 +369,12 @@ export function useAppointmentTimeline(
             type: 'appointment_created',
             timestamp: appt.created_at,
             title: 'Booking placed',
-            detail: humaniseSource(appt.source, appt.brand_id),
+            detail: joinDetail(
+              appt.event_type_label,
+              `scheduled ${formatBookingSlot(appt.start_at)}`,
+              appt.appointment_ref,
+              describeBookedBy(appt.source, appt.brand_id, undefined),
+            ),
             facts: bookingFacts(appt, walkIn),
             hint: 'calendar',
             tone: 'accent',
@@ -455,7 +463,8 @@ function mapEvent(
       // payload.source is the legacy slug from widget-create-
       // appointment ('widget'); appt.source is the canonical
       // 'native'/'manual'/'calendly' on the row. Prefer the row's
-      // value so the brand-aware "via venneir.com" mapping fires.
+      // value so the brand-aware "by customer on venneir.com"
+      // mapping fires.
       const payloadSource = readString(row.payload, 'source');
       const effectiveSource = payloadSource === 'widget' ? appt.source : (payloadSource ?? appt.source);
       // Detail chain mirrors what the visit-side synth used to
@@ -465,13 +474,18 @@ function mapEvent(
       // canonical Booking placed event for both pages.
       return {
         ...base,
+        // Suppress the generic "by {actor}" suffix the timeline card
+        // appends — the source line ("By customer on venneir.com" /
+        // "By Dylan Lane") already encodes who, and the renderer
+        // duplicating it produces "By Dylan Lane · by Dylan Lane".
+        actor: undefined,
         type: 'appointment_created',
         title: 'Booking placed',
         detail: joinDetail(
           appt.event_type_label,
           `scheduled ${formatBookingSlot(appt.start_at)}`,
           appt.appointment_ref,
-          humaniseSource(effectiveSource, appt.brand_id),
+          describeBookedBy(effectiveSource, appt.brand_id, actor),
         ),
         facts: bookingFacts(appt, walkIn),
         hint: 'calendar',
@@ -838,18 +852,32 @@ function formatWhen(iso: string): string {
   return `${date} at ${time}`;
 }
 
-function humaniseSource(source: string, brandId: string | null = null): string {
-  if (source === 'calendly') return 'Imported from Calendly';
-  if (source === 'manual') return 'Manually added';
+// Source-aware "who placed this booking" label for the Booking
+// placed timeline event. Dylan's spec: distinguish customer-driven
+// (widget / Calendly) from staff-driven (manual) bookings, and for
+// customer-driven name the storefront so reception can match the
+// row to the right Shopify dashboard.
+//
+//   • native (widget) → "By customer on venneir.com" /
+//                       "By customer on denture-services.co.uk"
+//   • calendly        → "By customer via Calendly"
+//   • manual (staff)  → "By {staff name}" if we resolved one,
+//                       otherwise plain "By staff"
+function describeBookedBy(
+  source: string,
+  brandId: string | null,
+  staffName: string | undefined,
+): string {
   if (source === 'native') {
-    // Native = booked through one of the embedded Shopify widgets.
-    // The brand_id tells us which storefront so the timeline says
-    // "via venneir.com" / "via denture-services.co.uk" instead of
-    // a generic "Created in Lounge".
-    if (brandId === 'denture') return 'via denture-services.co.uk';
-    if (brandId === 'venneir') return 'via venneir.com';
-    return 'via the booking widget';
+    const where = brandId === 'denture'
+      ? 'denture-services.co.uk'
+      : brandId === 'venneir'
+        ? 'venneir.com'
+        : 'the booking widget';
+    return `By customer on ${where}`;
   }
+  if (source === 'calendly') return 'By customer via Calendly';
+  if (source === 'manual') return staffName ? `By ${staffName}` : 'By staff';
   return source;
 }
 

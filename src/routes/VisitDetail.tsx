@@ -1170,6 +1170,7 @@ export function VisitDetail() {
                   cart,
                   latestUnsuitable,
                   items.length > 0,
+                  total,
                   openChangeFulfilment,
                 )}
                 trailing={
@@ -2863,6 +2864,7 @@ function buildVisitHeroProps(
   cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null; total_pence: number } | null,
   latestUnsuitable: { recorded_at: string | null } | null,
   hasItems: boolean,
+  outstandingPence: number,
   onChangeFulfilment: () => void,
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
@@ -2894,7 +2896,7 @@ function buildVisitHeroProps(
   // anchor + action prompt. The relative slot lands in the accent
   // colour, so action prompts there pull the operator's eye to the
   // next thing on the page (Add item / Take payment / Finish visit).
-  const ribbon = buildVisitRibbon({ visit, appointment, isWalkIn, cart, hasItems });
+  const ribbon = buildVisitRibbon({ visit, appointment, isWalkIn, cart, hasItems, outstandingPence });
 
   // Pills row — visit status always; cart status when one exists and
   // the visit isn't terminated (a "Cart open" pill on an unsuitable
@@ -2983,12 +2985,20 @@ function buildVisitRibbon({
   isWalkIn,
   cart,
   hasItems,
+  outstandingPence,
 }: {
   visit: VisitRow;
   appointment: VisitAppointmentContext | null;
   isWalkIn: boolean;
   cart: { status: 'open' | 'paid' | 'voided'; closed_at: string | null } | null;
   hasItems: boolean;
+  // Pence still owed at the till after deposit / paid-in-full /
+  // Shopify credit / earlier till payments. Drives the "Take payment"
+  // vs "Ready to finish" prompt — a £0 outstanding (paid in full at
+  // booking, fully covered by Shopify credit, etc.) means there is
+  // literally nothing to collect, so the prompt must not say
+  // "Take payment" or staff will tap into a £0 till flow.
+  outstandingPence: number;
 }): {
   icon: ReactNode;
   timeLine: string;
@@ -3057,7 +3067,18 @@ function buildVisitRibbon({
     : appointment
       ? `Scheduled ${formatTime(appointment.start_at)}`
       : 'Patient in clinic';
-  const prompt = hasItems ? 'Take payment' : 'Build the cart';
+  // Three-way prompt:
+  //   • Empty cart → "Build the cart"
+  //   • Cart has items but nothing left to collect (paid in full at
+  //     booking, fully covered by Shopify credit, deposit covers
+  //     everything, etc.) → "Ready to finish" — there is no till
+  //     payment to take.
+  //   • Cart has items with an outstanding balance → "Take payment".
+  const prompt = !hasItems
+    ? 'Build the cart'
+    : outstandingPence === 0
+      ? 'Ready to finish'
+      : 'Take payment';
   return {
     icon: <UserCheck size={16} aria-hidden />,
     timeLine: anchor,
