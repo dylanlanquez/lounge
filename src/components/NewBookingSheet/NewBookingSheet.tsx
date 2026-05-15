@@ -237,6 +237,29 @@ export function NewBookingSheet({
     setAxisOptions({});
   }, [serviceType]);
 
+  // ── Reset date+time + restart first-slot search on any axis or ──
+  // service change. The first-available slot for "Click-in veneers
+  // / Upper" lands on a different day from "Same-day appliance /
+  // Night Guard / Lower" — keeping the previous date+time would
+  // leave the operator on a slot that was bookable for the OLD
+  // axes but might be busy / closed / outside hours for the new
+  // ones. Blanking date+time + flipping searchingFirstSlot back
+  // on triggers useFirstAvailableSlot to settle on a fresh
+  // first-bookable slot for the new combo. Skipped while the
+  // sheet is closed (the open effect handles that case).
+  useEffect(() => {
+    if (!open) return;
+    setDate('');
+    setTime('');
+    setSearchingFirstSlot(true);
+  }, [
+    open,
+    serviceType,
+    axisValues.repair_variant,
+    axisValues.product_key,
+    axisValues.arch,
+  ]);
+
   // Does the picked service have sold_on_shopify=true on its catalogue
   // row? Matched on service_type + (product_key / repair_variant when
   // pinned) so admin can configure the flag at the appropriate level.
