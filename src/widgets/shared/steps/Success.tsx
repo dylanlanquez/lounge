@@ -585,11 +585,11 @@ function BookedItemsRow({
             >
               <span
                 style={{
-                  fontSize: 13,
-                  fontWeight: 600,
+                  fontSize: 15,
+                  fontWeight: 700,
                   color: QUIZ.INK,
-                  letterSpacing: '-0.005em',
-                  lineHeight: 1.3,
+                  letterSpacing: '-0.01em',
+                  lineHeight: 1.25,
                 }}
               >
                 {archLabel[arch]}
@@ -616,14 +616,14 @@ function BookedItemsRow({
           );
         })}
         {upgrades.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span
               style={{
-                fontSize: 13,
-                fontWeight: 600,
+                fontSize: 15,
+                fontWeight: 700,
                 color: QUIZ.INK,
-                letterSpacing: '-0.005em',
-                lineHeight: 1.3,
+                letterSpacing: '-0.01em',
+                lineHeight: 1.25,
               }}
             >
               Upgrades

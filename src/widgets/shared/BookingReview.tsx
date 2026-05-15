@@ -348,7 +348,16 @@ function ItemRow({
     <div
       style={{
         display: 'flex',
-        alignItems: 'center',
+        // flex-start (not center) so every icon top-aligns with its
+        // title's first line. With alignItems: 'center', a 2-line
+        // location row centred its icon BETWEEN the two text lines,
+        // while a 1-line service row centred its icon AT the line
+        // — making the icon column look offset between rows. With
+        // flex-start the location pin sits next to "Vennir", the
+        // calendar sits next to the date line, the service tick
+        // sits next to "Same-day upper retainer" — all at the same
+        // relative position to the first line of their title.
+        alignItems: 'flex-start',
         gap: 14,
         padding: '14px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
@@ -360,8 +369,13 @@ function ItemRow({
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
+          // Icon span height matches the title's line-height (15px ×
+          // 1.3 ≈ 20px) so the icon's vertical centre lines up with
+          // the title's visual midpoint when the outer row is
+          // flex-start aligned. Without this the 24px icon box sat
+          // 2px above the title baseline and looked slightly high.
           width: 24,
-          height: 24,
+          height: 20,
           flexShrink: 0,
         }}
       >
