@@ -187,7 +187,8 @@ export function RepairLinesStep({
   const rowsResult = useRepairCatalogueRows();
   const selectedHere = api.state.repairItems.filter((r) => r.arch === arch);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <ArchContextChip arch={arch} accent={accent} />
       <p
         style={{
           margin: 0,
@@ -266,7 +267,6 @@ function LineGrid({
           <RepairLineTile
             key={row.id}
             row={row}
-            arch={arch}
             selected={!!line}
             quantity={line?.quantity ?? 1}
             lineTotalPence={line?.lineTotalPence ?? null}
@@ -294,7 +294,6 @@ function LineGrid({
 
 function RepairLineTile({
   row,
-  arch,
   selected,
   quantity,
   lineTotalPence,
@@ -303,7 +302,6 @@ function RepairLineTile({
   onQuantityChange,
 }: {
   row: RepairCatalogueRow;
-  arch: 'upper' | 'lower';
   selected: boolean;
   quantity: number;
   lineTotalPence: number | null;
@@ -313,7 +311,7 @@ function RepairLineTile({
 }) {
   const [hovered, setHovered] = useState(false);
   const isPerTooth = row.unitLabel === 'per tooth';
-  const title = archifyName(row.name, arch);
+  const title = friendlyTitle(row);
   const priceLine = formatTilePrice(row);
   // The whole tile is the toggle target. The stepper sits inside but
   // stops propagation so its own taps don't accidentally deselect.
@@ -580,22 +578,89 @@ function StepperButton({
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Arch-context chip — persistent reminder of which arch this step is
+// asking about. Sits at the very top of the step body so an elderly
+// patient never has to scroll up to the title to remember.
+// ─────────────────────────────────────────────────────────────────────
+
+function ArchContextChip({
+  arch,
+  accent,
+}: {
+  arch: 'upper' | 'lower';
+  accent: string;
+}) {
+  const label = arch === 'upper' ? 'My top denture' : 'My bottom denture';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'center',
+        marginTop: -4,
+      }}
+    >
+      <span
+        aria-label={label}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          background: QUIZ.SOFT_BG_HIGHLIGHT,
+          color: accent,
+          fontSize: 14,
+          fontWeight: 600,
+          padding: '8px 14px 8px 10px',
+          borderRadius: 999,
+          border: `1px solid ${QUIZ.BORDER_SOFT}`,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: accent,
+            color: '#fff',
+            flexShrink: 0,
+          }}
+        >
+          <Check size={13} strokeWidth={3.5} aria-hidden />
+        </span>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Copy helpers
 // ─────────────────────────────────────────────────────────────────────
 
-// Rewrites a catalogue row's name to read for the chosen arch:
-//   "Snapped denture"             → "Snapped top denture"
-//   "Broken tooth on denture"     → "Broken tooth on top denture"
-//   "Add a new tooth to denture"  → "Add a new tooth to top denture"
-//   "Reline Denture"              → "Reline top denture"
-// Matches the first word "denture" case-insensitively so the case of
-// the source name doesn't matter. Falls back to the original name
-// when no "denture" word is present (defensive — current catalogue
-// always has one).
-function archifyName(name: string, arch: 'upper' | 'lower'): string {
-  const word = arch === 'upper' ? 'top' : 'bottom';
-  if (!/\bdenture\b/i.test(name)) return `${name} (${word})`;
-  return name.replace(/\bdenture\b/i, `${word} denture`);
+// Conversational, first-person tile title. We deliberately avoid the
+// arch in the wording — the chip at the top of the step ("My top
+// denture") carries that context. Without arch noise the tile reads
+// the way an elderly patient would describe the problem out loud:
+// "it's snapped", "I've broken a tooth". Less to parse, more
+// intuitive.
+//
+// Keyed by lwo_catalogue.code so a future catalogue addition without
+// a friendly mapping falls back to the original name (defensive — the
+// admin's clinical phrasing is at least always correct, just less
+// friendly).
+const FRIENDLY_TITLE: Record<string, string> = {
+  den_snapped: "It's snapped",
+  den_cracked: "It's cracked",
+  den_broken_tooth: "I've broken a tooth",
+  den_add_tooth: "I'm missing a tooth",
+  den_reline: "It feels loose",
+};
+
+function friendlyTitle(row: RepairCatalogueRow): string {
+  return FRIENDLY_TITLE[row.code] ?? row.name;
 }
 
 // Price preview shown on each tile:
