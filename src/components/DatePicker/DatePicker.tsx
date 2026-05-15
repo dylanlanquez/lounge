@@ -110,8 +110,12 @@ export function DatePicker({
   }, [open, onClose]);
 
   // Position the desktop popover relative to the trigger, clamped
-  // to the viewport so it never hangs off either edge. Same approach
-  // as DateRangePicker — see that file for the rationale.
+  // to the viewport so it never hangs off any edge. Flips above
+  // the trigger when there's not enough room below — important
+  // for sheets where the picker sits near the bottom (e.g. the
+  // New Booking sheet's "When" row often opens with the date
+  // trigger only a couple of buttons away from the sticky footer).
+  // Same approach as DateRangePicker — see that file for rationale.
   const [popoverPos, setPopoverPos] = useState<{
     top: number;
     left?: number;
@@ -124,6 +128,12 @@ export function DatePicker({
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const APPROX_W = 320;
+      // Approximate popover height (header + 6-row grid + Today
+      // button). The exact height varies by content but never
+      // exceeds this. Using a constant keeps the position stable
+      // across the first paint — measuring after mount would flash
+      // the picker at the wrong spot for one frame.
+      const APPROX_H = 360;
       const minLeft = POPOVER_PAD;
       const maxLeft = Math.max(
         POPOVER_PAD,
@@ -131,7 +141,18 @@ export function DatePicker({
       );
       const desired = rect.left;
       const left = Math.max(minLeft, Math.min(desired, maxLeft));
-      setPopoverPos({ top: rect.bottom + 6, left });
+      // Vertical flip: prefer below the trigger, but if the popover
+      // would clip the viewport's bottom edge AND there's more room
+      // above, anchor to the trigger's TOP instead. POPOVER_PAD
+      // breathing room either side so the popover never kisses
+      // the viewport edge.
+      const spaceBelow = window.innerHeight - rect.bottom - POPOVER_PAD;
+      const spaceAbove = rect.top - POPOVER_PAD;
+      const flipUp = spaceBelow < APPROX_H && spaceAbove > spaceBelow;
+      const top = flipUp
+        ? Math.max(POPOVER_PAD, rect.top - APPROX_H - 6)
+        : rect.bottom + 6;
+      setPopoverPos({ top, left });
     };
     update();
     window.addEventListener('scroll', update, true);
