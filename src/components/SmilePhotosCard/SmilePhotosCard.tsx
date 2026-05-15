@@ -1,6 +1,7 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Camera, Check, ChevronDown, Loader2 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
+import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox/PhotoLightbox.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   signIntakePhotoUrl,
@@ -102,6 +103,66 @@ export function SmilePhotosCard({
     userToggledRef.current = true;
     setOpen((o) => !o);
   };
+
+  // Sign every available intake photo URL up-front so the lightbox
+  // can render the chosen one without a fresh round-trip on click,
+  // and so each PhotoTile thumbnail shares the same signed URL the
+  // lightbox uses (no double-signing). Refreshes whenever the rows
+  // change. Dropped URLs revoke implicitly when the component
+  // unmounts — Supabase signed URLs are stateless so there's no
+  // cleanup to do.
+  const [signedByKind, setSignedByKind] = useState<Map<Kind, string>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (rows.length === 0) {
+      setSignedByKind(new Map());
+      return;
+    }
+    void Promise.all(
+      rows.map(async (r) => ({
+        kind: r.kind as Kind,
+        url: await signIntakePhotoUrl(r.filePath),
+      })),
+    ).then((results) => {
+      if (cancelled) return;
+      const next = new Map<Kind, string>();
+      for (const { kind, url } of results) {
+        if (url) next.set(kind, url);
+      }
+      setSignedByKind(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
+
+  // Lightbox state — index into the lightboxPhotos array below
+  // (NOT into SLOTS), or null when closed. Keeps navigation between
+  // siblings working: tap Front, arrow-right walks to Left to
+  // Right; Esc / X closes.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxPhotos = useMemo<LightboxPhoto[]>(() => {
+    const out: LightboxPhoto[] = [];
+    for (const slot of SLOTS) {
+      const url = signedByKind.get(slot.kind);
+      if (!url) continue;
+      out.push({ url, label: slot.label });
+    }
+    return out;
+  }, [signedByKind]);
+  // Map from kind → index into lightboxPhotos so a tile click can
+  // open the lightbox at the correct position. Recomputed alongside
+  // lightboxPhotos so the indices always agree.
+  const lightboxIndexByKind = useMemo(() => {
+    const m = new Map<Kind, number>();
+    lightboxPhotos.forEach((photo, i) => {
+      const slot = SLOTS.find((s) => s.label === photo.label);
+      if (slot) m.set(slot.kind, i);
+    });
+    return m;
+  }, [lightboxPhotos]);
 
   // Per-tile promotion state. Each kind gets its own slot so a
   // failure (or success) on one tile doesn't reset the others —
@@ -306,12 +367,19 @@ export function SmilePhotosCard({
             >
               {SLOTS.map((s) => {
                 const row = byKind.get(s.kind) ?? null;
+                const signedUrl = signedByKind.get(s.kind) ?? null;
+                const lightboxIdx = lightboxIndexByKind.get(s.kind) ?? null;
                 return (
                   <PhotoTile
                     key={s.kind}
                     label={s.label}
-                    row={row}
                     loading={loading}
+                    signedUrl={signedUrl}
+                    onOpenLightbox={
+                      lightboxIdx !== null
+                        ? () => setLightboxIndex(lightboxIdx)
+                        : null
+                    }
                     canPromote={canPromote && !!row}
                     promoteState={promote[s.kind]}
                     onPromote={() => row && promoteOne(s.kind, row)}
@@ -322,6 +390,11 @@ export function SmilePhotosCard({
           </div>
         </div>
       </div>
+      <PhotoLightbox
+        photos={lightboxPhotos}
+        index={lightboxIndex}
+        onChange={setLightboxIndex}
+      />
     </Card>
   );
 }
@@ -395,34 +468,29 @@ function SectionHeader({
 
 function PhotoTile({
   label,
-  row,
   loading,
+  signedUrl,
+  onOpenLightbox,
   canPromote,
   promoteState,
   onPromote,
 }: {
   label: string;
-  row: IntakePhotoRow | null;
   loading: boolean;
+  /** Signed URL for the thumbnail. Pre-signed by the parent so the
+   *  lightbox shares the same URL (no double round-trip on click).
+   *  Null while signing or for empty slots. */
+  signedUrl: string | null;
+  /** Opens the in-app PhotoLightbox at this tile's position in the
+   *  SmilePhotosCard's photo array. Null when there's no photo to
+   *  show (empty slot). The app runs in iPad kiosk mode so we
+   *  CAN'T open photos in a new tab — every tap must stay inside
+   *  the React tree. */
+  onOpenLightbox: (() => void) | null;
   canPromote: boolean;
   promoteState: PerTilePromoteState;
   onPromote: () => void;
 }) {
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!row) {
-      setSignedUrl(null);
-      return;
-    }
-    let cancelled = false;
-    void signIntakePhotoUrl(row.filePath).then((url) => {
-      if (!cancelled) setSignedUrl(url);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [row]);
-
   // Tile chrome matches PhotoGallery.tsx's UploadTile precisely:
   // square aspect, theme.radius.card corners, 1.5px dashed border in
   // theme.color.border, theme.color.surface fill. The empty state
@@ -437,14 +505,19 @@ function PhotoTile({
   // need this because the bold inside-label IS the affordance text;
   // here the inside text is a state ("Not uploaded"), so the
   // outside caption answers "which view is this".
+  const interactive = signedUrl && onOpenLightbox;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <a
-        href={signedUrl ?? undefined}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        type="button"
+        onClick={interactive ? onOpenLightbox! : undefined}
+        disabled={!interactive}
         aria-label={signedUrl ? `Open ${label} photo` : `${label} — not uploaded`}
         style={{
+          appearance: 'none',
+          fontFamily: 'inherit',
+          padding: 0,
+          margin: 0,
           position: 'relative',
           aspectRatio: '1 / 1',
           borderRadius: theme.radius.card,
@@ -459,9 +532,10 @@ function PhotoTile({
           justifyContent: 'center',
           gap: theme.space[2],
           color: theme.color.inkMuted,
-          cursor: signedUrl ? 'zoom-in' : 'default',
-          textDecoration: 'none',
+          cursor: interactive ? 'pointer' : 'default',
           boxSizing: 'border-box',
+          WebkitTapHighlightColor: 'transparent',
+          width: '100%',
         }}
       >
         {signedUrl ? (
@@ -502,7 +576,7 @@ function PhotoTile({
             </span>
           </>
         )}
-      </a>
+      </button>
       {/* Caption + per-tile promote affordance share one row so the
           two read as a single piece of metadata under the photo —
           "Front smile · Added ✓" — rather than the label sitting

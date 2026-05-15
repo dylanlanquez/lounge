@@ -175,6 +175,9 @@ export type {
 
 export { PatientFilesGrid } from './PatientFilesGrid/PatientFilesGrid.tsx';
 
+export { PhotoLightbox } from './PhotoLightbox/PhotoLightbox.tsx';
+export type { LightboxPhoto, PhotoLightboxProps } from './PhotoLightbox/PhotoLightbox.tsx';
+
 export { FinalDeliveries } from './FinalDeliveries/FinalDeliveries.tsx';
 
 export { PhaseRibbon } from './PhaseRibbon/PhaseRibbon.tsx';
