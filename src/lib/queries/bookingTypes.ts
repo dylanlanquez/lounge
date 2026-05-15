@@ -279,6 +279,16 @@ export async function resolveBookingTypeConfig(args: {
   if (error) throw new Error(error.message);
   const row = Array.isArray(data) ? data[0] : null;
   if (!row) return null;
+  // Phase-driven services (virtual_impression_appointment etc) leave
+  // the parent's duration_default NULL because their length is the
+  // sum of the phases — surfaced as block_duration_minutes on the
+  // resolver. Coalesce here so every consumer sees a usable
+  // duration; mirrors the same fallback the slot scanners now
+  // apply server-side (migrations 20260515000006 / 7).
+  const resolvedDuration =
+    (row.duration_default as number | null) ??
+    (row.block_duration_minutes as number | null) ??
+    null;
   return {
     service_type: row.service_type as BookingServiceType,
     repair_variant: row.repair_variant ?? null,
@@ -287,7 +297,7 @@ export async function resolveBookingTypeConfig(args: {
     working_hours: (row.working_hours ?? {}) as WorkingHours,
     duration_min: row.duration_min as number,
     duration_max: row.duration_max as number,
-    duration_default: row.duration_default as number,
+    duration_default: resolvedDuration as number,
     max_concurrent: (row.max_concurrent as number | null) ?? null,
     pool_ids: Array.isArray(row.pool_ids) ? (row.pool_ids as string[]) : [],
     notes: row.notes ?? null,
