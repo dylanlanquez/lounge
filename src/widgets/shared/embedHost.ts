@@ -111,6 +111,13 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   // desktop. Top margin sits above an auto-calc'd bottom margin so
   // the card centres vertically with the chosen height.
   const card = document.createElement('div');
+  // Marker so CSS in the injected stylesheet can target this specific
+  // element. Used by the success-state shrink animation that overrides
+  // the card's width once React sets data-state="success" on the
+  // modal root after a successful booking. Inline width / max-width
+  // stay as the defaults; the CSS uses !important to win against
+  // them on the success state.
+  card.setAttribute('data-vl-card', 'true');
   Object.assign(card.style, {
     position: 'relative',
     background: '#F4F4F4',
@@ -125,9 +132,13 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     flexDirection: 'column',
     transform: reducedMotion ? 'none' : 'scale(0.95) translateY(10px)',
     opacity: reducedMotion ? '1' : '0',
+    // width + height transitions are included so the success-state
+    // CSS overrides animate smoothly into the compact footprint
+    // rather than snapping. Springy easing matches the entry
+    // animation; 450ms reads as deliberate motion without dragging.
     transition: reducedMotion
       ? 'none'
-      : 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1)',
+      : 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1), width 450ms cubic-bezier(0.16, 1, 0.3, 1), max-width 450ms cubic-bezier(0.16, 1, 0.3, 1), height 450ms cubic-bezier(0.16, 1, 0.3, 1), max-height 450ms cubic-bezier(0.16, 1, 0.3, 1)',
     // Inherit the host storefront's font so typography matches the
     // surrounding venneir.com / denture-services.co.uk page.
     fontFamily: 'inherit',
@@ -456,6 +467,31 @@ function ensureResetStyles() {
     }
     #${MODAL_ID}[data-locked="true"] [data-vl-backdrop="true"] {
       cursor: not-allowed !important;
+    }
+    /* Success state — once the booking has landed and React swaps
+       in <SuccessScreen>, the modal contains a short confirmation
+       block that doesn't need the full ~92vw footprint on desktop.
+       The card animates down to 540px wide so the customer's eye
+       lands on the success glyph + booking ref directly rather
+       than scanning a sea of empty surface. 540px is wide enough
+       to accommodate the click-in-veneers photo-intake row (three
+       photo tiles + Send button) that some success screens carry,
+       and the inner Success.tsx column already maxes itself out
+       at 480 / 620px depending on photo intake — so the card +
+       content sizes agree on both paths.
+
+       Phones (< 768px) keep the full sheet — there's no awkward
+       "small modal on a big screen" problem on a 390px viewport
+       because the card already fills it. Height stays untouched
+       so the existing overflowY:auto behaviour on the inner
+       Success column keeps working unchanged. The width
+       transition is set on the card inline above; !important here
+       defeats the inline width/max-width so the CSS wins. */
+    @media (min-width: 768px) {
+      #${MODAL_ID}[data-state="success"] [data-vl-card="true"] {
+        width: 540px !important;
+        max-width: 92vw !important;
+      }
     }
   `;
   document.head.appendChild(style);

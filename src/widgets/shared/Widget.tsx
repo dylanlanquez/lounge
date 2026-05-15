@@ -281,6 +281,39 @@ function WidgetReady({
     };
   }, [busy]);
 
+  // Success state — once the booking has landed, flip
+  // data-state="success" on the modal root. The embedHost
+  // stylesheet's @media (min-width: 768px) rule shrinks the card
+  // down to a compact 480px wide × auto-height footprint via a
+  // 450ms transition, so the confirmation screen sits centred on
+  // desktop rather than floating in a sea of empty surface.
+  // Phones (< 768px) ignore the rule and keep the full-sheet card.
+  const success = submission.state === 'done';
+  useEffect(() => {
+    const modalRoot =
+      typeof document !== 'undefined'
+        ? document.getElementById('vlounge-embed-modal')
+        : null;
+    if (!modalRoot) return;
+    if (success) {
+      modalRoot.dataset.state = 'success';
+    } else {
+      // Clear the attribute when the success screen unmounts (e.g.
+      // the patient closes and re-opens for a new booking on the
+      // standalone /book route, where the React tree persists).
+      delete modalRoot.dataset.state;
+    }
+    return () => {
+      // Defence on unmount: never leave the attribute hanging if
+      // the widget is torn down mid-success.
+      const m =
+        typeof document !== 'undefined'
+          ? document.getElementById('vlounge-embed-modal')
+          : null;
+      if (m) delete m.dataset.state;
+    };
+  }, [success]);
+
   // Single submission entry-point. Called from the footer Next
   // button on the summary step (free booking) or from the Payment
   // step's onPaid handler after Stripe confirms.
