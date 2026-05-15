@@ -42,13 +42,11 @@ export function RepairArchStep({
 }) {
   const selected = api.state.axes.arch;
   return (
-    // marginTop:24 here pairs with the shell-rendered StepTitle's
-    // own marginBottom (sourced from QUIZ.STEP_TITLE_BOTTOM_SPACE)
-    // so the visible title-to-tiles gap matches the
-    // RepairLinesStep reference (parent flex gap 24 + h2
-    // marginBottom = 56). Without it the gap drifted to 64px and
-    // the two repair steps read inconsistently.
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: 24 }}>
+    // No extra marginTop — StepTitle's own bottom margin
+    // (STEP_TITLE_BOTTOM_SPACE) provides the gap. Parent flex gap
+    // also tightened from 32 → 16 so the trio of arch tiles sits
+    // close to the title on mobile without dropping below the fold.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 0 }}>
       <div
         className="vlounge-stagger"
         style={{
@@ -199,16 +197,17 @@ export function RepairLinesStep({
           can see at a glance which arch they're answering for. */}
       <h2
         style={{
-          // Bottom margin sourced from QUIZ.STEP_TITLE_BOTTOM_SPACE
-          // so this inline title's breathing room matches the shell-
-          // rendered StepTitle on every other step. Top margin
-          // (32px) stays — it's clearance from the StickyArchHeader
-          // chip pinned above, not a step-title rhythm value.
-          margin: `32px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
+          // Top margin = clearance from the StickyArchHeader chip
+          // pinned above. Bottom margin sourced from the global
+          // STEP_TITLE_BOTTOM_SPACE token so this inline title and
+          // the shell-rendered StepTitle stay in sync. Both halved
+          // from the previous 32px so the tiles surface above the
+          // fold on phones.
+          margin: `16px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
           maxWidth: 720,
           textAlign: 'center',
-          fontSize: 28,
-          lineHeight: 1.2,
+          fontSize: 24,
+          lineHeight: 1.25,
           fontWeight: 500,
           color: QUIZ.INK,
           letterSpacing: '-0.01em',

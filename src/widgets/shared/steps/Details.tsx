@@ -89,11 +89,11 @@ export function DetailsStep({
         maxWidth: 720,
         margin: '0 auto',
         width: '100%',
-        // 32px breathing room from the step title — this step has
-        // no intro paragraph between StepTitle and the form, so the
-        // tight 6px StepTitle bottom margin alone made the inputs
-        // hug the heading.
-        marginTop: 32,
+        // No extra marginTop — StepTitle's own bottom margin
+        // (STEP_TITLE_BOTTOM_SPACE) provides the gap. The
+        // historical marginTop:32 was doubling that gap on every
+        // step that set it, eating vertical real estate on phones.
+        marginTop: 0,
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >
@@ -319,7 +319,10 @@ function PhoneField({
             background: 'transparent',
             padding: '0 14px',
             fontFamily: 'inherit',
-            fontSize: 15,
+            // 16px stops iOS Safari auto-zooming on focus. Any value
+            // under 16 triggers the zoom; matched to inputStyle below
+            // so every field reads the same size at rest.
+            fontSize: 16,
             color: QUIZ.INK,
             outline: 'none',
             minWidth: 0,
@@ -402,6 +405,11 @@ function ErrorLine({
 // "input here"; a focus ring (via box-shadow) takes over on focus
 // so the active field still gets clear visual feedback without
 // the resting state shouting at the patient with 2px borders.
+//
+// fontSize sits at 16px (not 15) because iOS Safari auto-zooms
+// the viewport on focus when an input's font-size is below 16px.
+// Every text input the customer can focus must hit this threshold
+// or they get a disorienting page-zoom mid-form.
 const inputStyle: React.CSSProperties = {
   width: '100%',
   height: 46,
@@ -411,7 +419,7 @@ const inputStyle: React.CSSProperties = {
   background: QUIZ.SURFACE,
   color: QUIZ.INK,
   fontFamily: 'inherit',
-  fontSize: 15,
+  fontSize: 16,
   outline: 'none',
   boxSizing: 'border-box',
   boxShadow: 'none',
@@ -426,7 +434,7 @@ const textareaStyle: React.CSSProperties = {
   background: QUIZ.SURFACE,
   color: QUIZ.INK,
   fontFamily: 'inherit',
-  fontSize: 15,
+  fontSize: 16,
   resize: 'vertical',
   outline: 'none',
   boxSizing: 'border-box',

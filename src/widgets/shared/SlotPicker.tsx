@@ -236,10 +236,11 @@ export function SlotPicker({
         maxWidth: 560,
         margin: '0 auto',
         width: '100%',
-        // 32px from the step title — Time has no intro paragraph
-        // so the calendar card sat directly under the "Date and
-        // time" h2 with only StepTitle's 6px bottom margin.
-        marginTop: 32,
+        // No extra marginTop — StepTitle's own bottom margin
+        // (STEP_TITLE_BOTTOM_SPACE) provides the gap. Previous
+        // marginTop:32 was doubling that gap and pushing the time
+        // slots below the fold on phones.
+        marginTop: 0,
       }}
     >
       {showFirstAvailableBanner && earliest ? (

@@ -649,22 +649,20 @@ export function StepTitle({
     <h2
       style={{
         // Top + bottom both sourced through QUIZ tokens so every
-        // step's title-to-progress and title-to-body rhythm matches
-        // the canonical denture-repair lines step. Top is 32px to
-        // mirror the inline h2 in RepairBuilder (which renders its
-        // own title so the StickyArchHeader chip can pin above it).
-        // Bottom uses STEP_TITLE_BOTTOM_SPACE; the actual visible
-        // gap to the body adds the body's own marginTop/parent-gap
-        // (~24px in practice), matching the reference 56px.
+        // step's title-to-progress and title-to-body rhythm stays
+        // consistent. Top was 32px historically; reduced to 16px so
+        // the step title sits closer to the progress bar instead of
+        // floating in a wide blank band on phones. Bottom uses
+        // STEP_TITLE_BOTTOM_SPACE.
         // `align='left'` keeps the same 720px centred column the
         // form below uses but flushes the text to the left so the
         // h2 sits over the first input — used on Details + Payment
         // where the body is form/card-like rather than option-grid.
-        margin: `32px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
+        margin: `16px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
         maxWidth: 720,
         textAlign: align,
-        fontSize: 28,
-        lineHeight: 1.2,
+        fontSize: 24,
+        lineHeight: 1.25,
         // .step-title-vt in the template declares no font-weight at
         // all — the storefront's body inheritance carries through.
         // 500 (medium) is a deliberately light register that reads

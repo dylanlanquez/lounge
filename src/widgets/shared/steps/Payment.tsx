@@ -699,10 +699,11 @@ function Shell({
         display: 'flex',
         flexDirection: 'column',
         gap: 20,
-        // 32px from the step title — Payment has no intro
-        // paragraph so the Pay-headline + card form would hug the
-        // "Payment" h2 without it.
-        marginTop: 32,
+        // StepTitle's own bottom margin (STEP_TITLE_BOTTOM_SPACE)
+        // provides the gap. Previous marginTop:32 stacked with that
+        // to ~64px of dead space, pushing the card form below the
+        // fold on phones.
+        marginTop: 0,
       }}
     >
       {children}

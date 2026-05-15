@@ -30,7 +30,7 @@ export function ServiceStep({
   if (!data || data.length === 0) return <ServiceEmpty />;
 
   return (
-    <div style={{ marginTop: 32 }}>
+    <div style={{ marginTop: 0 }}>
       <OptionGrid>
         {data.map((bt) => {
           const selected = api.state.service?.id === bt.id;

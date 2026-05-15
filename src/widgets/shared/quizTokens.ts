@@ -80,8 +80,12 @@ export const QUIZ = {
   // grid / form below. Tuned so the title reads as a section heading
   // with its own visual weight rather than crowding the first card.
   // Threaded through one token so the shell-rendered StepTitle and
-  // each step that renders its own inline h2 stay in sync.
-  STEP_TITLE_BOTTOM_SPACE: 32,
+  // each step that renders its own inline h2 stay in sync. Tightened
+  // from 32 → 16 because the previous value ate ~70px of vertical
+  // chrome on mobile (32 top + 32 bottom + an extra 32 from each
+  // step's body marginTop) and pushed the actual answer choices
+  // below the fold.
+  STEP_TITLE_BOTTOM_SPACE: 16,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────
