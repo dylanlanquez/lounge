@@ -45,6 +45,7 @@ import {
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
+import { todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
@@ -477,7 +478,7 @@ export function NewBookingSheet({
     setAvailabilityLoading(true);
     (async () => {
       try {
-        const slots = await loadAvailableSlots({
+        const rawSlots = await loadAvailableSlots({
           locationId,
           serviceType: serviceType as BookingServiceType,
           date,
@@ -486,6 +487,20 @@ export function NewBookingSheet({
           arch: axisValues.arch,
         });
         if (cancelled) return;
+        // Strip past times when the picked date is today. The
+        // server returns every working slot regardless of clock
+        // time; the widget filters past slots client-side and we
+        // mirror the same behaviour here so an operator on the
+        // schedule late in the day can't accidentally book into a
+        // 10:00 slot when it's already 14:30.
+        const isToday = date === todayIso();
+        const slots = isToday
+          ? rawSlots.filter((slot) => {
+              const iso = composeIso(date, slot);
+              if (!iso) return false;
+              return new Date(iso).getTime() > Date.now();
+            })
+          : rawSlots;
         setAvailableSlots(slots);
         // Auto-snap the pre-filled time to the first available slot
         // when the current one isn't in the allow-list. Operator
@@ -563,8 +578,22 @@ export function NewBookingSheet({
     return startMin + extent <= closeMin;
   }, [config, hoursForDate, time]);
 
+  // Past-time guard. Mirrors the customer widget's behaviour
+  // (widget-create-appointment + state.ts both refuse past slots).
+  // The DatePicker is also clamped via minIso so the operator can't
+  // select a date earlier than today, but a same-day pick can still
+  // land on a time that's now in the past while the receptionist
+  // was typing — re-checked here so the Save button stays disabled
+  // and the inline status banner explains why.
+  const isPastSlot = useMemo(() => {
+    if (!date || !time) return false;
+    const iso = composeIso(date, time);
+    if (!iso) return false;
+    return new Date(iso).getTime() <= Date.now();
+  }, [date, time]);
+
   const slotIsValid =
-    !!config && !!date && !!time && inWorkingHours && fitsBeforeClose;
+    !!config && !!date && !!time && inWorkingHours && fitsBeforeClose && !isPastSlot;
   // Virtual services require a Meet host. The dropdown auto-picks
   // the first one when hosts exist, so this guard mostly trips when
   // no host has been connected yet — Save stays disabled until
@@ -612,6 +641,15 @@ export function NewBookingSheet({
     if (!canSave || !patient || !serviceType) return;
     const newStart = composeIso(date, time);
     if (!newStart) return;
+    // Last-line past-time guard. canSave already excludes isPastSlot
+    // via slotIsValid, but the user could conceivably leave the
+    // sheet open across midnight and tap Save against a now-stale
+    // slot. Refuse the write rather than create a booking in the
+    // past.
+    if (new Date(newStart).getTime() <= Date.now()) {
+      setSaving(false);
+      return;
+    }
     setSaving(true);
     try {
       const result = await createAppointment({
@@ -1046,6 +1084,11 @@ export function NewBookingSheet({
               onChange={(iso) => setDate(iso)}
               anchorRef={dateTriggerRef}
               title="Pick the booking date"
+              // Block past dates from the calendar entirely. Mirrors
+              // the customer widget — bookings always sit in the
+              // future. A typed value or a stale state could still
+              // slip through; isPastSlot below catches that.
+              minIso={todayIso()}
             />
             <TimePicker
               open={timeOpen}
@@ -1090,6 +1133,13 @@ export function NewBookingSheet({
               <div style={{ marginTop: theme.space[3] }}>
                 <StatusBanner tone="warning" title="Outside working hours">
                   This service runs {hoursForDate.open} to {hoursForDate.close} on the day you picked.
+                </StatusBanner>
+              </div>
+            ) : null}
+            {isPastSlot ? (
+              <div style={{ marginTop: theme.space[3] }}>
+                <StatusBanner tone="warning" title="That time has already passed">
+                  Pick a future date and time. Bookings can't be created in the past.
                 </StatusBanner>
               </div>
             ) : null}
