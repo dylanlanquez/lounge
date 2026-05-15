@@ -85,6 +85,11 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   // Backdrop alpha + blur lifted from #quizModal-vt (retainer-cart
   // line 2) so the dim feels continuous with the storefront.
   const backdrop = document.createElement('div');
+  // Marker so the locked-state CSS can target the backdrop without
+  // depending on DOM child ordering. The inline cursor below would
+  // otherwise win against any plain selector — the locked rule uses
+  // !important to override it for the backdrop and the close button.
+  backdrop.setAttribute('data-vl-backdrop', 'true');
   Object.assign(backdrop.style, {
     position: 'absolute',
     inset: '0',
@@ -438,12 +443,19 @@ function ensureResetStyles() {
     }
     /* Locked state — React flips data-locked="true" on the root
        while a payment is being confirmed or the booking is being
-       submitted. We fade the X close button so the customer reads
-       "this isn't interactive right now" without an explicit
-       toast; the click handler is already no-op'd in close(). */
+       submitted. We fade the X close button + flip cursor on both
+       the X and the backdrop so the customer reads "this isn't
+       interactive right now" without an explicit toast. The
+       click handler is already no-op'd in close() — these rules
+       fix only the visual signal. !important is required because
+       the inline cursor: pointer set in JS otherwise wins
+       against any plain selector. */
     #${MODAL_ID}[data-locked="true"] button[aria-label="Close booking"] {
-      opacity: 0.35;
-      cursor: not-allowed;
+      opacity: 0.35 !important;
+      cursor: not-allowed !important;
+    }
+    #${MODAL_ID}[data-locked="true"] [data-vl-backdrop="true"] {
+      cursor: not-allowed !important;
     }
   `;
   document.head.appendChild(style);
