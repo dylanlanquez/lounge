@@ -105,10 +105,14 @@ export function SuccessScreen({
       >
         <div
           style={{
-            background: QUIZ.SURFACE,
-            border: `1px solid ${QUIZ.BORDER}`,
-            borderRadius: QUIZ.R_CARD,
-            padding: '32px 28px 28px',
+            // No card chrome here — the embed modal IS the white
+            // surface, and a second bordered card on top of it read
+            // as a "double box" that Dylan flagged. The confirmation
+            // content now flows directly on the modal background.
+            // PhotoIntakeCard below keeps its own card chrome
+            // because it's a distinct section (click-in veneers
+            // photo upload) the patient interacts with separately.
+            padding: '8px 4px 8px',
             animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
           }}
         >
