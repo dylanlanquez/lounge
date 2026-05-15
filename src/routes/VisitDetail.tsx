@@ -1482,6 +1482,7 @@ export function VisitDetail() {
                       effects. */}
                   {patient ? (
                     <>
+                      <RescheduleAfterArrivalNote />
                       <VisitActionStack
                         onPatientProfile={() =>
                           navigate(`/patient/${patient.id}`, {
@@ -1495,7 +1496,6 @@ export function VisitDetail() {
                           })
                         }
                       />
-                      <RescheduleAfterArrivalNote />
                     </>
                   ) : null}
                   {visit.dispatch_ref ? (
@@ -3828,46 +3828,95 @@ function ShippedItemsCard({
   );
 }
 
-// VisitActionStack — quick-actions block surfaced above the
-// post-arrival info cards. Mirrors AppointmentDetail's pre-arrival
-// action list so the same destinations stay one tap away whether
-// the patient is still booked or already in clinic. Reschedule is
-// intentionally NOT here — see RescheduleAfterArrivalNote below.
+// VisitActionStack — quick-actions block surfaced beneath the
+// reschedule-after-arrival note on every post-arrival visit page.
+// Single Patient-profile row rendered with the same Card chrome
+// SmilePhotosCard uses when collapsed (lg padding, 30px icon pill,
+// h3 title, chevron trailing) so the post-arrival info column
+// reads as one matched stack of cards instead of mixed surfaces.
+// Reschedule is intentionally NOT here — see
+// RescheduleAfterArrivalNote above.
 function VisitActionStack({
   onPatientProfile,
 }: {
   onPatientProfile: () => void;
 }) {
   return (
-    <section
-      aria-label="Visit actions"
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        borderRadius: theme.radius.input,
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.surface,
-        overflow: 'hidden',
-      }}
-    >
-      <VisitActionRow
-        first
-        icon={<UserIcon size={16} aria-hidden />}
-        label="Patient profile"
+    <Card padding="lg">
+      <button
+        type="button"
         onClick={onPatientProfile}
-      />
-    </section>
+        aria-label="Open patient profile"
+        style={{
+          appearance: 'none',
+          width: '100%',
+          padding: 0,
+          margin: 0,
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          color: 'inherit',
+          WebkitTapHighlightColor: 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[3],
+            minWidth: 0,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: theme.radius.pill,
+              background: theme.color.accentBg,
+              color: theme.color.accent,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <UserIcon size={15} aria-hidden />
+          </span>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1.25,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Patient profile
+          </h3>
+        </span>
+        <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
+      </button>
+    </Card>
   );
 }
 
-// Operator-facing note shown beneath the actions block on every
+// Operator-facing note shown above the actions block on every
 // visit page (post-arrival). Replaces the Reschedule action that
 // briefly lived on this page — once the patient is checked in,
 // rescheduling would orphan the cart, the waiver signatures, the
 // JB ref, and any payments already taken. The right flow is to
-// End the visit and create a fresh booking. Reschedule still
-// lives on the pre-arrival appointment page, where the booking
-// hasn't yet committed any of those side effects.
+// End the visit and create a fresh booking.
 function RescheduleAfterArrivalNote() {
   return (
     <div
@@ -3916,73 +3965,11 @@ function RescheduleAfterArrivalNote() {
             lineHeight: theme.type.leading.snug,
           }}
         >
-          End this visit and create a new booking. Reschedule lives on the
-          pre-appointment page, before the patient has been checked in.
+          End this visit and create a new booking. This patient has already been
+          booked in.
         </p>
       </div>
     </div>
   );
 }
 
-function VisitActionRow({
-  icon,
-  label,
-  onClick,
-  first = false,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-  first?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        appearance: 'none',
-        background: 'transparent',
-        border: 'none',
-        borderTop: first ? 'none' : `1px solid ${theme.color.border}`,
-        padding: `${theme.space[4]}px ${theme.space[5]}px`,
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
-        width: '100%',
-        textAlign: 'left',
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
-        color: theme.color.ink,
-        cursor: 'pointer',
-        WebkitTapHighlightColor: 'transparent',
-        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = theme.color.bg;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent';
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 32,
-          height: 32,
-          borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
-          flexShrink: 0,
-        }}
-      >
-        {icon}
-      </span>
-      <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
-      <ChevronRight size={16} color={theme.color.inkSubtle} aria-hidden />
-    </button>
-  );
-}
