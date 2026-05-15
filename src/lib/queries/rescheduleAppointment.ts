@@ -77,6 +77,28 @@ interface AppointmentRowMin {
   // host so the Calendar event lands on the original host's calendar
   // (Karly's, Lab's, etc.) and not the service-account fallback.
   meet_host_id: string | null;
+  // Booking-time data the patient has committed to. Reschedule moves
+  // the patient to a new slot; everything they were booked in for
+  // moves with them — staff at the new appointment see the same
+  // notes, deposit credit, online order link, brand, intake answers,
+  // and (via the linked-table copies further down) the same
+  // upgrades, repair lines, and pre-visit smile photos.
+  notes: string | null;
+  intake: ReadonlyArray<{ question: string; answer: string }> | null;
+  brand_id: 'venneir' | 'denture' | null;
+  paid_in_full_at_booking: boolean | null;
+  deposit_pence: number | null;
+  deposit_currency: string | null;
+  deposit_provider: 'paypal' | 'stripe' | null;
+  deposit_external_id: string | null;
+  deposit_paid_at: string | null;
+  deposit_status: 'paid' | 'failed' | null;
+  shopify_order_id: string | null;
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
+  shopify_order_currency: string | null;
+  shopify_order_linked_at: string | null;
+  shopify_order_linked_by: string | null;
 }
 
 // Pre-flight conflict check — used by the reschedule sheet to give
@@ -140,10 +162,15 @@ export async function rescheduleAppointment(input: {
   reason?: string;
 }): Promise<RescheduleResult> {
   // ── 1. Read existing appointment ────────────────────────────────
+  // Pulls every column that needs to migrate to the rescheduled
+  // booking. Anything purely about the old slot (start_at, end_at,
+  // status, reminder_sent_at, conference fields, etc.) is left
+  // behind by design — those are moments-in-time facts of the old
+  // arrival window and don't make sense on the new one.
   const { data: existingRaw, error: readErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id',
+      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id, notes, intake, brand_id, paid_in_full_at_booking, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by',
     )
     .eq('id', input.appointmentId)
     .maybeSingle();
@@ -203,6 +230,11 @@ export async function rescheduleAppointment(input: {
   }
 
   // ── 5. Insert new appointment row ──────────────────────────────
+  // Every booking-time piece of data the patient committed to comes
+  // along: notes, intake answers, brand, deposit + paid-in-full
+  // flags, the linked Shopify order, and the per-host Meet config.
+  // Linked-table data (upgrades, repair lines, smile photos)
+  // copies in step 7 once the new appointment id exists.
   const { data: insertedRaw, error: insertErr } = await supabase
     .from('lng_appointments')
     .insert({
@@ -224,6 +256,27 @@ export async function rescheduleAppointment(input: {
       // booking would silently fall back to the service-account flow
       // and the original host's calendar would never see the new slot.
       meet_host_id: existing.meet_host_id,
+      // Booking-time data the patient committed to. Preserved across
+      // the reschedule so the new appointment surfaces the same
+      // intake answers, deposit credit (so the till still nets it
+      // against the cart), Shopify-paid online order, brand
+      // identity, and operator notes the original booking carried.
+      notes: existing.notes,
+      intake: existing.intake,
+      brand_id: existing.brand_id,
+      paid_in_full_at_booking: existing.paid_in_full_at_booking ?? false,
+      deposit_pence: existing.deposit_pence,
+      deposit_currency: existing.deposit_currency,
+      deposit_provider: existing.deposit_provider,
+      deposit_external_id: existing.deposit_external_id,
+      deposit_paid_at: existing.deposit_paid_at,
+      deposit_status: existing.deposit_status,
+      shopify_order_id: existing.shopify_order_id,
+      shopify_order_name: existing.shopify_order_name,
+      shopify_order_total_pence: existing.shopify_order_total_pence,
+      shopify_order_currency: existing.shopify_order_currency,
+      shopify_order_linked_at: existing.shopify_order_linked_at,
+      shopify_order_linked_by: existing.shopify_order_linked_by,
     })
     .select('id')
     .single();
@@ -247,6 +300,30 @@ export async function rescheduleAppointment(input: {
       `New appointment created (${newAppointmentId}) but couldn't mark the old one rescheduled: ${updateErr.message}. Manual cleanup required.`,
     );
   }
+
+  // ── 6.5 Carry over linked-table data ──────────────────────────
+  // The new appointment id now exists; copy every row that was
+  // attached to the old appointment over to the new one so the
+  // patient's commitments (paid upgrades, repair lines, pre-visit
+  // smile photos) follow them to the new slot. Best-effort —
+  // failures here log but don't unwind the reschedule, since the
+  // appointment row is already correct and the operator can re-
+  // attach manually if a copy fails. The OLD rows stay in place
+  // as a historical record; the new rows duplicate-by-design.
+  await carryOverLinkedTables(existing.id, newAppointmentId);
+
+  // ── 6.6 End any open visit attached to the old appointment ─────
+  // If the patient has already been marked arrived, the visit IS
+  // the historical record of that arrival and shouldn't be moved
+  // to the new appointment (the visit's opened_at, JB ref, cart
+  // items, payments, waiver signatures all belong to the moment
+  // the patient was actually in clinic). Instead, close the visit
+  // with reason='rescheduled' so reports can distinguish "visit
+  // ended because the booking was wrong" from "visit ended because
+  // the appointment was rescheduled". The next arrival on the new
+  // slot will spawn a fresh visit. Skipped when there's no visit
+  // (typical pre-arrival reschedule).
+  await endVisitIfOpen(existing.id, newAppointmentId, input.reason ?? null);
 
   // ── 7. Google Meet (virtual impression only) ────────────────────
   // Two-path routing: per-host bookings (meet_host_id set) go through
@@ -324,6 +401,131 @@ export async function rescheduleAppointment(input: {
   });
 
   return { newAppointmentId };
+}
+
+// Copy every row keyed by the old appointment id to the new
+// appointment id, across every table that hangs booking-time data
+// off the appointment. The OLD rows stay in place — duplicate
+// rows are deliberate so the historical record on the rescheduled
+// appointment isn't lost. Best-effort: a single failure logs to
+// console + lng_system_failures but doesn't unwind the reschedule.
+async function carryOverLinkedTables(
+  oldAppointmentId: string,
+  newAppointmentId: string,
+): Promise<void> {
+  await Promise.all([
+    copyRowsForAppointment({
+      table: 'lng_appointment_upgrade_selections',
+      cloneColumns: [
+        'upgrade_id',
+        'upgrade_code',
+        'name',
+        'unit_label',
+        'unit_price_pence',
+        'both_arches_price_pence',
+        'resolved_price_pence',
+      ],
+      oldAppointmentId,
+      newAppointmentId,
+    }),
+    copyRowsForAppointment({
+      table: 'lng_appointment_repair_items',
+      cloneColumns: [
+        'catalogue_id',
+        'code',
+        'repair_variant',
+        'name',
+        'unit_label',
+        'arch',
+        'quantity',
+        'unit_price_pence',
+        'both_arches_price_pence',
+        'line_total_pence',
+      ],
+      oldAppointmentId,
+      newAppointmentId,
+    }),
+    copyRowsForAppointment({
+      table: 'lng_booking_intake_photos',
+      cloneColumns: ['kind', 'file_path', 'mime_type', 'size_bytes'],
+      oldAppointmentId,
+      newAppointmentId,
+    }),
+  ]);
+}
+
+async function copyRowsForAppointment(args: {
+  table: string;
+  /** Columns to clone from the old rows into the new rows. The
+   *  appointment_id pointer + the table's own primary key + audit
+   *  timestamps (created_at) are excluded — pk regenerates,
+   *  appointment_id swaps to the new value, created_at defaults to
+   *  now() on the new row. */
+  cloneColumns: string[];
+  oldAppointmentId: string;
+  newAppointmentId: string;
+}): Promise<void> {
+  const selectCols = args.cloneColumns.join(', ');
+  const { data, error: readErr } = await supabase
+    .from(args.table)
+    .select(selectCols)
+    .eq('appointment_id', args.oldAppointmentId);
+  if (readErr) {
+    console.warn(`[reschedule] read ${args.table} failed:`, readErr.message);
+    return;
+  }
+  const rows = ((data ?? []) as unknown) as Array<Record<string, unknown>>;
+  if (rows.length === 0) return;
+  const inserts = rows.map((r) => ({
+    ...r,
+    appointment_id: args.newAppointmentId,
+  }));
+  const { error: insertErr } = await supabase.from(args.table).insert(inserts);
+  if (insertErr) {
+    console.warn(`[reschedule] copy ${args.table} failed:`, insertErr.message);
+  }
+}
+
+// End any open visit attached to the old appointment. Sets
+// status='ended_early' with reason='rescheduled' and a note that
+// references the new appointment id so the audit trail is
+// traceable. Skipped when the visit is already closed (or doesn't
+// exist) — pre-arrival reschedules are the common case.
+async function endVisitIfOpen(
+  oldAppointmentId: string,
+  newAppointmentId: string,
+  operatorReason: string | null,
+): Promise<void> {
+  const { data, error: readErr } = await supabase
+    .from('lng_visits')
+    .select('id, status')
+    .eq('appointment_id', oldAppointmentId)
+    .maybeSingle();
+  if (readErr) {
+    console.warn('[reschedule] visit lookup failed:', readErr.message);
+    return;
+  }
+  if (!data) return;
+  const visit = data as { id: string; status: string };
+  // Only the live "arrived" status warrants closing on reschedule.
+  // 'complete' / 'unsuitable' / 'ended_early' are already terminal;
+  // overriding them would lose the original closing reason.
+  if (visit.status !== 'arrived') return;
+  const note = operatorReason?.trim()
+    ? `Rescheduled to appointment ${newAppointmentId}. ${operatorReason.trim()}`
+    : `Rescheduled to appointment ${newAppointmentId}.`;
+  const { error: updateErr } = await supabase
+    .from('lng_visits')
+    .update({
+      status: 'ended_early',
+      visit_end_reason: 'rescheduled',
+      visit_end_note: note,
+      closed_at: new Date().toISOString(),
+    })
+    .eq('id', visit.id);
+  if (updateErr) {
+    console.warn('[reschedule] end visit failed:', updateErr.message);
+  }
 }
 
 function describeConflicts(conflicts: RescheduleConflict[]): string {

@@ -51,8 +51,9 @@ export interface ConflictBlockProps {
   // hidden. Use this when the slot picker already restricts the
   // operator to free times — the brief banner that pops up between
   // input changes reads as flashy noise. Conflicts and RPC errors
-  // always render regardless.
-  quiet?: boolean;
+  // always render regardless. Independent of freeBody — the
+  // success banner still renders if freeBody is set.
+  silentChecking?: boolean;
 }
 
 export function ConflictBlock({
@@ -62,7 +63,7 @@ export function ConflictBlock({
   slotIsValid,
   durationMinutes,
   freeBody,
-  quiet = false,
+  silentChecking = false,
 }: ConflictBlockProps) {
   if (error) {
     return (
@@ -73,7 +74,7 @@ export function ConflictBlock({
   }
   if (!slotIsValid) return null;
   if (checking) {
-    if (quiet) return null;
+    if (silentChecking) return null;
     return (
       <StatusBanner tone="info">
         Checking availability… ({durationMinutes ?? '–'} min slot)

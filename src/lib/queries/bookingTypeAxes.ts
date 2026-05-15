@@ -49,10 +49,28 @@ export const SERVICE_AXES: Record<BookingServiceType, readonly AxisDef[]> = {
   click_in_veneers: [
     { key: 'arch', label: 'Arch', source: { kind: 'arch_enum' } },
   ],
-  // In-person impression appointment will gain a product axis when
-  // Dylan provides the canonical product list (different from virtual
-  // impression's list — see ADR-007 §7.3.4). For now: arch only.
+  // In-person impression appointment shares the virtual-impression
+  // product list — both flows cover the same set of appliances, the
+  // only difference is delivery (in clinic vs over Meet). Keeping
+  // them in lockstep means a future product addition / removal
+  // doesn't have to be made in two places. Order: product first
+  // (drives arch_match resolution), then arch.
   impression_appointment: [
+    {
+      key: 'product_key',
+      label: 'Product',
+      source: {
+        kind: 'catalogue_for',
+        productKeys: [
+          'retainer',
+          'whitening_tray',
+          'night_guard',
+          'day_guard',
+          'click_in_veneers',
+          'missing_tooth',
+        ],
+      },
+    },
     { key: 'arch', label: 'Arch', source: { kind: 'arch_enum' } },
   ],
   same_day_appliance: [

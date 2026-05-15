@@ -1267,16 +1267,16 @@ export function NewBookingSheet({
                   error={conflictError}
                   slotIsValid={slotIsValid}
                   durationMinutes={config?.duration_default ?? null}
-                  /* quiet hides the in-flight "Checking availability…
-                   * (X min slot)" banner — the picker already
-                   * restricts to free times so the flash on every
-                   * input edit reads as noise. The check still runs
-                   * and gates Save via checkingConflicts.
+                  /* silentChecking hides the in-flight "Checking
+                   * availability… (X min slot)" banner — the picker
+                   * already restricts to free times so the flash on
+                   * every input edit reads as noise. The check
+                   * still runs and gates Save via checkingConflicts.
                    * No freeBody — re-confirming "free" beneath the
                    * date row would also be redundant. Conflicts
                    * (last-millisecond race against another
                    * concurrent edit) and RPC errors always surface. */
-                  quiet
+                  silentChecking
                 />
               </div>
             )}

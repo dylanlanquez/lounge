@@ -27,6 +27,8 @@ import {
   rescheduleAppointment,
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
+import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
+import { todayIso } from '../../lib/calendarMonth.ts';
 import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 
 // RescheduleSheet — bottom-sheet UI for moving a native (manual /
@@ -181,6 +183,35 @@ export function RescheduleSheet({
   // can't land on a busy time. excludeAppointmentId lets the
   // current slot still appear (the row being moved doesn't count
   // against itself).
+  // Per-month availability for the date picker so closed days
+  // (clinic shut on the picked weekday) and empty days (no free
+  // slots in the visible window) dim out instead of being tappable.
+  // Mirrors the New Booking sheet — the date picker tells us which
+  // window it's currently rendering via onVisibleMonthChange and
+  // we ask the server for that window's bookable set. The picker
+  // already excludes the current appointment from conflict checks
+  // via lng_widget_available_dates → lng_widget_available_slots →
+  // lng_booking_check_conflict (which we don't pass an excludeId
+  // to), so the very-edge case of "the current slot is the only
+  // one free that day" lights up only when the operator picks
+  // that day manually — the calendar treats it as empty. That's
+  // an acceptable tradeoff: the operator can still land on the
+  // current slot via the date+time fields, just not via a
+  // calendar tap.
+  const [calendarWindow, setCalendarWindow] = useState<{
+    fromIso: string | null;
+    toIso: string | null;
+  }>({ fromIso: null, toIso: null });
+  const monthAvailability = useAvailableDates({
+    locationId: appointment.location_id,
+    serviceType: serviceType ? (serviceType as string) : null,
+    repairVariant: null,
+    productKey: null,
+    arch: null,
+    fromIso: calendarWindow.fromIso,
+    toIso: calendarWindow.toIso,
+  });
+
   const [availableSlots, setAvailableSlots] = useState<string[] | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState<boolean>(false);
   useEffect(() => {
@@ -193,13 +224,27 @@ export function RescheduleSheet({
     setAvailabilityLoading(true);
     (async () => {
       try {
-        const slots = await loadAvailableSlots({
+        const rawSlots = await loadAvailableSlots({
           locationId: appointment.location_id,
           serviceType: serviceType as BookingServiceType,
           date,
           excludeAppointmentId: appointment.id,
         });
         if (cancelled) return;
+        // Strip past times when the picked date is today (the
+        // operator might be moving an appointment forward to later
+        // today). Mirrors the new-booking sheet — the slot scanner
+        // returns every working slot regardless of clock time, the
+        // client filters past ones out so the picker only surfaces
+        // bookable times.
+        const isToday = date === todayIso();
+        const slots = isToday
+          ? rawSlots.filter((slot) => {
+              const iso = composeIso(date, slot);
+              if (!iso) return false;
+              return new Date(iso).getTime() > Date.now();
+            })
+          : rawSlots;
         setAvailableSlots(slots);
         // If the operator moves the date to one where the current
         // time is no longer free (or out of hours), snap to the
@@ -415,6 +460,17 @@ export function RescheduleSheet({
               onChange={(iso) => setDate(iso)}
               anchorRef={dateTriggerRef}
               title="Pick the new date"
+              // Same disable-closed-and-empty-days whitelist the
+              // New Booking sheet uses. minIso=today is the
+              // defence-in-depth backstop for the moment between
+              // mount and the first available-dates fetch.
+              minIso={todayIso()}
+              availableDates={
+                monthAvailability.loading ? undefined : monthAvailability.dates
+              }
+              onVisibleMonthChange={(fromIso, toIso) =>
+                setCalendarWindow({ fromIso, toIso })
+              }
             />
             <TimePicker
               open={timeOpen}
@@ -453,13 +509,12 @@ export function RescheduleSheet({
                 startIso={composeIso(date, time)}
               />
             ) : null}
-            {!inWorkingHours && date && time && hoursForDate ? (
-              <div style={{ marginTop: theme.space[3] }}>
-                <StatusBanner tone="warning" title="Outside working hours">
-                  This service runs {hoursForDate.open} to {hoursForDate.close} on the day you picked.
-                </StatusBanner>
-              </div>
-            ) : null}
+            {/* "Outside working hours" StatusBanner removed — the
+                date picker's whitelist hides closed/empty days, and
+                the time picker's allow-list omits past times on
+                today. The state is now structurally unreachable.
+                Conflicts (last-millisecond race vs another
+                concurrent edit) still flow through ConflictBlock. */}
             <div style={{ marginTop: theme.space[3] }}>
               <ConflictBlock
                 checking={checkingConflicts}
@@ -467,6 +522,15 @@ export function RescheduleSheet({
                 error={conflictError}
                 slotIsValid={slotIsValid}
                 durationMinutes={config?.duration_default ?? null}
+                /* freeBody stays — the operator IS moving an
+                 * appointment, so re-confirming "saving will move it"
+                 * is meaningful context for the commit moment.
+                 * silentChecking hides the in-flight "Checking
+                 * availability… (X min slot)" banner that flashed
+                 * on every input edit; the picker already restricts
+                 * to free times so the optimistic re-check is
+                 * defence-in-depth and doesn't need a visible state. */
+                silentChecking
                 freeBody="Slot is free. Saving will move the appointment and email a calendar update to the patient if they have one on file."
               />
             </div>
