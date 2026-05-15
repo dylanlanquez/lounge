@@ -344,62 +344,72 @@ function ItemRow({
   rightAmountColour?: string;
   isLast: boolean;
 }) {
-  // Layout rule: the badge is centred with the TITLE LINE, never with
-  // the entire content block. A 1-line row (no subtitle) and a 2-line
-  // row (Location: name + address) must put the badge at the same y
-  // relative to the title text — otherwise the icon column "wobbles"
-  // as the eye scrolls down the receipt.
+  // Layout rule: every row is the SAME height (ROW_MIN_HEIGHT). That
+  // is what makes the icon column scan as evenly spaced — if one row
+  // is taller than the others (e.g. a Location row with a 2-line
+  // address), its badge ends up further from the next row's badge
+  // than the others are from each other, and the column reads as
+  // "wobbly" even though within each row the badge is correctly
+  // placed relative to the text.
   //
   // Structure:
-  //   outer       — block wrapper carrying padding + hairline only
-  //   title-row   — flex row, alignItems: center, contains the
-  //                 badge + title + optional rightAmount. Because
-  //                 this row contains ONLY the title (no subtitle),
-  //                 'center' alignment lands the badge centre on the
-  //                 title's line-box centre.
-  //   subtitle    — block under the title-row, with left padding
-  //                 equal to badge width + gap so it hangs under
-  //                 the title's left edge.
+  //   outer       — flex row, alignItems: center. Locks min-height
+  //                 to a single value so every row's vertical centre
+  //                 (and therefore every badge's position) sits on
+  //                 the same rhythm.
+  //   badge       — 30px circle with the icon at its centre.
+  //   content     — flex column, stacked tightly (gap 2px) and
+  //                 centred vertically. Title row sits above the
+  //                 subtitle when one is present; centre-of-stack
+  //                 lands on the row's centre line.
+  //   subtitle    — single line, ellipsised. Never wraps. Without
+  //                 this constraint the location row could grow
+  //                 past ROW_MIN_HEIGHT and re-introduce the
+  //                 column wobble we're trying to eliminate.
   //
-  // Result: identical icon-column geometry across 1-line and 2-line
-  // rows, no translateY hacks, no alignment drift between rows of
-  // different content heights.
-  const BADGE_SIZE = 30;
-  const TITLE_GAP = 12;
+  // The badge therefore aligns with the row's vertical centre, and
+  // since every row shares the same centre offset from the row
+  // edges, every badge in the column shares the same y rhythm.
+  const ROW_MIN_HEIGHT = 56;
   return (
     <div
       style={{
-        padding: '14px 0',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        minHeight: ROW_MIN_HEIGHT,
+        padding: '8px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
-      <div
+      <span
+        aria-hidden
         style={{
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
-          gap: TITLE_GAP,
+          justifyContent: 'center',
+          width: 30,
+          height: 30,
+          flexShrink: 0,
+          borderRadius: '50%',
+          background: 'rgba(8, 55, 88, 0.08)',
+          color: QUIZ.ACCENT,
         }}
       >
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: BADGE_SIZE,
-            height: BADGE_SIZE,
-            flexShrink: 0,
-            borderRadius: '50%',
-            background: 'rgba(8, 55, 88, 0.08)',
-            color: QUIZ.ACCENT,
-          }}
-        >
-          {icon}
-        </span>
+        {icon}
+      </span>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          gap: 2,
+        }}
+      >
         <div
           style={{
-            flex: 1,
-            minWidth: 0,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -413,7 +423,10 @@ function ItemRow({
               fontWeight: 600,
               color: QUIZ.INK,
               lineHeight: 1.2,
-              wordBreak: 'break-word',
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
           >
             {title}
@@ -434,21 +447,22 @@ function ItemRow({
             </span>
           ) : null}
         </div>
+        {subtitle ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: 13,
+              color: QUIZ.SUBTLE,
+              lineHeight: 1.3,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {subtitle}
+          </p>
+        ) : null}
       </div>
-      {subtitle ? (
-        <p
-          style={{
-            margin: '6px 0 0',
-            paddingLeft: BADGE_SIZE + TITLE_GAP,
-            fontSize: 13,
-            color: QUIZ.SUBTLE,
-            lineHeight: 1.3,
-            wordBreak: 'break-word',
-          }}
-        >
-          {subtitle}
-        </p>
-      ) : null}
     </div>
   );
 }
