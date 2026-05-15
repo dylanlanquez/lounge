@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, ArrowRight, CalendarClock } from 'lucide-react';
+import { ArrowLeft, CalendarClock, ShieldCheck } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -931,7 +931,7 @@ function Footer({
     }
     if (submitting) return 'Booking…';
     if (isDetailsStep) return copy.summaryCtaBook;
-    return 'Continue';
+    return 'Next';
   })();
 
   return (
@@ -992,7 +992,7 @@ function Footer({
                   }}
                 >
                   Book appointment
-                  <ArrowRight size={16} aria-hidden />
+                  <ShieldCheck size={16} aria-hidden />
                 </span>
               )}
             </NextButton>
@@ -1061,13 +1061,24 @@ function Footer({
                       </PayOnTheDayButton>
                     ) : null}
                     {primary === 'deposit' ? (
+                      // When deposit is the ONLY option (no Pay-in-full
+                      // pill, no OTD pill) the button reads as a
+                      // generic "Next" — there's no choice to make,
+                      // tapping just walks the patient into the Stripe
+                      // step where the deposit amount + secure-card
+                      // chrome carries the price + verb context. When
+                      // a secondary CTA also exists the deposit row
+                      // keeps its explicit "Pay deposit · £X" label so
+                      // the choice between options stays unambiguous.
                       <NextButton
                         disabled={nextDisabled}
                         onClick={onPayDeposit}
                         accent={accent}
                         shimmer={false}
                       >
-                        {`Pay deposit · ${formatPriceShort(depositPence)}`}
+                        {showFullCta || showOTDCta
+                          ? `Pay deposit · ${formatPriceShort(depositPence)}`
+                          : 'Next'}
                       </NextButton>
                     ) : primary === 'full' ? (
                       <NextButton
@@ -1109,9 +1120,9 @@ function Footer({
           )
         ) : summaryFree ? (
           // Free-service path — there's no payment step, the Book
-          // button on Details IS the commit. Same shimmer + arrow
-          // treatment as the paid Book-appointment so the conversion
-          // moment reads the same regardless of price.
+          // button on Details IS the commit. Same shimmer + shield
+          // treatment as every other Book-appointment commit so the
+          // conversion moment reads the same regardless of price.
           <NextButton
             disabled={nextDisabled}
             onClick={onNext}
@@ -1130,7 +1141,7 @@ function Footer({
                 }}
               >
                 {nextLabel}
-                <ArrowRight size={16} aria-hidden />
+                <ShieldCheck size={16} aria-hidden />
               </span>
             )}
           </NextButton>
@@ -1151,7 +1162,7 @@ function Footer({
                 }}
               >
                 {nextLabel}
-                <ArrowRight size={16} aria-hidden />
+                <ShieldCheck size={16} aria-hidden />
               </span>
             ) : (
               nextLabel
