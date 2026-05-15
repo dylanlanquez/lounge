@@ -1489,7 +1489,7 @@ export function VisitDetail() {
                       appointmentId={visit.appointment_id}
                       patientId={patient?.id}
                       patientName={patient ? patientFullName(patient) : undefined}
-                      uploaderAccountId={user?.id ?? null}
+                      uploaderAccountId={currentAccount?.account_id ?? null}
                       onPromoted={refreshGalleryFiles}
                     />
                   ) : null}

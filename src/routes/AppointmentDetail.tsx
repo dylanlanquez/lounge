@@ -48,6 +48,7 @@ import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { logFailure } from '../lib/failureLog.ts';
 import {
@@ -276,7 +277,10 @@ function Loaded({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  // Resolve the signed-in user's accounts.id (NOT the auth user uuid)
+  // for stamping uploader on patient_files rows. The two are
+  // different — patient_files.uploaded_by has an FK to accounts.id.
+  const { account: currentAccount } = useCurrentAccount();
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
@@ -500,7 +504,7 @@ function Loaded({
               patient_first_name: appt.patient.first_name,
               patient_last_name: appt.patient.last_name,
             } as never)}
-            uploaderAccountId={user?.id ?? null}
+            uploaderAccountId={currentAccount?.account_id ?? null}
             onPromoted={onChanged}
           />
         ) : null}

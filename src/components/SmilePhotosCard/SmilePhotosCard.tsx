@@ -31,28 +31,42 @@ import { logFailure } from '../../lib/failureLog.ts';
 //   • Body stays mounted across toggles (CSS grid 0fr/1fr trick)
 //     so the signed-URL fetches don't restart every time the card
 //     is opened.
+//   • Each uploaded tile carries its OWN "Add to profile" link —
+//     staff can promote one photo at a time rather than batching
+//     all three. Independent state per tile (idle / busy / done /
+//     error) so a failure on one doesn't block the others.
 
-export interface SmilePhotosCardProps {
-  appointmentId: string;
-  // Optional promotion target. When all three are provided AND at least
-  // one intake photo has been uploaded, the card surfaces an "Add to
-  // patient profile as smile photos" link that copies the intake images
-  // into the patient's canonical Smile Photo slots (Front / Left /
-  // Right) on the patient profile. Omit to render the card read-only.
-  patientId?: string;
-  patientName?: string;
-  uploaderAccountId?: string | null;
-  // Called when promotion succeeds. Lets the parent refresh the patient
-  // files grid (or any other dependent surface) so the new smile-photo
-  // rows appear without a manual reload.
-  onPromoted?: () => void;
+type Kind = 'front' | 'left' | 'right';
+type PromoteState = 'idle' | 'busy' | 'done' | 'error';
+
+interface PerTilePromoteState {
+  state: PromoteState;
+  message: string | null;
 }
 
-const SLOTS: Array<{ kind: 'front' | 'left' | 'right'; label: string }> = [
+const SLOTS: Array<{ kind: Kind; label: string }> = [
   { kind: 'front', label: 'Front smile' },
   { kind: 'left', label: 'Left side' },
   { kind: 'right', label: 'Right side' },
 ];
+
+const EMPTY_PROMOTE: PerTilePromoteState = { state: 'idle', message: null };
+
+export interface SmilePhotosCardProps {
+  appointmentId: string;
+  // Optional promotion target. When all three are provided, each
+  // uploaded tile renders an "Add to profile" link that copies that
+  // single photo into the patient's matching canonical Smile Photo
+  // slot (Front / Left / Right). Omit any field to render the card
+  // read-only.
+  patientId?: string;
+  patientName?: string;
+  uploaderAccountId?: string | null;
+  // Called when promotion succeeds. Lets the parent refresh the
+  // patient files grid (or any other dependent surface) so the new
+  // smile-photo row appears without a manual reload.
+  onPromoted?: () => void;
+}
 
 export function SmilePhotosCard({
   appointmentId,
@@ -88,83 +102,67 @@ export function SmilePhotosCard({
     setOpen((o) => !o);
   };
 
-  // Promotion state for the "Add to patient profile as smile photos"
-  // link. Idle until the user clicks; busy while photos are downloading
-  // + uploading; done shows a 3s confirmation; error surfaces a loud
-  // message (no silent fallbacks per CLAUDE.md). The link is gated
-  // behind: patient context provided, at least one intake photo
-  // uploaded, and not already in flight.
-  const [promoteState, setPromoteState] =
-    useState<'idle' | 'busy' | 'done' | 'error'>('idle');
-  const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
-  const canPromote =
-    !!patientId &&
-    !!patientName &&
-    uploadedCount > 0 &&
-    promoteState !== 'busy';
+  // Per-tile promotion state. Each kind gets its own slot so a
+  // failure (or success) on one tile doesn't reset the others —
+  // staff can retry just the tile that failed without re-promoting
+  // the ones that worked.
+  const [promote, setPromote] = useState<Record<Kind, PerTilePromoteState>>({
+    front: EMPTY_PROMOTE,
+    left: EMPTY_PROMOTE,
+    right: EMPTY_PROMOTE,
+  });
 
-  const handlePromote = async () => {
+  const setKindState = (kind: Kind, next: PerTilePromoteState) => {
+    setPromote((prev) => ({ ...prev, [kind]: next }));
+  };
+
+  const promoteOne = async (kind: Kind, row: IntakePhotoRow) => {
     if (!patientId || !patientName) return;
-    setPromoteState('busy');
-    setPromoteMessage(null);
-    const sources = rows.map((r) => ({
-      kind: r.kind as IntakePhotoKindForPromotion,
-      filePath: r.filePath,
-      mimeType: r.mimeType,
-    }));
+    setKindState(kind, { state: 'busy', message: null });
     try {
       const result = await promoteIntakePhotosToPatientProfile({
         patientId,
         patientName,
         uploaderAccountId: uploaderAccountId ?? null,
-        sources,
+        sources: [{
+          kind: kind as IntakePhotoKindForPromotion,
+          filePath: row.filePath,
+          mimeType: row.mimeType,
+        }],
       });
-      if (result.errors.length > 0) {
-        const which = result.errors.map((e) => e.kind).join(', ');
-        const detail = result.errors[0]!.message;
-        setPromoteState('error');
-        setPromoteMessage(
-          `Couldn't copy ${which}: ${detail}. ${result.promoted.length > 0 ? `${result.promoted.length} added.` : ''}`,
-        );
+      const failure = result.errors[0];
+      if (failure) {
+        setKindState(kind, { state: 'error', message: failure.message });
         await logFailure({
-          source: 'smile_photo_promote_partial',
-          severity: 'warning',
-          message: detail,
-          context: {
-            appointmentId,
-            patientId,
-            promoted: result.promoted,
-            errors: result.errors,
-          },
+          source: 'smile_photo_promote_failed',
+          severity: 'error',
+          message: failure.message,
+          context: { appointmentId, patientId, kind },
         });
         return;
       }
-      setPromoteState('done');
-      setPromoteMessage(
-        result.promoted.length === 1
-          ? 'Added 1 photo to patient profile.'
-          : `Added ${result.promoted.length} photos to patient profile.`,
-      );
+      setKindState(kind, { state: 'done', message: 'Added to profile' });
       onPromoted?.();
-      // Auto-revert to idle after 3s so the link reads as "ready to
-      // re-run" again. The 3s tracks Toast's standard dwell time
-      // elsewhere in the app.
+      // Auto-revert to idle after 3s so the link reads as "ready
+      // to re-run" again. Re-running overwrites with the latest
+      // intake photo per Meridian's slot versioning, so the
+      // affordance staying live after success is correct.
       setTimeout(() => {
-        setPromoteState('idle');
-        setPromoteMessage(null);
+        setKindState(kind, EMPTY_PROMOTE);
       }, 3000);
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Could not add photos.';
-      setPromoteState('error');
-      setPromoteMessage(message);
+      const message = e instanceof Error ? e.message : 'Could not add photo.';
+      setKindState(kind, { state: 'error', message });
       await logFailure({
         source: 'smile_photo_promote_failed',
         severity: 'error',
         message,
-        context: { appointmentId, patientId },
+        context: { appointmentId, patientId, kind },
       });
     }
   };
+
+  const canPromote = !!patientId && !!patientName;
 
   const panelId = `lng-smile-photos-${appointmentId}`;
 
@@ -273,139 +271,17 @@ export function SmilePhotosCard({
                     label={s.label}
                     row={row}
                     loading={loading}
+                    canPromote={canPromote && !!row}
+                    promoteState={promote[s.kind]}
+                    onPromote={() => row && promoteOne(s.kind, row)}
                   />
                 );
               })}
             </div>
-            {canPromote || promoteState !== 'idle' ? (
-              <PromoteToProfileLink
-                state={promoteState}
-                message={promoteMessage}
-                disabled={!canPromote}
-                onClick={handlePromote}
-              />
-            ) : null}
           </div>
         </div>
       </div>
     </Card>
-  );
-}
-
-// Plain text link with a trailing arrow-in-pill, matching the Patient
-// Files Grid "View history" affordance — no background, no pill chrome
-// on the label itself, just bold ink type plus a 22px accent-tinted
-// circle holding a Lucide ArrowRight. Surfaced beneath the photo grid
-// when the parent passed enough patient context to copy the photos
-// across. Empty state (no patient context, no upload yet) hides the
-// link entirely so the read-only render is unchanged.
-function PromoteToProfileLink({
-  state,
-  message,
-  disabled,
-  onClick,
-}: {
-  state: 'idle' | 'busy' | 'done' | 'error';
-  message: string | null;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const showShift = hovered && !disabled && state === 'idle';
-  const labelColor =
-    state === 'error'
-      ? theme.color.alert
-      : state === 'done'
-        ? theme.color.accent
-        : theme.color.ink;
-  // No theme.color.alertBg token (yet) so use a tinted alert wash for
-  // the error state. accentBg drives every other state — calm green
-  // pill, white arrow.
-  const trailingTint =
-    state === 'error'
-      ? { bg: 'rgba(184, 58, 42, 0.12)', fg: theme.color.alert }
-      : { bg: theme.color.accentBg, fg: theme.color.accent };
-  const labelText =
-    state === 'busy'
-      ? 'Adding to patient profile…'
-      : state === 'done'
-        ? message ?? 'Added to patient profile'
-        : state === 'error'
-          ? message ?? "Couldn't add to patient profile"
-          : 'Add to patient profile as smile photos';
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'flex-start',
-        marginTop: theme.space[5],
-      }}
-    >
-      <button
-        type="button"
-        onClick={disabled || state === 'busy' ? undefined : onClick}
-        disabled={disabled || state === 'busy'}
-        aria-label={labelText}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onFocus={() => setHovered(true)}
-        onBlur={() => setHovered(false)}
-        style={{
-          appearance: 'none',
-          background: 'transparent',
-          border: 'none',
-          padding: 0,
-          margin: 0,
-          fontFamily: 'inherit',
-          color: labelColor,
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.tight,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[3],
-          cursor: disabled || state === 'busy' ? 'default' : 'pointer',
-          opacity: disabled ? 0.55 : 1,
-          WebkitTapHighlightColor: 'transparent',
-        }}
-      >
-        <span>{labelText}</span>
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 22,
-            height: 22,
-            borderRadius: theme.radius.pill,
-            background: trailingTint.bg,
-            color: trailingTint.fg,
-            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            transform: showShift ? 'translateX(3px)' : 'translateX(0)',
-            flexShrink: 0,
-          }}
-        >
-          {state === 'busy' ? (
-            <Loader2
-              size={14}
-              aria-hidden
-              style={{
-                animation: 'lng-smile-promote-spin 0.9s linear infinite',
-              }}
-            />
-          ) : (
-            <ArrowRight size={14} aria-hidden />
-          )}
-        </span>
-      </button>
-      <style>{`
-        @keyframes lng-smile-promote-spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
-    </div>
   );
 }
 
@@ -480,10 +356,16 @@ function PhotoTile({
   label,
   row,
   loading,
+  canPromote,
+  promoteState,
+  onPromote,
 }: {
   label: string;
   row: IntakePhotoRow | null;
   loading: boolean;
+  canPromote: boolean;
+  promoteState: PerTilePromoteState;
+  onPromote: () => void;
 }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -589,6 +471,125 @@ function PhotoTile({
       >
         {label}
       </span>
+      {canPromote || promoteState.state !== 'idle' ? (
+        <PromoteTileLink
+          state={promoteState}
+          disabled={!canPromote || promoteState.state === 'busy'}
+          onClick={onPromote}
+        />
+      ) : null}
     </div>
+  );
+}
+
+// Per-tile "Add to profile" affordance. Compact text link with a
+// trailing arrow-in-pill — matches the visual pattern used on the
+// PatientFilesGrid "View history" link. Sits under the slot
+// caption, only renders when the tile has an uploaded photo AND
+// the parent passed enough patient context to copy it across.
+function PromoteTileLink({
+  state,
+  disabled,
+  onClick,
+}: {
+  state: PerTilePromoteState;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const showShift = hovered && !disabled && state.state === 'idle';
+  const labelColor =
+    state.state === 'error'
+      ? theme.color.alert
+      : state.state === 'done'
+        ? theme.color.accent
+        : theme.color.ink;
+  // No theme.color.alertBg token (yet) so use a tinted alert wash
+  // for the error state. accentBg drives every other state — calm
+  // green pill, white arrow.
+  const trailingTint =
+    state.state === 'error'
+      ? { bg: 'rgba(184, 58, 42, 0.12)', fg: theme.color.alert }
+      : { bg: theme.color.accentBg, fg: theme.color.accent };
+  const labelText =
+    state.state === 'busy'
+      ? 'Adding…'
+      : state.state === 'done'
+        ? state.message ?? 'Added to profile'
+        : state.state === 'error'
+          ? state.message ?? "Couldn't add"
+          : 'Add to profile';
+  return (
+    <button
+      type="button"
+      onClick={disabled || state.state === 'busy' ? undefined : onClick}
+      disabled={disabled || state.state === 'busy'}
+      aria-label={labelText}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
+      style={{
+        appearance: 'none',
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        margin: 0,
+        marginTop: 2,
+        fontFamily: 'inherit',
+        color: labelColor,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: theme.type.tracking.tight,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        cursor: disabled || state.state === 'busy' ? 'default' : 'pointer',
+        opacity: disabled ? 0.55 : 1,
+        WebkitTapHighlightColor: 'transparent',
+        textAlign: 'left',
+      }}
+    >
+      <span style={{
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        minWidth: 0,
+      }}>{labelText}</span>
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 18,
+          height: 18,
+          borderRadius: theme.radius.pill,
+          background: trailingTint.bg,
+          color: trailingTint.fg,
+          transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          transform: showShift ? 'translateX(2px)' : 'translateX(0)',
+          flexShrink: 0,
+        }}
+      >
+        {state.state === 'busy' ? (
+          <Loader2
+            size={11}
+            aria-hidden
+            style={{
+              animation: 'lng-smile-promote-spin 0.9s linear infinite',
+            }}
+          />
+        ) : (
+          <ArrowRight size={11} aria-hidden />
+        )}
+      </span>
+      <style>{`
+        @keyframes lng-smile-promote-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </button>
   );
 }
