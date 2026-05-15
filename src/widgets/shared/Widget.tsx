@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft, CalendarClock, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, CalendarClock } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -992,7 +992,7 @@ function Footer({
                   }}
                 >
                   Book appointment
-                  <ShieldCheck size={16} aria-hidden />
+                  <BookCheckIcon size={16} />
                 </span>
               )}
             </NextButton>
@@ -1141,7 +1141,7 @@ function Footer({
                 }}
               >
                 {nextLabel}
-                <ShieldCheck size={16} aria-hidden />
+                <BookCheckIcon size={16} />
               </span>
             )}
           </NextButton>
@@ -1162,7 +1162,7 @@ function Footer({
                 }}
               >
                 {nextLabel}
-                <ShieldCheck size={16} aria-hidden />
+                <BookCheckIcon size={16} />
               </span>
             ) : (
               nextLabel
@@ -1396,6 +1396,30 @@ function FooterPriceBlock({
         {formatPrice(valuePence)}
       </span>
     </div>
+  );
+}
+
+// BookCheckIcon — bespoke calendar-with-tick mark used on every Book
+// appointment CTA. Custom artwork (sourced from the brand asset set)
+// rather than a Lucide icon so the conversion moment carries the
+// product's own visual identity. fill=currentColor inherits whatever
+// the parent button's text colour is, so the icon flips between
+// white-on-accent (NextButton) and accent-on-white (PayOnTheDayButton)
+// without per-call-site overrides.
+function BookCheckIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 336.08 335.39"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+      focusable="false"
+    >
+      <path d="M335.97,59.57l.1,238.96c0,20.87-16.06,36.87-36.93,36.86H36.91c-20.31,0-36.85-15.56-36.86-36.09L0,60.77C0,39.98,16,23.88,36.84,23.91l47.2.07-.07-11.3c-.04-6.99,4.96-12.47,11.72-12.68s12.29,4.95,12.33,11.93l.06,12.02h119.92s-.03-11.27-.03-11.27c-.02-7,4.93-12.47,11.73-12.69s12.31,4.96,12.32,11.93l.02,12.05,47.29-.08c19.58-.03,36.63,15.06,36.64,35.65ZM312.01,95.82l.04-35.93c-.24-6.71-5.13-11.89-12.15-11.97H36.16c-6.9.07-12.12,5.24-12.12,11.97v35.94s287.97,0,287.97,0ZM300.27,311.4c7.02-.48,11.76-5.4,11.76-12.09V119.78s-287.99,0-287.99,0l-.02,179.54c0,6.97,5.26,11.89,12.14,12.08h264.1Z" />
+      <path d="M100.1,212.7c-5.09-5.08-5.22-12.34-.56-17.24,4.3-4.53,12.11-5.06,16.94-.24l28.16,28.06,76.88-65.7c5.12-4.37,13.18-1.82,16.43,2.67,3.93,5.42,2.92,12.23-2.29,16.68l-83.45,71.39c-5.36,4.59-12.26,4.15-17.1-.68l-35.02-34.94Z" />
+    </svg>
   );
 }
 
