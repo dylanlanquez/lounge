@@ -144,6 +144,15 @@ export function ensureQuizKeyframes(): void {
       to   { opacity: 1; transform: translateY(0); }
     }
 
+    /* Slide-up sheet — used by RepairBuilder's "Add a repair" sheet.
+       Translates from below the viewport with a soft bounce easing,
+       paired with the .vlounge-fadeIn on the backdrop overlay so the
+       two land together. */
+    @keyframes vlounge-sheet-up {
+      from { transform: translateY(100%); opacity: 0; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+
     /* Success ring + tick — stroke-dashoffset draw-in for the
        booking-confirmation glyph. Ring draws clockwise from the top,
        tick draws after a short delay. Combined feel: ~0.85s motion,

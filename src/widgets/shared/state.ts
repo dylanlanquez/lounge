@@ -68,10 +68,57 @@ export interface AxisPinState {
   product_arch_match?: CatalogueArchMatch;
 }
 
+/** One repair line in the denture-repair cart. The repair step lets
+ *  the patient pile up multiple repairs (reline upper + 2 broken
+ *  teeth on lower + …) before continuing, and each line carries
+ *  enough info to render the cart, compute the total, and submit
+ *  the booking with full per-line breakdown. */
+export interface RepairLine {
+  /** Stable client-side id used for React keys + removal. */
+  lineId: string;
+  /** Catalogue row id (lwo_catalogue.id) — what the booking write
+   *  will reference when we land the lng_booking_repair_items
+   *  migration. Snapshotted so a catalogue edit mid-session doesn't
+   *  swap the line under the patient. */
+  catalogueId: string;
+  /** Catalogue code, e.g. 'den_snapped'. Convenience for downstream
+   *  filters / logging. */
+  code: string;
+  /** lwo_catalogue.repair_variant — the column value the slot RPC,
+   *  the catalogue resolver and the upgrades query all filter on
+   *  (e.g. "Snapped denture", "Broken tooth", "Relining"). Mirrored
+   *  to axes.repair_variant whenever the cart's first line changes. */
+  repairVariant: string;
+  /** Display name snapshotted at add time. */
+  name: string;
+  /** unit_label from the catalogue ('per tooth' / 'per arch' / null).
+   *  Drives the cart display ("× 3 teeth" suffix) and the sheet's
+   *  quantity stepper visibility. */
+  unitLabel: string | null;
+  arch: 'upper' | 'lower' | 'both';
+  quantity: number;
+  /** Per-unit price snapshotted from the catalogue at add time. */
+  unitPricePence: number;
+  /** Both-arches override snapshotted from the catalogue. Used when
+   *  arch === 'both' AND the catalogue has a both_arches_price (e.g.
+   *  Reline £320 for both arches vs £160 each). */
+  bothArchesPricePence: number | null;
+  /** Resolved total for this line, in pence. Precomputed at add
+   *  time so the cart shows a stable price; recomputed if quantity
+   *  changes via the stepper. */
+  lineTotalPence: number;
+}
+
 export interface WidgetState {
   location: WidgetLocation | null;
   service: WidgetBookingType | null;
   axes: AxisPinState;
+  /** Denture-repair cart. Empty for every other service; one or more
+   *  RepairLines for denture_repair. axes.repair_variant mirrors the
+   *  first line's code so downstream queries (slot duration, upgrades)
+   *  keep working in their current shape — the multi-line write to
+   *  the booking happens at submit time via a separate field. */
+  repairItems: RepairLine[];
   /** Upgrade ids the patient has ticked on the Upgrades step. The
    *  widget loads upgrades for the resolved catalogue row only when
    *  axes are complete enough to identify it; this set stays empty
@@ -265,6 +312,7 @@ export function useBookingState(
       location: startingLocation,
       service: prefill.service,
       axes: { ...prefill.axes },
+      repairItems: [],
       upgradeIds: [],
       slotIso: null,
       // Prefill-supplied identity (Shopify customer email) wins over
@@ -311,10 +359,18 @@ export function useBookingState(
         service: state.service,
         resolvedRow: resolvedResult.data,
         arch: state.axes.arch,
+        repairItems: state.repairItems,
         upgrades,
         selectedUpgradeIds: state.upgradeIds,
       }),
-    [state.service, resolvedResult.data, state.axes.arch, upgrades, state.upgradeIds],
+    [
+      state.service,
+      resolvedResult.data,
+      state.axes.arch,
+      state.repairItems,
+      upgrades,
+      state.upgradeIds,
+    ],
   );
   const currentIdx = activeSteps.indexOf(stepKey);
   const totalSteps = activeSteps.length;
@@ -371,6 +427,7 @@ export function useBookingState(
       ...prev,
       service,
       axes: {},
+      repairItems: [],
       upgradeIds: [],
     }));
   };
@@ -416,12 +473,59 @@ export function useBookingState(
     }));
   };
 
+  /** Add one line to the denture-repair cart. Called from
+   *  RepairBuilder after the patient confirms arch + quantity in the
+   *  slide-up sheet. Mirrors the line's code into axes.repair_variant
+   *  the first time the cart fills so downstream queries (slot
+   *  duration, upgrades) still resolve against a single repair_variant.
+   *  Multi-line submission is wired in a separate phase. */
+  const addRepairItem = (line: Omit<RepairLine, 'lineId'>) => {
+    setState((prev) => {
+      const lineId = newLineId();
+      const next: RepairLine = { lineId, ...line };
+      const repairItems = [...prev.repairItems, next];
+      // Mirror the FIRST line's repair_variant into axes (not the
+      // line just added) — the downstream resolver, slot RPC and
+      // upgrades all key off a single repair_variant and the
+      // first-line choice is the stable anchor across adds.
+      const firstVariant = repairItems[0]?.repairVariant;
+      return {
+        ...prev,
+        repairItems,
+        axes: { ...prev.axes, repair_variant: firstVariant },
+        // Adding a repair invalidates the per-variant upgrades that
+        // the previous repair_variant might have loaded — keeps the
+        // upgrade selection consistent with the cart's first line.
+        upgradeIds: [],
+      };
+    });
+  };
+
+  /** Remove one line from the repair cart by lineId. If that empties
+   *  the cart, clears the mirrored axes.repair_variant; otherwise
+   *  rebinds it to the new first line so downstream queries keep
+   *  resolving. */
+  const removeRepairItem = (lineId: string) => {
+    setState((prev) => {
+      const repairItems = prev.repairItems.filter((r) => r.lineId !== lineId);
+      const firstVariant = repairItems[0]?.repairVariant ?? undefined;
+      return {
+        ...prev,
+        repairItems,
+        axes: { ...prev.axes, repair_variant: firstVariant },
+        upgradeIds: [],
+      };
+    });
+  };
+
   return {
     state,
     setState,
     setService,
     setAxisPin,
     toggleUpgrade,
+    addRepairItem,
+    removeRepairItem,
     upgrades,
     resolvedRow: resolvedResult.data,
     priceBreakdown,
@@ -437,6 +541,21 @@ export function useBookingState(
     goTo,
     choosePayment,
   };
+}
+
+/** Stable, unique line id for repair-cart entries. Uses
+ *  crypto.randomUUID() when available (every browser the widget
+ *  targets, Safari 15.4+), falling back to a Date+Math composite
+ *  for ancient WebViews so the cart never silently dedupes lines
+ *  on key collisions. */
+function newLineId(): string {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
+    return crypto.randomUUID();
+  }
+  return `line_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export type BookingStateApi = ReturnType<typeof useBookingState>;
@@ -459,6 +578,7 @@ function initialStepFor(prefill: ResolvedPrefill, locationCount: number): StepKe
       prefill.location ?? (locationCount === 1 ? null : null), // location pinning irrelevant for activeStepsFor's location branch — that one only checks locationCount
     service: prefill.service,
     axes: { ...prefill.axes },
+    repairItems: [],
     upgradeIds: [],
     slotIso: null,
     details: { ...EMPTY_DETAILS, ...prefill.details },
@@ -478,7 +598,13 @@ function initialStepFor(prefill: ResolvedPrefill, locationCount: number): StepKe
       const axisKey = step.slice(5) as AxisKey;
       if (axisKey === 'product_key' && prefill.axes.product_key) continue;
       if (axisKey === 'arch' && prefill.axes.arch) continue;
-      if (axisKey === 'repair_variant' && prefill.axes.repair_variant) continue;
+      // repair_variant prefill is a hint of which repair tile the
+      // patient clicked on the host page; it does NOT auto-add the
+      // cart line (arch + quantity are still unknown). Always land
+      // on the repair step so the patient confirms.
+      if (axisKey === 'repair_variant' && prefill.axes.repair_variant) {
+        return step;
+      }
       return step;
     }
     return step;
@@ -501,6 +627,7 @@ function initialLockedIdxFor(
     location: prefill.location ?? null,
     service: prefill.service,
     axes: { ...prefill.axes },
+    repairItems: [],
     upgradeIds: [],
     slotIso: null,
     details: { ...EMPTY_DETAILS, ...prefill.details },
@@ -521,7 +648,9 @@ function initialLockedIdxFor(
       const axisKey = step.slice(5) as AxisKey;
       if (axisKey === 'product_key' && prefill.axes.product_key) { idx++; continue; }
       if (axisKey === 'arch' && prefill.axes.arch) { idx++; continue; }
-      if (axisKey === 'repair_variant' && prefill.axes.repair_variant) { idx++; continue; }
+      // repair_variant prefill never advances past the repair step —
+      // the patient still needs to confirm arch + quantity on the
+      // cart builder, so the step stays in play (not locked).
       return idx;
     }
     return idx;
@@ -736,6 +865,12 @@ export function computePriceBreakdown(input: {
   service: WidgetBookingType | null;
   resolvedRow: ResolvedCatalogueRow | null;
   arch: 'upper' | 'lower' | 'both' | undefined;
+  /** Denture-repair cart. When non-empty AND the service is
+   *  denture_repair, the service line is the sum of line totals
+   *  instead of the single-row resolver — the resolver can only
+   *  identify ONE repair at a time, which is meaningless for a
+   *  multi-line cart. */
+  repairItems: RepairLine[];
   upgrades: WidgetUpgrade[];
   selectedUpgradeIds: string[];
 }): PriceBreakdown {
@@ -753,13 +888,20 @@ export function computePriceBreakdown(input: {
     return unit;
   };
 
-  const serviceLinePence = input.resolvedRow
-    ? priceFor(
-        input.resolvedRow.unitPricePence,
-        input.resolvedRow.bothArchesPricePence,
-        input.resolvedRow.archMatch,
-      )
-    : 0;
+  // Denture-repair branch: the cart is the source of truth. Each
+  // line's lineTotalPence was resolved against the catalogue at
+  // add-time (with both_arches_price honoured for 'both' arch on
+  // single-arch repairs), so we just sum.
+  const isRepair = input.service?.serviceType === 'denture_repair';
+  const serviceLinePence = isRepair
+    ? input.repairItems.reduce((sum, r) => sum + r.lineTotalPence, 0)
+    : input.resolvedRow
+      ? priceFor(
+          input.resolvedRow.unitPricePence,
+          input.resolvedRow.bothArchesPricePence,
+          input.resolvedRow.archMatch,
+        )
+      : 0;
 
   const upgradesLinePence = input.upgrades
     .filter((u) => input.selectedUpgradeIds.includes(u.id))
@@ -811,6 +953,13 @@ export function isNextEnabled(api: BookingStateApi): boolean {
     case 'axis:arch':
       return !!api.state.axes.arch;
     case 'axis:repair_variant':
+      // Denture-repair uses the cart builder, so Continue lights up
+      // once the patient has at least one line. Any other service
+      // that ever declares the repair_variant axis would fall back
+      // to the legacy single-pin gate.
+      if (api.state.service?.serviceType === 'denture_repair') {
+        return api.state.repairItems.length > 0;
+      }
       return !!api.state.axes.repair_variant;
     case 'upgrades':
       // Upgrades are optional — Next is always live so the customer

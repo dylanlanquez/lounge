@@ -25,6 +25,7 @@ import {
 import { LocationStep } from './steps/Location.tsx';
 import { ServiceStep } from './steps/Service.tsx';
 import { AxisStep } from './steps/Axis.tsx';
+import { RepairBuilder } from './steps/RepairBuilder.tsx';
 import { UpgradesStep } from './steps/Upgrades.tsx';
 import { TimeStep } from './steps/Time.tsx';
 import { DetailsStep } from './steps/Details.tsx';
@@ -752,6 +753,15 @@ function StepRouter({
 }) {
   if (api.stepKey.startsWith('axis:')) {
     const axisKey = api.stepKey.slice(5) as AxisKey;
+    // Denture-repair gets the cart-style builder (multi-line, with
+    // arch + quantity per line). Every other axis step keeps the
+    // single-select option-card pattern in AxisStep.
+    if (
+      axisKey === 'repair_variant' &&
+      api.state.service?.serviceType === 'denture_repair'
+    ) {
+      return <RepairBuilder api={api} accent={accent} />;
+    }
     return <AxisStep api={api} axisKey={axisKey} accent={accent} />;
   }
   switch (api.stepKey) {
@@ -818,8 +828,10 @@ function Footer({
   // shouldn't book the appointment outright; the customer needs a
   // moment of "right, this is going to commit me". When confirmOTD
   // is true the two-CTA row collapses into one full-width "Book
-  // appointment" button, with a quiet "Change" link to roll back
-  // to the two-button view. Local state (not api.state) because the
+  // appointment" button. The back arrow rolls back to the two-button
+  // view instead of navigating to the previous step (handled by
+  // effectiveOnBack below) so there's no separate "Change" link
+  // cluttering the footer. Local state (not api.state) because the
   // intent is a transient UI mode, not a piece of the booking the
   // server cares about until the customer hits Book.
   const [confirmOTD, setConfirmOTD] = useState(false);
@@ -840,6 +852,21 @@ function Footer({
   const summaryPaid = isDetailsStep && fullAmount > 0;
   const summaryFree = isDetailsStep && fullAmount === 0;
 
+  // Back-arrow behaviour: when the user has tapped "Pay on the day"
+  // and is sitting on the Book-appointment confirmation, the arrow
+  // rolls back the confirmation rather than navigating to the
+  // previous step. Two presses still walk them all the way back
+  // (first rolls confirmOTD off, second goes to the prior step).
+  const inOTDConfirm = summaryPaid && confirmOTD;
+  const backEnabled = inOTDConfirm || api.canGoBack;
+  const effectiveOnBack = () => {
+    if (inOTDConfirm) {
+      setConfirmOTD(false);
+      return;
+    }
+    onBack();
+  };
+
   const nextDisabled = isPaymentStep
     ? !paymentReady || paymentPaying || submitting
     : !detailsValid || submitting;
@@ -847,7 +874,12 @@ function Footer({
   const nextLabel = (() => {
     if (isPaymentStep) {
       if (paymentPaying || submitting) return 'Processing…';
-      return `Pay ${formatPriceShort(fullAmount)}`;
+      // The pay button on the payment step IS the booking commit —
+      // tapping it confirms the slot, so the label has to read as
+      // "pay AND book", not just "pay". Without the second verb the
+      // patient can tap thinking they're only authorising the card
+      // and still have a separate Book step to go.
+      return `Pay ${formatPriceShort(fullAmount)} and book in`;
     }
     if (submitting) return 'Booking…';
     if (isDetailsStep) return copy.summaryCtaBook;
@@ -881,16 +913,15 @@ function Footer({
           maxWidth: 600,
         }}
       >
-        <BackButton disabled={!api.canGoBack} onClick={onBack} />
+        <BackButton disabled={!backEnabled} onClick={effectiveOnBack} />
 
         {summaryPaid ? (
           confirmOTD ? (
             // Confirmation beat — Pay-on-the-day was tapped once;
             // surfacing the explicit "Book appointment" makes the
-            // commit step obvious. The "Paying on the day · Change"
-            // link is rendered as a separate row UNDER this one
-            // (see below) so the button column doesn't stretch and
-            // drag the Back arrow's vertical centre down with it.
+            // commit step obvious. The back arrow (now overridden by
+            // effectiveOnBack) rolls this confirmation off without
+            // needing a separate "Change" link.
             <NextButton
               disabled={nextDisabled}
               onClick={onPayOnTheDay}
@@ -975,31 +1006,6 @@ function Footer({
           </NextButton>
         )}
       </div>
-
-      {summaryPaid && confirmOTD ? (
-        // Sits on its own row under the buttons so the BackButton +
-        // Book-appointment line stays single-row aligned. Tapping
-        // Change rolls back to the two-CTA view.
-        <button
-          type="button"
-          onClick={() => setConfirmOTD(false)}
-          disabled={submitting}
-          style={{
-            appearance: 'none',
-            border: 'none',
-            background: 'transparent',
-            fontFamily: 'inherit',
-            fontSize: 13,
-            color: QUIZ.MUTED_2,
-            cursor: submitting ? 'not-allowed' : 'pointer',
-            padding: '0 8px',
-            textDecoration: 'underline',
-            textUnderlineOffset: 3,
-          }}
-        >
-          Change to pay now instead
-        </button>
-      ) : null}
     </footer>
   );
 }
@@ -1066,26 +1072,35 @@ function FooterPrice({
   accent: string;
 }) {
   if (totalPence <= 0) return null;
+  // Visual centring: the button row below has a 42px back-button on
+  // the left + 8px gap before the Next pill. If the price simply
+  // centred on the full footer width (justify-content:center +
+  // width:100%) the £-amount sat ~25px left of the Next button's
+  // own centre — fine numerically, off-axis visually. Mirror the
+  // button row's structure (max-width 600, 42px spacer, flex:1
+  // centred slot) so the total stacks directly above the CTA.
   return (
     <div
       className="vlounge-footer-price"
       style={{
         display: 'flex',
-        flexDirection: 'row',
-        flexWrap: 'wrap',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: 20,
+        gap: 8,
         width: '100%',
+        maxWidth: 600,
+        margin: '0 auto',
         animation: `vlounge-fadeIn 0.25s ease`,
       }}
     >
-      <FooterPriceBlock
-        label="Total"
-        valuePence={totalPence}
-        muted={false}
-        accent={accent}
-      />
+      <div aria-hidden style={{ width: 42, flexShrink: 0 }} />
+      <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+        <FooterPriceBlock
+          label="Total"
+          valuePence={totalPence}
+          muted={false}
+          accent={accent}
+        />
+      </div>
     </div>
   );
 }

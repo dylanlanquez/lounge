@@ -61,6 +61,43 @@ export interface ResolvedCatalogueRow {
   archMatch: 'any' | 'single' | 'both';
 }
 
+/** One row from lwo_catalogue filtered to service_type='denture_repair'
+ *  and ready for the cart-style repair builder. Carries every field
+ *  the builder needs to render a tile + resolve a line price without
+ *  another round-trip. */
+export interface RepairCatalogueRow {
+  id: string;
+  /** Stable internal code, e.g. 'den_snapped'. Used for client-side
+   *  identity (React keys, log lines). Not what downstream queries
+   *  filter on — see repairVariant below. */
+  code: string;
+  /** lwo_catalogue.repair_variant — the value the slot RPC, the
+   *  catalogue resolver and the upgrades query all filter on
+   *  (e.g. "Snapped denture", "Broken tooth", "Relining"). Mirror
+   *  this into axes.repair_variant when a cart line is added so
+   *  the existing single-row plumbing keeps resolving. */
+  repairVariant: string;
+  name: string;
+  description: string | null;
+  unitPricePence: number;
+  /** Tiered "first one £X, each extra £Y" price. Null for flat-rate
+   *  rows. None of the current repair rows use this, but the column
+   *  exists so the builder honours it from day one. */
+  extraUnitPricePence: number | null;
+  /** Override price when arch='both' on per-arch repairs (Reline:
+   *  £160 per arch, £320 both). Null when not applicable. */
+  bothArchesPricePence: number | null;
+  /** 'per tooth' | 'per arch' | null. Drives the cart copy and the
+   *  quantity-stepper visibility on the slide-up sheet. */
+  unitLabel: string | null;
+  /** True when the catalogue allows the patient to choose how many.
+   *  Per-tooth rows always have this set; per-arch rows currently
+   *  do too, though we don't surface a stepper for them (1 = one
+   *  repair on the chosen arch). */
+  quantityEnabled: boolean;
+  sortOrder: number | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Live location read
 // ─────────────────────────────────────────────────────────────────────────────
@@ -668,6 +705,82 @@ export function useResolvedCatalogueRow(input: ResolverInput): ResolverResult {
       cancelled = true;
     };
   }, [input.serviceType, input.productKey, input.repairVariant]);
+
+  return { data, loading, error };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Denture-repair catalogue (all rows for the cart builder)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The repair step lets the patient build a multi-line cart, so it
+// needs every repair row up-front rather than the single-row
+// resolver above. Filters mirror lng_widget_booking_types' anon
+// SELECT contract: active + widget_visible.
+
+interface RepairCatalogueResult {
+  data: RepairCatalogueRow[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/** Reads every active, widget-visible denture-repair row from
+ *  lwo_catalogue. Single-fire on mount — the catalogue doesn't change
+ *  inside one booking session, and a refresh on next open picks up
+ *  any catalogue edit. */
+export function useRepairCatalogueRows(): RepairCatalogueResult {
+  const [data, setData] = useState<RepairCatalogueRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('lwo_catalogue')
+        .select(
+          'id, code, repair_variant, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, quantity_enabled, sort_order',
+        )
+        .eq('service_type', 'denture_repair')
+        .eq('active', true)
+        .eq('widget_visible', true)
+        .not('repair_variant', 'is', null)
+        .order('sort_order', { ascending: true, nullsFirst: false })
+        .order('name', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setData(null);
+        setLoading(false);
+        return;
+      }
+      const shaped: RepairCatalogueRow[] = (rows ?? []).map((r) => ({
+        id: r.id as string,
+        code: (r.code as string) ?? '',
+        repairVariant: (r.repair_variant as string) ?? '',
+        name: (r.name as string) ?? '',
+        description: (r.description as string | null) ?? null,
+        unitPricePence: Math.round(Number(r.unit_price) * 100),
+        extraUnitPricePence:
+          r.extra_unit_price === null
+            ? null
+            : Math.round(Number(r.extra_unit_price) * 100),
+        bothArchesPricePence:
+          r.both_arches_price === null
+            ? null
+            : Math.round(Number(r.both_arches_price) * 100),
+        unitLabel: (r.unit_label as string | null) ?? null,
+        quantityEnabled: Boolean(r.quantity_enabled),
+        sortOrder: (r.sort_order as number | null) ?? null,
+      }));
+      setData(shaped);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return { data, loading, error };
 }
