@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Camera, ChevronDown, Loader2 } from 'lucide-react';
+import { ArrowRight, Camera, Check, ChevronDown, Loader2 } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
 import { theme } from '../../theme/index.ts';
 import {
@@ -12,6 +12,7 @@ import {
   type IntakePhotoKindForPromotion,
 } from '../../lib/queries/promoteIntakePhotos.ts';
 import { logFailure } from '../../lib/failureLog.ts';
+import { supabase } from '../../lib/supabase.ts';
 
 // SmilePhotosCard — collapsible card that surfaces the pre-visit
 // smile photos the patient uploaded from the booking-confirmation
@@ -105,12 +106,37 @@ export function SmilePhotosCard({
   // Per-tile promotion state. Each kind gets its own slot so a
   // failure (or success) on one tile doesn't reset the others —
   // staff can retry just the tile that failed without re-promoting
-  // the ones that worked.
+  // the ones that worked. Once a tile reaches 'done' it stays
+  // there for the life of the page (no auto-revert) so staff can't
+  // accidentally re-promote the same photo twice.
   const [promote, setPromote] = useState<Record<Kind, PerTilePromoteState>>({
     front: EMPTY_PROMOTE,
     left: EMPTY_PROMOTE,
     right: EMPTY_PROMOTE,
   });
+
+  // Already-added detection. On mount (and whenever the patient
+  // changes) check which smile-photo slots already exist on the
+  // patient profile so the affordance reads "Added" from page
+  // load, not just after the in-session promotion. Without this a
+  // refresh would re-arm the button and staff could promote the
+  // same photo twice.
+  const existingKinds = useExistingSmilePhotoKinds(patientId);
+  useEffect(() => {
+    if (existingKinds.size === 0) return;
+    setPromote((prev) => {
+      const next = { ...prev };
+      for (const k of ['front', 'left', 'right'] as const) {
+        // Only seed 'done' on slots whose live state is still the
+        // pristine idle placeholder; never overwrite a busy/error
+        // state mid-promotion or roll back a freshly-completed one.
+        if (existingKinds.has(k) && next[k].state === 'idle') {
+          next[k] = { state: 'done', message: 'Added' };
+        }
+      }
+      return next;
+    });
+  }, [existingKinds]);
 
   const setKindState = (kind: Kind, next: PerTilePromoteState) => {
     setPromote((prev) => ({ ...prev, [kind]: next }));
@@ -141,15 +167,12 @@ export function SmilePhotosCard({
         });
         return;
       }
-      setKindState(kind, { state: 'done', message: 'Added to profile' });
+      setKindState(kind, { state: 'done', message: 'Added' });
       onPromoted?.();
-      // Auto-revert to idle after 3s so the link reads as "ready
-      // to re-run" again. Re-running overwrites with the latest
-      // intake photo per Meridian's slot versioning, so the
-      // affordance staying live after success is correct.
-      setTimeout(() => {
-        setKindState(kind, EMPTY_PROMOTE);
-      }, 3000);
+      // No auto-revert — once promoted the tile stays "Added"
+      // for the life of the page so staff can't accidentally
+      // re-promote the same photo. The existingKinds query above
+      // picks up this row on the next page load too.
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not add photo.';
       setKindState(kind, { state: 'error', message });
@@ -515,15 +538,20 @@ function PromoteTileLink({
     state.state === 'busy'
       ? 'Adding…'
       : state.state === 'done'
-        ? state.message ?? 'Added to profile'
+        ? state.message ?? 'Added'
         : state.state === 'error'
           ? state.message ?? "Couldn't add"
           : 'Add to profile';
+  // Once promoted the affordance is read-only — clicking again
+  // would be a no-op (the row already exists), so we kill the
+  // hover lift, the cursor, and the click handler entirely. Same
+  // for any disabled / in-flight state.
+  const inactive = disabled || state.state === 'busy' || state.state === 'done';
   return (
     <button
       type="button"
-      onClick={disabled || state.state === 'busy' ? undefined : onClick}
-      disabled={disabled || state.state === 'busy'}
+      onClick={inactive ? undefined : onClick}
+      disabled={inactive}
       aria-label={labelText}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -544,10 +572,14 @@ function PromoteTileLink({
         display: 'inline-flex',
         alignItems: 'center',
         gap: theme.space[2],
-        cursor: disabled || state.state === 'busy' ? 'default' : 'pointer',
-        opacity: disabled ? 0.55 : 1,
+        cursor: inactive ? 'default' : 'pointer',
+        opacity: disabled && state.state !== 'done' ? 0.55 : 1,
         WebkitTapHighlightColor: 'transparent',
         textAlign: 'left',
+        // Soft-fade the label between states so the text swap feels
+        // intentional rather than abrupt. The icon spin (below)
+        // carries the more dramatic motion.
+        transition: `color ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
       }}
     >
       <span style={{
@@ -559,6 +591,7 @@ function PromoteTileLink({
       <span
         aria-hidden
         style={{
+          position: 'relative',
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -567,29 +600,112 @@ function PromoteTileLink({
           borderRadius: theme.radius.pill,
           background: trailingTint.bg,
           color: trailingTint.fg,
-          transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.base}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
           transform: showShift ? 'translateX(2px)' : 'translateX(0)',
           flexShrink: 0,
+          overflow: 'hidden',
         }}
       >
-        {state.state === 'busy' ? (
-          <Loader2
-            size={11}
-            aria-hidden
-            style={{
-              animation: 'lng-smile-promote-spin 0.9s linear infinite',
-            }}
-          />
-        ) : (
-          <ArrowRight size={11} aria-hidden />
-        )}
+        {/* key forces React to remount the inner icon on every state
+            transition so the spin-in keyframe replays. The container
+            stays mounted (so background colour transitions stay
+            smooth); the swap of arrow ↔ check ↔ spinner happens
+            inside it with a 360° rotate-in. */}
+        <span
+          key={state.state}
+          style={{
+            display: 'inline-flex',
+            animation: `lng-smile-icon-swap ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
+          }}
+        >
+          {state.state === 'busy' ? (
+            <Loader2
+              size={11}
+              aria-hidden
+              style={{
+                animation: 'lng-smile-promote-spin 0.9s linear infinite',
+              }}
+            />
+          ) : state.state === 'done' ? (
+            <Check size={12} strokeWidth={3} aria-hidden />
+          ) : (
+            <ArrowRight size={11} aria-hidden />
+          )}
+        </span>
       </span>
       <style>{`
         @keyframes lng-smile-promote-spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        @keyframes lng-smile-icon-swap {
+          0%   { transform: rotate(-180deg) scale(0.4); opacity: 0; }
+          60%  { transform: rotate(20deg) scale(1.08); opacity: 1; }
+          100% { transform: rotate(0deg) scale(1); opacity: 1; }
+        }
       `}</style>
     </button>
   );
+}
+
+// Lightweight existence check — for a given patient, returns the
+// set of smile-photo kinds (front / left / right) that already
+// have an active patient_files row. Used by SmilePhotosCard to
+// seed the per-tile promote state to 'done' on mount so the
+// affordance reads "Added" from page load and can't be tapped to
+// re-promote a photo that was already added in a previous session.
+//
+// Only the file_labels.key column is fetched (via the inner-join);
+// no file urls or sizes — this is cheaper than usePatientProfileFiles
+// and avoids re-rendering the whole card every time gallery files
+// change.
+function useExistingSmilePhotoKinds(
+  patientId: string | null | undefined,
+): Set<Kind> {
+  const [kinds, setKinds] = useState<Set<Kind>>(() => new Set());
+  useEffect(() => {
+    if (!patientId) {
+      setKinds(new Set());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('patient_files')
+        .select('file_labels:label_id(key)')
+        .eq('patient_id', patientId)
+        .eq('status', 'active');
+      if (cancelled) return;
+      if (error) {
+        // Non-fatal — fall back to "no existing slots" so the
+        // affordance stays interactive. The promote handler still
+        // fires; the worst case is staff promoting a photo that
+        // was already there (which is idempotent — Meridian's
+        // version stamp keeps both rows + the latest wins).
+        console.error('[useExistingSmilePhotoKinds]', error);
+        setKinds(new Set());
+        return;
+      }
+      const next = new Set<Kind>();
+      // Supabase typings join the embedded select as an array even
+      // when the relationship is one-to-one — flatten and read the
+      // single key. Using `unknown` first because the inferred shape
+      // doesn't match our narrower view of the row.
+      const rows = ((data ?? []) as unknown) as Array<{
+        file_labels: { key?: string } | Array<{ key?: string }> | null;
+      }>;
+      for (const r of rows) {
+        const lbl = Array.isArray(r.file_labels) ? r.file_labels[0] : r.file_labels;
+        const k = lbl?.key;
+        if (k === 'smile_photo_front') next.add('front');
+        else if (k === 'smile_photo_left') next.add('left');
+        else if (k === 'smile_photo_right') next.add('right');
+      }
+      setKinds(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
+  return kinds;
 }
