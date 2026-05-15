@@ -1007,11 +1007,48 @@ export function VisitDetail() {
           `Tech note is too long for the label (${trimmed.length} / ${MAX_TECH_NOTE_LENGTH}). Please trim and try again.`,
         );
       }
+      const previousNote = (visit.notes ?? '').trim();
+      const nextNote = trimmed;
+      // Skip the round-trip when nothing changed — the dialog still
+      // closes (idempotent save) but we don't write a no-op event
+      // to the timeline.
+      if (previousNote === nextNote) {
+        setNoteOpen(false);
+        return;
+      }
       const { error: err } = await supabase
         .from('lng_visits')
-        .update({ notes: trimmed.length > 0 ? trimmed : null })
+        .update({ notes: nextNote.length > 0 ? nextNote : null })
         .eq('id', visit.id);
       if (err) throw new Error(err.message);
+      // Audit row for the timeline. Three distinct event types so
+      // the visit timeline can render add / edit / remove with the
+      // right verb (rather than collapsing to one ambiguous
+      // "tech_note_changed"). Best-effort — the dialog still closes
+      // even if the audit insert fails so a single-write hiccup
+      // doesn't block the operator from saving.
+      const eventType = !previousNote
+        ? 'visit_tech_note_added'
+        : !nextNote
+          ? 'visit_tech_note_removed'
+          : 'visit_tech_note_edited';
+      await supabase.from('patient_events').insert({
+        patient_id: visit.patient_id,
+        event_type: eventType,
+        actor_account_id: currentAccount?.account_id ?? null,
+        payload: {
+          visit_id: visit.id,
+          // Short preview so the timeline can show a snippet of
+          // the new note without rendering the full body. Trimmed
+          // to ~120 chars + ellipsis; the full text always lives
+          // on lng_visits.notes for anyone needing the canonical
+          // copy.
+          preview: nextNote.length > 0 ? nextNote.slice(0, 120) : null,
+          truncated: nextNote.length > 120,
+          previous_length: previousNote.length || null,
+          length: nextNote.length || null,
+        },
+      });
       // Realtime subscription on lng_visits (filter id=eq.<visit>)
       // refreshes useVisitDetail; the dialog closes immediately.
       setNoteOpen(false);

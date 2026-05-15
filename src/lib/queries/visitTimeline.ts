@@ -1168,6 +1168,13 @@ function composePatientEventTitle(row: PatientEventRow): string {
   if (row.event_type === 'receipt_sent' && row.payload?.delivery_status === 'failed') {
     return 'Receipt failed to send';
   }
+  // Tech-note lifecycle on the visit. Three discrete event types
+  // (added / edited / removed) each get a verb that reads as the
+  // operator action — "Tech note added" rather than the snake-case
+  // fall-through ("Visit Tech Note Added").
+  if (row.event_type === 'visit_tech_note_added') return 'Tech note added';
+  if (row.event_type === 'visit_tech_note_edited') return 'Tech note edited';
+  if (row.event_type === 'visit_tech_note_removed') return 'Tech note removed';
   return HUMAN_PATIENT_EVENT(row.event_type);
 }
 
@@ -1179,6 +1186,19 @@ function composePatientEventTitle(row: PatientEventRow): string {
 // duplicate it.
 function composePatientEventDetail(row: PatientEventRow): string | undefined {
   const payload = row.payload ?? {};
+  // Tech-note add / edit detail surfaces the first 120 chars of the
+  // new note so staff can see what was written without reopening the
+  // dialog. Truncated rows get an ellipsis suffix; remove rows have
+  // no payload preview (the headline already says what happened).
+  if (
+    row.event_type === 'visit_tech_note_added' ||
+    row.event_type === 'visit_tech_note_edited'
+  ) {
+    const preview = typeof payload.preview === 'string' ? payload.preview.trim() : null;
+    if (!preview) return undefined;
+    const truncated = payload.truncated === true;
+    return truncated ? `"${preview}…"` : `"${preview}"`;
+  }
   if (row.event_type === 'patient_registered_from_shopify') {
     const id = typeof payload.shopify_customer_id === 'string'
       ? payload.shopify_customer_id
