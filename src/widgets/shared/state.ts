@@ -140,13 +140,21 @@ export interface WidgetState {
   upgradeIds: string[];
   slotIso: string | null;
   details: WidgetDetails;
-  /** Pay-now vs Pay-on-the-day. Picked from the two CTAs at the
-   *  bottom of the details summary; null while the patient hasn't
-   *  decided yet (i.e. they're still filling in their details).
-   *  'now' includes the Payment step in activeSteps; 'on_the_day'
-   *  drops it. Free services (subtotal === 0) stay null and submit
-   *  via the single Book button. */
-  paymentChoice: 'now' | 'on_the_day' | null;
+  /** Picks one of three payment paths from the details footer CTAs;
+   *  null while the patient hasn't decided yet. Free services stay
+   *  null and submit via the single Book button.
+   *
+   *  • 'pay_full'        Charge the resolved full price now.
+   *                      Includes the Payment step in activeSteps.
+   *  • 'pay_deposit'     Charge service.depositPence now (legacy
+   *                      Calendly-style "£25 today, balance on the
+   *                      day"). Includes the Payment step.
+   *  • 'pay_on_the_day'  Take nothing now; cart settles at the till.
+   *                      Skips the Payment step.
+   *
+   *  Which CTAs surface is per-service: Footer reads
+   *  service.depositPence and service.allowPayOnTheDay to decide. */
+  paymentChoice: 'pay_full' | 'pay_deposit' | 'pay_on_the_day' | null;
 }
 
 export interface WidgetDetails {
@@ -284,11 +292,17 @@ export function activeStepsFor(
   // screen the customer reviews and commits on. Previous standalone
   // 'summary' step removed.
   out.push('details');
-  // Payment step is gated on the patient's "Pay now" choice from the
-  // details footer rather than the legacy "service has a deposit"
-  // rule. Services without a price (free walk-ins etc.) stay
-  // payment-less because the customer never sees the choice.
-  if (state.service && state.paymentChoice === 'now') out.push('payment');
+  // Payment step is gated on the patient's choice from the details
+  // footer. Either 'pay_full' or 'pay_deposit' enters the Stripe step
+  // (the only difference being the amount the PI is created for);
+  // 'pay_on_the_day' bypasses it. Free services (subtotal === 0)
+  // stay paymentless because the choice never surfaces.
+  if (
+    state.service &&
+    (state.paymentChoice === 'pay_full' || state.paymentChoice === 'pay_deposit')
+  ) {
+    out.push('payment');
+  }
   return out;
 }
 
@@ -427,16 +441,17 @@ export function useBookingState(
     if (activeSteps.includes(key)) setStepKey(key);
   };
 
-  /** Pick the pay-now vs pay-on-the-day path from the details footer.
-   *  Sets the choice in state AND advances atomically — by the time
-   *  React commits, paymentChoice is set, activeSteps reflects it,
-   *  and the new stepKey is consistent. For 'now' we walk into the
-   *  Payment step; for 'on_the_day' we leave stepKey on details so
-   *  the caller can fire its submit handler (the widget shell does
-   *  that immediately after this call). */
-  const choosePayment = (choice: 'now' | 'on_the_day') => {
+  /** Pick the payment path from the details footer CTAs. Sets the
+   *  choice in state AND advances atomically — by the time React
+   *  commits, paymentChoice is set, activeSteps reflects it, and
+   *  the new stepKey is consistent.
+   *
+   *  • 'pay_full'        → walk into the Payment step (full price PI)
+   *  • 'pay_deposit'     → walk into the Payment step (deposit PI)
+   *  • 'pay_on_the_day'  → stay on details; caller fires submit() */
+  const choosePayment = (choice: 'pay_full' | 'pay_deposit' | 'pay_on_the_day') => {
     setState((prev) => ({ ...prev, paymentChoice: choice }));
-    if (choice === 'now') {
+    if (choice === 'pay_full' || choice === 'pay_deposit') {
       setStepKey('payment');
     }
   };

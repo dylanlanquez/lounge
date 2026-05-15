@@ -120,7 +120,13 @@ interface SubmitBody {
    *    null / unset  → legacy deposit path: verify against
    *                    widget_deposit_pence (back-compat for any
    *                    older client still in the wild). */
-  paymentMode?: 'full' | 'on_the_day' | null;
+  /** Customer-facing payment path. 'full' charges the resolved
+   *  catalogue price; 'deposit' charges widget_deposit_pence (the
+   *  legacy "£25 today, balance on the day" path); 'on_the_day'
+   *  takes nothing and lets the cart settle at the till; null is
+   *  the legacy free-booking / pre-mode-flag path which falls back
+   *  to the deposit pathway when widget_deposit_pence > 0. */
+  paymentMode?: 'full' | 'deposit' | 'on_the_day' | null;
   details: {
     firstName: string;
     lastName: string;
@@ -224,19 +230,22 @@ Deno.serve(async (req) => {
   }
 
   // ── Payment verification ────────────────────────────────────────
-  // Three modes the client can ask for. All flows resolve the
-  // expected amount server-side first so a tampered client body
-  // can't claim "£0 paid" on a £399 booking.
+  // Four modes the client can send. All flows resolve the expected
+  // amount server-side first so a tampered client body can't claim
+  // "£0 paid" on a £399 booking.
   //
-  //   paymentMode === 'full'        → verify PI against the
-  //     resolved catalogue price (unit_price or both_arches_price);
-  //     write paid_in_full_at_booking=true.
-  //   paymentMode === 'on_the_day'  → nothing collected at
-  //     booking. We still take the lookup for completeness but
-  //     never expect a paymentIntentId.
-  //   paymentMode is null / unset   → legacy deposit path. Read
-  //     widget_deposit_pence, require PI when > 0, write the
-  //     deposit fields (paid_in_full_at_booking stays false).
+  //   paymentMode === 'full'        Verify PI against the resolved
+  //     catalogue price (unit_price or both_arches_price); write
+  //     paid_in_full_at_booking=true.
+  //   paymentMode === 'deposit'     Verify PI against
+  //     widget_deposit_pence (the per-booking-type deposit); write
+  //     the deposit fields, paid_in_full_at_booking stays false.
+  //   paymentMode === 'on_the_day'  Nothing collected at booking;
+  //     no PI expected. The cart settles at the till.
+  //   paymentMode is null / unset   Legacy fallback for the old
+  //     widget that pre-dated the explicit mode flag — same
+  //     behaviour as 'deposit'. Kept for back-compat with any
+  //     un-redeployed embed in the wild.
   const paymentMode: 'full' | 'on_the_day' | 'deposit' =
     body.paymentMode === 'full'
       ? 'full'

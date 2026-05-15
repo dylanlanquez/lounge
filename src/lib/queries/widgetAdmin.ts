@@ -64,6 +64,12 @@ export interface WidgetAdminService {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
+  /** Surfaces the "Pay on the day" CTA on the booking widget's
+   *  details footer. Default off — services with a deposit show
+   *  "Pay deposit / Pay in full"; turning this on adds the OTD
+   *  pill alongside (or replaces the deposit CTA when
+   *  widget_deposit_pence is 0). Set per booking type. */
+  widgetAllowPayOnTheDay: boolean;
   /** Whether the admin should see a per-option list. True when the
    *  service has an axis that indexes catalogue rows (`product_key`
    *  for same-day-appliance / virtual-impression, `repair_variant`
@@ -109,7 +115,7 @@ export function useWidgetAdminServices(): ReadResult {
         supabase
           .from('lng_booking_type_config')
           .select(
-            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence',
+            'id, service_type, display_label, duration_default, duration_min, widget_visible, widget_description, widget_deposit_pence, widget_allow_pay_on_the_day',
           )
           .is('repair_variant', null)
           .is('product_key', null)
@@ -247,6 +253,7 @@ export function useWidgetAdminServices(): ReadResult {
           widgetVisible: (bt.widget_visible as boolean) ?? false,
           widgetDescription: (bt.widget_description as string | null) ?? '',
           widgetDepositPence: (bt.widget_deposit_pence as number) ?? 0,
+          widgetAllowPayOnTheDay: (bt.widget_allow_pay_on_the_day as boolean) ?? false,
           hasOptions,
           optionsLabel,
           products: allProducts,
@@ -275,6 +282,7 @@ export async function saveServiceConfig(input: {
   widgetVisible: boolean;
   widgetDescription: string;
   widgetDepositPence: number;
+  widgetAllowPayOnTheDay: boolean;
 }): Promise<void> {
   const { error } = await supabase
     .from('lng_booking_type_config')
@@ -282,6 +290,7 @@ export async function saveServiceConfig(input: {
       widget_visible: input.widgetVisible,
       widget_description: input.widgetDescription.trim() || null,
       widget_deposit_pence: input.widgetDepositPence,
+      widget_allow_pay_on_the_day: input.widgetAllowPayOnTheDay,
     })
     .eq('id', input.id);
   if (error) throw new Error(`Couldn't save: ${error.message}`);

@@ -286,7 +286,7 @@ function WidgetReady({
   // step's onPaid handler after Stripe confirms.
   const submit = async (
     paymentIntentId: string | null = null,
-    paymentMode: 'full' | 'on_the_day' | null = null,
+    paymentMode: 'full' | 'deposit' | 'on_the_day' | null = null,
   ) => {
     if (submission.state === 'submitting') return;
     setSubmission({
@@ -297,19 +297,21 @@ function WidgetReady({
       error: null,
     });
     try {
-      // paymentMode is explicit because the two-button summary footer
-      // sets api.state.paymentChoice and calls submit in the same
-      // handler — React hasn't committed the state update yet, so
-      // we'd read the stale value off api.state. Passing it through
-      // sidesteps that race; falls back to api.state for legacy
-      // callers (free-service path).
+      // paymentMode is explicit because the summary-footer CTAs set
+      // api.state.paymentChoice and call submit in the same handler —
+      // React hasn't committed yet, so we'd read the stale value off
+      // api.state. Passing it through sidesteps that race; falls back
+      // to api.state for legacy callers (free-service path) and for
+      // the Payment-step success handler (which is post-commit).
       const resolvedMode =
         paymentMode ??
-        (api.state.paymentChoice === 'now'
+        (api.state.paymentChoice === 'pay_full'
           ? 'full'
-          : api.state.paymentChoice === 'on_the_day'
-            ? 'on_the_day'
-            : null);
+          : api.state.paymentChoice === 'pay_deposit'
+            ? 'deposit'
+            : api.state.paymentChoice === 'pay_on_the_day'
+              ? 'on_the_day'
+              : null);
       const result = await submitBooking(
         api.state,
         paymentIntentId,
@@ -408,16 +410,23 @@ function WidgetReady({
     api.goNext();
   };
 
-  // The two summary-footer CTAs. Both must set api.state.paymentChoice
-  // (so activeSteps recalcs and the back-arrow knows where to land)
-  // and either advance to the Payment step or fire submit straight
+  // The summary-footer CTAs. Each sets api.state.paymentChoice (so
+  // activeSteps recalcs and the back-arrow knows where to land) and
+  // either advances to the Payment step or fires submit straight
   // away. paymentMode is passed to submit explicitly because the
   // setState above hasn't propagated by the time we call it.
-  const onPayNow = () => {
-    api.choosePayment('now');
+  //
+  // Three choices map to two routes:
+  //   • Pay in full / Pay deposit  → Payment step (Stripe form)
+  //   • Pay on the day             → submit immediately, no PI
+  const onPayInFull = () => {
+    api.choosePayment('pay_full');
+  };
+  const onPayDeposit = () => {
+    api.choosePayment('pay_deposit');
   };
   const onPayOnTheDay = () => {
-    api.choosePayment('on_the_day');
+    api.choosePayment('pay_on_the_day');
     submit(null, 'on_the_day');
   };
   const submitting = submission.state === 'submitting';
@@ -429,7 +438,8 @@ function WidgetReady({
       brand={brand}
       locations={locations}
       onNext={onFooterNext}
-      onPayNow={onPayNow}
+      onPayInFull={onPayInFull}
+      onPayDeposit={onPayDeposit}
       onPayOnTheDay={onPayOnTheDay}
       onSubmit={submit}
       submitting={submitting}
@@ -456,7 +466,8 @@ function ChromeShell({
   brand,
   locations,
   onNext,
-  onPayNow,
+  onPayInFull,
+  onPayDeposit,
   onPayOnTheDay,
   onSubmit,
   submitting,
@@ -473,7 +484,8 @@ function ChromeShell({
   brand?: WidgetBrand;
   locations: WidgetLocation[];
   onNext: () => void;
-  onPayNow: () => void;
+  onPayInFull: () => void;
+  onPayDeposit: () => void;
   onPayOnTheDay: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
@@ -577,7 +589,8 @@ function ChromeShell({
         accent={accent}
         onNext={onNext}
         onBack={api.goBack}
-        onPayNow={onPayNow}
+        onPayInFull={onPayInFull}
+        onPayDeposit={onPayDeposit}
         onPayOnTheDay={onPayOnTheDay}
         submitting={submitting}
         paymentReady={paymentReady}
@@ -812,7 +825,8 @@ function Footer({
   accent,
   onNext,
   onBack,
-  onPayNow,
+  onPayInFull,
+  onPayDeposit,
   onPayOnTheDay,
   submitting,
   paymentReady,
@@ -823,7 +837,8 @@ function Footer({
   accent: string;
   onNext: () => void;
   onBack: () => void;
-  onPayNow: () => void;
+  onPayInFull: () => void;
+  onPayDeposit: () => void;
   onPayOnTheDay: () => void;
   submitting: boolean;
   paymentReady: boolean;
@@ -833,6 +848,19 @@ function Footer({
   const isDetailsStep = api.stepKey === 'details';
   const breakdown = api.priceBreakdown;
   const fullAmount = breakdown.subtotalPence;
+  // Per-booking-type payment options. depositPence > 0 surfaces a
+  // "Pay deposit £X" CTA on the summary footer (and switches the
+  // running-total preview into a TODAY/ON THE DAY split). The
+  // allowPayOnTheDay flag (Lounge admin → Widget tab) surfaces the
+  // "Pay on the day" CTA. "Pay in full" is always shown when there's
+  // a non-zero amount. Three combos in practice:
+  //   • deposit only        (click-in, same-day): Deposit + Full
+  //   • on-the-day only     (denture-repair):     Full + On the day
+  //   • both flags set                            Deposit + Full + On the day
+  const depositPence = api.state.service?.depositPence ?? 0;
+  const allowOTD = api.state.service?.allowPayOnTheDay === true;
+  const showDepositCta = depositPence > 0;
+  const showOTDCta = allowOTD;
 
   // "Pay on the day" needs a confirmation beat — clicking it
   // shouldn't book the appointment outright; the customer needs a
@@ -911,7 +939,11 @@ function Footer({
       }}
     >
       {showPrice ? (
-        <FooterPrice totalPence={fullAmount} accent={accent} />
+        <FooterPrice
+          totalPence={fullAmount}
+          depositPence={showDepositCta ? depositPence : 0}
+          accent={accent}
+        />
       ) : null}
 
       <div
@@ -955,11 +987,15 @@ function Footer({
               )}
             </NextButton>
           ) : (
-            // Two-CTA summary footer. Pay-now is the primary path so
-            // it lives on the right (the same slot Next/Pay used to
-            // occupy); Pay-on-the-day sits before it as a secondary
-            // pill. Both share the disabled state — neither lights
-            // up until the form is valid.
+            // Per-booking-type CTA row. The right-most button is
+            // always the primary commit ("Pay £X" — the larger
+            // single-figure number, either deposit when configured
+            // or the full amount). When the deposit flow is active
+            // the deposit CTA takes the primary slot and "Pay in
+            // full" sits to its left as the secondary; on services
+            // that allow pay-on-the-day, the OTD pill appears on
+            // the far left. All buttons share the disabled state
+            // so the row only lights up once the form is valid.
             <div
               style={{
                 flex: 1,
@@ -969,31 +1005,59 @@ function Footer({
                 minWidth: 0,
               }}
             >
-              <PayOnTheDayButton
-                disabled={nextDisabled}
-                onClick={() => setConfirmOTD(true)}
-                accent={accent}
-              >
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                  }}
+              {showOTDCta ? (
+                <PayOnTheDayButton
+                  disabled={nextDisabled}
+                  onClick={() => setConfirmOTD(true)}
+                  accent={accent}
                 >
-                  <CalendarClock size={14} aria-hidden />
-                  Pay on the day
-                </span>
-              </PayOnTheDayButton>
-              <NextButton
-                disabled={nextDisabled}
-                onClick={onPayNow}
-                accent={accent}
-                shimmer={false}
-              >
-                {`Pay ${formatPriceShort(fullAmount)} now`}
-              </NextButton>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <CalendarClock size={14} aria-hidden />
+                    Pay on the day
+                  </span>
+                </PayOnTheDayButton>
+              ) : null}
+              {showDepositCta ? (
+                <>
+                  {/* Secondary outlined pill matches the pay-on-the-day
+                      pill chrome — same height, same border, same
+                      typography — so the row reads as a balanced pair.
+                      "Pay deposit £X" is the historical primary path
+                      for click-in / same-day so it stays in the
+                      right-hand primary slot. */}
+                  <PayOnTheDayButton
+                    disabled={nextDisabled}
+                    onClick={onPayInFull}
+                    accent={accent}
+                  >
+                    {`Pay in full · ${formatPriceShort(fullAmount)}`}
+                  </PayOnTheDayButton>
+                  <NextButton
+                    disabled={nextDisabled}
+                    onClick={onPayDeposit}
+                    accent={accent}
+                    shimmer={false}
+                  >
+                    {`Pay deposit · ${formatPriceShort(depositPence)}`}
+                  </NextButton>
+                </>
+              ) : (
+                <NextButton
+                  disabled={nextDisabled}
+                  onClick={onPayInFull}
+                  accent={accent}
+                  shimmer={false}
+                >
+                  {`Pay ${formatPriceShort(fullAmount)} now`}
+                </NextButton>
+              )}
             </div>
           )
         ) : summaryFree ? (
@@ -1108,9 +1172,16 @@ function PayOnTheDayButton({
 
 function FooterPrice({
   totalPence,
+  depositPence,
   accent,
 }: {
   totalPence: number;
+  /** When > 0 the footer renders a TODAY · ON THE DAY split instead
+   *  of a single Total — primary block is the deposit ("£25 today"),
+   *  muted block is the balance ("£374 on the day"). Mirrors what the
+   *  Calendly-style booking summary used to surface; reintroduced for
+   *  click-in / same-day where the practice always takes a deposit. */
+  depositPence: number;
   accent: string;
 }) {
   if (totalPence <= 0) return null;
@@ -1121,6 +1192,8 @@ function FooterPrice({
   // own centre — fine numerically, off-axis visually. Mirror the
   // button row's structure (max-width 600, 42px spacer, flex:1
   // centred slot) so the total stacks directly above the CTA.
+  const showSplit = depositPence > 0 && depositPence < totalPence;
+  const balancePence = Math.max(0, totalPence - depositPence);
   return (
     <div
       className="vlounge-footer-price"
@@ -1135,13 +1208,50 @@ function FooterPrice({
       }}
     >
       <div aria-hidden style={{ width: 42, flexShrink: 0 }} />
-      <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-        <FooterPriceBlock
-          label="Total"
-          valuePence={totalPence}
-          muted={false}
-          accent={accent}
-        />
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: showSplit ? 18 : 0,
+        }}
+      >
+        {showSplit ? (
+          <>
+            <FooterPriceBlock
+              label="Today"
+              showLabel
+              valuePence={depositPence}
+              muted={false}
+              accent={accent}
+            />
+            <span
+              aria-hidden
+              style={{
+                width: 1,
+                height: 30,
+                background: accent,
+                opacity: 0.18,
+                flexShrink: 0,
+              }}
+            />
+            <FooterPriceBlock
+              label="On the day"
+              showLabel
+              valuePence={balancePence}
+              muted
+              accent={accent}
+            />
+          </>
+        ) : (
+          <FooterPriceBlock
+            label="Total"
+            valuePence={totalPence}
+            muted={false}
+            accent={accent}
+          />
+        )}
       </div>
     </div>
   );
@@ -1150,12 +1260,18 @@ function FooterPrice({
 
 function FooterPriceBlock({
   label,
+  showLabel = false,
   valuePence,
   muted,
   icon,
   accent,
 }: {
   label: string;
+  /** When true the label renders as a tiny uppercase caption ABOVE
+   *  the price (the Calendly-style "TODAY £25" / "ON THE DAY £374"
+   *  pattern). Default false keeps the legacy single-Total view
+   *  unchanged — the price stands alone, label is aria-only. */
+  showLabel?: boolean;
   valuePence: number;
   muted: boolean;
   icon?: React.ReactNode;
@@ -1163,8 +1279,8 @@ function FooterPriceBlock({
 }) {
   // Label + amount both tint with the brand accent so the Today
   // block reads as one cohesive primary unit. Muted ("On the day")
-  // block dims uniformly via opacity 0.55 — same colour family,
-  // softer presence so the eye lands on Today first.
+  // block dims uniformly via opacity — same colour family, softer
+  // presence so the eye lands on Today first.
   return (
     <div
       aria-label={label}
@@ -1173,10 +1289,24 @@ function FooterPriceBlock({
         flexDirection: 'column',
         alignItems: 'center',
         lineHeight: 1.1,
-        opacity: muted ? 0.3 : 1,
+        opacity: muted ? 0.45 : 1,
         color: accent,
+        gap: showLabel ? 3 : 0,
       }}
     >
+      {showLabel ? (
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            color: accent,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {label}
+        </span>
+      ) : null}
       <span
         style={{
           display: 'inline-flex',

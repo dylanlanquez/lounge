@@ -34,10 +34,20 @@ export class SubmitError extends Error {
 /** What the customer chose at the details footer. The shell passes
  *  this explicitly because state.paymentChoice may not have
  *  propagated yet on the same tick — we set the choice and call
- *  submit in the same handler. 'on_the_day' means no PaymentIntent.
- *  'full' means the PI was created at the full-price amount and
- *  verified server-side. null is the legacy free-booking path. */
-export type WidgetPaymentMode = 'full' | 'on_the_day' | null;
+ *  submit in the same handler.
+ *
+ *  • 'full'        PI created at the resolved full price and verified
+ *                  server-side; appointment marked paid_in_full_at_booking.
+ *  • 'deposit'     PI created at widget_deposit_pence (the legacy
+ *                  per-booking-type deposit) and verified server-side;
+ *                  appointment carries the deposit but the cart still
+ *                  collects the balance at the till.
+ *  • 'on_the_day'  No PI. Cart settles entirely at the till.
+ *  • null          Legacy free-booking / pre-mode-flag path. The
+ *                  server falls back to the deposit pathway when
+ *                  widget_deposit_pence > 0 to stay back-compatible
+ *                  with any older client still in the wild. */
+export type WidgetPaymentMode = 'full' | 'deposit' | 'on_the_day' | null;
 
 export async function submitBooking(
   state: WidgetState,

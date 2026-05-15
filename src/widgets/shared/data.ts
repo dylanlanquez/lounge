@@ -27,10 +27,19 @@ export interface WidgetBookingType {
    *  same name for the same service. */
   label: string;
   description: string;
-  /** Deposit captured at booking time, in pence. 0 means no payment
-   *  step. Widget-specific; sourced from
-   *  lng_booking_type_config.widget_deposit_pence. */
+  /** Deposit captured at booking time, in pence. > 0 surfaces a "Pay
+   *  deposit £X" CTA on the details summary footer; 0 hides it. The
+   *  same value also drives the FooterPrice TODAY/ON THE DAY split.
+   *  Sourced from lng_booking_type_config.widget_deposit_pence. */
   depositPence: number;
+  /** When TRUE the details footer surfaces a "Pay on the day" CTA in
+   *  addition to (or instead of) the deposit / pay-in-full pair. Set
+   *  per booking type in the Lounge admin Widget tab. Mirrored from
+   *  lng_booking_type_config.widget_allow_pay_on_the_day. Defaults to
+   *  FALSE — services like click-in veneers and same-day appliance
+   *  require a deposit and don't expose this option. Denture-repair
+   *  has it on. */
+  allowPayOnTheDay: boolean;
   /** Default appointment length. Phase 2c will resolve this to the
    *  most-specific lng_booking_type_config row once axes are pinned. */
   durationMinutes: number;
@@ -173,7 +182,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_widget_booking_types')
-        .select('id, service_type, label, description, deposit_pence, duration_minutes')
+        .select('id, service_type, label, description, deposit_pence, allow_pay_on_the_day, duration_minutes')
         .order('label', { ascending: true });
       if (cancelled) return;
       if (err) {
@@ -187,6 +196,7 @@ export function useWidgetBookingTypes(): BookingTypeReadResult {
         label: (r.label as string) ?? '',
         description: (r.description as string) ?? '',
         depositPence: (r.deposit_pence as number) ?? 0,
+        allowPayOnTheDay: (r.allow_pay_on_the_day as boolean) ?? false,
         durationMinutes: (r.duration_minutes as number) ?? 30,
       }));
       setData(shaped);

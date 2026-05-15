@@ -95,6 +95,13 @@ export const PaymentStep = forwardRef<
   const repairVariant = api.state.axes.repair_variant ?? null;
   const productKey = api.state.axes.product_key ?? null;
   const arch = api.state.axes.arch ?? null;
+  // Which amount the PI is created for. 'pay_deposit' tells the
+  // server to read widget_deposit_pence (legacy "£25 deposit, balance
+  // on the day" path); 'pay_full' tells it to charge the resolved
+  // catalogue price. Default 'full' for the legacy entry path where
+  // paymentChoice was never set.
+  const requestedMode: 'full' | 'deposit' =
+    api.state.paymentChoice === 'pay_deposit' ? 'deposit' : 'full';
 
   useEffect(() => {
     if (!locationId || !serviceType || !slotIso || !email) return;
@@ -116,12 +123,12 @@ export const PaymentStep = forwardRef<
           repairVariant,
           productKey,
           arch,
-          // New flow: the widget always collects the full price now.
-          // Server resolves the catalogue row's unit_price (or
-          // both_arches_price when arch === 'both') and charges that;
-          // the legacy 'deposit' path stays on the server for any
-          // older client that hasn't been redeployed yet.
-          paymentMode: 'full',
+          // 'full' charges the resolved catalogue price; 'deposit'
+          // charges widget_deposit_pence and leaves the rest for the
+          // till. The server enforces the amount against its own
+          // resolution either way; the body's paymentMode is the
+          // intent flag, not a price the client gets to claim.
+          paymentMode: requestedMode,
         },
       });
       if (cancelled) return;
@@ -138,7 +145,7 @@ export const PaymentStep = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch, onError]);
+  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch, requestedMode, onError]);
 
   // While the Stripe form isn't ready yet, the parent shouldn't
   // enable the footer's Pay button.
@@ -165,12 +172,18 @@ export const PaymentStep = forwardRef<
     [],
   );
 
-  // Full-bill mode: we now collect the resolved service price up
-  // front when the patient picked "Pay now" on the summary footer,
-  // not the legacy deposit_pence. The price breakdown is the same
-  // one the summary card renders, so the headline + Pay button
-  // amount line up exactly with what the patient just committed to.
-  const fullAmount = api.priceBreakdown.subtotalPence;
+  // Amount the Pay button charges. 'pay_full' takes the resolved
+  // service price; 'pay_deposit' takes the per-booking-type
+  // widget_deposit_pence (the legacy "£25 today, balance on the
+  // day" path). Always sourced client-side from the same breakdown
+  // the summary card renders so the headline + button amount line
+  // up exactly with what the customer committed to. The server
+  // re-resolves and verifies before capture either way; this is
+  // display-only.
+  const fullAmount =
+    requestedMode === 'deposit'
+      ? api.priceBreakdown.depositPence
+      : api.priceBreakdown.subtotalPence;
 
   // Read the storefront's actual body font and forward it to
   // Stripe's iframe. Stripe inputs render inside cross-origin

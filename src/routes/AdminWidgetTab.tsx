@@ -760,6 +760,7 @@ function ServiceCardBody({
   const [visible, setVisible] = useState(service.widgetVisible);
   const [description, setDescription] = useState(service.widgetDescription);
   const [depositText, setDepositText] = useState(formatPoundsText(service.widgetDepositPence));
+  const [allowOTD, setAllowOTD] = useState(service.widgetAllowPayOnTheDay);
   const [productVis, setProductVis] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
   );
@@ -780,6 +781,7 @@ function ServiceCardBody({
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
+    setAllowOTD(service.widgetAllowPayOnTheDay);
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
     );
@@ -796,6 +798,7 @@ function ServiceCardBody({
     service.widgetVisible,
     service.widgetDescription,
     service.widgetDepositPence,
+    service.widgetAllowPayOnTheDay,
     service.products,
   ]);
 
@@ -816,6 +819,7 @@ function ServiceCardBody({
     visible !== service.widgetVisible ||
     description !== service.widgetDescription ||
     depositPence !== service.widgetDepositPence ||
+    allowOTD !== service.widgetAllowPayOnTheDay ||
     changedProductIds.length > 0 ||
     changedUpgradeIds.length > 0;
 
@@ -851,6 +855,7 @@ function ServiceCardBody({
     setVisible(service.widgetVisible);
     setDescription(service.widgetDescription);
     setDepositText(formatPoundsText(service.widgetDepositPence));
+    setAllowOTD(service.widgetAllowPayOnTheDay);
     setProductVis(
       Object.fromEntries(service.products.map((p) => [p.id, p.widgetVisible])),
     );
@@ -885,6 +890,7 @@ function ServiceCardBody({
           widgetVisible: visible,
           widgetDescription: description,
           widgetDepositPence: depositPence,
+          widgetAllowPayOnTheDay: allowOTD,
         }),
         ...changedProductIds.map((id) =>
           saveProductVisibility({ id, widgetVisible: productVis[id] === true }),
@@ -951,9 +957,21 @@ function ServiceCardBody({
 
       <Section
         title="Deposit at booking"
-        description="Captured upfront via Stripe. £0 means no payment step."
+        description="Captured upfront via Stripe. £0 means no deposit option."
       >
         <PoundsInput value={depositText} onChange={setDepositText} />
+      </Section>
+
+      <Section
+        title="Allow pay on the day?"
+        description="Adds a 'Pay on the day' option to the widget's payment screen. Off means the patient must pay (deposit or in full) at booking. On adds the option to settle nothing now and pay everything at the till."
+      >
+        <Toggle
+          checked={allowOTD}
+          onChange={setAllowOTD}
+          onLabel="Patients can choose 'Pay on the day'"
+          offLabel="Hidden — patients must pay at booking"
+        />
       </Section>
 
       {service.hasOptions ? (
