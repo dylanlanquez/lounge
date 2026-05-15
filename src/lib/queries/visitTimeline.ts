@@ -1065,6 +1065,15 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
     'visit_arrived',
     'visit_closed',
     'appointment_booked',
+    // deposit_paid is also surfaced via the visit-side synthesis
+    // (lng_appointments.deposit_paid_at) AND via the appointment
+    // timeline's deposit_paid case. Without this skip the visit
+    // hook surfaces a third "Deposit Paid" row from patient_events
+    // with no detail body — three rows for one deposit. The
+    // synthesis carries the £ + provider; the appointment hook
+    // carries the PI ref. Both are richer than a generic
+    // patient_events fall-through.
+    'deposit_paid',
   ]);
   const events: RawTimelineEvent[] = rows
     .filter((r) => !skip.has(r.event_type))
