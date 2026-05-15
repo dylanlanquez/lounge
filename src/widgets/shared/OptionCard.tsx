@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { QUIZ } from './quizTokens.ts';
+import { useCanHover } from './useCanHover.ts';
 
 // OptionCard — radio-style card used on Location / Service / Axis
 // steps. Matches `.option-card-vt` + `.card-vt` + `.radio-indicator-vt`
@@ -43,8 +44,15 @@ export function OptionCard({
   children,
   ariaLabel,
 }: OptionCardProps) {
+  const canHover = useCanHover();
   const [hovered, setHovered] = useState(false);
-  const showLift = hovered && !selected;
+  // hover state can only engage when the device has a real hovering
+  // pointer (mouse / trackpad). On touch devices the hover state
+  // stays false regardless of mouse events — iOS Safari's sticky
+  // hover would otherwise paint a tapped card with the same accent
+  // border the selected state uses and the customer would think
+  // they'd picked something they hadn't.
+  const showLift = canHover && hovered && !selected;
 
   const dimmed = anySelected && !selected;
 
@@ -54,18 +62,20 @@ export function OptionCard({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={ariaLabel}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={canHover ? () => setHovered(true) : undefined}
+      onMouseLeave={canHover ? () => setHovered(false) : undefined}
       // Focus deliberately does NOT pipe into hovered state. Letting
       // it would mean the moment the modal opens (or the step renders
       // and the browser drops focus on the first focusable card) the
       // card flashes "selected"-looking even though the patient hasn't
-      // tapped it. Border tracks selected (true) + mouse-hover only.
+      // tapped it. Border tracks selected (true) + mouse-hover only,
+      // and mouse-hover itself is gated on canHover so touch never
+      // engages it.
       style={{
         position: 'relative',
         background: QUIZ.SURFACE,
         border: `2px solid ${
-          selected ? accent : hovered ? accent : 'transparent'
+          selected ? accent : canHover && hovered ? accent : 'transparent'
         }`,
         borderRadius: QUIZ.R_CARD,
         padding: '20px',

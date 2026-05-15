@@ -6,6 +6,7 @@ import type { WidgetUpgrade } from '../data.ts';
 import { formatPrice } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
 import { INCLUDED_PERKS } from '../includedPerks.ts';
+import { useCanHover } from '../useCanHover.ts';
 
 // Upgrades step — port of the retainer-cart `.addons-grid-vt` (lines
 // 55–70 of /Users/dylan/Downloads/retainer-cart.liquid).
@@ -113,6 +114,7 @@ function UpgradeCard({
   accent: string;
   onInfoClick?: () => void;
 }) {
+  const canHover = useCanHover();
   const price =
     archIsBoth && upgrade.bothArchesPricePence !== null
       ? upgrade.bothArchesPricePence
@@ -134,18 +136,23 @@ function UpgradeCard({
         transition: `all 0.2s ${QUIZ.EASE_CARD}`,
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
-      onMouseEnter={(e) => {
+      // Hover handlers only attached on devices with a real hovering
+      // pointer. On touch (phone / tablet) iOS Safari's sticky hover
+      // would otherwise repaint the border with the accent and the
+      // customer couldn't tell the checked state apart from a stale
+      // hover state.
+      onMouseEnter={canHover ? (e) => {
         if (checked) return;
         e.currentTarget.style.borderColor = accent;
         e.currentTarget.style.transform = 'translateY(-1px)';
         e.currentTarget.style.boxShadow = QUIZ.SHADOW_SOFT;
-      }}
-      onMouseLeave={(e) => {
+      } : undefined}
+      onMouseLeave={canHover ? (e) => {
         if (checked) return;
         e.currentTarget.style.borderColor = QUIZ.BORDER;
         e.currentTarget.style.transform = 'none';
         e.currentTarget.style.boxShadow = 'none';
-      }}
+      } : undefined}
     >
       <input
         type="checkbox"

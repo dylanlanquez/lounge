@@ -6,6 +6,7 @@ import {
 } from '../data.ts';
 import type { BookingStateApi } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
+import { useCanHover } from '../useCanHover.ts';
 
 // Denture-repair step components, arch-first.
 //
@@ -99,31 +100,29 @@ function ArchTile({
   accent: string;
   onSelect: () => void;
 }) {
+  const canHover = useCanHover();
   const [hovered, setHovered] = useState(false);
   const dimmed = anySelected && !selected;
-  // Focus no longer pipes into hovered state — that was making a tile
-  // look "highlighted" the moment it received focus (e.g. after the
-  // step transitions in and the browser drops focus on the first
-  // button), which Dylan saw as a glitchy pre-select. The accent
-  // border now strictly tracks `selected` (true selection) or `hovered`
-  // (mouse-over on desktop only). Mobile taps no longer trigger a
-  // ghost-selected border because there's no hover event.
-  const showLift = hovered && !selected;
+  // Hover state only engages on devices with a real hovering pointer
+  // (mouse / trackpad). Touch devices skip it entirely — iOS Safari's
+  // sticky hover state was painting tapped-but-not-selected tiles
+  // with the accent border, which read as a false selection.
+  const showLift = canHover && hovered && !selected;
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`${title}, ${subtitle}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={canHover ? () => setHovered(true) : undefined}
+      onMouseLeave={canHover ? () => setHovered(false) : undefined}
       style={{
         position: 'relative',
         background: QUIZ.SURFACE,
         // Border ONLY follows selected (or mouse-hover on desktop).
-        // Previously included `hovered` for keyboard focus too, which
-        // made tapped-but-not-selected tiles look selected on mobile.
-        border: `2px solid ${selected ? accent : hovered ? accent : 'transparent'}`,
+        // canHover gates the hover branch so touch devices never
+        // paint an accent border without a real selection.
+        border: `2px solid ${selected ? accent : canHover && hovered ? accent : 'transparent'}`,
         borderRadius: QUIZ.R_CARD,
         // Shorter tiles so three of them fit above the fold on phones
         // alongside the step heading + sticky header. Padding tightens
@@ -319,9 +318,14 @@ function RepairLineTile({
   onToggle: () => void;
   onQuantityChange: (next: number) => void;
 }) {
+  const canHover = useCanHover();
   const [hovered, setHovered] = useState(false);
   const isPerTooth = row.unitLabel === 'per tooth';
   const title = friendlyTitle(row);
+  // Hover gated on canHover so touch devices never enter the hovered
+  // state. iOS Safari's sticky hover would otherwise leave a tapped
+  // tile in the accent-bordered "hover" look, ambiguous with selected.
+  const hoverActive = canHover && hovered;
   // The whole tile is the toggle target. The stepper sits inside but
   // stops propagation so its own taps don't accidentally deselect.
   return (
@@ -329,20 +333,20 @@ function RepairLineTile({
       style={{
         position: 'relative',
         background: QUIZ.SURFACE,
-        border: `2px solid ${selected ? accent : hovered ? accent : 'transparent'}`,
+        border: `2px solid ${selected ? accent : hoverActive ? accent : 'transparent'}`,
         borderRadius: QUIZ.R_CARD,
         transition: `all 0.2s ${QUIZ.EASE_CARD}, transform 0.15s ${QUIZ.EASE_CARD}`,
         transform: selected
           ? 'scale(1.01)'
-          : hovered
+          : hoverActive
             ? 'translateY(-2px)'
             : 'none',
-        boxShadow: hovered && !selected ? QUIZ.SHADOW_LIFT : 'none',
+        boxShadow: hoverActive && !selected ? QUIZ.SHADOW_LIFT : 'none',
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
         overflow: 'hidden',
       }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={canHover ? () => setHovered(true) : undefined}
+      onMouseLeave={canHover ? () => setHovered(false) : undefined}
     >
       <button
         type="button"
