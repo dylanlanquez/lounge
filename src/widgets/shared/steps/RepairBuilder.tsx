@@ -42,11 +42,13 @@ export function RepairArchStep({
 }) {
   const selected = api.state.axes.arch;
   return (
-    // marginTop:32 matches the no-helper axis-step convention in
-    // Axis.tsx — without a helper paragraph, the title's natural
-    // 6px bottom margin alone leaves the tile grid hugging the
-    // title. Bridge that gap so the page breathes.
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: 32 }}>
+    // marginTop:24 here pairs with the shell-rendered StepTitle's
+    // own marginBottom (sourced from QUIZ.STEP_TITLE_BOTTOM_SPACE)
+    // so the visible title-to-tiles gap matches the
+    // RepairLinesStep reference (parent flex gap 24 + h2
+    // marginBottom = 56). Without it the gap drifted to 64px and
+    // the two repair steps read inconsistently.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: 24 }}>
       <div
         className="vlounge-stagger"
         style={{
