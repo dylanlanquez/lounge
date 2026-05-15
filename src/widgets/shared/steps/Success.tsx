@@ -196,9 +196,17 @@ export function SuccessScreen({
 
           <p
             style={{
-              margin: '16px 0 0',
-              paddingTop: 16,
-              borderTop: `1px solid ${QUIZ.BORDER_SOFT}`,
+              // Generous breathing above + below the hairline so it
+              // reads as a deliberate visual break between the
+              // booking details and the follow-up email line.
+              // Previous BORDER_SOFT (#f0f0f0) was indistinguishable
+              // from the modal's #f4f4f4 background — Dylan flagged
+              // that he couldn't see it at all. Switching to the
+              // standard BORDER (#e5e5e5) gives a clean, visible
+              // 1px rule without shouting.
+              margin: '28px 0 0',
+              paddingTop: 28,
+              borderTop: `1px solid ${QUIZ.BORDER}`,
               fontSize: 13.5,
               color: QUIZ.MUTED_2,
               lineHeight: 1.5,
@@ -344,50 +352,62 @@ function BookingReferenceRow({ value }: { value: string }) {
       >
         <Hash size={16} strokeWidth={1.75} />
       </span>
-      <span
+      {/* Value + Copy button sit together inline so the Copy
+          affordance reads as "copy THIS value", not as a separate
+          right-aligned action. flex:1 dropped on the value — the
+          group hugs the left edge with the rest of the inline row
+          stack. */}
+      <div
         style={{
-          flex: 1,
-          fontSize: 14,
-          fontWeight: 600,
-          color: QUIZ.INK,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '0.02em',
-        }}
-      >
-        {value}
-      </span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
-        style={{
-          appearance: 'none',
-          background: 'transparent',
-          border: 'none',
-          padding: 0,
-          margin: 0,
-          fontFamily: 'inherit',
-          cursor: 'pointer',
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 5,
-          fontSize: 13,
-          fontWeight: 600,
-          color: QUIZ.MUTED_2,
-          flexShrink: 0,
-          transition: 'color 0.15s ease',
+          gap: 10,
         }}
       >
-        {copied ? (
-          <>
-            <CheckCircle2 size={13} aria-hidden /> Copied
-          </>
-        ) : (
-          <>
-            <Copy size={13} aria-hidden /> Copy
-          </>
-        )}
-      </button>
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: QUIZ.INK,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: '0.02em',
+          }}
+        >
+          {value}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={copied ? 'Booking reference copied' : 'Copy booking reference'}
+          style={{
+            appearance: 'none',
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            margin: 0,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: 13,
+            fontWeight: 600,
+            color: QUIZ.MUTED_2,
+            flexShrink: 0,
+            transition: 'color 0.15s ease',
+          }}
+        >
+          {copied ? (
+            <>
+              <CheckCircle2 size={13} aria-hidden /> Copied
+            </>
+          ) : (
+            <>
+              <Copy size={13} aria-hidden /> Copy
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
