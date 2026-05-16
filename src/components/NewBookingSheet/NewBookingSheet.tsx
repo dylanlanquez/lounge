@@ -1268,15 +1268,10 @@ export function NewBookingSheet({
                   : 'Closed on this day.'
               }
             />
-            {/* Loading-state hint. While the availability fetch is
-                in flight every cell in the date picker is dimmed —
-                we always pass the dates Set (never undefined), and
-                the initial empty Set means all-disabled. The hint
-                explains the wait so the operator doesn't think the
-                picker is broken. */}
-            {monthAvailability.loading ? (
-              <InlineHint tone="muted">Loading available dates…</InlineHint>
-            ) : null}
+            {/* Loading-state hint removed — flickered on every fetch
+                cycle (open, month change). The picker's dim-all-
+                then-light-up behaviour is sufficient signal that
+                data is loading. */}
             {config && !searchingFirstSlot ? (
               <InlineHint
                 tone={hoursForDate || !date ? 'muted' : 'alert'}

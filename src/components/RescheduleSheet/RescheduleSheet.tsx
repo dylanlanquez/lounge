@@ -6,7 +6,6 @@ import {
   ConflictBlock,
   DatePicker,
   FieldTrigger,
-  InlineHint,
   Input,
   ReturnSegmentHints,
   Section,
@@ -548,9 +547,8 @@ export function RescheduleSheet({
               // during the load window, which silently re-opened
               // closed days whenever the loading flag stayed true
               // for any reason (slow RPC, effect loop, stale
-              // cache). Dim-all initial state is the honest
-              // "we don't know yet" signal; the InlineHint below
-              // explains the wait.
+              // cache). Dim-all initial state is the honest "we
+              // don't know yet" signal.
               availableDates={monthAvailability.dates}
               onVisibleMonthChange={onCalendarWindow}
             />
@@ -571,27 +569,17 @@ export function RescheduleSheet({
                   : 'Closed on this day.'
               }
             />
-            {/* Loading-state hint. While the availability fetch is
-                in flight, every cell in the date picker is dimmed
-                (we always pass the dates Set; initial empty means
-                all-disabled). The hint explains the wait so the
-                operator doesn't think the picker is broken. */}
-            {monthAvailability.loading ? (
-              <InlineHint tone="muted">Loading available dates…</InlineHint>
-            ) : null}
-            {/* The "N-minute slot. Hours that day: HH:MM to HH:MM,
-                minus lunch …" hint that used to live here has been
+            {/* The duration/hours hint AND the "Loading available
+                dates…" hint that used to live here have both been
                 removed. The picker already restricts the operator
-                to slots inside working hours, and the closed-day
-                / lunch-break / past-time filters all run server-
-                side in the slot RPC — so the duration + hours
-                duplicated visible information about already-
-                enforced constraints. Dylan asked for the reschedule
-                sheet to feel exactly like the regular new-booking
-                surface, which surfaces this hint less often (gated
-                on !searchingFirstSlot) and treats it as a footnote;
-                pulling it out of reschedule entirely is the cleaner
-                "make these two surfaces match" answer. */}
+                to slots inside working hours, dims everything
+                while the availability fetch is in flight, and
+                lights up only the bookable dates once the data
+                returns. The explicit "Loading…" message flickered
+                on every fetch cycle (open / month-change); the
+                dim-all-then-light-up behaviour is signal enough.
+                Result: a clean reschedule sheet that visually
+                matches the new-booking surface. */}
             {config && date && time ? (
               <ReturnSegmentHints
                 phases={config.phases}
