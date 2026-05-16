@@ -1131,20 +1131,25 @@ export function Schedule() {
             id: reschedulingRow.id,
             patient_id: reschedulingRow.patient_id,
             location_id: reschedulingRow.location_id,
-            // service_type was added to lng_appointments in
-            // 20260501000005 but the AppointmentRow shape predates
-            // it — we narrow + best-effort-cast here. New native
-            // bookings written by this very flow will set it; legacy
-            // Calendly imports were backfilled to 'other' if no
-            // pattern matched.
-            service_type:
-              ((reschedulingRow as unknown as { service_type?: string | null }).service_type ?? null) as
-                | 'denture_repair'
-                | 'click_in_veneers'
-                | 'same_day_appliance'
-                | 'impression_appointment'
-                | 'other'
-                | null,
+            // service_type lives on lng_appointments since the
+            // conflict-check migration. AppointmentRow now exposes
+            // it natively — no need for the legacy cast.
+            service_type: reschedulingRow.service_type as
+              | 'denture_repair'
+              | 'click_in_veneers'
+              | 'same_day_appliance'
+              | 'impression_appointment'
+              | 'virtual_impression_appointment'
+              | 'other'
+              | null,
+            // Axis pins required so the picker's availability RPCs
+            // resolve the per-product duration the widget uses for
+            // this exact booking. Without them the calendar dims
+            // the wrong dates and the time list shows the wrong
+            // slots. Same column shape as AppointmentRow.
+            repair_variant: reschedulingRow.repair_variant,
+            product_key: reschedulingRow.product_key,
+            arch: reschedulingRow.arch as 'upper' | 'lower' | 'both' | null,
             source: reschedulingRow.source,
             start_at: reschedulingRow.start_at,
             end_at: reschedulingRow.end_at,

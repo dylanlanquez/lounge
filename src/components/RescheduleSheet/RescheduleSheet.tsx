@@ -65,12 +65,22 @@ export interface RescheduleSheetProps {
   open: boolean;
   onClose: () => void;
   // The appointment being rescheduled. Caller passes everything we
-  // need so we don't double-fetch what they already have.
+  // need so we don't double-fetch what they already have. Axis pins
+  // (repair_variant / product_key / arch) MUST be threaded in:
+  // the availability + conflict-check RPCs resolve the correct
+  // per-product duration from these, and the customer-facing widget
+  // already passes them. Without them, the reschedule date/time
+  // picker uses the parent service's default duration and shows a
+  // different set of available dates than the widget would for the
+  // same booking — Dylan flagged exactly that.
   appointment: {
     id: string;
     patient_id: string;
     location_id: string;
     service_type: BookingServiceType | null;
+    repair_variant: string | null;
+    product_key: string | null;
+    arch: 'upper' | 'lower' | 'both' | null;
     source: 'calendly' | 'manual' | 'native';
     start_at: string;
     end_at: string;
@@ -117,7 +127,18 @@ export function RescheduleSheet({
     setConfigError(null);
     (async () => {
       try {
-        const c = await resolveBookingTypeConfig({ service_type: serviceType });
+        // Pass the axis pins through so the resolver returns the
+        // per-(product, arch, repair-variant) override's duration,
+        // not the parent service's default. Without this, a 30-min
+        // retainer would resolve to the 60-min parent default and
+        // the conflict check below would look for 60-min slots,
+        // dimming dates that actually have plenty of 30-min slots.
+        const c = await resolveBookingTypeConfig({
+          service_type: serviceType,
+          repair_variant: appointment.repair_variant,
+          product_key: appointment.product_key,
+          arch: appointment.arch,
+        });
         if (cancelled) return;
         if (!c) {
           setConfigError(
@@ -160,6 +181,13 @@ export function RescheduleSheet({
           // Exclude the appointment being rescheduled so it doesn't
           // conflict with itself when the new slot overlaps the old.
           excludeAppointmentId: appointment.id,
+          // Axis pins so the RPC resolves the right duration AND
+          // applies the correct pool/capacity constraints for this
+          // specific product/variant — same parameters the widget
+          // passes when computing the original booking's slots.
+          repairVariant: appointment.repair_variant,
+          productKey: appointment.product_key,
+          arch: appointment.arch,
         });
         if (cancelled) return;
         setConflicts(result);
@@ -175,7 +203,18 @@ export function RescheduleSheet({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [open, config, date, time, appointment.id, appointment.location_id, serviceType]);
+  }, [
+    open,
+    config,
+    date,
+    time,
+    appointment.id,
+    appointment.location_id,
+    appointment.repair_variant,
+    appointment.product_key,
+    appointment.arch,
+    serviceType,
+  ]);
 
   // ── Available slots for the picked day ─────────────────────────
   // Same flow as NewBookingSheet: the TimePicker only renders
@@ -205,9 +244,16 @@ export function RescheduleSheet({
   const monthAvailability = useAvailableDates({
     locationId: appointment.location_id,
     serviceType: serviceType ? (serviceType as string) : null,
-    repairVariant: null,
-    productKey: null,
-    arch: null,
+    // Axis pins forwarded so the date-availability RPC resolves the
+    // SAME duration the widget would for this booking. Previously
+    // these were hardcoded null and the calendar dimmed dates that
+    // would actually accommodate the booking (because the RPC
+    // looked for parent-default-duration slots, not the per-product
+    // override). Dylan's flag: "must match exactly the original
+    // booking layout and way it works".
+    repairVariant: appointment.repair_variant,
+    productKey: appointment.product_key,
+    arch: appointment.arch,
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
   });
@@ -229,6 +275,12 @@ export function RescheduleSheet({
           serviceType: serviceType as BookingServiceType,
           date,
           excludeAppointmentId: appointment.id,
+          // Axis pins so the per-day slot list matches what the
+          // widget would render for this exact (service, product,
+          // variant, arch) combination. Same RPC, same parameters.
+          repairVariant: appointment.repair_variant,
+          productKey: appointment.product_key,
+          arch: appointment.arch,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today (the
@@ -263,7 +315,17 @@ export function RescheduleSheet({
     return () => {
       cancelled = true;
     };
-  }, [open, config, date, appointment.id, appointment.location_id, serviceType]);
+  }, [
+    open,
+    config,
+    date,
+    appointment.id,
+    appointment.location_id,
+    appointment.repair_variant,
+    appointment.product_key,
+    appointment.arch,
+    serviceType,
+  ]);
 
   // ── Working-hours derivation for the chosen date ───────────────
   // Single source of truth lives in lng_settings.clinic.opening_hours

@@ -640,10 +640,26 @@ function Loaded({
             id: appt.id,
             patient_id: appt.patient_id,
             location_id: appt.location_id,
-            // service_type lives on lng_appointments via the conflict-
-            // check migration. Fall back to null when not present so
-            // RescheduleSheet seeds the picker fresh.
-            service_type: null,
+            // Axis pins are required so RescheduleSheet's availability
+            // RPCs (resolveBookingTypeConfig, useAvailableDates,
+            // loadAvailableSlots, checkBookingConflict) resolve the
+            // per-product duration the widget uses for THIS exact
+            // booking — not the parent service's default. Without
+            // them, the calendar dimmed the wrong dates and the slot
+            // picker offered the wrong times. Dylan's flag: "must
+            // match exactly the original booking layout".
+            service_type:
+              (appt.service_type ?? null) as
+                | 'denture_repair'
+                | 'click_in_veneers'
+                | 'same_day_appliance'
+                | 'impression_appointment'
+                | 'virtual_impression_appointment'
+                | 'other'
+                | null,
+            repair_variant: appt.repair_variant,
+            product_key: appt.product_key,
+            arch: appt.arch as 'upper' | 'lower' | 'both' | null,
             source: appt.source,
             start_at: appt.start_at,
             end_at: appt.end_at,
