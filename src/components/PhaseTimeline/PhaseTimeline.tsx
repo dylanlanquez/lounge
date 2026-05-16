@@ -140,16 +140,13 @@ function PhaseRow({
         >
           {startStr}
         </span>
-        <span
-          style={{
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkSubtle,
-            lineHeight: 1.4,
-            marginTop: 2,
-          }}
-        >
-          ends {endStr}
-        </span>
+        {/* The "ends HH:MM" sub-line was removed at Dylan's request —
+            it duplicated information the connecting next-phase's start
+            time already carries (this phase's end IS the next phase's
+            start), and the patient-facing copy in PresenceNote
+            ("back by …") communicates the same return-time signal
+            for passive phases. The wrapping flex column stays so the
+            start label keeps its right-aligned, tabular-nums layout. */}
       </div>
 
       {/* Rail — dot at the top, connector segment beneath */}
