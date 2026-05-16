@@ -184,22 +184,25 @@ export function SmilePhotosCard({
   // load, not just after the in-session promotion. Without this a
   // refresh would re-arm the button and staff could promote the
   // same photo twice.
-  const existingKinds = useExistingSmilePhotoKinds(patientId, appointmentId);
+  const { scopedToAppointment, anyOnProfile } = useExistingSmilePhotoKinds(
+    patientId,
+    appointmentId,
+  );
   useEffect(() => {
-    if (existingKinds.size === 0) return;
+    if (scopedToAppointment.size === 0) return;
     setPromote((prev) => {
       const next = { ...prev };
       for (const k of ['front', 'left', 'right'] as const) {
         // Only seed 'done' on slots whose live state is still the
         // pristine idle placeholder; never overwrite a busy/error
         // state mid-promotion or roll back a freshly-completed one.
-        if (existingKinds.has(k) && next[k].state === 'idle') {
+        if (scopedToAppointment.has(k) && next[k].state === 'idle') {
           next[k] = { state: 'done', message: 'Added to patients profile' };
         }
       }
       return next;
     });
-  }, [existingKinds]);
+  }, [scopedToAppointment]);
 
   const setKindState = (kind: Kind, next: PerTilePromoteState) => {
     setPromote((prev) => ({ ...prev, [kind]: next }));
@@ -207,25 +210,29 @@ export function SmilePhotosCard({
 
   // Confirmation flow lives in a BottomSheet (Dylan's preferred dialog
   // primitive — Dialog's centred card overflows on tablet). When the
-  // user taps a tile that's already 'done', we stash the kind + row
-  // here instead of firing window.confirm; the sheet renders below
-  // and either runs the promote on confirm, or closes on cancel.
+  // user taps a tile that would overwrite a live profile photo, we
+  // stash the kind + row here; the sheet renders below and either
+  // runs the promote on confirm, or closes on cancel.
   const [replaceConfirm, setReplaceConfirm] = useState<
     { kind: Kind; row: IntakePhotoRow } | null
   >(null);
 
   const requestPromote = (kind: Kind, row: IntakePhotoRow) => {
     if (!patientId || !patientName) return;
-    // If the slot already carries a smile photo (either added in
-    // this session or in a previous one), re-promotion overwrites
-    // the existing canonical row on the patient profile. The
-    // patient's earlier photo stays in patient_files history (the
-    // version stamp keeps the trail), but the LIVE smile photo
-    // becomes the one we're about to copy. Confirm before doing
-    // that — staff opening a returning patient's new appointment
-    // shouldn't accidentally swap the old smile photo with the
-    // new one without a moment of "yes, that's what I want".
-    if (promote[kind].state === 'done') {
+    // Warn whenever the patient profile already carries a smile
+    // photo for this slot, regardless of which appointment promoted
+    // it. Two cases both warn:
+    //   • This appointment already promoted (promote[kind].state ===
+    //     'done') — re-promoting is rare but possible if the staff
+    //     re-uploaded a fresh shot.
+    //   • A PRIOR appointment, or a direct staff upload, left a row
+    //     on the profile (anyOnProfile.has(kind)). Overwriting that
+    //     should never be silent — it's the patient's canonical
+    //     photo and the operator deserves a moment of "yes, swap it".
+    // Either condition triggers the BottomSheet.
+    const wouldOverwrite =
+      promote[kind].state === 'done' || anyOnProfile.has(kind);
+    if (wouldOverwrite) {
       setReplaceConfirm({ kind, row });
       return;
     }
@@ -821,40 +828,50 @@ function PromoteTileLink({
 // Lightweight existence check — for a given patient, returns the
 // set of smile-photo kinds (front / left / right) that already
 // have an active patient_files row. Used by SmilePhotosCard to
-// seed the per-tile promote state to 'done' on mount so the
-// affordance reads "Added" from page load and can't be tapped to
-// re-promote a photo that was already added in a previous session.
+// TWO predicates over patient_files, returned as a single hook so
+// the component does one round-trip:
 //
-// Scoping rule: a promoted row only counts when its
-// source_appointment_id matches THIS appointment. Before this scope
-// was in place, the predicate asked "is there any front-smile row
-// on the patient?" — which meant any earlier appointment that had
-// promoted the patient's front-smile to their profile poisoned every
-// future appointment's button into reading "Added to patient's
-// profile" even though that appointment's specific photos were
-// never copied. Dylan flagged it; this is the fix.
+//   • scopedToAppointment — kinds promoted from THIS specific
+//     appointment. Drives the per-tile "Added to patients profile"
+//     state, so the button text accurately reflects what this
+//     booking did (not what some previous booking did).
 //
-// Only the file_labels.key column is fetched (via the inner-join);
-// no file urls or sizes — this is cheaper than usePatientProfileFiles
-// and avoids re-rendering the whole card every time gallery files
-// change.
+//   • anyOnProfile        — kinds present on the patient profile
+//     from ANY source (this appointment, a previous appointment,
+//     a staff direct-upload, etc.). Drives the BottomSheet
+//     replace-confirmation warning. If the live profile photo for
+//     this slot exists, we warn before overwriting — regardless of
+//     which appointment put it there.
+//
+// Without both, the button either lies ("Added" when this booking
+// did nothing) or the warning silently skips ("just overwrote the
+// previous appointment's smile photo without asking"). Both bugs
+// reported by Dylan.
+//
+// Only the label key + source_appointment_id are fetched — no urls,
+// sizes or mime types — so this stays cheaper than the full gallery
+// query.
 function useExistingSmilePhotoKinds(
   patientId: string | null | undefined,
   appointmentId: string | null | undefined,
-): Set<Kind> {
-  const [kinds, setKinds] = useState<Set<Kind>>(() => new Set());
+): { scopedToAppointment: Set<Kind>; anyOnProfile: Set<Kind> } {
+  const [state, setState] = useState<{
+    scopedToAppointment: Set<Kind>;
+    anyOnProfile: Set<Kind>;
+  }>(() => ({ scopedToAppointment: new Set(), anyOnProfile: new Set() }));
   useEffect(() => {
-    if (!patientId || !appointmentId) {
-      setKinds(new Set());
+    if (!patientId) {
+      setState({ scopedToAppointment: new Set(), anyOnProfile: new Set() });
       return;
     }
     let cancelled = false;
     (async () => {
+      // One query returns rows for any-source presence; we partition
+      // client-side by source_appointment_id for the scoped set.
       const { data, error } = await supabase
         .from('patient_files')
-        .select('file_labels:label_id(key)')
+        .select('source_appointment_id, file_labels:label_id(key)')
         .eq('patient_id', patientId)
-        .eq('source_appointment_id', appointmentId)
         .eq('status', 'active');
       if (cancelled) return;
       if (error) {
@@ -864,29 +881,37 @@ function useExistingSmilePhotoKinds(
         // was already there (which is idempotent — Meridian's
         // version stamp keeps both rows + the latest wins).
         console.error('[useExistingSmilePhotoKinds]', error);
-        setKinds(new Set());
+        setState({ scopedToAppointment: new Set(), anyOnProfile: new Set() });
         return;
       }
-      const next = new Set<Kind>();
-      // Supabase typings join the embedded select as an array even
-      // when the relationship is one-to-one — flatten and read the
-      // single key. Using `unknown` first because the inferred shape
-      // doesn't match our narrower view of the row.
+      const scopedToAppointment = new Set<Kind>();
+      const anyOnProfile = new Set<Kind>();
       const rows = ((data ?? []) as unknown) as Array<{
+        source_appointment_id: string | null;
         file_labels: { key?: string } | Array<{ key?: string }> | null;
       }>;
       for (const r of rows) {
         const lbl = Array.isArray(r.file_labels) ? r.file_labels[0] : r.file_labels;
         const k = lbl?.key;
-        if (k === 'smile_photo_front') next.add('front');
-        else if (k === 'smile_photo_left') next.add('left');
-        else if (k === 'smile_photo_right') next.add('right');
+        const kind: Kind | null =
+          k === 'smile_photo_front'
+            ? 'front'
+            : k === 'smile_photo_left'
+              ? 'left'
+              : k === 'smile_photo_right'
+                ? 'right'
+                : null;
+        if (!kind) continue;
+        anyOnProfile.add(kind);
+        if (appointmentId && r.source_appointment_id === appointmentId) {
+          scopedToAppointment.add(kind);
+        }
       }
-      setKinds(next);
+      setState({ scopedToAppointment, anyOnProfile });
     })();
     return () => {
       cancelled = true;
     };
   }, [patientId, appointmentId]);
-  return kinds;
+  return state;
 }
