@@ -352,6 +352,14 @@ function formatTime(iso: string): string {
 // and Visit detail headers all share the same glyph. Single helper,
 // three branches — change here flows everywhere.
 export function SourceGlyph({ source, size = 12 }: { source: AppointmentSource; size?: number }) {
+  // Explicit per-source branches with no fall-through. The previous
+  // shape rendered Footprints for anything that wasn't 'calendly' or
+  // 'native' — which, while data was loading and source was briefly
+  // undefined, produced a one-frame Footprints render that then
+  // swapped to MousePointerClick once 'native' arrived. The visible
+  // flicker was Dylan's complaint. Returning null for unknown values
+  // means the icon simply appears in its final form when source
+  // resolves, with no intermediate wrong frame.
   if (source === 'calendly') {
     return <CalendlyIcon size={size} title="Calendly booking" color={theme.color.inkSubtle} />;
   }
@@ -365,14 +373,17 @@ export function SourceGlyph({ source, size = 12 }: { source: AppointmentSource; 
       />
     );
   }
-  return (
-    <Footprints
-      size={size + 2}
-      color={theme.color.inkSubtle}
-      aria-label="Walk-in"
-      style={{ flexShrink: 0 }}
-    />
-  );
+  if (source === 'manual') {
+    return (
+      <Footprints
+        size={size + 2}
+        color={theme.color.inkSubtle}
+        aria-label="Walk-in"
+        style={{ flexShrink: 0 }}
+      />
+    );
+  }
+  return null;
 }
 
 // Re-export the tone mapping so other surfaces can show consistent badges.
