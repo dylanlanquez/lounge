@@ -359,15 +359,25 @@ export const PaymentStep = forwardRef<
                 backgroundColor: '#FFFFFF',
                 boxShadow: 'none',
               },
+              // Accordion rows — full-width radio-style cards
+              // matching Dylan's reference (Visa / Mastercard list).
+              // Soft drop shadow lifts each row off the background,
+              // generous internal padding gives the brand mark room
+              // on the right of the label. Selected row picks up the
+              // navy accent border so the active method is unambiguous.
               '.AccordionItem': {
-                border: '2px solid rgba(14, 20, 20, 0.08)',
+                border: '1px solid transparent',
                 backgroundColor: '#FFFFFF',
-                boxShadow: 'none',
-                padding: '14px 16px',
+                boxShadow:
+                  '0 1px 2px rgba(14, 20, 20, 0.05), 0 4px 12px rgba(14, 20, 20, 0.04)',
+                padding: '16px 18px',
+                borderRadius: '12px',
               },
               '.AccordionItem--selected': {
                 borderColor: QUIZ.ACCENT,
-                backgroundColor: 'rgba(8, 55, 88, 0.05)',
+                backgroundColor: '#FFFFFF',
+                boxShadow:
+                  '0 1px 2px rgba(8, 55, 88, 0.10), 0 4px 14px rgba(8, 55, 88, 0.08)',
               },
               '.PickerItem': {
                 border: '2px solid rgba(14, 20, 20, 0.08)',
@@ -476,9 +486,29 @@ function PaymentForm({
           },
         });
         if (result.error) {
-          const msg = result.error.message ?? 'Payment failed. Please try a different card.';
-          setPayError(msg);
-          onError?.(msg);
+          const rawMsg = result.error.message ?? 'Payment failed. Please try a different card.';
+          // Suppress Stripe's generic "fill in your card details" /
+          // "your card number is incomplete" style messages from
+          // surfacing in the global payError banner. Those errors
+          // appear when the user picked Apple Pay, tapped Book
+          // appointment, and Stripe's confirmPayment fired its
+          // card-tab validation before the Apple Pay sheet opened
+          // (a quirk of redirect: 'if_required' with mixed payment
+          // methods). The card form has its own per-field invalid
+          // indicators that catch real card errors; a global red
+          // banner saying "fill in your card details" is misleading
+          // when Apple Pay is the active method, and unhelpful even
+          // on the Card tab where the field already shows the error.
+          const isCardFieldValidation =
+            /fill in your card details|card number is incomplete|incomplete card|expiration date is incomplete|security code is incomplete/i.test(
+              rawMsg,
+            );
+          if (isCardFieldValidation) {
+            onPayingChange?.(false);
+            return;
+          }
+          setPayError(rawMsg);
+          onError?.(rawMsg);
           return;
         }
         const pi = result.paymentIntent;
@@ -518,7 +548,13 @@ function PaymentForm({
             }
           }}
           options={{
-            layout: 'tabs',
+            // Accordion layout stacks payment methods vertically as
+            // full-width radio rows (per Dylan's reference). Tabs
+            // layout put Card / Apple Pay side-by-side which felt
+            // squashed at narrow widths; rows feel calmer and read
+            // more like a list of options the patient is choosing
+            // between.
+            layout: 'accordion',
             paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
             fields: {
               billingDetails: {
