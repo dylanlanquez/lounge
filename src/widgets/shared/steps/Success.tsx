@@ -1217,7 +1217,7 @@ function messageFor(code: string): string {
     case 'invalid_size':
       return 'Photo is too large. Max 12 MB.';
     case 'service_not_supported':
-      return 'Photo uploads are only available for click-in veneers.';
+      return "Photo uploads aren't enabled for this booking.";
     case 'token_mismatch':
       return "We couldn't verify this booking. Refresh and try again.";
     case 'appointment_cancelled':

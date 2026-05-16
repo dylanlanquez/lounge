@@ -18,9 +18,12 @@
 // replaces the previous file in Storage and updates the row in
 // place — `(appointment_id, kind)` is unique.
 //
-// Service-type gate: appointments are only allowed to attach
-// intake photos when `service_type = 'click_in_veneers'`. Other
-// services get rejected with `service_not_supported`.
+// Product gate: appointments are only allowed to attach intake
+// photos when their (service_type, product_key) has
+// request_smile_photos = true in lng_product_widget_config.
+// Previously this was hardcoded to service_type='click_in_veneers';
+// the admin-controlled toggle generalises it so any product can
+// opt in. Missing config row defaults to false (reject).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 
@@ -89,10 +92,11 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // Verify appointment + token + service-type gate in a single read.
+  // Verify appointment + token in a single read; product gate
+  // requires the (service_type, product_key) pair so we fetch both.
   const { data: appt, error: apptErr } = await supabase
     .from('lng_appointments')
-    .select('id, service_type, manage_token, status')
+    .select('id, service_type, product_key, manage_token, status')
     .eq('id', appointmentId)
     .maybeSingle();
   if (apptErr) {
@@ -104,11 +108,29 @@ Deno.serve(async (req) => {
   if (appt.manage_token !== manageToken) {
     return jsonResponse(403, { error: 'token_mismatch' });
   }
-  if (appt.service_type !== 'click_in_veneers') {
-    return jsonResponse(400, { error: 'service_not_supported' });
-  }
   if (appt.status === 'cancelled') {
     return jsonResponse(409, { error: 'appointment_cancelled' });
+  }
+
+  // Product gate: read the per-product widget config for this
+  // appointment's (service_type, product_key). Service role bypasses
+  // RLS so we read the underlying table directly. A missing row
+  // (the admin hasn't touched this product yet) means request_smile_photos
+  // defaults to false → reject.
+  if (!appt.product_key) {
+    return jsonResponse(400, { error: 'service_not_supported' });
+  }
+  const { data: cfg, error: cfgErr } = await supabase
+    .from('lng_product_widget_config')
+    .select('request_smile_photos')
+    .eq('service_type', appt.service_type)
+    .eq('product_key', appt.product_key)
+    .maybeSingle();
+  if (cfgErr) {
+    return jsonResponse(500, { error: 'config_lookup_failed', detail: cfgErr.message });
+  }
+  if (!cfg || cfg.request_smile_photos !== true) {
+    return jsonResponse(400, { error: 'service_not_supported' });
   }
 
   // Storage path: `<appointment_id>/<kind>.<ext>`. One file per
