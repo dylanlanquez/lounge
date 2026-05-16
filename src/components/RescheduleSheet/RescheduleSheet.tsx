@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, Clock } from 'lucide-react';
 import {
   BottomSheet,
@@ -241,6 +241,23 @@ export function RescheduleSheet({
     fromIso: string | null;
     toIso: string | null;
   }>({ fromIso: null, toIso: null });
+
+  // Stabilise the callback identity so DatePicker's effect deps don't
+  // re-fire on every parent render. An inline arrow would create a
+  // new function each render → DatePicker's [open, year, month,
+  // onVisibleMonthChange] effect re-fires → calls setCalendarWindow
+  // with a new object literal → parent re-renders → new arrow → loop.
+  // useCallback + functional setState makes the identity stable and
+  // bails out of no-op state updates by reference-equality at the
+  // window object level (a fresh window with the same strings still
+  // forces a re-render; functional update avoids the closure trap
+  // around stale state).
+  const onCalendarWindow = useCallback((fromIso: string, toIso: string) => {
+    setCalendarWindow((prev) => {
+      if (prev.fromIso === fromIso && prev.toIso === toIso) return prev;
+      return { fromIso, toIso };
+    });
+  }, []);
   const monthAvailability = useAvailableDates({
     locationId: appointment.location_id,
     serviceType: serviceType ? (serviceType as string) : null,
@@ -530,9 +547,7 @@ export function RescheduleSheet({
               availableDates={
                 monthAvailability.loading ? undefined : monthAvailability.dates
               }
-              onVisibleMonthChange={(fromIso, toIso) =>
-                setCalendarWindow({ fromIso, toIso })
-              }
+              onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
               open={timeOpen}
