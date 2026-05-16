@@ -402,6 +402,7 @@ export function SmilePhotosCard({
                     canPromote={canPromote && !!row}
                     promoteState={promote[s.kind]}
                     onPromote={() => row && requestPromote(s.kind, row)}
+                    existsOnProfile={anyOnProfile.has(s.kind)}
                   />
                 );
               })}
@@ -536,6 +537,7 @@ function PhotoTile({
   canPromote,
   promoteState,
   onPromote,
+  existsOnProfile,
 }: {
   label: string;
   loading: boolean;
@@ -552,6 +554,12 @@ function PhotoTile({
   canPromote: boolean;
   promoteState: PerTilePromoteState;
   onPromote: () => void;
+  /** True when the patient profile already carries a photo for this
+   *  slot, regardless of which appointment promoted it. Drives the
+   *  per-tile button text — "Replace existing photo" instead of
+   *  "Add to profile" — so the operator sees the consequence of the
+   *  tap before they take it. */
+  existsOnProfile: boolean;
 }) {
   // Tile chrome matches PhotoGallery.tsx's UploadTile precisely:
   // square aspect, theme.radius.card corners, 1.5px dashed border in
@@ -667,6 +675,7 @@ function PhotoTile({
             state={promoteState}
             disabled={!canPromote || promoteState.state === 'busy'}
             onClick={onPromote}
+            existsOnProfile={existsOnProfile}
           />
         ) : null}
       </div>
@@ -683,10 +692,18 @@ function PromoteTileLink({
   state,
   disabled,
   onClick,
+  existsOnProfile,
 }: {
   state: PerTilePromoteState;
   disabled: boolean;
   onClick: () => void;
+  /** When true, the patient profile already carries a photo for this
+   *  slot (from this appointment OR a prior one OR a staff direct
+   *  upload). Changes the idle-state label from "Add to profile" to
+   *  "Replace existing photo" so the operator sees up-front that the
+   *  action will swap an existing canonical photo. The actual replace
+   *  guard still lives in the parent (BottomSheet confirmation). */
+  existsOnProfile: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   // Hover shift signals interactivity. Fires in any non-busy /
@@ -714,7 +731,9 @@ function PromoteTileLink({
         ? state.message ?? 'Added to patients profile'
         : state.state === 'error'
           ? state.message ?? "Couldn't add"
-          : 'Add to profile';
+          : existsOnProfile
+            ? 'Replace existing photo'
+            : 'Add to profile';
   // The button stays clickable in the 'done' state — re-clicking
   // is the path to overwrite the existing smile photo with a new
   // one (e.g., a returning patient who uploaded fresh intake
