@@ -32,7 +32,9 @@ function pickOne<T>(value: T | T[] | null | undefined): T | null {
 }
 
 function composePersonName(
-  p: { first_name: string | null; last_name: string | null; name: string | null } | null,
+  p:
+    | { first_name: string | null; last_name: string | null; name?: string | null }
+    | null,
 ): string {
   if (!p) return '—';
   const fn = properCase(p.first_name);
@@ -46,7 +48,11 @@ function composePersonName(
 interface Person {
   first_name: string | null;
   last_name: string | null;
-  name: string | null;
+  // `name` only exists on the accounts table (used for the taken_by
+  // join). The patients table only carries first_name + last_name, so
+  // patient rows never include this field — keep it optional so the
+  // composePersonName fallback chain compiles for both shapes.
+  name?: string | null;
 }
 
 type OneOrMany<T> = T | T[] | null;
@@ -168,7 +174,7 @@ export function useCashDrawerSinceLastCount(
              cart:lng_carts!inner (
                visit:lng_visits!inner (
                  location_id,
-                 patient:patients ( first_name, last_name, name ),
+                 patient:patients ( first_name, last_name ),
                  appointment:lng_appointments ( appointment_ref ),
                  walk_in:lng_walk_ins ( appointment_ref )
                )
@@ -266,7 +272,7 @@ export function useCashPaymentsInRange(
            cart:lng_carts!inner (
              visit:lng_visits!inner (
                location_id,
-               patient:patients ( first_name, last_name, name ),
+               patient:patients ( first_name, last_name ),
                appointment:lng_appointments ( appointment_ref ),
                walk_in:lng_walk_ins ( appointment_ref )
              )
