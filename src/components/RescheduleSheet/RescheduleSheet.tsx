@@ -539,14 +539,19 @@ export function RescheduleSheet({
               onChange={(iso) => setDate(iso)}
               anchorRef={dateTriggerRef}
               title="Pick the new date"
-              // Same disable-closed-and-empty-days whitelist the
-              // New Booking sheet uses. minIso=today is the
-              // defence-in-depth backstop for the moment between
-              // mount and the first available-dates fetch.
               minIso={todayIso()}
-              availableDates={
-                monthAvailability.loading ? undefined : monthAvailability.dates
-              }
+              // Always pass the Set, never undefined. The hook's
+              // initial state is an empty Set — which correctly
+              // disables every cell until the first fetch returns.
+              // The previous shape (`loading ? undefined : dates`)
+              // rendered as "no whitelist → all dates enabled"
+              // during the load window, which silently re-opened
+              // closed days whenever the loading flag stayed true
+              // for any reason (slow RPC, effect loop, stale
+              // cache). Dim-all initial state is the honest
+              // "we don't know yet" signal; the InlineHint below
+              // explains the wait.
+              availableDates={monthAvailability.dates}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
@@ -566,6 +571,14 @@ export function RescheduleSheet({
                   : 'Closed on this day.'
               }
             />
+            {/* Loading-state hint. While the availability fetch is
+                in flight, every cell in the date picker is dimmed
+                (we always pass the dates Set; initial empty means
+                all-disabled). The hint explains the wait so the
+                operator doesn't think the picker is broken. */}
+            {monthAvailability.loading ? (
+              <InlineHint tone="muted">Loading available dates…</InlineHint>
+            ) : null}
             {config ? (
               <InlineHint tone={hoursForDate || !date ? 'muted' : 'alert'}>
                 {config.duration_default}-minute slot

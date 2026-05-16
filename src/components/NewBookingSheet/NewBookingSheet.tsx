@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
   CalendarPlus,
@@ -537,6 +537,19 @@ export function NewBookingSheet({
     fromIso: string | null;
     toIso: string | null;
   }>({ fromIso: null, toIso: null });
+
+  // Stable callback identity so DatePicker's [open, year, month,
+  // onVisibleMonthChange] effect doesn't re-fire on every parent
+  // render. Functional setState bails on same string values so
+  // identity-only changes don't trigger a re-render here either.
+  // See RescheduleSheet for the full diagnosis of why this matters.
+  const onCalendarWindow = useCallback((fromIso: string, toIso: string) => {
+    setCalendarWindow((prev) => {
+      if (prev.fromIso === fromIso && prev.toIso === toIso) return prev;
+      return { fromIso, toIso };
+    });
+  }, []);
+
   const monthAvailability = useAvailableDates({
     locationId,
     serviceType: serviceType || null,
@@ -1228,12 +1241,15 @@ export function NewBookingSheet({
               // a defence-in-depth backstop for the moment between
               // mount and the first available-dates fetch.
               minIso={todayIso()}
-              availableDates={
-                monthAvailability.loading ? undefined : monthAvailability.dates
-              }
-              onVisibleMonthChange={(fromIso, toIso) =>
-                setCalendarWindow({ fromIso, toIso })
-              }
+              // Always pass the Set (never undefined). Initial empty
+              // Set correctly disables every cell until the first
+              // fetch returns. The previous `loading ? undefined :
+              // dates` shape briefly rendered all dates as enabled
+              // during the load window, which silently re-opened
+              // closed days whenever the loading flag stayed true
+              // longer than expected.
+              availableDates={monthAvailability.dates}
+              onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
               open={timeOpen}
@@ -1252,6 +1268,15 @@ export function NewBookingSheet({
                   : 'Closed on this day.'
               }
             />
+            {/* Loading-state hint. While the availability fetch is
+                in flight every cell in the date picker is dimmed —
+                we always pass the dates Set (never undefined), and
+                the initial empty Set means all-disabled. The hint
+                explains the wait so the operator doesn't think the
+                picker is broken. */}
+            {monthAvailability.loading ? (
+              <InlineHint tone="muted">Loading available dates…</InlineHint>
+            ) : null}
             {config && !searchingFirstSlot ? (
               <InlineHint
                 tone={hoursForDate || !date ? 'muted' : 'alert'}
