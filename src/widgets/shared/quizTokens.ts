@@ -176,16 +176,19 @@ export function ensureQuizKeyframes(): void {
 
     /* Progress fill shimmer overlay — ::after pseudo isn't reachable
        from inline styles, so we declare it on the .vlounge-progress-fill
-       class and toggle it through className. Gradient uses the
-       brand accent + a hover shade so the bar reads as on-brand
-       navy rather than the earlier washed-out blue-grey. */
+       class and toggle it through className. Gradient mirrors the
+       original Venneir retainer-cart storefront widget exactly
+       (#adc4d2 → #8badbd → #adc4d2 — a soft blue-grey that the brand
+       has used since launch). Dylan briefly tried the brand navy
+       here but the blue-grey is the version he wants to live with,
+       so this is the canonical reference now. */
     .vlounge-progress-fill {
       position: relative;
       height: 100%;
       background: linear-gradient(90deg,
-        ${QUIZ.ACCENT}       0%,
-        ${QUIZ.ACCENT_HOVER} 50%,
-        ${QUIZ.ACCENT}       100%);
+        #adc4d2 0%,
+        #8badbd 50%,
+        #adc4d2 100%);
       background-size: 200% 100%;
       transition: width 0.35s ${QUIZ.EASE_CARD};
       animation: vlounge-progressShine 2s ease-in-out infinite;
