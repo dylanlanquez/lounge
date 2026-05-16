@@ -1,15 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Banknote, ChevronDown, ChevronRight, ReceiptText, ScrollText } from 'lucide-react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import {
+  Banknote,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ReceiptText,
+  ScrollText,
+  Search,
+} from 'lucide-react';
 import {
   Card,
   DropdownSelect,
   EmptyState,
+  Input,
   Skeleton,
   StatCard,
   StatusPill,
 } from '../../components/index.ts';
 import { theme } from '../../theme/index.ts';
-import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
+import { type DateRange } from '../../lib/dateRange.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { useLocations } from '../../lib/queries/locations.ts';
@@ -17,10 +26,12 @@ import { useCashCountStatement } from '../../lib/queries/cashCounts.ts';
 import {
   type CashDrawerLine,
   type PastSettlementRow,
+  useAllCashPayments,
   useCashDrawerSinceLastCount,
-  useCashPaymentsInRange,
   usePastSettlements,
 } from '../../lib/queries/cashDrawer.ts';
+
+const CASH_LOG_ROWS_PER_PAGE = 20;
 
 // CashDrawerTab — read-only mirror of the cash-drawer reconciliation
 // data inside Admin → Reports. The interactive flow (start a count,
@@ -28,16 +39,23 @@ import {
 // finance / management can read "what should be in the safe" and
 // "every cash line item that contributes" without leaving Reports.
 //
-// Two sections, in order:
+// Three sections, in order:
 //   1. Since last cash count — anchored on the chosen location's
 //      most recent SIGNED count. Sums succeeded cash payments at
 //      that location since the count's period_end. Cross-location
 //      view isn't shown here: each location has its own count chain,
 //      so "expected cash" only makes sense scoped to one.
-//   2. All cash sale records — every cash payment whose succeeded_at
-//      OR cancelled_at falls in the report's DateRange, scoped by
-//      the same location filter. Voided rows are included so the
-//      reconciliation story stays honest (took £X, voided £Y, net).
+//   2. Past settlements — every signed count for the chosen location,
+//      newest first. Click a row to expand the contributing payment
+//      lines for that settlement (immutable lng_cash_count_lines
+//      snapshot, so the record stays honest even if a payment is
+//      voided later).
+//   3. All cash sale records — every cash payment ever recorded at
+//      the chosen location (or every visible location if "All" is
+//      selected), with a search bar and 20-per-page pagination.
+//      Deliberately NOT bound to the report-level DateRange picker:
+//      reconciliation needs the full log searchable, not just the
+//      last N days.
 //
 // The single location filter at the top drives both sections; an
 // "All locations" choice disables the since-last-count section
@@ -45,12 +63,18 @@ import {
 // every location the viewer can see.
 
 interface Props {
+  // Reports.tsx passes its top-level DateRange to every tab uniformly;
+  // accept it for signature consistency even though this tab is
+  // explicitly all-time (so reconciliation can scroll back to any
+  // historical payment, not just the picker's window). The picker
+  // still drives every other tab — we just intentionally ignore it
+  // here. Underscore prefix tells the linter we mean to skip it.
   range: DateRange;
 }
 
 const ALL_LOCATIONS_KEY = '__all__';
 
-export function CashDrawerTab({ range }: Props) {
+export function CashDrawerTab({ range: _range }: Props) {
   const { account } = useCurrentAccount();
   const { data: locations, loading: locationsLoading } = useLocations();
 
@@ -85,7 +109,7 @@ export function CashDrawerTab({ range }: Props) {
   const queryLocationId = locationId ?? null;
 
   const sinceLastCount = useCashDrawerSinceLastCount(queryLocationId);
-  const inRange = useCashPaymentsInRange(range, queryLocationId);
+  const allCashPayments = useAllCashPayments(queryLocationId);
   const pastSettlements = usePastSettlements(queryLocationId);
 
   const locationOptions = useMemo(() => {
@@ -161,12 +185,11 @@ export function CashDrawerTab({ range }: Props) {
         error={pastSettlements.error}
       />
 
-      <InRangeSection
-        range={range}
+      <AllCashSalesSection
         scopedToLocation={selectedLocationName}
-        data={inRange.data}
-        loading={inRange.loading}
-        error={inRange.error}
+        data={allCashPayments.data}
+        loading={allCashPayments.loading}
+        error={allCashPayments.error}
       />
     </div>
   );
@@ -641,31 +664,29 @@ function SettlementStatusPill({ status }: { status: 'pending' | 'signed' | 'disp
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 3 — All cash sale records in range
+// Section 3 — All cash sale records (all time, searchable, paginated)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface InRangeSectionProps {
-  range: DateRange;
+interface AllCashSalesSectionProps {
   scopedToLocation: string | null;
-  data: ReturnType<typeof useCashPaymentsInRange>['data'];
+  data: ReturnType<typeof useAllCashPayments>['data'];
   loading: boolean;
   error: string | null;
 }
 
-function InRangeSection({
-  range,
+function AllCashSalesSection({
   scopedToLocation,
   data,
   loading,
   error,
-}: InRangeSectionProps) {
+}: AllCashSalesSectionProps) {
   return (
     <Card padding="lg">
       <SectionHeader
         title="All cash sale records"
-        subtitle={`Every cash capture and void in ${dateRangeLabel(range)}${
+        subtitle={`Every cash capture and void${
           scopedToLocation ? ` at ${scopedToLocation}` : ' across all visible locations'
-        }.`}
+        }, all time. Search by patient, reference or who took it; 20 per page.`}
       />
 
       {error ? (
@@ -673,17 +694,38 @@ function InRangeSection({
       ) : loading || !data ? (
         <Skeleton height={260} />
       ) : (
-        <InRangeBody data={data} />
+        <AllCashSalesBody data={data} />
       )}
     </Card>
   );
 }
 
-function InRangeBody({
+function AllCashSalesBody({
   data,
 }: {
-  data: NonNullable<ReturnType<typeof useCashPaymentsInRange>['data']>;
+  data: NonNullable<ReturnType<typeof useAllCashPayments>['data']>;
 }) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+
+  // Reset to page 1 when the search query changes — otherwise the
+  // user can be sitting on page 4 of an empty filter and not realise.
+  useEffect(() => {
+    setPage(1);
+  }, [query, data]);
+
+  const filtered = useMemo(
+    () => filterCashLines(data.lines, query),
+    [data.lines, query],
+  );
+  const totalPages = Math.max(1, Math.ceil(filtered.length / CASH_LOG_ROWS_PER_PAGE));
+  // Clamp the active page in case `data` shrank under our feet
+  // (location switch returns fewer rows) and the previous page index
+  // is now past the end.
+  const activePage = Math.min(page, totalPages);
+  const pageStart = (activePage - 1) * CASH_LOG_ROWS_PER_PAGE;
+  const pageRows = filtered.slice(pageStart, pageStart + CASH_LOG_ROWS_PER_PAGE);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       <div
@@ -706,7 +748,7 @@ function InRangeBody({
           delta={
             data.voided_count > 0
               ? `${formatNumber(data.voided_count)} reversed`
-              : 'none in this period'
+              : 'none on record'
           }
         />
         <StatCard
@@ -716,20 +758,150 @@ function InRangeBody({
         />
       </div>
 
+      <div style={{ maxWidth: 360 }}>
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search patient, reference or staff"
+          leadingIcon={<Search size={16} aria-hidden />}
+        />
+      </div>
+
       {data.lines.length === 0 ? (
         <EmptyState
           icon={<ReceiptText size={20} />}
-          title="No cash payments in this range"
-          description="Try a wider date range, or switch to a different location."
+          title="No cash payments on record"
+          description="Once a cash payment is taken at the till, it appears here."
+        />
+      ) : pageRows.length === 0 ? (
+        <EmptyState
+          icon={<Search size={20} />}
+          title="No matches"
+          description={`Nothing matches "${query}". Try a different patient name, appointment ref or staff name.`}
         />
       ) : (
-        <PaymentsTable
-          title="Cash log"
-          subtitle="Every captured or voided cash payment, newest first."
-          lines={data.lines}
-        />
+        <>
+          <PaymentsTable
+            title="Cash log"
+            subtitle={`${formatNumber(filtered.length)} payment${filtered.length === 1 ? '' : 's'}${query ? ' matching the search' : ''}, newest first.`}
+            lines={pageRows}
+          />
+          <PaginationFooter
+            total={filtered.length}
+            page={activePage}
+            totalPages={totalPages}
+            pageStart={pageStart}
+            pageEnd={pageStart + pageRows.length}
+            onPrev={() => setPage((p) => Math.max(1, p - 1))}
+            onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+          />
+        </>
       )}
     </div>
+  );
+}
+
+function filterCashLines(
+  lines: CashDrawerLine[],
+  query: string,
+): CashDrawerLine[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return lines;
+  return lines.filter((l) => {
+    return (
+      l.patient_name.toLowerCase().includes(q) ||
+      (l.appointment_ref?.toLowerCase().includes(q) ?? false) ||
+      l.taken_by_name.toLowerCase().includes(q)
+    );
+  });
+}
+
+function PaginationFooter({
+  total,
+  page,
+  totalPages,
+  pageStart,
+  pageEnd,
+  onPrev,
+  onNext,
+}: {
+  total: number;
+  page: number;
+  totalPages: number;
+  pageStart: number;
+  pageEnd: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const prevDisabled = page <= 1;
+  const nextDisabled = page >= totalPages;
+  return (
+    <div
+      style={{
+        paddingTop: theme.space[4],
+        borderTop: `1px solid ${theme.color.border}`,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: theme.space[3],
+        flexWrap: 'wrap',
+        fontSize: theme.type.size.xs,
+        color: theme.color.inkMuted,
+      }}
+    >
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+        Showing {formatNumber(pageStart + 1)}–{formatNumber(pageEnd)} of{' '}
+        {formatNumber(total)}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+        <PaginationButton onClick={onPrev} disabled={prevDisabled} label="Previous page">
+          <ChevronLeft size={14} aria-hidden />
+        </PaginationButton>
+        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+          Page {formatNumber(page)} of {formatNumber(totalPages)}
+        </span>
+        <PaginationButton onClick={onNext} disabled={nextDisabled} label="Next page">
+          <ChevronRight size={14} aria-hidden />
+        </PaginationButton>
+      </div>
+    </div>
+  );
+}
+
+function PaginationButton({
+  onClick,
+  disabled,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      style={{
+        appearance: 'none',
+        width: 32,
+        height: 32,
+        border: `1px solid ${theme.color.border}`,
+        background: disabled ? theme.color.bg : theme.color.surface,
+        color: disabled ? theme.color.inkSubtle : theme.color.ink,
+        borderRadius: theme.radius.pill,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

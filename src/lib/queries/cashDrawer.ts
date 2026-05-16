@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
-import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
 import { logFailure } from '../failureLog.ts';
 import { properCase } from './appointments.ts';
 
@@ -234,10 +233,22 @@ export function useCashDrawerSinceLastCount(
   return { data, loading, error };
 }
 
-// ── In-range (all cash sale records for a DateRange) ────────────────────────
+// ── All cash payments (no date bound) ───────────────────────────────────────
+//
+// Dylan asked for the cash log to be all-time, not bound by the
+// report-level date range. Reconciliation needs to be able to scroll
+// back to any historical cash payment — a date-picker only helps if
+// you already know roughly when something happened, but the more
+// common question is "where did this £230 go?" which needs the full
+// log searchable in one place.
+//
+// Returns every cash payment (succeeded + cancelled) the viewer can
+// read at the chosen location (or every location if locationId is
+// null). The UI paginates + searches client-side; for now Lounge
+// won't hit the row counts where that becomes painful, and the
+// query stays simple enough to reason about.
 
-export interface CashDrawerInRange {
-  range_label: string;
+export interface CashDrawerAllPayments {
   succeeded_pence: number;
   succeeded_count: number;
   voided_pence: number;
@@ -246,17 +257,16 @@ export interface CashDrawerInRange {
   lines: CashDrawerLine[];
 }
 
-interface InRangeResult {
-  data: CashDrawerInRange | null;
+interface AllPaymentsResult {
+  data: CashDrawerAllPayments | null;
   loading: boolean;
   error: string | null;
 }
 
-export function useCashPaymentsInRange(
-  range: DateRange,
+export function useAllCashPayments(
   locationId: string | null,
-): InRangeResult {
-  const [data, setData] = useState<CashDrawerInRange | null>(null);
+): AllPaymentsResult {
+  const [data, setData] = useState<CashDrawerAllPayments | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -264,7 +274,6 @@ export function useCashPaymentsInRange(
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const { fromIso, toIso } = dateRangeToUtcBounds(range);
     (async () => {
       try {
         const baseSelect = `id, amount_pence, status, succeeded_at, cancelled_at, failure_reason,
@@ -278,28 +287,22 @@ export function useCashPaymentsInRange(
              )
            )`;
 
-        // Two parallel reads:
-        //   • succeeded captures inside the window (timestamp =
-        //     succeeded_at)
-        //   • voided payments cancelled inside the window (timestamp =
-        //     cancelled_at). The original capture might have happened
-        //     before fromIso — including those keeps the reconciliation
-        //     story honest ("a refund landed today even though the
-        //     original sale was last week").
+        // Two parallel reads so a busy location's voids don't slow
+        // the captures: succeeded payments timestamped by
+        // succeeded_at, cancelled payments timestamped by
+        // cancelled_at. Sorting + merging happens after both arrive.
         const succeededQuery = supabase
           .from('lng_payments')
           .select(baseSelect)
           .eq('method', 'cash')
           .eq('status', 'succeeded')
-          .gte('succeeded_at', fromIso)
-          .lte('succeeded_at', toIso);
+          .order('succeeded_at', { ascending: false });
         const voidedQuery = supabase
           .from('lng_payments')
           .select(baseSelect)
           .eq('method', 'cash')
           .eq('status', 'cancelled')
-          .gte('cancelled_at', fromIso)
-          .lte('cancelled_at', toIso);
+          .order('cancelled_at', { ascending: false });
 
         if (locationId) {
           succeededQuery.eq('cart.visit.location_id', locationId);
@@ -338,7 +341,6 @@ export function useCashPaymentsInRange(
 
         if (cancelled) return;
         setData({
-          range_label: `${fromIso} – ${toIso}`,
           succeeded_pence,
           succeeded_count: succLines.length,
           voided_pence,
@@ -354,17 +356,17 @@ export function useCashPaymentsInRange(
         setError(message);
         setLoading(false);
         await logFailure({
-          source: 'cash.drawer.in_range',
+          source: 'cash.drawer.all_payments',
           severity: 'error',
           message,
-          context: { range, locationId },
+          context: { locationId },
         });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [range, locationId]);
+  }, [locationId]);
 
   return { data, loading, error };
 }
