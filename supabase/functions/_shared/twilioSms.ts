@@ -10,9 +10,14 @@
 //
 // Required env (Supabase function secrets):
 //   TWILIO_ACCOUNT_SID          AC……
-//   TWILIO_API_KEY_SID          SK……
-//   TWILIO_API_KEY_SECRET       (key secret)
 //   TWILIO_MESSAGING_SERVICE_SID MG……
+//
+//   PLUS one of the following auth pairs (API Key preferred):
+//     TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET   (scoped, revokable)
+//   OR
+//     TWILIO_AUTH_TOKEN                            (master Auth Token,
+//                                                   fall-back when no
+//                                                   scoped key is set)
 //
 // Optional:
 //   TWILIO_STATUS_CALLBACK_URL  webhook for delivery updates. When
@@ -55,20 +60,28 @@ export type SendSmsResult = SendSmsOk | SendSmsErr;
  *  nothing. */
 function readTwilioConfig(): {
   accountSid: string;
-  apiKeySid: string;
-  apiKeySecret: string;
+  authUser: string;
+  authPass: string;
   messagingServiceSid: string;
   statusCallbackUrl: string | null;
 } {
   const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID') ?? '';
   const apiKeySid = Deno.env.get('TWILIO_API_KEY_SID') ?? '';
   const apiKeySecret = Deno.env.get('TWILIO_API_KEY_SECRET') ?? '';
+  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN') ?? '';
   const messagingServiceSid = Deno.env.get('TWILIO_MESSAGING_SERVICE_SID') ?? '';
   const statusCallbackUrl = Deno.env.get('TWILIO_STATUS_CALLBACK_URL') ?? '';
+  // Prefer the scoped API Key pair when both halves are present — a
+  // restricted key with the messaging grant is the right long-term
+  // shape. Fall back to Account SID + Auth Token (master credential)
+  // when no key is configured, so we can stand the integration up
+  // before the API key has the right scopes.
+  const haveApiKey = apiKeySid.length > 0 && apiKeySecret.length > 0;
+  const authUser = haveApiKey ? apiKeySid : accountSid;
+  const authPass = haveApiKey ? apiKeySecret : authToken;
   const missing = [
     !accountSid && 'TWILIO_ACCOUNT_SID',
-    !apiKeySid && 'TWILIO_API_KEY_SID',
-    !apiKeySecret && 'TWILIO_API_KEY_SECRET',
+    !authPass && 'TWILIO_API_KEY_SECRET or TWILIO_AUTH_TOKEN',
     !messagingServiceSid && 'TWILIO_MESSAGING_SERVICE_SID',
   ].filter(Boolean);
   if (missing.length > 0) {
@@ -76,8 +89,8 @@ function readTwilioConfig(): {
   }
   return {
     accountSid,
-    apiKeySid,
-    apiKeySecret,
+    authUser,
+    authPass,
     messagingServiceSid,
     statusCallbackUrl: statusCallbackUrl || null,
   };
@@ -96,7 +109,7 @@ export async function sendSms({ to, body }: SendSmsInput): Promise<SendSmsResult
     };
   }
 
-  const auth = btoa(`${cfg.apiKeySid}:${cfg.apiKeySecret}`);
+  const auth = btoa(`${cfg.authUser}:${cfg.authPass}`);
   const form = new URLSearchParams({
     MessagingServiceSid: cfg.messagingServiceSid,
     To: to,
