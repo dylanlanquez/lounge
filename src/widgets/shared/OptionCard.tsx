@@ -220,29 +220,33 @@ export function OptionTitle({ children }: { children: ReactNode }) {
   );
 }
 
+// <div> rather than <p> for both helpers: the embed's typography
+// reset force-zeros <p> margins with !important so host themes can't
+// inject margin-top via global `p { ... }` rules. Anything that
+// needs a non-zero top margin lives in a <div>.
 export function OptionDescription({ children }: { children: ReactNode }) {
   return (
-    <p
+    <div
       style={{
         // 2px above (was 8 from the retainer-cart template) so the
         // description reads as a direct continuation of the option
         // title rather than a separate paragraph block.
-        margin: '2px 0 0',
+        marginTop: 2,
         fontSize: 14,
         color: QUIZ.MUTED,
         lineHeight: 1.45,
       }}
     >
       {children}
-    </p>
+    </div>
   );
 }
 
 export function OptionMeta({ children }: { children: ReactNode }) {
   return (
-    <p
+    <div
       style={{
-        margin: '12px 0 0',
+        marginTop: 12,
         fontSize: 13,
         color: QUIZ.LAVENDER,
         fontWeight: 600,
@@ -250,6 +254,6 @@ export function OptionMeta({ children }: { children: ReactNode }) {
       }}
     >
       {children}
-    </p>
+    </div>
   );
 }

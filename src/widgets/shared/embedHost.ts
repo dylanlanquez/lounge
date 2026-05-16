@@ -379,16 +379,29 @@ function ensureFontStylesheet() {
   document.head.appendChild(sheet);
 }
 
-// Defensive CSS reset scoped to the modal. Stops Shopify themes from
+// Defensive CSS reset scoped to the modal. Stops host themes from
 // reaching into the widget via global selectors like `button { ... }`
 // or `body { font-family: ... }`. ID-prefixed so each rule has
-// specificity 1-1-1 (ID + class/attr + tag) — wins against the class-
-// based selectors most themes use, without resorting to !important.
+// specificity (0,1,0,1) (ID + tag) — wins against the class-based
+// selectors most themes use.
 //
 // We deliberately do NOT do `all: initial` (it nukes inherited styles
 // React relies on). Instead we lock the small set of properties
 // themes most commonly leak: typography, box-sizing, default heading
 // margins, list bullets, link colour.
+//
+// !important on `<p>` margin: encountered in the wild a host theme
+// with `p { margin-top: 7px !important }`. Because !important in
+// author CSS beats specificity AND inline styles, our higher-
+// specificity reset still lost. The only way to win is matching the
+// host's importance with our own !important — there is no CSS
+// specificity escape hatch around this. We scope !important to <p>
+// (not the whole heading group) so that headings, figures and
+// blockquotes can still carry intentional non-zero inline margins
+// inside the widget. The flip side is widget code MUST NOT rely on
+// inline margins on <p>; for any place that needs a non-zero margin
+// the convention is to use a <div> wrapper (semantically these are
+// labels / descriptions, not document paragraphs anyway).
 function ensureResetStyles() {
   if (document.getElementById(RESET_STYLE_ID)) return;
   const style = document.createElement('style');
@@ -433,10 +446,17 @@ function ensureResetStyles() {
     #${MODAL_ID} h4,
     #${MODAL_ID} h5,
     #${MODAL_ID} h6,
-    #${MODAL_ID} p,
     #${MODAL_ID} figure,
     #${MODAL_ID} blockquote {
       margin: 0;
+      font: inherit;
+      letter-spacing: inherit;
+      color: inherit;
+    }
+    /* <p> separated from the heading group so margin can carry
+       !important. See rationale in ensureResetStyles comment block. */
+    #${MODAL_ID} p {
+      margin: 0 !important;
       font: inherit;
       letter-spacing: inherit;
       color: inherit;

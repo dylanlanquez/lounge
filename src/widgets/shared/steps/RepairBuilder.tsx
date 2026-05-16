@@ -776,15 +776,15 @@ function ErrorCard({ message }: { message: string }) {
       >
         Couldn't load the repairs
       </p>
-      <p
+      <div
         style={{
-          margin: '8px 0 0',
+          marginTop: 8,
           fontSize: 14,
           color: QUIZ.MUTED_2,
         }}
       >
         Refresh the page, or call us if it sticks. ({message})
-      </p>
+      </div>
     </div>
   );
 }

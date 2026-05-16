@@ -144,9 +144,9 @@ export function SuccessScreen({
           </h2>
 
           {state.service ? (
-            <p
+            <div
               style={{
-                margin: '6px 0 0',
+                marginTop: 6,
                 fontSize: 15,
                 color: QUIZ.MUTED_2,
                 textAlign: 'center',
@@ -154,7 +154,7 @@ export function SuccessScreen({
               }}
             >
               {formatBookingSuccessTitle(state)}
-            </p>
+            </div>
           ) : null}
 
           <div
@@ -194,7 +194,7 @@ export function SuccessScreen({
             ) : null}
           </div>
 
-          <p
+          <div
             style={{
               // Generous breathing above + below the hairline so it
               // reads as a deliberate visual break between the
@@ -204,7 +204,7 @@ export function SuccessScreen({
               // that he couldn't see it at all. Switching to the
               // standard BORDER (#e5e5e5) gives a clean, visible
               // 1px rule without shouting.
-              margin: '28px 0 0',
+              marginTop: 28,
               paddingTop: 28,
               borderTop: `1px solid ${QUIZ.BORDER}`,
               fontSize: 13.5,
@@ -218,7 +218,7 @@ export function SuccessScreen({
               {state.details.email || 'your inbox'}
             </strong>
             . We'll send a reminder a day before.
-          </p>
+          </div>
         </div>
 
         {showPhotoIntake ? (
@@ -773,9 +773,9 @@ function PhotoIntakeCard({
       >
         Send us your smile photos
       </h3>
-      <p
+      <div
         style={{
-          margin: '8px 0 0',
+          marginTop: 8,
           fontSize: 14,
           color: QUIZ.MUTED_2,
           lineHeight: 1.5,
@@ -784,10 +784,10 @@ function PhotoIntakeCard({
         Optional but highly recommended. These let our clinical team check
         shade match and arch shape before you come in, so the visit goes as
         smoothly as possible.
-      </p>
-      <p
+      </div>
+      <div
         style={{
-          margin: '8px 0 0',
+          marginTop: 8,
           fontSize: 13,
           color: QUIZ.MUTED_2,
           lineHeight: 1.5,
@@ -795,7 +795,7 @@ function PhotoIntakeCard({
       >
         If we look at your photos and decide click-in veneers aren't the right
         fit for you, your deposit is refunded in full, no questions.
-      </p>
+      </div>
 
       {/* Grid → 3 columns on desktop, smooth horizontal-snap row on
           ≤520px. Class + media query live in quizTokens.ts so the

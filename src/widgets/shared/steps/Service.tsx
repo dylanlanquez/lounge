@@ -129,16 +129,16 @@ function ServiceEmpty() {
       >
         Online booking is paused right now
       </p>
-      <p
+      <div
         style={{
-          margin: '8px 0 0',
+          marginTop: 8,
           fontSize: 14,
           color: QUIZ.MUTED_2,
           lineHeight: 1.5,
         }}
       >
         Give us a call and we'll find you a time. Sorry for the hop.
-      </p>
+      </div>
     </div>
   );
 }
@@ -165,15 +165,15 @@ function ServiceError({ message }: { message: string }) {
       >
         Something went wrong loading our services
       </p>
-      <p
+      <div
         style={{
-          margin: '8px 0 0',
+          marginTop: 8,
           fontSize: 14,
           color: QUIZ.MUTED_2,
         }}
       >
         Refresh the page, or call us if it sticks. ({message})
-      </p>
+      </div>
     </div>
   );
 }

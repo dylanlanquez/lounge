@@ -513,9 +513,14 @@ function ItemRow({
         </div>
       </div>
       {subtitle ? (
-        <p
+        // <div> rather than <p>: the typography reset force-zeros
+        // <p> margin with !important (see embedHost.ts) so host
+        // themes can't inject margin-top via global `p { ... }`
+        // rules. Subtitles that need a non-zero top margin live in
+        // a <div> to opt out of that rule.
+        <div
           style={{
-            margin: '2px 0 0',
+            marginTop: 2,
             paddingLeft: BADGE_SIZE + BADGE_GAP,
             fontSize: 13,
             color: QUIZ.SUBTLE,
@@ -526,7 +531,7 @@ function ItemRow({
           }}
         >
           {subtitle}
-        </p>
+        </div>
       ) : null}
     </div>
   );

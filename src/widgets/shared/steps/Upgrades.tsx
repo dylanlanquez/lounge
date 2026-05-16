@@ -374,9 +374,9 @@ function IncludedPerksCard({
                   {perk.title}
                 </p>
                 {perk.subtitle ? (
-                  <p
+                  <div
                     style={{
-                      margin: '4px 0 0',
+                      marginTop: 4,
                       fontSize: 13,
                       color: QUIZ.SUBTLE,
                       fontStyle: 'italic',
@@ -384,7 +384,7 @@ function IncludedPerksCard({
                     }}
                   >
                     {perk.subtitle}
-                  </p>
+                  </div>
                 ) : null}
               </div>
               <span
