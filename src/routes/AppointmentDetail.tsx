@@ -605,9 +605,6 @@ function Loaded({
             conferenceCount={appt.conference_count}
             recordingCount={appt.recording_count}
             transcriptCount={appt.transcript_count}
-            patientRsvpStatus={appt.patient_rsvp_status}
-            patientRsvpUpdatedAt={appt.patient_rsvp_updated_at}
-            patientEmail={appt.patient.email}
             patientFirstName={appt.patient.first_name}
             patientLastName={appt.patient.last_name}
           />

@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { Card } from '../Card/Card.tsx';
+import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import {
@@ -45,20 +46,9 @@ export interface MeetAttendanceCardProps {
   conferenceCount: number | null;
   // Corroborating evidence pulled by meet-fetch-attendance. Counts are
   // the count of Google-published artefacts (non-zero = unfakeable
-  // proof the meeting happened). RSVP is the patient's responseStatus
-  // on the underlying Calendar invite — shows whether they ever opened
-  // the email at all.
+  // proof the meeting happened).
   recordingCount: number | null;
   transcriptCount: number | null;
-  patientRsvpStatus: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
-  patientRsvpUpdatedAt: string | null;
-  // The patient's email on file. Surfaced inline on the invite row so
-  // operators can tell at a glance which inbox we tracked — important
-  // because Google's Meet API doesn't publish the email a participant
-  // used to join (only their display name). If the patient joined from
-  // a different Google account than the one we have, the only visible
-  // signal is the display name in the participants list.
-  patientEmail: string | null;
   // The patient's name on file. Used to flag non-host participants
   // whose Meet display name doesn't roughly match (different Google
   // account, anonymous join, or some other identity-confusion case).
@@ -76,9 +66,6 @@ export function MeetAttendanceCard({
   conferenceCount,
   recordingCount,
   transcriptCount,
-  patientRsvpStatus,
-  patientRsvpUpdatedAt: _patientRsvpUpdatedAt,
-  patientEmail,
   patientFirstName,
   patientLastName,
 }: MeetAttendanceCardProps) {
@@ -151,37 +138,50 @@ export function MeetAttendanceCard({
             margin: `${theme.space[4]}px 0 ${theme.space[5]}px`,
           }}
         />
-        <VerdictBanner verdict={verdict} />
-        <MetadataList
-          startedAt={conferenceStartedAt}
-          endedAt={conferenceEndedAt}
-          conferenceCount={conferenceCount}
-          recordingCount={recordingCount}
-          transcriptCount={transcriptCount}
-          patientRsvpStatus={patientRsvpStatus}
-          patientEmail={patientEmail}
-          meetingHasEnded={meetingHasEnded}
-        />
-        {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-            <Skeleton height={48} radius={12} />
-            <Skeleton height={48} radius={12} />
-          </div>
-        ) : error ? (
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
-            Could not load attendance: {error}
-          </p>
-        ) : grouped.length === 0 ? null : (
+        {/* Pre-meeting state: skip the speculative "Awaiting Google
+            publication" verdict + metadata clutter entirely. Show a
+            single in-theme empty state so the card reads "we know
+            why this is empty, come back later" without restating
+            the obvious. The verdict + metadata only earn their pixels
+            once Google actually has something to publish. */}
+        {verdict.kind === 'pending' ? (
+          <EmptyState
+            icon={<Users size={20} aria-hidden />}
+            title="No attendance tracked yet"
+            description="Attendance lands here once the Meet room closes."
+          />
+        ) : (
           <>
-            <SectionLabel>Participants</SectionLabel>
-            <ParticipantList
-              grouped={grouped}
-              patientFirstName={patientFirstName}
-              patientLastName={patientLastName}
+            <VerdictBanner verdict={verdict} />
+            <MetadataList
+              startedAt={conferenceStartedAt}
+              endedAt={conferenceEndedAt}
+              conferenceCount={conferenceCount}
+              recordingCount={recordingCount}
+              transcriptCount={transcriptCount}
+              meetingHasEnded={meetingHasEnded}
             />
+            {loading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <Skeleton height={48} radius={12} />
+                <Skeleton height={48} radius={12} />
+              </div>
+            ) : error ? (
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
+                Could not load attendance: {error}
+              </p>
+            ) : grouped.length === 0 ? null : (
+              <>
+                <SectionLabel>Participants</SectionLabel>
+                <ParticipantList
+                  grouped={grouped}
+                  patientFirstName={patientFirstName}
+                  patientLastName={patientLastName}
+                />
+              </>
+            )}
           </>
         )}
-        <FooterHint />
       </Card>
       {toast ? (
         <Toast
@@ -377,8 +377,6 @@ function MetadataList({
   conferenceCount,
   recordingCount,
   transcriptCount,
-  patientRsvpStatus,
-  patientEmail,
   meetingHasEnded,
 }: {
   startedAt: string | null;
@@ -386,8 +384,6 @@ function MetadataList({
   conferenceCount: number | null;
   recordingCount: number | null;
   transcriptCount: number | null;
-  patientRsvpStatus: 'accepted' | 'declined' | 'tentative' | 'needsAction' | null;
-  patientEmail: string | null;
   meetingHasEnded: boolean;
 }) {
   const rows: Array<{ label: string; value: ReactNode; tone?: 'success' | 'warn' | 'muted' }> = [];
@@ -433,41 +429,6 @@ function MetadataList({
         tone: 'success',
       });
     }
-  }
-
-  // Calendar invite RSVP row. Two things to communicate clearly:
-  //
-  //   • Where we sent the Google Calendar invite (the patient email on
-  //     file). The patient may join from a different Google account
-  //     than this — common in practice — so showing the tracked
-  //     mailbox prevents the operator from misreading "no response"
-  //     as "patient unreachable".
-  //   • What their RSVP state means in plain English. "No response
-  //     yet" used to read as "we have no data on this patient", but
-  //     it actually means "they haven't clicked Yes / No / Maybe on
-  //     the Google Calendar invite". Many iCloud users never do —
-  //     Apple Mail handles Calendar invites differently from Gmail —
-  //     so this is not a "they won't attend" signal. The participants
-  //     list below is the source of truth for who actually joined.
-  if (patientEmail) {
-    const status = patientRsvpStatus
-      ? ({
-          accepted: { label: 'Patient accepted in Google Calendar', tone: 'success' as const },
-          declined: { label: 'Patient declined in Google Calendar', tone: 'warn' as const },
-          tentative: { label: 'Patient marked as maybe in Google Calendar', tone: 'muted' as const },
-          needsAction: { label: "Patient has not responded in Google Calendar (often left untouched by Apple Mail or Outlook recipients)", tone: 'muted' as const },
-        } satisfies Record<'accepted' | 'declined' | 'tentative' | 'needsAction', { label: string; tone: 'success' | 'warn' | 'muted' }>)[patientRsvpStatus]
-      : { label: "Patient has not responded in Google Calendar (often left untouched by Apple Mail or Outlook recipients)", tone: 'muted' as const };
-    rows.push({
-      label: 'Google Calendar invite',
-      value: (
-        <span>
-          <span style={{ color: theme.color.ink }}>Sent to {patientEmail}.</span>{' '}
-          <span style={{ color: toneColor(status.tone) }}>{status.label}.</span>
-        </span>
-      ),
-      tone: status.tone,
-    });
   }
 
   if (rows.length === 0) return null;
@@ -516,17 +477,6 @@ function MetadataList({
   );
 }
 
-function toneColor(tone: 'success' | 'warn' | 'muted'): string {
-  switch (tone) {
-    case 'success':
-      return '#1F5A33';
-    case 'warn':
-      return '#8E6826';
-    case 'muted':
-    default:
-      return theme.color.inkMuted;
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // Participants — grouped by person, one row each
@@ -940,39 +890,6 @@ function SectionLabel({ children }: { children: ReactNode }) {
       }}
     >
       {children}
-    </p>
-  );
-}
-
-// The footer hint replaces a longer paragraph that used to sit in the
-// empty-state. Two short sentences cover everything an operator needs
-// to know about why the card might look empty:
-//
-//   1. Google publishes attendance only after the Meet room closes
-//      (host ends call, or it sits empty for ~5 minutes). This is the
-//      most common cause of "I attended but the card is empty".
-//
-//   2. The Meet REST API doesn't publish lobby knocks or the email
-//      a participant used to join — only display names. So if the
-//      patient joins from a different Google account than the one on
-//      the invite, the only visible signal is the display name in the
-//      Participants list above.
-//
-// Kept terse so it doesn't dominate the card. Operators who need the
-// detail will find it; everyone else can ignore it.
-function FooterHint() {
-  return (
-    <p
-      style={{
-        margin: `${theme.space[4]}px 0 0`,
-        paddingTop: theme.space[3],
-        borderTop: `1px solid ${theme.color.border}`,
-        fontSize: theme.type.size.xs,
-        color: theme.color.inkMuted,
-        lineHeight: 1.55,
-      }}
-    >
-      Sessions appear once the Meet room closes — host ends the call for everyone, or the room sits empty for ~5 minutes. Google does not publish the email a participant used to join (only their display name), and does not publish lobby knocks. The Google Calendar invite row above tracks the invite Google emails the patient at booking — separate from our Lounge confirmation email. Patients reading it in Apple Mail, Outlook, iCloud, or any non-Gmail client often never click Yes / No / Maybe even when they join the meeting fine, so &ldquo;no response&rdquo; is not a &ldquo;won&rsquo;t attend&rdquo; signal. The participants list above is the source of truth for who actually joined.
     </p>
   );
 }
