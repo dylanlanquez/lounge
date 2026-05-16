@@ -188,7 +188,15 @@ export async function rescheduleAppointment(input: {
     existing.status === 'rescheduled' ||
     existing.status === 'cancelled' ||
     existing.status === 'no_show' ||
-    existing.status === 'complete'
+    existing.status === 'complete' ||
+    // 'arrived' rejected to mirror the UI policy in
+    // appointmentDetail.ts availableActions(): once the patient is
+    // physically in clinic the visit is the system of record, not
+    // the appointment. The endVisitIfOpen path below stays as
+    // defence-in-depth in case anyone ever relaxes this guard, but
+    // in normal operation this branch fires first and the visit
+    // close path never runs.
+    existing.status === 'arrived'
   ) {
     throw new Error(`Cannot reschedule an appointment with status "${existing.status}".`);
   }
