@@ -349,6 +349,13 @@ export function DatePicker({
             today={today}
             minIso={minIso}
             maxIso={maxIso}
+            // Mobile path was missing this prop — desktop passed it
+            // but mobile rendered every cell as enabled because the
+            // whitelist never reached MonthGrid. Result: on phones
+            // the reschedule calendar showed closed days and fully-
+            // booked days as clickable. Same prop, same source of
+            // truth as desktop.
+            availableDates={availableDates}
             onPrev={() => stepMonth(-1)}
             onNext={() => stepMonth(+1)}
             onPick={handlePick}
