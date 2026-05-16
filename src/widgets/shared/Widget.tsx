@@ -1312,6 +1312,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       aria-label="Back"
+      className="vlounge-back-btn"
       style={{
         border: 'none',
         width: 42,
@@ -1326,15 +1327,10 @@ function BackButton({ onClick }: { onClick: () => void }) {
         justifyContent: 'center',
         flexShrink: 0,
         color: QUIZ.ACCENT,
+        // Hover/active styles live in CSS so they only fire on hover-
+        // capable devices. See quizTokens.ts vlounge-back-btn rules
+        // for the rationale (iOS first-tap-is-hover trap).
         transition: `all 0.2s ${QUIZ.EASE_CARD}`,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = QUIZ.PROGRESS_BACK_BG_HOVER;
-        e.currentTarget.style.transform = 'translateY(-1px)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = QUIZ.PROGRESS_BACK_BG;
-        e.currentTarget.style.transform = 'translateY(0)';
       }}
     >
       <ArrowLeft size={20} aria-hidden />
@@ -1358,12 +1354,18 @@ function NextButton({
    *  the flow's Continue buttons stay still. */
   shimmer?: boolean;
 }) {
+  const className = [
+    'vlounge-next-btn',
+    shimmer && !disabled ? 'vlounge-pay-shimmer' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
     <button
       type="button"
-      onClick={disabled ? undefined : onClick}
+      onClick={onClick}
       disabled={disabled}
-      className={shimmer && !disabled ? 'vlounge-pay-shimmer' : undefined}
+      className={className}
       style={{
         border: 'none',
         padding: '12px 28px',
@@ -1375,18 +1377,14 @@ function NextButton({
         color: '#fff',
         flex: 1,
         fontFamily: 'inherit',
+        // Hover styles live in CSS (see vlounge-next-btn rules in
+        // quizTokens.ts) so they only kick in on devices that
+        // actually support hover. The previous JS onMouseEnter /
+        // onMouseLeave handlers caused the iOS "first tap triggers
+        // hover, second tap fires click" hang — which is why the
+        // Book appointment button felt broken on phones.
         transition: `all 0.2s ${QUIZ.EASE_CARD}`,
         opacity: disabled ? 0.4 : 1,
-      }}
-      onMouseEnter={(e) => {
-        if (disabled) return;
-        e.currentTarget.style.transform = 'translateY(-1px)';
-        e.currentTarget.style.boxShadow = QUIZ.SHADOW_BUTTON_HOVER;
-      }}
-      onMouseLeave={(e) => {
-        if (disabled) return;
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow = 'none';
       }}
     >
       {/* z-index 2 so the label sits ABOVE the .vlounge-pay-shimmer

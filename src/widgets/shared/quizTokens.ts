@@ -254,6 +254,43 @@ export function ensureQuizKeyframes(): void {
       opacity: 0;
     }
 
+    /* Footer button hover/active treatment.
+       Previously the Next + Back buttons set their hover transform
+       inline via onMouseEnter / onMouseLeave React handlers. On iOS
+       Safari that's the classic hover-then-click pitfall: the first
+       tap fires the emulated mouseenter (styles change), and the
+       click only registers on a second tap — except sometimes the
+       hover state sticks and the click never fires at all until the
+       user taps somewhere else. From the customer's POV the button
+       "doesn't work."
+       The fix is to scope the hover styles to devices that actually
+       support hover, via @media (hover: hover) + :hover, and use
+       :active for the touch press affordance. Hands off the click
+       path completely on touchscreens.
+       touch-action: manipulation kills iOS Safari's 300ms tap delay
+       and the double-tap-zoom gesture for these specific controls. */
+    .vlounge-next-btn,
+    .vlounge-back-btn {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    @media (hover: hover) {
+      .vlounge-next-btn:not(:disabled):hover {
+        transform: translateY(-1px);
+        box-shadow: ${QUIZ.SHADOW_BUTTON_HOVER};
+      }
+      .vlounge-back-btn:hover {
+        background: ${QUIZ.PROGRESS_BACK_BG_HOVER};
+        transform: translateY(-1px);
+      }
+    }
+    .vlounge-next-btn:not(:disabled):active {
+      transform: translateY(0);
+    }
+    .vlounge-back-btn:active {
+      transform: translateY(0);
+    }
+
     /* Stagger delays for sets of cards (option-card-vt / addon-item-vt)
        — applied via inline animationDelay too, this is a fallback. */
     .vlounge-stagger > *:nth-child(1) { animation-delay: 0.05s; }
