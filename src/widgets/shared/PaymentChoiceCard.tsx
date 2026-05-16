@@ -107,11 +107,10 @@ function enabledPaymentOptions(
   // deposit > pay-in-full > pay-on-the-day. Keeps the visual
   // anchor (Stripe step entry) at the top of the list.
   if (showDeposit) {
-    const balance = Math.max(0, total - depositPence);
     out.push({
       id: 'pay_deposit',
-      title: `Pay £${(depositPence / 100).toFixed(2)} deposit now`,
-      description: `Pay the £${(balance / 100).toFixed(2)} balance at your appointment.`,
+      title: `Pay £${(depositPence / 100).toFixed(2)} deposit`,
+      description: 'Pay the remaining balance on the day.',
       amountLabel: formatPriceShort(depositPence),
       icon: <CreditCard size={18} aria-hidden />,
     });
@@ -119,10 +118,10 @@ function enabledPaymentOptions(
   if (allowFull) {
     out.push({
       id: 'pay_full',
-      title: `Pay in full now`,
-      description: showDeposit
-        ? `Pay the full amount upfront, nothing on the day.`
-        : `Pay now, nothing more on the day.`,
+      title: 'Pay in full now',
+      // Copy is identical whether or not a deposit option is also
+      // shown — Dylan wants a single, predictable line on every widget.
+      description: 'Pay now, nothing more on the day.',
       amountLabel: formatPriceShort(total),
       icon: <CreditCard size={18} aria-hidden />,
     });

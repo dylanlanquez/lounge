@@ -848,7 +848,7 @@ export function stepTitle(
     case 'details':
       return copy.detailsTitle;
     case 'review':
-      return 'Review your booking';
+      return 'Booking summary';
     case 'payment':
       return copy.paymentTitle;
     case 'repair:arch':

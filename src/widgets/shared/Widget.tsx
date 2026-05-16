@@ -841,14 +841,12 @@ function StepBody({
   // to the top of the scroll container. If we let StepBody render
   // the default title here, the chip would have to live below it.
   //
-  // Review step renders no title at all — the BookingReview card
-  // immediately below carries its own "Your booking" heading, so
-  // a wrapping "Review your booking" h2 just doubled the messaging
-  // and pushed the payment options down the page.
+  // Review step now uses the shell-rendered title ("Booking summary")
+  // — the previous "Your booking" heading inside the BookingReview
+  // card has been removed so the receipt sits cleanly under the
+  // standard StepTitle like every other step.
   const stepOwnsTitle =
-    api.stepKey === 'repair:top' ||
-    api.stepKey === 'repair:bottom' ||
-    api.stepKey === 'review';
+    api.stepKey === 'repair:top' || api.stepKey === 'repair:bottom';
   return (
     <>
       {stepOwnsTitle ? null : (

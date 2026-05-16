@@ -272,17 +272,6 @@ export function BookingReview({
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
     >
-      <h3
-        style={{
-          margin: '0 0 6px',
-          fontSize: 17,
-          fontWeight: 700,
-          color: accent,
-          letterSpacing: '-0.01em',
-        }}
-      >
-        Your booking
-      </h3>
       {rows.map((row, i) => {
         const isLast = i === rows.length - 1;
         // Suppress the bottom hairline on the row immediately
