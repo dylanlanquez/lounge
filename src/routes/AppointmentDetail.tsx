@@ -52,8 +52,8 @@ import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import {
   configFor,
-  useAdminServiceTypeConfig,
-} from '../lib/queries/serviceTypeWidgetConfig.ts';
+  useAdminProductConfig,
+} from '../lib/queries/productWidgetConfig.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { logFailure } from '../lib/failureLog.ts';
 import {
@@ -288,11 +288,12 @@ function Loaded({
   // for stamping uploader on patient_files rows. The two are
   // different — patient_files.uploaded_by has an FK to accounts.id.
   const { account: currentAccount } = useCurrentAccount();
-  // Per-service-type widget config drives whether the Smile photos
-  // card surfaces on this appointment. Previously hardcoded to
-  // click_in_veneers; now any service whose admin toggle is on shows
-  // it. Missing rows fall back to defaults (request_smile_photos=false).
-  const { data: serviceTypeConfig } = useAdminServiceTypeConfig();
+  // Per-product widget config drives whether the Smile photos card
+  // surfaces on this appointment. Looked up via (service_type,
+  // product_key) — previously hardcoded to click_in_veneers; now any
+  // product whose admin toggle is on shows it. Missing rows fall back
+  // to defaults (request_smile_photos=false).
+  const { data: productConfig } = useAdminProductConfig();
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
@@ -508,7 +509,7 @@ function Loaded({
           upgrades={appt.upgrades}
           repairItems={appt.repairItems}
         />
-        {configFor(appt.service_type, serviceTypeConfig).request_smile_photos ? (
+        {configFor(appt.service_type, appt.product_key, productConfig).request_smile_photos ? (
           <SmilePhotosCard
             appointmentId={appt.id}
             patientId={appt.patient_id}

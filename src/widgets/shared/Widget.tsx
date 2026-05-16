@@ -17,9 +17,9 @@ import {
 import { useWidgetCopy, type WidgetCopy } from './copy.ts';
 import {
   configFor,
-  useWidgetServiceTypeConfig,
-  type ServiceTypeWidgetConfig,
-} from '../../lib/queries/serviceTypeWidgetConfig.ts';
+  useWidgetProductConfig,
+  type ProductWidgetConfig,
+} from '../../lib/queries/productWidgetConfig.ts';
 import {
   useWidgetBookingTypes,
   useWidgetLocations,
@@ -128,23 +128,23 @@ export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
   const locationsResult = useWidgetLocations();
   const bookingTypesResult = useWidgetBookingTypes();
   const { copy, loading: copyLoading } = useWidgetCopy();
-  const serviceTypeConfigResult = useWidgetServiceTypeConfig();
+  const productConfigResult = useWidgetProductConfig();
 
   if (
     locationsResult.loading ||
     bookingTypesResult.loading ||
     copyLoading ||
-    serviceTypeConfigResult.loading ||
+    productConfigResult.loading ||
     !locationsResult.data ||
     !bookingTypesResult.data ||
-    !serviceTypeConfigResult.data
+    !productConfigResult.data
   ) {
     return (
       <BootScreen
         error={
           locationsResult.error ??
           bookingTypesResult.error ??
-          serviceTypeConfigResult.error
+          productConfigResult.error
         }
       />
     );
@@ -157,7 +157,7 @@ export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
       copy={copy}
       brand={brand}
       prefill={prefill}
-      serviceTypeConfig={serviceTypeConfigResult.data}
+      productConfig={productConfigResult.data}
       onClose={onClose}
     />
   );
@@ -169,7 +169,7 @@ function WidgetReady({
   copy,
   brand,
   prefill,
-  serviceTypeConfig,
+  productConfig,
   onClose,
 }: {
   locations: WidgetLocation[];
@@ -180,7 +180,7 @@ function WidgetReady({
   /** Map service_type → per-service-type widget toggles. Drives
    *  the upgrades-step gate (show_upgrades) and the success-screen
    *  photo-intake gate (request_smile_photos). */
-  serviceTypeConfig: Record<string, ServiceTypeWidgetConfig>;
+  productConfig: Record<string, ProductWidgetConfig>;
   onClose?: () => void;
 }) {
   // Inject the keyframes used by the chrome (modal-slide-in, step
@@ -246,7 +246,7 @@ function WidgetReady({
     return fromBooking?.patientFirstName ?? null;
   }, [remembered.data]);
 
-  const api = useBookingState(locations, resolvedPrefill, serviceTypeConfig);
+  const api = useBookingState(locations, resolvedPrefill, productConfig);
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
     appointmentRef: string | null;
@@ -444,8 +444,11 @@ function WidgetReady({
         manageToken={submission.manageToken}
         brand={brand}
         requestSmilePhotos={
-          configFor(api.state.service?.serviceType, serviceTypeConfig)
-            .request_smile_photos
+          configFor(
+            api.state.service?.serviceType,
+            api.state.axes.product_key ?? null,
+            productConfig,
+          ).request_smile_photos
         }
         onClose={onClose}
       />

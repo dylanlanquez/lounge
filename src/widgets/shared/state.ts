@@ -13,8 +13,8 @@ import {
 import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
 import {
   configFor,
-  type ServiceTypeWidgetConfig,
-} from '../../lib/queries/serviceTypeWidgetConfig.ts';
+  type ProductWidgetConfig,
+} from '../../lib/queries/productWidgetConfig.ts';
 import { DEFAULT_COPY, type WidgetCopy } from './copy.ts';
 import {
   validateEmail,
@@ -356,12 +356,13 @@ const EMPTY_PREFILL: ResolvedPrefill = {
 export function useBookingState(
   locations: WidgetLocation[],
   prefill: ResolvedPrefill = EMPTY_PREFILL,
-  /** Service-type-level widget toggles. The hook uses this to decide
-   *  whether the Upgrades step belongs in the active-steps list for
-   *  the chosen service. An empty map means every service falls
-   *  back to the defaults (show_upgrades = true), so callers that
-   *  haven't loaded config yet aren't forced to gate-render. */
-  serviceTypeConfig: Record<string, ServiceTypeWidgetConfig> = {},
+  /** Per-product widget toggles. The hook uses this to decide whether
+   *  the Upgrades step belongs in the active-steps list for the
+   *  (service_type, product_key) the patient has picked. An empty
+   *  map means every product falls back to the defaults
+   *  (show_upgrades = true), so callers that haven't loaded config
+   *  yet aren't forced to gate-render. */
+  productConfig: Record<string, ProductWidgetConfig> = {},
 ) {
   const [state, setState] = useState<WidgetState>(() => {
     const remembered = loadRememberedIdentity();
@@ -411,12 +412,14 @@ export function useBookingState(
   const resolvedResult = useResolvedCatalogueRow(resolverInput);
   const upgrades = upgradesResult.data ?? [];
   const hasUpgrades = upgrades.length > 0;
-  // Derive the per-service show_upgrades flag from the config map.
-  // configFor handles missing rows by returning the default (true),
-  // so a service the admin hasn't touched still shows upgrades.
+  // Derive the per-product show_upgrades flag from the config map.
+  // configFor handles missing rows / not-yet-picked product_key by
+  // returning the default (true), so a product the admin hasn't
+  // touched still shows upgrades.
   const showUpgrades = configFor(
     state.service?.serviceType,
-    serviceTypeConfig,
+    state.axes.product_key ?? null,
+    productConfig,
   ).show_upgrades;
   const activeSteps = useMemo(
     () => activeStepsFor(state, hasUpgrades, locations.length, showUpgrades),

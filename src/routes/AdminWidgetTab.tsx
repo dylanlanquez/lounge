@@ -23,15 +23,11 @@ import {
   type WidgetAdminUpgrade,
 } from '../lib/queries/widgetAdmin.ts';
 import {
-  BOOKING_SERVICE_TYPES,
-  type BookingServiceType,
-} from '../lib/queries/bookingTypes.ts';
-import {
-  DEFAULT_SERVICE_TYPE_CONFIG,
-  saveServiceTypeConfig,
-  useAdminServiceTypeConfig,
-  type ServiceTypeWidgetConfig,
-} from '../lib/queries/serviceTypeWidgetConfig.ts';
+  saveProductConfig,
+  useAdminProductConfig,
+  DEFAULT_PRODUCT_CONFIG,
+  type ProductWidgetConfig,
+} from '../lib/queries/productWidgetConfig.ts';
 import {
   DEFAULT_COPY,
   saveWidgetCopy,
@@ -182,10 +178,10 @@ export function AdminWidgetTab() {
       </EditorBoundary>
 
       <EditorBoundary>
-        <ServiceTypeSettingsEditor
-          onSaved={(label) => {
+        <ProductSettingsEditor
+          onSaved={(productLabel) => {
             reloadPreview();
-            setToast({ tone: 'success', title: `${label} updated` });
+            setToast({ tone: 'success', title: `${productLabel} updated` });
           }}
           onError={(message) =>
             setToast({ tone: 'error', title: 'Could not save', description: message })
@@ -1794,40 +1790,68 @@ const COPY_GROUPS: CopyGroup[] = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Service-type settings — per-service toggles that apply uniformly across
-// every booking-type under one service. Sibling to the per-booking-type
-// ServicesEditor above (which configures price, deposit, description,
-// pay-in-full etc).
+// Product settings — per-product toggles. Iterates the catalogue's
+// (service_type, product_key) pairs and renders a card per product,
+// grouped under each service's header. Services that don't have a
+// product axis (denture_repair, impression_appointment, etc.) are
+// hidden entirely — there's no meaningful "product" to toggle for them.
 //
-// Initial settings:
-//   • Pre-visit smile photos — whether the widget success screen asks for
-//     smile photos AND the staff appointment / visit pages render the
-//     SmilePhotosCard. Previously hardcoded to click_in_veneers only.
-//   • Optional extras step — whether the widget renders the upgrades step
-//     for this service at all. Per-upgrade visibility still lives on the
-//     catalogue row; this gates the whole step.
+// Toggles per product:
+//   • Pre-visit smile photos — drives the widget's success-screen
+//     photo intake AND the staff appointment / visit Smile photos
+//     card when the booked product matches.
+//   • Optional extras step — gates the widget's Optional extras step
+//     for this specific product. Per-upgrade visibility (set on the
+//     existing per-booking-type editor above) still applies when on.
 //
-// Each toggle saves immediately on flip (optimistic) and re-fetches to
-// confirm the row landed. Errors bubble up to the parent's toast.
+// The list of products comes from useWidgetAdminServices() so we get
+// the catalogue's natural grouping for free — same data the per-
+// booking-type editor above renders.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ServiceTypeSettingsEditor({
+function ProductSettingsEditor({
   onSaved,
   onError,
 }: {
-  onSaved: (serviceLabel: string) => void;
+  onSaved: (productLabel: string) => void;
   onError: (message: string) => void;
 }) {
-  const { data, loading, error, refresh } = useAdminServiceTypeConfig();
+  const services = useWidgetAdminServices();
+  const config = useAdminProductConfig();
 
-  if (error) {
+  if (services.error || config.error) {
     return (
       <Card padding="lg">
         <p style={{ margin: 0, color: theme.color.alert }}>
-          Could not load service-type settings: {error}
+          Could not load product settings: {services.error ?? config.error}
         </p>
       </Card>
     );
+  }
+
+  // Build a unique list of (service_type, product_key) pairs from the
+  // catalogue. We dedupe on the composite key because a catalogue can
+  // hold multiple rows per (service, product) — one per arch / variant
+  // — and one toggle covers all of them.
+  const productsByService = new Map<
+    string,
+    { serviceLabel: string; products: { productKey: string; name: string }[] }
+  >();
+  for (const service of services.data ?? []) {
+    const seen = new Set<string>();
+    const products: { productKey: string; name: string }[] = [];
+    for (const product of service.products) {
+      if (!product.productKey) continue; // Services without a product axis are skipped
+      if (seen.has(product.productKey)) continue;
+      seen.add(product.productKey);
+      products.push({ productKey: product.productKey, name: product.name });
+    }
+    if (products.length > 0) {
+      productsByService.set(service.serviceType, {
+        serviceLabel: service.label,
+        products,
+      });
+    }
   }
 
   return (
@@ -1841,7 +1865,7 @@ function ServiceTypeSettingsEditor({
             color: theme.color.ink,
           }}
         >
-          Service-type settings
+          Product settings
         </h3>
         <p
           style={{
@@ -1852,66 +1876,107 @@ function ServiceTypeSettingsEditor({
             maxWidth: 640,
           }}
         >
-          These apply to every booking type within a service. Pre-visit smile
-          photos drives both the widget's success-screen photo intake and the
-          staff Smile photos card on appointments / visits. Optional extras
+          Per-product toggles. Pre-visit smile photos drives both the widget's
+          success-screen photo intake and the staff Smile photos card on
+          appointments / visits matching the booked product. Optional extras
           step hides the whole step in the widget when off.
         </p>
       </div>
 
-      {loading || !data ? (
-        <Skeleton height={180} />
+      {services.loading || config.loading || !config.data ? (
+        <Skeleton height={220} />
+      ) : productsByService.size === 0 ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+          }}
+        >
+          No widget-eligible products in the catalogue yet.
+        </p>
       ) : (
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: theme.space[3],
+            gap: theme.space[5],
           }}
         >
-          {BOOKING_SERVICE_TYPES.map((svc) => {
-            const current: ServiceTypeWidgetConfig =
-              data[svc.value] ?? DEFAULT_SERVICE_TYPE_CONFIG;
-            return (
-              <ServiceTypeRow
-                key={svc.value}
-                serviceType={svc.value}
-                label={svc.label}
-                config={current}
-                onSaved={() => {
-                  refresh();
-                  onSaved(svc.label);
+          {Array.from(productsByService.entries()).map(([serviceType, group]) => (
+            <div
+              key={serviceType}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[3],
+              }}
+            >
+              <h4
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.inkMuted,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
                 }}
-                onError={onError}
-              />
-            );
-          })}
+              >
+                {group.serviceLabel}
+              </h4>
+              {group.products.map((product) => {
+                const key = `${serviceType}|${product.productKey}`;
+                const current: ProductWidgetConfig =
+                  config.data?.[key] ?? DEFAULT_PRODUCT_CONFIG;
+                return (
+                  <ProductSettingsRow
+                    key={key}
+                    serviceType={serviceType}
+                    productKey={product.productKey}
+                    label={product.name}
+                    config={current}
+                    onSaved={() => {
+                      config.refresh();
+                      onSaved(product.name);
+                    }}
+                    onError={onError}
+                  />
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
     </Card>
   );
 }
 
-function ServiceTypeRow({
+function ProductSettingsRow({
   serviceType,
+  productKey,
   label,
   config,
   onSaved,
   onError,
 }: {
-  serviceType: BookingServiceType;
+  serviceType: string;
+  productKey: string;
   label: string;
-  config: ServiceTypeWidgetConfig;
+  config: ProductWidgetConfig;
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
   const [saving, setSaving] = useState<'smile' | 'upgrades' | null>(null);
 
-  const save = async (patch: Partial<ServiceTypeWidgetConfig>, which: 'smile' | 'upgrades') => {
+  const save = async (
+    patch: Partial<ProductWidgetConfig>,
+    which: 'smile' | 'upgrades',
+  ) => {
     setSaving(which);
     try {
-      await saveServiceTypeConfig({
+      await saveProductConfig({
         service_type: serviceType,
+        product_key: productKey,
         request_smile_photos:
           patch.request_smile_photos ?? config.request_smile_photos,
         show_upgrades: patch.show_upgrades ?? config.show_upgrades,
@@ -1980,7 +2045,7 @@ function ServiceTypeRow({
 
       <Section
         title="Optional extras step"
-        description="Shows the Optional extras step in the widget. Off hides the whole step for this service; per-upgrade visibility still applies when on."
+        description="Shows the Optional extras step in the widget. Off hides the whole step for this product; per-upgrade visibility still applies when on."
       >
         <Toggle
           checked={config.show_upgrades}

@@ -73,8 +73,8 @@ import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import {
   configFor,
-  useAdminServiceTypeConfig,
-} from '../lib/queries/serviceTypeWidgetConfig.ts';
+  useAdminProductConfig,
+} from '../lib/queries/productWidgetConfig.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   completeVisit,
@@ -139,10 +139,11 @@ export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const { account: currentAccount } = useCurrentAccount();
-  // Per-service-type widget config — drives whether the Smile photos
-  // card renders on the visit body. See AppointmentDetail for the
-  // matching surface; both read the same source of truth.
-  const { data: serviceTypeConfig } = useAdminServiceTypeConfig();
+  // Per-product widget config — drives whether the Smile photos card
+  // renders on the visit body. Composite key (service_type, product_key)
+  // — see AppointmentDetail for the matching surface; both read the
+  // same source of truth.
+  const { data: productConfig } = useAdminProductConfig();
   const navigate = useNavigate();
   const location = useLocation();
   const { visit, patient, deposit, shopifyOrder, appointment, receptionistName, loading } = useVisitDetail(id);
@@ -1616,7 +1617,11 @@ export function VisitDetail() {
                       progress shots read as one media block. Click-in
                       veneers only. */}
                   {visit.appointment_id &&
-                  configFor(appointment?.service_type, serviceTypeConfig).request_smile_photos ? (
+                  configFor(
+                    appointment?.service_type,
+                    appointment?.product_key,
+                    productConfig,
+                  ).request_smile_photos ? (
                     <SmilePhotosCard
                       appointmentId={visit.appointment_id}
                       patientId={patient?.id}
