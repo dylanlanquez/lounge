@@ -603,14 +603,21 @@ function DayCell({
     pointerEvents: disabled ? 'none' : 'auto',
   };
 
+  // Available cells get the brand accent colour for their digit so
+  // they stand visually apart from the muted inkSubtle disabled
+  // cells. Selected stays as the solid accent disc (white text);
+  // today keeps its semibold treatment to differentiate from a
+  // generic available cell that's the same colour. Disabled +
+  // outside-month cells stay light grey. Dylan's ask was "make
+  // available dates easier to see, not too much, keep it nice on
+  // theme" — accent-tinted text is the smallest possible change
+  // that's still unambiguous.
   const discBg = isSelected ? theme.color.accent : 'transparent';
   const discFg = isSelected
     ? theme.color.surface
     : cell.outside || disabled
     ? theme.color.inkSubtle
-    : isToday
-    ? theme.color.accent
-    : theme.color.ink;
+    : theme.color.accent;
   const discWeight =
     isSelected || isToday
       ? theme.type.weight.semibold

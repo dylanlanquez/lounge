@@ -587,11 +587,18 @@ function Month({
                   height: 36,
                   borderRadius: '50%',
                   background: selected ? ACCENT : 'transparent',
+                  // Available cells render their digit in the brand
+                  // accent (navy) so they stand visually apart from
+                  // the muted disabled cells. Selected stays as the
+                  // solid-disc treatment with white text. Disabled
+                  // keeps the existing subtle-grey + 55% opacity
+                  // fade so the visual hierarchy is unambiguous.
+                  // Matches the staff DatePicker's tint approach.
                   color: selected
                     ? '#FFFFFF'
                     : disabled
                       ? SUBTLE
-                      : INK,
+                      : ACCENT,
                   fontSize: 14,
                   fontWeight: selected ? 600 : 500,
                   fontVariantNumeric: 'tabular-nums',
