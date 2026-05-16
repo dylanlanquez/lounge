@@ -1,5 +1,5 @@
 import { type CSSProperties } from 'react';
-import { Ban, Footprints, RotateCcw } from 'lucide-react';
+import { Ban, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
 import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
@@ -336,12 +336,34 @@ function formatTime(iso: string): string {
   return `${hh}${mm}${ampm}`;
 }
 
-// Compact source glyph next to the patient name. CalendlyIcon for
-// public bookings, Footprints for walk-ins / manual rows. Exported so
-// the list view + cluster sheet + detail header share the same badge.
+// Compact source glyph next to the patient name. Drives the at-a-
+// glance "did this patient walk in off the street or did they pre-
+// book?" cue everywhere an appointment / visit surfaces:
+//   • 'native'   → MousePointerClick — booked through our customer-
+//                  facing widget on a brand storefront
+//   • 'calendly' → CalendlyIcon — booked through the legacy Calendly
+//                  embed (kept distinct while Calendly is still in
+//                  play; will collapse into the click icon once the
+//                  Calendly flow is retired)
+//   • 'manual'   → Footprints — walked in off the street; the
+//                  receptionist created the calendar marker row
+//
+// Exported so the schedule list + grid + bottom sheet + Appointment
+// and Visit detail headers all share the same glyph. Single helper,
+// three branches — change here flows everywhere.
 export function SourceGlyph({ source, size = 12 }: { source: AppointmentSource; size?: number }) {
   if (source === 'calendly') {
     return <CalendlyIcon size={size} title="Calendly booking" color={theme.color.inkSubtle} />;
+  }
+  if (source === 'native') {
+    return (
+      <MousePointerClick
+        size={size + 2}
+        color={theme.color.inkSubtle}
+        aria-label="Booked via widget"
+        style={{ flexShrink: 0 }}
+      />
+    );
   }
   return (
     <Footprints

@@ -45,6 +45,7 @@ import {
   SmilePhotosCard,
   type StatusTone,
 } from '../components/index.ts';
+import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -773,7 +774,22 @@ function Hero({
           ? 'venneir.com'
           : 'Booking widget'
       : humaniseLedgerSource(appt.source);
-  const refLine = [sourceLabel, appt.appointment_ref ?? null].filter(Boolean).join(' · ');
+  // Subtitle is a JSX node so the SourceGlyph (walk-in vs widget vs
+  // Calendly) sits inline with the text. The icon is the at-a-glance
+  // signal the schedule cards use; mirroring it on the detail page
+  // keeps the cue consistent across every surface an appointment
+  // appears on.
+  const refTextParts = [sourceLabel, appt.appointment_ref ?? null].filter(
+    Boolean,
+  ) as string[];
+  const refLine = (
+    <span
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+    >
+      <SourceGlyph source={appt.source} size={12} />
+      <span>{refTextParts.join(' · ')}</span>
+    </span>
+  );
   // Native widget bookings store axis pins (arch + product_key +
   // service_type) on the row directly, so compose the title from
   // those columns instead of running the Calendly intake-parsing

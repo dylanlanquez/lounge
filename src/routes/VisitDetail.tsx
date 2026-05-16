@@ -56,7 +56,11 @@ import { supabase } from '../lib/supabase.ts';
 import { useSignedWaivers } from '../lib/queries/waiver.ts';
 import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from '../lib/waiverDocument.ts';
 import { humaniseEventTypeLabel, usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
-import { formatNativeBookingSummary } from '../lib/queries/appointments.ts';
+import {
+  formatNativeBookingSummary,
+  type AppointmentSource,
+} from '../lib/queries/appointments.ts';
+import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import {
   formatDateLongOrdinal,
   formatTime,
@@ -3019,13 +3023,26 @@ function buildVisitHeroProps(
     });
   }
 
-  // Subtitle — refs first (MP, LAP, JB), then arrival type. Compact
-  // dot-separated form so the line stays scannable at a glance.
-  const subtitleParts: string[] = [];
-  if (showableRef(patient?.internal_ref)) subtitleParts.push(patient!.internal_ref);
-  if (appointment?.appointment_ref) subtitleParts.push(appointment.appointment_ref);
-  if (appointment?.jb_ref) subtitleParts.push(`JB${appointment.jb_ref}`);
-  subtitleParts.push(isWalkIn ? 'Walk-in' : 'Scheduled');
+  // Subtitle — refs first (MP, LAP, JB), then the SourceGlyph + arrival
+  // type. Switched from a plain string to JSX so the walk-in / widget
+  // / Calendly icon (the same one the schedule cards show) sits inline
+  // before the arrival-type label. Keeps the at-a-glance source signal
+  // consistent across every surface a visit appears on. The icon is
+  // driven by the appointment.source when present, falling back to
+  // 'manual' for pure walk-ins with no calendar marker row — both
+  // render the Footprints icon, so the visual is identical.
+  const textParts: string[] = [];
+  if (showableRef(patient?.internal_ref)) textParts.push(patient!.internal_ref);
+  if (appointment?.appointment_ref) textParts.push(appointment.appointment_ref);
+  if (appointment?.jb_ref) textParts.push(`JB${appointment.jb_ref}`);
+  textParts.push(isWalkIn ? 'Walk-in' : 'Scheduled');
+  const subtitleSource = (appointment?.source ?? 'manual') as AppointmentSource;
+  const subtitle = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <SourceGlyph source={subtitleSource} size={12} />
+      <span>{textParts.join(' · ')}</span>
+    </span>
+  );
 
   // Suppress unused-arg warning until we surface the unsuitable-at
   // moment in the ribbon copy. Keeping the arg in the signature so
@@ -3035,7 +3052,7 @@ function buildVisitHeroProps(
   return {
     patient: { name: patient ? patientFullName(patient) : 'Patient', avatarSrc: patient?.avatar_data ?? null },
     pills,
-    subtitle: subtitleParts.join(' · '),
+    subtitle,
     when: {
       dateLong,
       timeLine: ribbon.timeLine,
