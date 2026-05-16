@@ -344,84 +344,65 @@ function ItemRow({
   rightAmountColour?: string;
   isLast: boolean;
 }) {
-  // Layout rule: every row is the SAME height (ROW_MIN_HEIGHT). That
-  // is what makes the icon column scan as evenly spaced — if one row
-  // is taller than the others (e.g. a Location row with a 2-line
-  // address), its badge ends up further from the next row's badge
-  // than the others are from each other, and the column reads as
-  // "wobbly" even though within each row the badge is correctly
-  // placed relative to the text.
+  // The badge MUST sit on the same horizontal line as the title — on
+  // every row, regardless of whether the row carries a subtitle. The
+  // previous structure ran badge + (title + subtitle) through one
+  // alignItems:center flex row, which lands the badge mid-stack on
+  // 2-line rows (Location: name + address) so the icon visually
+  // floats between the two lines instead of pairing with the title.
   //
-  // Structure:
-  //   outer       — flex row, alignItems: center. Locks min-height
-  //                 to a single value so every row's vertical centre
-  //                 (and therefore every badge's position) sits on
-  //                 the same rhythm.
-  //   badge       — 30px circle with the icon at its centre.
-  //   content     — flex column, stacked tightly (gap 2px) and
-  //                 centred vertically. Title row sits above the
-  //                 subtitle when one is present; centre-of-stack
-  //                 lands on the row's centre line.
-  //   subtitle    — single line, ellipsised. Never wraps. Without
-  //                 this constraint the location row could grow
-  //                 past ROW_MIN_HEIGHT and re-introduce the
-  //                 column wobble we're trying to eliminate.
-  //
-  // The badge therefore aligns with the row's vertical centre, and
-  // since every row shares the same centre offset from the row
-  // edges, every badge in the column shares the same y rhythm.
-  const ROW_MIN_HEIGHT = 56;
+  // Structure now:
+  //   outer       — block wrapper, padding + hairline only.
+  //   title-line  — flex row, alignItems: center. Holds the badge
+  //                 next to the title (+ optional rightAmount). With
+  //                 only the title in this line, the badge centres
+  //                 on the title's line-box, never drifts.
+  //   subtitle    — sibling block under the title-line, indented by
+  //                 badge width + gap so it hangs under the title's
+  //                 left edge, not under the badge.
+  const BADGE_SIZE = 30;
+  const BADGE_GAP = 12;
   return (
     <div
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        minHeight: ROW_MIN_HEIGHT,
-        padding: '8px 0',
+        padding: '13px 0',
         borderBottom: isLast ? 'none' : `1px solid #e9ecef`,
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 30,
-          height: 30,
-          flexShrink: 0,
-          borderRadius: '50%',
-          background: 'rgba(8, 55, 88, 0.08)',
-          color: QUIZ.ACCENT,
-        }}
-      >
-        {icon}
-      </span>
       <div
         style={{
-          flex: 1,
-          minWidth: 0,
           display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          gap: 2,
+          alignItems: 'center',
+          gap: BADGE_GAP,
         }}
       >
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: BADGE_SIZE,
+            height: BADGE_SIZE,
+            flexShrink: 0,
+            borderRadius: '50%',
+            background: 'rgba(8, 55, 88, 0.08)',
+            color: QUIZ.ACCENT,
+          }}
+        >
+          {icon}
+        </span>
         <div
           style={{
+            flex: 1,
+            minWidth: 0,
             display: 'flex',
             justifyContent: 'space-between',
-            // alignItems: 'baseline' aligns the title and amount by
-            // their text baselines, not their line-box centres. With
-            // center alignment a title containing descenders ("Same-
-            // day upper retainer" — the 'p' and 'y' extend below
-            // baseline, so the line box reserves room and pushes its
-            // centre downward) sits visually higher than an amount
-            // with no descenders ("£149.00"). Baseline alignment
-            // pins the letters of both to the same horizontal line,
-            // which is how the eye actually reads "title + amount on
-            // one line".
+            // alignItems: 'baseline' pins title and amount to the same
+            // text baseline. Centre alignment lets descenders ("p", "y"
+            // in "Same-day upper retainer") push the title's line-box
+            // centre below the amount's, which reads as a vertical
+            // wobble even though both sit on the same row.
             alignItems: 'baseline',
             gap: 12,
           }}
@@ -458,22 +439,23 @@ function ItemRow({
             </span>
           ) : null}
         </div>
-        {subtitle ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: 13,
-              color: QUIZ.SUBTLE,
-              lineHeight: 1.3,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {subtitle}
-          </p>
-        ) : null}
       </div>
+      {subtitle ? (
+        <p
+          style={{
+            margin: '2px 0 0',
+            paddingLeft: BADGE_SIZE + BADGE_GAP,
+            fontSize: 13,
+            color: QUIZ.SUBTLE,
+            lineHeight: 1.3,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {subtitle}
+        </p>
+      ) : null}
     </div>
   );
 }
