@@ -120,7 +120,22 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'location',
-      icon: <MapPin size={18} strokeWidth={2} aria-hidden />,
+      // Optical centring: see ICON_OPTICAL_OFFSETS rationale below
+      // ItemRow. MapPin's bulb (the visual mass) sits at viewBox y=10
+      // while the icon's geometric centre is y=12 — so when the icon
+      // is rendered with its geometric centre at the badge centre, the
+      // bulb floats 2 viewBox units (1.5 CSS px at size=18) above the
+      // badge centre line. translateY(1.5px) drops the icon so the
+      // bulb lands on the badge centre, which is where the eye reads
+      // the icon's position from.
+      icon: (
+        <MapPin
+          size={18}
+          strokeWidth={2}
+          aria-hidden
+          style={{ transform: 'translateY(1.5px)' }}
+        />
+      ),
       title: state.location.name,
       subtitle: state.location.addressLine,
     });
@@ -134,7 +149,23 @@ export function BookingReview({
     rows.push({
       kind: 'item',
       key: 'slot',
-      icon: <Calendar size={18} strokeWidth={2} aria-hidden />,
+      // Optical centring: Calendar's main rect (the dominant visual
+      // mass) is x=3 y=4 w=18 h=18 → its centre is at viewBox y=13,
+      // one unit below the icon's geometric centre y=12. The two
+      // binding tabs at y=2-6 are thin and add negligible mass, so
+      // the rect's centre is effectively the visual centre. With no
+      // correction the rect floats below the badge centre; the eye
+      // reads the icon as sitting low. translateY(-0.75px) lifts the
+      // icon by 1 viewBox unit (0.75 CSS px at size=18) so the rect
+      // centre lands on the badge centre.
+      icon: (
+        <Calendar
+          size={18}
+          strokeWidth={2}
+          aria-hidden
+          style={{ transform: 'translateY(-0.75px)' }}
+        />
+      ),
       title: formatSlotLong(state.slotIso),
     });
   }
@@ -324,6 +355,47 @@ export function BookingReview({
 // ─────────────────────────────────────────────────────────────────
 // Row primitives — chrome matches IncludedPerksCard exactly
 // ─────────────────────────────────────────────────────────────────
+//
+// ICON_OPTICAL_OFFSETS — why MapPin and Calendar carry translateY
+// corrections inline at their declaration sites above.
+//
+// Lucide normalises icons to their viewBox's GEOMETRIC centre, not
+// their visual-mass centre. For symmetric glyphs (CheckCircle2: a
+// circle inside a circle) the two coincide and no correction is
+// needed. For asymmetric glyphs the geometric centre and the
+// visual-mass centre diverge, and aligning by the geometric centre
+// leaves the icon visibly off — the eye reads the icon's POSITION
+// from where its mass is, not from where its bounding box is.
+//
+// Per-icon analysis (24x24 viewBox, strokeWidth 2):
+//   • MapPin       — bulb + inner circle sit at viewBox y=7-13
+//                    (mass centre ≈ y=10), tail tapers to a point
+//                    at y=22. Geometric centre is y=12.
+//                    Offset: +2 viewBox units (push DOWN).
+//   • Calendar     — body rect spans y=4-22 (centre y=13), binding
+//                    tabs at y=2-6 are thin and add no mass.
+//                    Geometric centre is y=12.
+//                    Offset: -1 viewBox unit (push UP).
+//   • CheckCircle2 — outer circle is concentric with viewBox.
+//                    No correction.
+//
+// Conversion to CSS px scales with the rendered icon size:
+//   shift_css_px = (viewBox_offset * icon_size) / 24
+// All icons in this card render at size=18, so:
+//   MapPin   = +2 * 18/24 = +1.5px
+//   Calendar = -1 * 18/24 = -0.75px
+//
+// This precise calibration is what differs from commit 4758a42
+// (reverted in 7e578b2). 4758a42 used ±2 CSS px at icon size=16,
+// which converts to ±3 viewBox units — over-correcting both icons,
+// especially Calendar (correct value is -1 viewBox unit, not -3).
+// The over-shift made the bounding-box padding read as visibly
+// asymmetric, which Dylan called out as worse than the original.
+// Smaller, mathematically-derived corrections sit far below the
+// bounding-box-asymmetry threshold while still landing each glyph's
+// visual centre on the badge centre — the same principle Material
+// Symbols, IBM Carbon, and Atlassian Design System apply to their
+// own icon sets.
 
 function ItemRow({
   icon,
