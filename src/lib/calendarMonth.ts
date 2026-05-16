@@ -53,3 +53,35 @@ export function getWeekDays(dateIso: string): string[] {
   return [0, 1, 2, 3, 4, 5, 6].map((i) => addDaysIso(start, i));
 }
 
+// First and last ISO dates of the 42-cell Mon-anchored calendar grid for
+// the given month. Mirrors the layout the DatePicker renders (its
+// `buildMonthCells` produces the same 6-row grid starting on the Monday
+// of the week containing day-1). Useful for pre-fetching availability
+// before the picker mounts, so the first paint already has its dim/pill
+// chrome correct rather than flashing from "all dim" to "pills appear".
+export function getMonthGridWindow(year: number, month: number): {
+  firstIso: string;
+  lastIso: string;
+} {
+  const first = new Date(year, month, 1);
+  const firstDow = (first.getDay() + 6) % 7;
+  const start = new Date(year, month, 1 - firstDow);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 41);
+  return { firstIso: formatDateIso(start), lastIso: formatDateIso(end) };
+}
+
+// Convenience wrapper: 42-cell grid window for the month containing the
+// supplied ISO date.
+export function monthGridWindowForIso(dateIso: string): {
+  firstIso: string;
+  lastIso: string;
+} {
+  const d = new Date(`${dateIso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) {
+    const now = new Date();
+    return getMonthGridWindow(now.getFullYear(), now.getMonth());
+  }
+  return getMonthGridWindow(d.getFullYear(), d.getMonth());
+}
+

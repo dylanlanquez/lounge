@@ -27,7 +27,7 @@ import {
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
-import { todayIso } from '../../lib/calendarMonth.ts';
+import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 
 // RescheduleSheet — bottom-sheet UI for moving a native (manual /
@@ -236,10 +236,25 @@ export function RescheduleSheet({
   // an acceptable tradeoff: the operator can still land on the
   // current slot via the date+time fields, just not via a
   // calendar tap.
+  // Seeded with the 42-cell grid window for the appointment's current
+  // month so the availability fetch fires on sheet mount, not on
+  // picker open. Without this seed, calendarWindow stays {null, null}
+  // until the operator taps the date field; the picker then opens
+  // with an empty `dates` Set, paints every cell dim, and "flashes"
+  // to its real state ~100-500ms later when the RPC settles. By the
+  // time the operator gets to the date field, the data is usually
+  // already cached and the first paint shows the correct pill / dim
+  // chrome in one frame. Picker-driven onVisibleMonthChange still
+  // runs on open and on month navigation; the no-op guard inside
+  // onCalendarWindow bails when the strings match, so the seeded
+  // window doesn't trigger a redundant refetch.
   const [calendarWindow, setCalendarWindow] = useState<{
     fromIso: string | null;
     toIso: string | null;
-  }>({ fromIso: null, toIso: null });
+  }>(() => {
+    const window = monthGridWindowForIso(initial.date || todayIso());
+    return { fromIso: window.firstIso, toIso: window.lastIso };
+  });
 
   // Stabilise the callback identity so DatePicker's effect deps don't
   // re-fire on every parent render. An inline arrow would create a

@@ -49,7 +49,7 @@ import {
   useFirstAvailableSlot,
 } from '../../lib/queries/bookingAvailability.ts';
 import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
-import { todayIso } from '../../lib/calendarMonth.ts';
+import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
@@ -533,10 +533,19 @@ export function NewBookingSheet({
   // working hours) can't be tapped. The DatePicker tells us which
   // window it's currently rendering via onVisibleMonthChange; we
   // ask the server for that window's bookable set and feed it back.
+  // Seeded with the 42-cell grid window for `initialIso`'s month so
+  // the availability fetch fires on sheet mount, not on picker open.
+  // See RescheduleSheet for the full rationale — short version: an
+  // unseeded {null, null} makes the picker open with an empty `dates`
+  // Set, paint every cell dim, and flash to its real state when the
+  // RPC settles. Seeding lets first paint match the final state.
   const [calendarWindow, setCalendarWindow] = useState<{
     fromIso: string | null;
     toIso: string | null;
-  }>({ fromIso: null, toIso: null });
+  }>(() => {
+    const window = monthGridWindowForIso(initial.date || todayIso());
+    return { fromIso: window.firstIso, toIso: window.lastIso };
+  });
 
   // Stable callback identity so DatePicker's [open, year, month,
   // onVisibleMonthChange] effect doesn't re-fire on every parent
