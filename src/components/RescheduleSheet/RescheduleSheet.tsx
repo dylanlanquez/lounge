@@ -522,16 +522,17 @@ export function RescheduleSheet({
                 error={conflictError}
                 slotIsValid={slotIsValid}
                 durationMinutes={config?.duration_default ?? null}
-                /* freeBody stays — the operator IS moving an
-                 * appointment, so re-confirming "saving will move it"
-                 * is meaningful context for the commit moment.
-                 * silentChecking hides the in-flight "Checking
-                 * availability… (X min slot)" banner that flashed
-                 * on every input edit; the picker already restricts
-                 * to free times so the optimistic re-check is
-                 * defence-in-depth and doesn't need a visible state. */
+                /* freeBody is intentionally not passed — Dylan
+                 * flagged the green "Slot is free…" banner flickered
+                 * on every input edit (it re-rendered every time the
+                 * 250ms debounce settled). The picker already
+                 * restricts the operator to free times so the
+                 * re-confirmation banner was redundant noise.
+                 * silentChecking similarly hides the in-flight
+                 * "Checking availability…" state for the same reason.
+                 * Real conflicts and RPC errors still render — only
+                 * the success-state banner is suppressed. */
                 silentChecking
-                freeBody="Slot is free. Saving will move the appointment and email a calendar update to the patient if they have one on file."
               />
             </div>
           </Section>
