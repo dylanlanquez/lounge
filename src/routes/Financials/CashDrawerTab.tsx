@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import {
   Card,
+  DateRangePicker,
   DropdownSelect,
   EmptyState,
   Input,
@@ -18,7 +19,7 @@ import {
   StatusPill,
 } from '../../components/index.ts';
 import { theme } from '../../theme/index.ts';
-import { type DateRange } from '../../lib/dateRange.ts';
+import { type DateRange, dateRangeToUtcBounds } from '../../lib/dateRange.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { useLocations } from '../../lib/queries/locations.ts';
@@ -686,7 +687,7 @@ function AllCashSalesSection({
         title="All cash sale records"
         subtitle={`Every cash capture and void${
           scopedToLocation ? ` at ${scopedToLocation}` : ' across all visible locations'
-        }, all time. Search by patient, reference or who took it; 20 per page.`}
+        }. Defaults to all time; narrow by search or date range, 20 per page.`}
       />
 
       {error ? (
@@ -706,25 +707,33 @@ function AllCashSalesBody({
   data: NonNullable<ReturnType<typeof useAllCashPayments>['data']>;
 }) {
   const [query, setQuery] = useState('');
+  const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(1);
 
-  // Reset to page 1 when the search query changes — otherwise the
-  // user can be sitting on page 4 of an empty filter and not realise.
+  // Reset to page 1 when ANY filter changes (search, date range, or
+  // the underlying data refresh from a location switch). Otherwise
+  // the user can be sitting on page 4 of an empty filter and not
+  // realise.
   useEffect(() => {
     setPage(1);
-  }, [query, data]);
+  }, [query, dateRange, data]);
 
+  // Apply both filters then derive the stat-card totals from the
+  // filtered set so the visible numbers always match the visible
+  // rows — picking a date range that contains £200 of cash should
+  // make the "Cash captured" card show £200, not the all-time total.
   const filtered = useMemo(
-    () => filterCashLines(data.lines, query),
-    [data.lines, query],
+    () => filterCashLines(data.lines, query, dateRange),
+    [data.lines, query, dateRange],
   );
+  const summary = useMemo(() => summariseCashLines(filtered), [filtered]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / CASH_LOG_ROWS_PER_PAGE));
-  // Clamp the active page in case `data` shrank under our feet
-  // (location switch returns fewer rows) and the previous page index
-  // is now past the end.
   const activePage = Math.min(page, totalPages);
   const pageStart = (activePage - 1) * CASH_LOG_ROWS_PER_PAGE;
   const pageRows = filtered.slice(pageStart, pageStart + CASH_LOG_ROWS_PER_PAGE);
+
+  const isFiltered = query.trim().length > 0 || dateRange !== null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
@@ -737,33 +746,57 @@ function AllCashSalesBody({
       >
         <StatCard
           label="Cash captured"
-          value={formatPence(data.succeeded_pence)}
+          value={formatPence(summary.succeeded_pence)}
           tone="accent"
-          delta={`${formatNumber(data.succeeded_count)} payment${data.succeeded_count === 1 ? '' : 's'}`}
+          delta={
+            isFiltered
+              ? `${formatNumber(summary.succeeded_count)} matching payment${summary.succeeded_count === 1 ? '' : 's'}`
+              : `${formatNumber(summary.succeeded_count)} payment${summary.succeeded_count === 1 ? '' : 's'}`
+          }
         />
         <StatCard
           label="Voided / refunded"
-          value={`−${formatPence(data.voided_pence)}`}
-          tone={data.voided_count > 0 ? 'warn' : 'normal'}
+          value={`−${formatPence(summary.voided_pence)}`}
+          tone={summary.voided_count > 0 ? 'warn' : 'normal'}
           delta={
-            data.voided_count > 0
-              ? `${formatNumber(data.voided_count)} reversed`
-              : 'none on record'
+            summary.voided_count > 0
+              ? `${formatNumber(summary.voided_count)} reversed`
+              : isFiltered
+                ? 'none in this filter'
+                : 'none on record'
           }
         />
         <StatCard
           label="Net cash"
-          value={formatPence(data.net_pence)}
+          value={formatPence(summary.net_pence)}
           delta="captured minus voids"
         />
       </div>
 
-      <div style={{ maxWidth: 360 }}>
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search patient, reference or staff"
-          leadingIcon={<Search size={16} aria-hidden />}
+      {/* Filter row: search left, date range right. Wraps to a
+          column on narrow widths so neither control is squashed. */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: theme.space[3],
+          alignItems: 'center',
+        }}
+      >
+        <div style={{ flex: '1 1 240px', maxWidth: 360 }}>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search patient, reference or staff"
+            leadingIcon={<Search size={16} aria-hidden />}
+          />
+        </div>
+        <DateRangePicker
+          value={dateRange}
+          onChange={setDateRange}
+          onClear={() => setDateRange(null)}
+          placeholder="All time"
+          size="md"
         />
       </div>
 
@@ -777,13 +810,17 @@ function AllCashSalesBody({
         <EmptyState
           icon={<Search size={20} />}
           title="No matches"
-          description={`Nothing matches "${query}". Try a different patient name, appointment ref or staff name.`}
+          description={
+            query
+              ? `Nothing matches "${query}"${dateRange ? ' inside the selected date range' : ''}. Try a different name, reference, or widen the dates.`
+              : 'No cash payments fell inside the selected date range. Try a wider range or clear it.'
+          }
         />
       ) : (
         <>
           <PaymentsTable
             title="Cash log"
-            subtitle={`${formatNumber(filtered.length)} payment${filtered.length === 1 ? '' : 's'}${query ? ' matching the search' : ''}, newest first.`}
+            subtitle={`${formatNumber(filtered.length)} payment${filtered.length === 1 ? '' : 's'}${isFiltered ? ' matching the filters' : ''}, newest first.`}
             lines={pageRows}
           />
           <PaginationFooter
@@ -801,18 +838,58 @@ function AllCashSalesBody({
   );
 }
 
+function summariseCashLines(lines: CashDrawerLine[]): {
+  succeeded_pence: number;
+  succeeded_count: number;
+  voided_pence: number;
+  voided_count: number;
+  net_pence: number;
+} {
+  let succeeded_pence = 0;
+  let succeeded_count = 0;
+  let voided_pence = 0;
+  let voided_count = 0;
+  for (const l of lines) {
+    if (l.status === 'cancelled') {
+      voided_pence += l.amount_pence;
+      voided_count += 1;
+    } else if (l.status === 'succeeded') {
+      succeeded_pence += l.amount_pence;
+      succeeded_count += 1;
+    }
+  }
+  return {
+    succeeded_pence,
+    succeeded_count,
+    voided_pence,
+    voided_count,
+    net_pence: succeeded_pence - voided_pence,
+  };
+}
+
 function filterCashLines(
   lines: CashDrawerLine[],
   query: string,
+  range: DateRange | null,
 ): CashDrawerLine[] {
   const q = query.trim().toLowerCase();
-  if (!q) return lines;
+  // Convert the calendar-day range into UTC instant bounds so the
+  // comparison against occurred_at (ISO timestamp) catches every
+  // payment whose moment-of-success falls inside the chosen days.
+  const bounds = range ? dateRangeToUtcBounds(range) : null;
   return lines.filter((l) => {
-    return (
-      l.patient_name.toLowerCase().includes(q) ||
-      (l.appointment_ref?.toLowerCase().includes(q) ?? false) ||
-      l.taken_by_name.toLowerCase().includes(q)
-    );
+    if (q) {
+      const textMatch =
+        l.patient_name.toLowerCase().includes(q) ||
+        (l.appointment_ref?.toLowerCase().includes(q) ?? false) ||
+        l.taken_by_name.toLowerCase().includes(q);
+      if (!textMatch) return false;
+    }
+    if (bounds) {
+      if (l.occurred_at < bounds.fromIso) return false;
+      if (l.occurred_at > bounds.toIso) return false;
+    }
+    return true;
   });
 }
 

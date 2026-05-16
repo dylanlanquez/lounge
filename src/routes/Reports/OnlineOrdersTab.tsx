@@ -14,6 +14,7 @@ import {
 import {
   BarChart,
   Card,
+  DateRangePicker,
   EmptyState,
   Input,
   Skeleton,
@@ -21,7 +22,11 @@ import {
 } from '../../components/index.ts';
 import { ShopifyIcon } from '../../components/Icons/ShopifyIcon.tsx';
 import { theme } from '../../theme/index.ts';
-import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
+import {
+  type DateRange,
+  dateRangeLabel,
+  dateRangeToUtcBounds,
+} from '../../lib/dateRange.ts';
 import {
   type OnlineOrderTableRow,
   type OnlineOrdersData,
@@ -236,16 +241,20 @@ function OrdersTable({
   data: OnlineOrdersData;
 }) {
   const [query, setQuery] = useState('');
+  const [tableRange, setTableRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(1);
 
-  // Reset to page 1 when the underlying data changes (date range
-  // switch) or when the search query changes — otherwise the user
-  // can sit on page 4 of an empty filter and not realise.
+  // Reset to page 1 when the underlying data changes (page-level range
+  // switch) or when any of this table's own filters change. Otherwise
+  // the user can sit on page 4 of an empty filter and not realise.
   useEffect(() => {
     setPage(1);
-  }, [data, query]);
+  }, [data, query, tableRange]);
 
-  const filtered = useMemo(() => filterRows(data.rows, query), [data.rows, query]);
+  const filtered = useMemo(
+    () => filterRows(data.rows, query, tableRange),
+    [data.rows, query, tableRange],
+  );
   const totalPages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE));
   // Clamp the active page in case `data` shrank under our feet
   // (e.g. range narrowed) and the previous page index is now past
@@ -265,26 +274,46 @@ function OrdersTable({
       </div>
       <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
         One row per online-order appointment, newest first. The Shopify column links straight to the order
-        in admin so a credit can be verified independently of what staff or the patient say was paid.
+        in admin so a credit can be verified independently of what staff or the patient say was paid. The
+        date filter below narrows just this table; the KPIs and breakdown above stay tied to the page-level range.
       </p>
 
-      <div style={{ marginBottom: theme.space[4], maxWidth: 360 }}>
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search patient name, internal ref or order number"
-          leadingIcon={<Search size={16} aria-hidden />}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: theme.space[3],
+          alignItems: 'center',
+          marginBottom: theme.space[4],
+        }}
+      >
+        <div style={{ flex: '1 1 240px', maxWidth: 360 }}>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search patient name, internal ref or order number"
+            leadingIcon={<Search size={16} aria-hidden />}
+          />
+        </div>
+        <DateRangePicker
+          value={tableRange}
+          onChange={setTableRange}
+          onClear={() => setTableRange(null)}
+          placeholder="All dates in range"
+          size="md"
         />
       </div>
 
       {pageRows.length === 0 ? (
         <EmptyState
           icon={<Search size={20} />}
-          title={query ? 'No matches' : 'No online orders'}
+          title={query || tableRange ? 'No matches' : 'No online orders'}
           description={
             query
-              ? `Nothing matches "${query}" in this date range. Try a different name or order number.`
-              : 'No online-order appointments fell in this date range.'
+              ? `Nothing matches "${query}"${tableRange ? ' inside the table date range' : ' in this period'}. Try a different name, order number, or widen the dates.`
+              : tableRange
+                ? 'No online-order appointments fell inside the selected date range. Try a wider range or clear it.'
+                : 'No online-order appointments fell in this period.'
           }
         />
       ) : (
@@ -384,16 +413,30 @@ function OrdersTable({
   );
 }
 
-function filterRows(rows: OnlineOrderTableRow[], query: string): OnlineOrderTableRow[] {
+function filterRows(
+  rows: OnlineOrderTableRow[],
+  query: string,
+  range: DateRange | null,
+): OnlineOrderTableRow[] {
   const q = query.trim().toLowerCase();
-  if (!q) return rows;
+  // Calendar-day → UTC instant bounds so the comparison against
+  // start_at (ISO timestamp) catches every appointment whose start
+  // falls inside the chosen days.
+  const bounds = range ? dateRangeToUtcBounds(range) : null;
   return rows.filter((r) => {
-    return (
-      r.patient_name.toLowerCase().includes(q) ||
-      (r.patient_internal_ref?.toLowerCase().includes(q) ?? false) ||
-      r.shopify_order_name.toLowerCase().includes(q) ||
-      (r.appointment_ref?.toLowerCase().includes(q) ?? false)
-    );
+    if (q) {
+      const textMatch =
+        r.patient_name.toLowerCase().includes(q) ||
+        (r.patient_internal_ref?.toLowerCase().includes(q) ?? false) ||
+        r.shopify_order_name.toLowerCase().includes(q) ||
+        (r.appointment_ref?.toLowerCase().includes(q) ?? false);
+      if (!textMatch) return false;
+    }
+    if (bounds) {
+      if (r.start_at < bounds.fromIso) return false;
+      if (r.start_at > bounds.toIso) return false;
+    }
+    return true;
   });
 }
 
