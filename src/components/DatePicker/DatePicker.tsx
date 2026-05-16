@@ -59,6 +59,18 @@ export interface DatePickerProps {
   // for whichever month the user navigates to. Omit to fall back
   // to min/max-only behaviour.
   availableDates?: ReadonlySet<string>;
+  // While the parent's availability fetch is in flight, treat every
+  // in-month / in-bounds cell as enabled rather than dimming each
+  // one. This prevents the "available dates flash in" perception
+  // when the operator opens the picker before the RPC settles —
+  // without it, cells render dim-all on first paint then the
+  // bookable subset suddenly lights up. With it, the cells stay in
+  // their pill chrome throughout and the non-available ones fade
+  // OUT once data lands (a far less attention-grabbing transition
+  // than the opposite direction). Matches the customer widget
+  // SlotPicker, which has used the same optimistic-while-loading
+  // pattern since it shipped.
+  availableDatesLoading?: boolean;
   // Called whenever the visible month changes (initial mount, prev
   // / next month nav). The parent uses it to refetch
   // `availableDates` for the newly visible window. Args are the
@@ -80,6 +92,7 @@ export function DatePicker({
   minIso,
   maxIso,
   availableDates,
+  availableDatesLoading = false,
   onVisibleMonthChange,
 }: DatePickerProps) {
   const isMobile = useIsMobile(720);
@@ -234,6 +247,7 @@ export function DatePicker({
             minIso={minIso}
             maxIso={maxIso}
             availableDates={availableDates}
+            availableDatesLoading={availableDatesLoading}
             onPrev={() => stepMonth(-1)}
             onNext={() => stepMonth(+1)}
             onPick={handlePick}
@@ -356,6 +370,7 @@ export function DatePicker({
             // booked days as clickable. Same prop, same source of
             // truth as desktop.
             availableDates={availableDates}
+            availableDatesLoading={availableDatesLoading}
             onPrev={() => stepMonth(-1)}
             onNext={() => stepMonth(+1)}
             onPick={handlePick}
@@ -431,6 +446,7 @@ function MonthGrid({
   minIso,
   maxIso,
   availableDates,
+  availableDatesLoading = false,
   onPrev,
   onNext,
   onPick,
@@ -447,6 +463,12 @@ function MonthGrid({
    *  a cell that fails ANY check is disabled. Omit to fall back to
    *  min/max-only behaviour. */
   availableDates?: ReadonlySet<string>;
+  /** While true, the availability whitelist check is suppressed and
+   *  every in-month / in-bounds cell renders as enabled. See the
+   *  prop comment on DatePicker for the rationale (preventing the
+   *  available-cells-flash-in perception when the picker opens
+   *  before the RPC settles). */
+  availableDatesLoading?: boolean;
   onPrev: () => void;
   onNext: () => void;
   onPick: (iso: string) => void;
@@ -528,7 +550,12 @@ function MonthGrid({
               // clickable. Cells outside the visible month
               // (cell.outside) already short-circuit above so we
               // don't have to special-case the gutter rows here.
-              (availableDates ? !availableDates.has(cell.iso) : false)
+              // Suppressed during loading so cells stay in their
+              // pill chrome until live data lands — see the
+              // availableDatesLoading prop comment.
+              (availableDates && !availableDatesLoading
+                ? !availableDates.has(cell.iso)
+                : false)
             }
             onPick={onPick}
           />

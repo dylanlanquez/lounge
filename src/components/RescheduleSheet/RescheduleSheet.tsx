@@ -565,6 +565,7 @@ export function RescheduleSheet({
               // cache). Dim-all initial state is the honest "we
               // don't know yet" signal.
               availableDates={monthAvailability.dates}
+              availableDatesLoading={monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker

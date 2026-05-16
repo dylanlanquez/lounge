@@ -1258,6 +1258,7 @@ export function NewBookingSheet({
               // closed days whenever the loading flag stayed true
               // longer than expected.
               availableDates={monthAvailability.dates}
+              availableDatesLoading={monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
