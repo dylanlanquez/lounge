@@ -503,6 +503,20 @@ function PaymentForm({
       <div style={{ display: elementReady ? 'block' : 'none' }}>
         <PaymentElement
           onReady={() => setElementReady(true)}
+          onChange={() => {
+            // Stripe fires onChange when the user switches tab
+            // (Card ↔ Apple Pay), edits a field, or otherwise changes
+            // the element's internal state. Clearing payError on any
+            // such change means a previous "Please fill in your card
+            // details" message can't linger after the user has moved
+            // on — which Dylan flagged as nonsensical because by the
+            // time they see the error they're already on a different
+            // tab. The next pay attempt re-validates from scratch.
+            if (payError) {
+              setPayError(null);
+              onError?.(null);
+            }
+          }}
           options={{
             layout: 'tabs',
             paymentMethodOrder: ['card', 'apple_pay', 'google_pay'],
