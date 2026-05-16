@@ -43,20 +43,6 @@ export function UpgradesStep({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-      <p
-        style={{
-          margin: '0 auto',
-          fontSize: 14,
-          color: QUIZ.MUTED_2,
-          lineHeight: 1.45,
-          maxWidth: 600,
-          textAlign: 'center',
-        }}
-      >
-        Anything you'd like to add? Pick as many as you want, or none. You can
-        always change your mind in clinic.
-      </p>
-
       <div
         className="vlounge-stagger"
         style={{

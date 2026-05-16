@@ -41,7 +41,6 @@ export interface WidgetCopy {
 
   // Step — Upgrades (Optional extras)
   upgradesTitle: string;
-  upgradesHelper: string;
   /** Continue-button copy when no upgrade is selected. */
   upgradesContinueEmpty: string;
   /** Continue-button copy when one or more upgrades are selected.
@@ -98,8 +97,6 @@ export const DEFAULT_COPY: WidgetCopy = {
   axisArchHelper: 'The top teeth, the bottom teeth, or both. Pick whichever applies.',
 
   upgradesTitle: 'Optional extras',
-  upgradesHelper:
-    "Anything you'd like to add? Pick as many as you want, or none, then continue. You can always change your mind in clinic.",
   upgradesContinueEmpty: 'No extras, continue',
   upgradesContinueWithFormat: 'Continue with {n} extras',
 

@@ -1688,7 +1688,6 @@ const COPY_GROUPS: CopyGroup[] = [
       "Shown when there are widget-visible upgrades for the patient's resolved choices.",
     fields: [
       { key: 'upgradesTitle', label: 'Step title' },
-      { key: 'upgradesHelper', label: 'Helper paragraph', multiline: true },
       {
         key: 'upgradesContinueEmpty',
         label: 'Continue button — nothing ticked',
