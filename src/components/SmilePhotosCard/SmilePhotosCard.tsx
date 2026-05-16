@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Camera, Check, ChevronDown, Loader2 } from 'lucide-react';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
+import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
 import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox/PhotoLightbox.tsx';
 import { theme } from '../../theme/index.ts';
@@ -182,7 +184,7 @@ export function SmilePhotosCard({
   // load, not just after the in-session promotion. Without this a
   // refresh would re-arm the button and staff could promote the
   // same photo twice.
-  const existingKinds = useExistingSmilePhotoKinds(patientId);
+  const existingKinds = useExistingSmilePhotoKinds(patientId, appointmentId);
   useEffect(() => {
     if (existingKinds.size === 0) return;
     setPromote((prev) => {
@@ -203,7 +205,16 @@ export function SmilePhotosCard({
     setPromote((prev) => ({ ...prev, [kind]: next }));
   };
 
-  const promoteOne = async (kind: Kind, row: IntakePhotoRow) => {
+  // Confirmation flow lives in a BottomSheet (Dylan's preferred dialog
+  // primitive — Dialog's centred card overflows on tablet). When the
+  // user taps a tile that's already 'done', we stash the kind + row
+  // here instead of firing window.confirm; the sheet renders below
+  // and either runs the promote on confirm, or closes on cancel.
+  const [replaceConfirm, setReplaceConfirm] = useState<
+    { kind: Kind; row: IntakePhotoRow } | null
+  >(null);
+
+  const requestPromote = (kind: Kind, row: IntakePhotoRow) => {
     if (!patientId || !patientName) return;
     // If the slot already carries a smile photo (either added in
     // this session or in a previous one), re-promotion overwrites
@@ -215,20 +226,21 @@ export function SmilePhotosCard({
     // shouldn't accidentally swap the old smile photo with the
     // new one without a moment of "yes, that's what I want".
     if (promote[kind].state === 'done') {
-      const slotLabel = SLOTS.find((s) => s.kind === kind)?.label.toLowerCase() ?? kind;
-      const confirmed = typeof window !== 'undefined'
-        ? window.confirm(
-            `Replace the patient's existing ${slotLabel} photo with this one? The previous photo will stay in their file history but the live smile photo on the profile will become this one.`,
-          )
-        : true;
-      if (!confirmed) return;
+      setReplaceConfirm({ kind, row });
+      return;
     }
+    void runPromote(kind, row);
+  };
+
+  const runPromote = async (kind: Kind, row: IntakePhotoRow) => {
+    if (!patientId || !patientName) return;
     setKindState(kind, { state: 'busy', message: null });
     try {
       const result = await promoteIntakePhotosToPatientProfile({
         patientId,
         patientName,
         uploaderAccountId: uploaderAccountId ?? null,
+        sourceAppointmentId: appointmentId,
         sources: [{
           kind: kind as IntakePhotoKindForPromotion,
           filePath: row.filePath,
@@ -382,7 +394,7 @@ export function SmilePhotosCard({
                     }
                     canPromote={canPromote && !!row}
                     promoteState={promote[s.kind]}
-                    onPromote={() => row && promoteOne(s.kind, row)}
+                    onPromote={() => row && requestPromote(s.kind, row)}
                   />
                 );
               })}
@@ -395,6 +407,49 @@ export function SmilePhotosCard({
         index={lightboxIndex}
         onChange={setLightboxIndex}
       />
+      {/* In-app confirmation when re-promoting a smile photo that's
+          already on the patient profile. Replaces the previous
+          window.confirm so the prompt is styled in-brand and works
+          on tablet (where Dialog's centred card has historically
+          overflowed). Confirm = run the promote; Cancel = close. */}
+      <BottomSheet
+        open={!!replaceConfirm}
+        onClose={() => setReplaceConfirm(null)}
+        title="Replace existing smile photo?"
+        description={
+          replaceConfirm
+            ? `The patient's ${
+                SLOTS.find((s) => s.kind === replaceConfirm.kind)?.label.toLowerCase() ?? replaceConfirm.kind
+              } photo on the profile will be swapped for this one. The previous photo stays in their file history; the live smile photo on the profile becomes this one.`
+            : ''
+        }
+        footer={
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button
+              variant="secondary"
+              onClick={() => setReplaceConfirm(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (!replaceConfirm) return;
+                const { kind, row } = replaceConfirm;
+                setReplaceConfirm(null);
+                void runPromote(kind, row);
+              }}
+            >
+              Replace photo
+            </Button>
+          </div>
+        }
+      >
+        {/* No body content beyond title + description; the footer
+            carries the action. BottomSheet's chrome handles the
+            close X + backdrop dismiss for us. */}
+        <div style={{ height: 1 }} />
+      </BottomSheet>
     </Card>
   );
 }
@@ -770,16 +825,26 @@ function PromoteTileLink({
 // affordance reads "Added" from page load and can't be tapped to
 // re-promote a photo that was already added in a previous session.
 //
+// Scoping rule: a promoted row only counts when its
+// source_appointment_id matches THIS appointment. Before this scope
+// was in place, the predicate asked "is there any front-smile row
+// on the patient?" — which meant any earlier appointment that had
+// promoted the patient's front-smile to their profile poisoned every
+// future appointment's button into reading "Added to patient's
+// profile" even though that appointment's specific photos were
+// never copied. Dylan flagged it; this is the fix.
+//
 // Only the file_labels.key column is fetched (via the inner-join);
 // no file urls or sizes — this is cheaper than usePatientProfileFiles
 // and avoids re-rendering the whole card every time gallery files
 // change.
 function useExistingSmilePhotoKinds(
   patientId: string | null | undefined,
+  appointmentId: string | null | undefined,
 ): Set<Kind> {
   const [kinds, setKinds] = useState<Set<Kind>>(() => new Set());
   useEffect(() => {
-    if (!patientId) {
+    if (!patientId || !appointmentId) {
       setKinds(new Set());
       return;
     }
@@ -789,6 +854,7 @@ function useExistingSmilePhotoKinds(
         .from('patient_files')
         .select('file_labels:label_id(key)')
         .eq('patient_id', patientId)
+        .eq('source_appointment_id', appointmentId)
         .eq('status', 'active');
       if (cancelled) return;
       if (error) {
@@ -821,6 +887,6 @@ function useExistingSmilePhotoKinds(
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, appointmentId]);
   return kinds;
 }

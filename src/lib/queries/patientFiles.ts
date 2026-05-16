@@ -96,6 +96,13 @@ export async function uploadPatientFile(args: {
   labelKey: string;
   labelDisplayName: string;
   uploaderAccountId: string | null;
+  /** When the upload is being promoted from a specific Lounge
+   *  appointment's intake (e.g. smile-photo intake on the booking
+   *  success screen), pass the appointment id so the patient_files
+   *  row carries a back-reference. NULL for staff-uploaded files
+   *  from the general patient-profile uploader, where there's no
+   *  appointment to attribute. */
+  sourceAppointmentId?: string | null;
 }): Promise<PatientFileRow> {
   const labelId = await getOrCreateLabel(args.labelKey, args.labelDisplayName);
 
@@ -127,6 +134,7 @@ export async function uploadPatientFile(args: {
       is_delivery: false,
       uploaded_by: args.uploaderAccountId,
       description: args.labelDisplayName,
+      source_appointment_id: args.sourceAppointmentId ?? null,
     })
     .select('*')
     .single();

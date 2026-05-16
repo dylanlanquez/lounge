@@ -52,6 +52,14 @@ export async function promoteIntakePhotosToPatientProfile(args: {
   patientName: string;
   uploaderAccountId: string | null;
   sources: IntakePhotoSource[];
+  /** The Lounge appointment these intake photos came from. Threaded
+   *  through to patient_files.source_appointment_id so the
+   *  SmilePhotosCard predicate can ask "did THIS appointment promote
+   *  a row for this label?" instead of the previous coarse
+   *  "is there any row with this label on the patient?" — which
+   *  inherited a stale 'Added to patients profile' state any time a
+   *  PRIOR appointment had been promoted on the same patient. */
+  sourceAppointmentId: string;
 }): Promise<PromoteResult> {
   const promoted: IntakePhotoKindForPromotion[] = [];
   const errors: PromoteResult['errors'] = [];
@@ -66,6 +74,7 @@ export async function promoteIntakePhotosToPatientProfile(args: {
         labelKey: KIND_TO_LABEL_KEY[src.kind],
         labelDisplayName: KIND_TO_DISPLAY_NAME[src.kind],
         uploaderAccountId: args.uploaderAccountId,
+        sourceAppointmentId: args.sourceAppointmentId,
       });
       promoted.push(src.kind);
     } catch (e) {
