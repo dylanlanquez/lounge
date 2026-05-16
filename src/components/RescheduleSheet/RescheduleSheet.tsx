@@ -579,20 +579,19 @@ export function RescheduleSheet({
             {monthAvailability.loading ? (
               <InlineHint tone="muted">Loading available dates…</InlineHint>
             ) : null}
-            {config ? (
-              <InlineHint tone={hoursForDate || !date ? 'muted' : 'alert'}>
-                {config.duration_default}-minute slot
-                {hoursForDate
-                  ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}${
-                      hoursForDate.break && hoursForDate.break.end > hoursForDate.break.start
-                        ? `, minus lunch ${hoursForDate.break.start} to ${hoursForDate.break.end}`
-                        : ''
-                    }.`
-                  : date
-                  ? '. The clinic is closed on this day.'
-                  : '.'}
-              </InlineHint>
-            ) : null}
+            {/* The "N-minute slot. Hours that day: HH:MM to HH:MM,
+                minus lunch …" hint that used to live here has been
+                removed. The picker already restricts the operator
+                to slots inside working hours, and the closed-day
+                / lunch-break / past-time filters all run server-
+                side in the slot RPC — so the duration + hours
+                duplicated visible information about already-
+                enforced constraints. Dylan asked for the reschedule
+                sheet to feel exactly like the regular new-booking
+                surface, which surfaces this hint less often (gated
+                on !searchingFirstSlot) and treats it as a footnote;
+                pulling it out of reschedule entirely is the cleaner
+                "make these two surfaces match" answer. */}
             {config && date && time ? (
               <ReturnSegmentHints
                 phases={config.phases}
@@ -612,16 +611,14 @@ export function RescheduleSheet({
                 error={conflictError}
                 slotIsValid={slotIsValid}
                 durationMinutes={config?.duration_default ?? null}
-                /* freeBody is intentionally not passed — Dylan
-                 * flagged the green "Slot is free…" banner flickered
-                 * on every input edit (it re-rendered every time the
-                 * 250ms debounce settled). The picker already
-                 * restricts the operator to free times so the
-                 * re-confirmation banner was redundant noise.
-                 * silentChecking similarly hides the in-flight
-                 * "Checking availability…" state for the same reason.
-                 * Real conflicts and RPC errors still render — only
-                 * the success-state banner is suppressed. */
+                /* silentChecking hides the in-flight "Checking
+                 * availability…" banner; the picker already restricts
+                 * the operator to free times, so the optimistic
+                 * re-check is defence-in-depth and doesn't need a
+                 * visible state. Real conflicts and RPC errors still
+                 * render. The success-state banner ("Slot is free…")
+                 * was removed wholesale from ConflictBlock itself
+                 * — see that file for the rationale. */
                 silentChecking
               />
             </div>

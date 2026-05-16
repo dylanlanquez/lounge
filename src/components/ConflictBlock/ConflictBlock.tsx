@@ -36,33 +36,28 @@ export interface ConflictBlockProps {
   // upstream banners' job.
   slotIsValid: boolean;
   durationMinutes: number | null;
-  // Body text shown when the slot is free. Differs by consumer:
-  // reschedule reads "Saving will move the appointment and email
-  // the patient.". Centralising the visual pattern but letting
-  // each sheet phrase its own commit-action keeps the copy
-  // accurate to what's about to happen. Omit (or pass null) to
-  // suppress the success banner entirely — the new-booking sheet
-  // does this because its slot picker already restricts the
-  // operator to free times, so re-confirming "free" reads as noise.
-  freeBody?: string | null;
   // Suppresses the in-flight "Checking availability…" StatusBanner.
   // The conflict check still runs (the parent's checking flag
   // still gates the Save button); only the visible banner is
   // hidden. Use this when the slot picker already restricts the
   // operator to free times — the brief banner that pops up between
   // input changes reads as flashy noise. Conflicts and RPC errors
-  // always render regardless. Independent of freeBody — the
-  // success banner still renders if freeBody is set.
+  // always render regardless.
   silentChecking?: boolean;
 }
 
+// Note: there is NO success-state banner here. Both consumers
+// (reschedule, new-booking) restrict their slot picker to slots
+// that already pass the conflict check, so a "slot is free" green
+// banner adds nothing — the picker IS the affordance. The
+// previously-present freeBody prop has been removed entirely so
+// no caller can accidentally re-introduce that noise.
 export function ConflictBlock({
   checking,
   conflicts,
   error,
   slotIsValid,
   durationMinutes,
-  freeBody,
   silentChecking = false,
 }: ConflictBlockProps) {
   if (error) {
@@ -82,8 +77,7 @@ export function ConflictBlock({
     );
   }
   if (conflicts.length === 0) {
-    if (!freeBody) return null;
-    return <StatusBanner tone="success">{freeBody}</StatusBanner>;
+    return null;
   }
   return (
     <StatusBanner tone="error" title="Slot conflicts">
