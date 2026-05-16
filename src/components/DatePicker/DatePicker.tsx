@@ -603,16 +603,22 @@ function DayCell({
     pointerEvents: disabled ? 'none' : 'auto',
   };
 
-  // Available cells get the brand accent colour for their digit so
-  // they stand visually apart from the muted inkSubtle disabled
-  // cells. Selected stays as the solid accent disc (white text);
-  // today keeps its semibold treatment to differentiate from a
-  // generic available cell that's the same colour. Disabled +
-  // outside-month cells stay light grey. Dylan's ask was "make
-  // available dates easier to see, not too much, keep it nice on
-  // theme" — accent-tinted text is the smallest possible change
-  // that's still unambiguous.
-  const discBg = isSelected ? theme.color.accent : 'transparent';
+  // Available cells get BOTH the brand-accent digit colour AND a
+  // soft accent-tinted background pill, so they read as "tappable"
+  // chrome rather than just slightly-different text. Disabled +
+  // outside-month cells stay light grey with no pill — they fade
+  // into the grid surface. Selected stays as the solid accent
+  // disc (white text on full-accent fill). Today keeps semibold
+  // weight on top of the pill so it's distinguishable from a
+  // generic available cell. Earlier passes (accent text only,
+  // weight bump) weren't enough visual separation for Dylan; the
+  // pill is the smallest chrome that makes the contrast obvious.
+  const isAvailable = !cell.outside && !disabled;
+  const discBg = isSelected
+    ? theme.color.accent
+    : isAvailable
+      ? theme.color.accentBg
+      : 'transparent';
   const discFg = isSelected
     ? theme.color.surface
     : cell.outside || disabled
@@ -621,7 +627,9 @@ function DayCell({
   const discWeight =
     isSelected || isToday
       ? theme.type.weight.semibold
-      : theme.type.weight.regular;
+      : isAvailable
+        ? theme.type.weight.medium
+        : theme.type.weight.regular;
 
   return (
     <div style={wrapperStyle}>

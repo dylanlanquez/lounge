@@ -570,12 +570,15 @@ function Month({
               onMouseEnter={(e) => {
                 if (selected || disabled) return;
                 const inner = e.currentTarget.firstElementChild as HTMLElement | null;
-                if (inner) inner.style.background = '#eef1f4';
+                // Darker tint on hover. Restored to the default
+                // accent pill on mouseLeave so the base "tappable"
+                // chrome doesn't get blanked out after a hover.
+                if (inner) inner.style.background = 'rgba(8, 55, 88, 0.16)';
               }}
               onMouseLeave={(e) => {
                 if (selected || disabled) return;
                 const inner = e.currentTarget.firstElementChild as HTMLElement | null;
-                if (inner) inner.style.background = 'transparent';
+                if (inner) inner.style.background = 'rgba(8, 55, 88, 0.08)';
               }}
             >
               <span
@@ -586,21 +589,26 @@ function Month({
                   width: 36,
                   height: 36,
                   borderRadius: '50%',
-                  background: selected ? ACCENT : 'transparent',
-                  // Available cells render their digit in the brand
-                  // accent (navy) so they stand visually apart from
-                  // the muted disabled cells. Selected stays as the
-                  // solid-disc treatment with white text. Disabled
-                  // keeps the existing subtle-grey + 55% opacity
-                  // fade so the visual hierarchy is unambiguous.
-                  // Matches the staff DatePicker's tint approach.
+                  // Available cells get BOTH the accent text AND a
+                  // soft accent-tinted background pill so they read
+                  // as "tappable" chrome, not just slightly-different
+                  // text. Disabled keeps a transparent background and
+                  // muted grey colour. Selected stays as the solid-
+                  // disc treatment. Matches the staff DatePicker's
+                  // approach; same visual hierarchy across both
+                  // surfaces.
+                  background: selected
+                    ? ACCENT
+                    : disabled
+                      ? 'transparent'
+                      : 'rgba(8, 55, 88, 0.08)',
                   color: selected
                     ? '#FFFFFF'
                     : disabled
                       ? SUBTLE
                       : ACCENT,
                   fontSize: 14,
-                  fontWeight: selected ? 600 : 500,
+                  fontWeight: selected ? 600 : disabled ? 500 : 600,
                   fontVariantNumeric: 'tabular-nums',
                   opacity: disabled && !selected ? 0.55 : 1,
                   transition: `background 0.15s ${EASE_CARD}, color 0.15s ${EASE_CARD}`,
