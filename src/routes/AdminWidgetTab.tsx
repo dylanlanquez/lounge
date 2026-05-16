@@ -23,6 +23,16 @@ import {
   type WidgetAdminUpgrade,
 } from '../lib/queries/widgetAdmin.ts';
 import {
+  BOOKING_SERVICE_TYPES,
+  type BookingServiceType,
+} from '../lib/queries/bookingTypes.ts';
+import {
+  DEFAULT_SERVICE_TYPE_CONFIG,
+  saveServiceTypeConfig,
+  useAdminServiceTypeConfig,
+  type ServiceTypeWidgetConfig,
+} from '../lib/queries/serviceTypeWidgetConfig.ts';
+import {
   DEFAULT_COPY,
   saveWidgetCopy,
   useWidgetCopyOverrides,
@@ -164,6 +174,18 @@ export function AdminWidgetTab() {
           onSaved={() => {
             reloadPreview();
             setToast({ tone: 'success', title: 'Saved' });
+          }}
+          onError={(message) =>
+            setToast({ tone: 'error', title: 'Could not save', description: message })
+          }
+        />
+      </EditorBoundary>
+
+      <EditorBoundary>
+        <ServiceTypeSettingsEditor
+          onSaved={(label) => {
+            reloadPreview();
+            setToast({ tone: 'success', title: `${label} updated` });
           }}
           onError={(message) =>
             setToast({ tone: 'error', title: 'Could not save', description: message })
@@ -1770,6 +1792,206 @@ const COPY_GROUPS: CopyGroup[] = [
     fields: [{ key: 'footerPoweredBy', label: '"Powered by" line' }],
   },
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Service-type settings — per-service toggles that apply uniformly across
+// every booking-type under one service. Sibling to the per-booking-type
+// ServicesEditor above (which configures price, deposit, description,
+// pay-in-full etc).
+//
+// Initial settings:
+//   • Pre-visit smile photos — whether the widget success screen asks for
+//     smile photos AND the staff appointment / visit pages render the
+//     SmilePhotosCard. Previously hardcoded to click_in_veneers only.
+//   • Optional extras step — whether the widget renders the upgrades step
+//     for this service at all. Per-upgrade visibility still lives on the
+//     catalogue row; this gates the whole step.
+//
+// Each toggle saves immediately on flip (optimistic) and re-fetches to
+// confirm the row landed. Errors bubble up to the parent's toast.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ServiceTypeSettingsEditor({
+  onSaved,
+  onError,
+}: {
+  onSaved: (serviceLabel: string) => void;
+  onError: (message: string) => void;
+}) {
+  const { data, loading, error, refresh } = useAdminServiceTypeConfig();
+
+  if (error) {
+    return (
+      <Card padding="lg">
+        <p style={{ margin: 0, color: theme.color.alert }}>
+          Could not load service-type settings: {error}
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card padding="lg">
+      <div style={{ marginBottom: theme.space[4] }}>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          Service-type settings
+        </h3>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+            maxWidth: 640,
+          }}
+        >
+          These apply to every booking type within a service. Pre-visit smile
+          photos drives both the widget's success-screen photo intake and the
+          staff Smile photos card on appointments / visits. Optional extras
+          step hides the whole step in the widget when off.
+        </p>
+      </div>
+
+      {loading || !data ? (
+        <Skeleton height={180} />
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[3],
+          }}
+        >
+          {BOOKING_SERVICE_TYPES.map((svc) => {
+            const current: ServiceTypeWidgetConfig =
+              data[svc.value] ?? DEFAULT_SERVICE_TYPE_CONFIG;
+            return (
+              <ServiceTypeRow
+                key={svc.value}
+                serviceType={svc.value}
+                label={svc.label}
+                config={current}
+                onSaved={() => {
+                  refresh();
+                  onSaved(svc.label);
+                }}
+                onError={onError}
+              />
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ServiceTypeRow({
+  serviceType,
+  label,
+  config,
+  onSaved,
+  onError,
+}: {
+  serviceType: BookingServiceType;
+  label: string;
+  config: ServiceTypeWidgetConfig;
+  onSaved: () => void;
+  onError: (message: string) => void;
+}) {
+  const [saving, setSaving] = useState<'smile' | 'upgrades' | null>(null);
+
+  const save = async (patch: Partial<ServiceTypeWidgetConfig>, which: 'smile' | 'upgrades') => {
+    setSaving(which);
+    try {
+      await saveServiceTypeConfig({
+        service_type: serviceType,
+        request_smile_photos:
+          patch.request_smile_photos ?? config.request_smile_photos,
+        show_upgrades: patch.show_upgrades ?? config.show_upgrades,
+      });
+      onSaved();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        padding: theme.space[4],
+        background: theme.color.surface,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[4],
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {label}
+        </p>
+        {saving ? (
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+            }}
+          >
+            Saving…
+          </span>
+        ) : null}
+      </div>
+
+      <Section
+        title="Pre-visit smile photos"
+        description="Asks the patient to upload smile photos on the success screen, and surfaces the Smile photos card on the staff appointment + visit pages."
+      >
+        <Toggle
+          checked={config.request_smile_photos}
+          onChange={(next) => save({ request_smile_photos: next }, 'smile')}
+          onLabel="Patient is asked for smile photos"
+          offLabel="Smile photos are not requested"
+        />
+      </Section>
+
+      <Section
+        title="Optional extras step"
+        description="Shows the Optional extras step in the widget. Off hides the whole step for this service; per-upgrade visibility still applies when on."
+      >
+        <Toggle
+          checked={config.show_upgrades}
+          onChange={(next) => save({ show_upgrades: next }, 'upgrades')}
+          onLabel="Patients see the Optional extras step"
+          offLabel="The Optional extras step is hidden"
+        />
+      </Section>
+    </div>
+  );
+}
 
 function CopyEditor({
   onSaved,
