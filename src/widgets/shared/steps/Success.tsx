@@ -11,6 +11,7 @@ import {
   ImageIcon,
   Loader2,
   MapPin,
+  X,
 } from 'lucide-react';
 import {
   customerRepairLabel,
@@ -50,6 +51,8 @@ export function SuccessScreen({
   appointmentId,
   manageToken,
   brand,
+  requestSmilePhotos,
+  onClose,
 }: {
   state: WidgetState;
   /** The full upgrade rows loaded by the booking-state hook. Used to
@@ -65,6 +68,15 @@ export function SuccessScreen({
   appointmentId: string | null;
   manageToken: string | null;
   brand?: WidgetBrand;
+  /** Per-service-type toggle — drives whether the photo-intake card
+   *  appears under the confirmation block. Read by the parent from
+   *  lng_widget_service_type_config; previously hardcoded here as a
+   *  serviceType === 'click_in_veneers' check. */
+  requestSmilePhotos: boolean;
+  /** Provided by the modal host so the close × in the top-right of
+   *  the success card can fire the same close path as Esc / backdrop
+   *  click on the form. Omitted in the standalone /book route. */
+  onClose?: () => void;
 }) {
   const slot = state.slotIso ? new Date(state.slotIso) : null;
   const dateLabel = slot
@@ -77,10 +89,13 @@ export function SuccessScreen({
     : null;
   const timeLabel = slot ? formatHourMinute(slot) : null;
   const accent = brand?.accent ?? QUIZ.ACCENT;
+  const isClickInVeneers = state.service?.serviceType === 'click_in_veneers';
+  // Photo intake renders for any service that has Pre-visit smile
+  // photos toggled on in Admin → Widget. Click-in veneers ships with
+  // the toggle enabled by default; other services opt in via the
+  // admin form (and the migration seeds them off).
   const showPhotoIntake =
-    state.service?.serviceType === 'click_in_veneers' &&
-    !!appointmentId &&
-    !!manageToken;
+    requestSmilePhotos && !!appointmentId && !!manageToken;
   const locationName = state.location?.name?.trim() || null;
   const locationAddress = state.location?.addressLine?.trim() || null;
 
@@ -101,8 +116,13 @@ export function SuccessScreen({
         overflowX: 'hidden',
         overscrollBehavior: 'none',
         WebkitOverflowScrolling: 'touch',
+        // position: relative so the absolute close × can anchor to
+        // the scrollable container's top-right corner without being
+        // dragged around by the inner card's max-width clamp.
+        position: 'relative',
       }}
     >
+      {onClose ? <SuccessCloseButton onClick={onClose} /> : null}
       <div
         style={{
           maxWidth: showPhotoIntake ? 620 : 480,
@@ -226,6 +246,7 @@ export function SuccessScreen({
             appointmentId={appointmentId!}
             manageToken={manageToken!}
             accent={accent}
+            isClickInVeneers={isClickInVeneers}
           />
         ) : null}
       </div>
@@ -723,14 +744,62 @@ const PHOTO_KINDS: Array<{
   },
 ];
 
+// SuccessCloseButton — small × in the top-right of the success
+// screen, only rendered when the host supplies an onClose callback
+// (i.e. the embedded modal — the standalone /book route shows no
+// close button). Visually identical to the in-form CloseButton:
+// 32×32 hit target, lucide X at 22, #333 stroke, transparent bg.
+// Uses the same .vlounge-close-btn CSS class for hover / active /
+// touch-action behaviour so the iOS first-tap-is-hover fix that
+// landed for Next + Back + the form-header close applies here too.
+function SuccessCloseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close booking"
+      onClick={onClick}
+      className="vlounge-close-btn"
+      style={{
+        position: 'absolute',
+        // Top inset matches the form header's 18px padding-top so the
+        // × lands on the same line as it did over the progress bar,
+        // visually anchoring the modal chrome continuity.
+        top: 18,
+        right: 20,
+        zIndex: 2,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 32,
+        height: 32,
+        padding: 0,
+        background: 'transparent',
+        border: 0,
+        borderRadius: 0,
+        color: '#333',
+        cursor: 'pointer',
+        transition: 'transform 0.15s ease, opacity 0.15s ease',
+      }}
+    >
+      <X size={22} strokeWidth={2} aria-hidden />
+    </button>
+  );
+}
+
 function PhotoIntakeCard({
   appointmentId,
   manageToken,
   accent,
+  isClickInVeneers,
 }: {
   appointmentId: string;
   manageToken: string;
   accent: string;
+  /** Click-in veneers carries an additional pair of explanatory
+   *  paragraphs under the heading (the "deposit refunded if veneers
+   *  aren't right for you" reassurance). Other services that opt
+   *  into smile-photo capture only show the heading + photo grid. */
+  isClickInVeneers: boolean;
 }) {
   // Lift the per-tile done state up so the Submit button at the
   // bottom can disable itself when nothing is uploaded yet. Each
@@ -773,29 +842,39 @@ function PhotoIntakeCard({
       >
         Send us your smile photos
       </h3>
-      <div
-        style={{
-          marginTop: 8,
-          fontSize: 14,
-          color: QUIZ.MUTED_2,
-          lineHeight: 1.5,
-        }}
-      >
-        Optional but highly recommended. These let our clinical team check
-        shade match and arch shape before you come in, so the visit goes as
-        smoothly as possible.
-      </div>
-      <div
-        style={{
-          marginTop: 8,
-          fontSize: 13,
-          color: QUIZ.MUTED_2,
-          lineHeight: 1.5,
-        }}
-      >
-        If we look at your photos and decide click-in veneers aren't the right
-        fit for you, your deposit is refunded in full, no questions.
-      </div>
+      {/* The descriptive copy below stays only for click-in veneers
+          — its "your deposit is refunded if we decide veneers aren't
+          right for you" line is specific to that service. Other
+          services that opt into pre-visit smile photos just show
+          the heading + photo grid; the heading itself already says
+          what the patient needs to do. */}
+      {isClickInVeneers ? (
+        <>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 14,
+              color: QUIZ.MUTED_2,
+              lineHeight: 1.5,
+            }}
+          >
+            Optional but highly recommended. These let our clinical team check
+            shade match and arch shape before you come in, so the visit goes
+            as smoothly as possible.
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 13,
+              color: QUIZ.MUTED_2,
+              lineHeight: 1.5,
+            }}
+          >
+            If we look at your photos and decide click-in veneers aren't the
+            right fit for you, your deposit is refunded in full, no questions.
+          </div>
+        </>
+      ) : null}
 
       {/* Grid → 3 columns on desktop, smooth horizontal-snap row on
           ≤520px. Class + media query live in quizTokens.ts so the

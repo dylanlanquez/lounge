@@ -16,6 +16,11 @@ import {
 } from './state.ts';
 import { useWidgetCopy, type WidgetCopy } from './copy.ts';
 import {
+  configFor,
+  useWidgetServiceTypeConfig,
+  type ServiceTypeWidgetConfig,
+} from '../../lib/queries/serviceTypeWidgetConfig.ts';
+import {
   useWidgetBookingTypes,
   useWidgetLocations,
   type WidgetBookingType,
@@ -113,22 +118,35 @@ export interface WidgetProps {
 }
 
 export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
-  // Gate the first render on locations + booking types + copy so a
-  // deep-linked service has its matching booking-type object
-  // resolved before useBookingState seeds initial state.
+  // Gate the first render on locations + booking types + copy + the
+  // per-service-type widget config (drives smile-photos intake +
+  // upgrades step visibility). All four loads are independent and
+  // run in parallel; we just hold rendering until they all settle so
+  // a deep-linked service has its matching booking-type object AND
+  // its per-service flags resolved before useBookingState seeds
+  // initial state.
   const locationsResult = useWidgetLocations();
   const bookingTypesResult = useWidgetBookingTypes();
   const { copy, loading: copyLoading } = useWidgetCopy();
+  const serviceTypeConfigResult = useWidgetServiceTypeConfig();
 
   if (
     locationsResult.loading ||
     bookingTypesResult.loading ||
     copyLoading ||
+    serviceTypeConfigResult.loading ||
     !locationsResult.data ||
-    !bookingTypesResult.data
+    !bookingTypesResult.data ||
+    !serviceTypeConfigResult.data
   ) {
     return (
-      <BootScreen error={locationsResult.error ?? bookingTypesResult.error} />
+      <BootScreen
+        error={
+          locationsResult.error ??
+          bookingTypesResult.error ??
+          serviceTypeConfigResult.error
+        }
+      />
     );
   }
 
@@ -139,6 +157,7 @@ export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
       copy={copy}
       brand={brand}
       prefill={prefill}
+      serviceTypeConfig={serviceTypeConfigResult.data}
       onClose={onClose}
     />
   );
@@ -150,6 +169,7 @@ function WidgetReady({
   copy,
   brand,
   prefill,
+  serviceTypeConfig,
   onClose,
 }: {
   locations: WidgetLocation[];
@@ -157,6 +177,10 @@ function WidgetReady({
   copy: WidgetCopy;
   brand?: WidgetBrand;
   prefill?: WidgetPrefill;
+  /** Map service_type → per-service-type widget toggles. Drives
+   *  the upgrades-step gate (show_upgrades) and the success-screen
+   *  photo-intake gate (request_smile_photos). */
+  serviceTypeConfig: Record<string, ServiceTypeWidgetConfig>;
   onClose?: () => void;
 }) {
   // Inject the keyframes used by the chrome (modal-slide-in, step
@@ -222,7 +246,7 @@ function WidgetReady({
     return fromBooking?.patientFirstName ?? null;
   }, [remembered.data]);
 
-  const api = useBookingState(locations, resolvedPrefill);
+  const api = useBookingState(locations, resolvedPrefill, serviceTypeConfig);
   const [submission, setSubmission] = useState<{
     state: 'idle' | 'submitting' | 'done';
     appointmentRef: string | null;
@@ -419,6 +443,11 @@ function WidgetReady({
         appointmentId={submission.appointmentId}
         manageToken={submission.manageToken}
         brand={brand}
+        requestSmilePhotos={
+          configFor(api.state.service?.serviceType, serviceTypeConfig)
+            .request_smile_photos
+        }
+        onClose={onClose}
       />
     );
   }
@@ -684,6 +713,7 @@ function CloseButton({ onClick }: { onClick: () => void }) {
       type="button"
       aria-label="Close booking"
       onClick={onClick}
+      className="vlounge-close-btn"
       style={{
         flexShrink: 0,
         display: 'inline-flex',
@@ -697,15 +727,11 @@ function CloseButton({ onClick }: { onClick: () => void }) {
         borderRadius: 0,
         color: '#333',
         cursor: 'pointer',
+        // Hover/active styles live in CSS (vlounge-close-btn rules in
+        // quizTokens.ts) so they only fire on hover-capable devices.
+        // Inline mouse handlers caused the iOS first-tap-is-hover
+        // trap on Next / Back; the close × inherits the fix.
         transition: 'transform 0.15s ease, opacity 0.15s ease',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'scale(1.1)';
-        e.currentTarget.style.opacity = '0.7';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.opacity = '1';
       }}
     >
       <X size={22} strokeWidth={2} aria-hidden />

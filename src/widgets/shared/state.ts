@@ -11,6 +11,10 @@ import {
   type CatalogueArchMatch,
 } from '../../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
+import {
+  configFor,
+  type ServiceTypeWidgetConfig,
+} from '../../lib/queries/serviceTypeWidgetConfig.ts';
 import { DEFAULT_COPY, type WidgetCopy } from './copy.ts';
 import {
   validateEmail,
@@ -257,6 +261,11 @@ export function activeStepsFor(
   state: WidgetState,
   hasUpgrades: boolean,
   locationCount: number,
+  /** Service-type-level override from lng_service_type_widget_config.
+   *  Default true preserves existing behaviour when the param is
+   *  omitted (older call sites, tests). When false, the Upgrades step
+   *  is hidden even if the catalogue has visible upgrades. */
+  showUpgrades: boolean = true,
 ): StepKey[] {
   const out: StepKey[] = [];
   if (locationCount > 1) out.push('location');
@@ -288,7 +297,7 @@ export function activeStepsFor(
       }
     }
   }
-  if (hasUpgrades) out.push('upgrades');
+  if (hasUpgrades && showUpgrades) out.push('upgrades');
   out.push('time');
   // Identity capture (form). Strictly form fields — no summary, no
   // payment selector — so the customer is asked one focused thing
@@ -347,6 +356,12 @@ const EMPTY_PREFILL: ResolvedPrefill = {
 export function useBookingState(
   locations: WidgetLocation[],
   prefill: ResolvedPrefill = EMPTY_PREFILL,
+  /** Service-type-level widget toggles. The hook uses this to decide
+   *  whether the Upgrades step belongs in the active-steps list for
+   *  the chosen service. An empty map means every service falls
+   *  back to the defaults (show_upgrades = true), so callers that
+   *  haven't loaded config yet aren't forced to gate-render. */
+  serviceTypeConfig: Record<string, ServiceTypeWidgetConfig> = {},
 ) {
   const [state, setState] = useState<WidgetState>(() => {
     const remembered = loadRememberedIdentity();
@@ -396,9 +411,16 @@ export function useBookingState(
   const resolvedResult = useResolvedCatalogueRow(resolverInput);
   const upgrades = upgradesResult.data ?? [];
   const hasUpgrades = upgrades.length > 0;
+  // Derive the per-service show_upgrades flag from the config map.
+  // configFor handles missing rows by returning the default (true),
+  // so a service the admin hasn't touched still shows upgrades.
+  const showUpgrades = configFor(
+    state.service?.serviceType,
+    serviceTypeConfig,
+  ).show_upgrades;
   const activeSteps = useMemo(
-    () => activeStepsFor(state, hasUpgrades, locations.length),
-    [state, hasUpgrades, locations.length],
+    () => activeStepsFor(state, hasUpgrades, locations.length, showUpgrades),
+    [state, hasUpgrades, locations.length, showUpgrades],
   );
   const priceBreakdown = useMemo(
     () =>

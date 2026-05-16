@@ -270,7 +270,8 @@ export function ensureQuizKeyframes(): void {
        touch-action: manipulation kills iOS Safari's 300ms tap delay
        and the double-tap-zoom gesture for these specific controls. */
     .vlounge-next-btn,
-    .vlounge-back-btn {
+    .vlounge-back-btn,
+    .vlounge-close-btn {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
@@ -283,12 +284,20 @@ export function ensureQuizKeyframes(): void {
         background: ${QUIZ.PROGRESS_BACK_BG_HOVER};
         transform: translateY(-1px);
       }
+      .vlounge-close-btn:hover {
+        transform: scale(1.1);
+        opacity: 0.7;
+      }
     }
     .vlounge-next-btn:not(:disabled):active {
       transform: translateY(0);
     }
     .vlounge-back-btn:active {
       transform: translateY(0);
+    }
+    .vlounge-close-btn:active {
+      transform: scale(1);
+      opacity: 1;
     }
 
     /* Stagger delays for sets of cards (option-card-vt / addon-item-vt)
