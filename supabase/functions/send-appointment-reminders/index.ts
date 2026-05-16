@@ -147,7 +147,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: oneRaw, error: oneErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, appointment_ref, join_url, manage_token',
       )
       .eq('id', singleId)
       .maybeSingle();
@@ -176,7 +176,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: rowsRaw, error: sweepErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, appointment_ref, join_url, manage_token',
       )
       .eq('status', 'booked')
       .neq('source', 'calendly')
@@ -596,20 +596,88 @@ async function resolvePatientFacingRange(
   return { min, max };
 }
 
+// Per-product noun map. Mirrors `lwo_catalogue.name` (admin > Service
+// types) and the NATIVE_PRODUCT_NOUN constant in
+// src/lib/queries/appointments.ts. Keep in sync — the reminder
+// subject has to read the same as the in-app schedule label.
+const PRODUCT_NOUN: Record<string, string> = {
+  retainer: 'retainer',
+  night_guard: 'night guard',
+  day_guard: 'day guard',
+  click_in_veneers: 'click-in veneers',
+  missing_tooth: 'missing tooth retainer',
+};
+
+const SERVICE_FALLBACK_LABEL: Record<string, string> = {
+  denture_repair: 'Denture repair',
+  click_in_veneers: 'Click-in veneers',
+  same_day_appliance: 'Same-day appliance',
+  impression_appointment: 'Impression appointment',
+  in_person_impression_appointment: 'In-person impression appointment',
+  virtual_impression_appointment: 'Virtual impression appointment',
+};
+
+const IMPRESSION_SERVICE_TYPES = new Set([
+  'impression_appointment',
+  'in_person_impression_appointment',
+  'virtual_impression_appointment',
+]);
+
+function pluraliseApplianceForBoth(label: string): string {
+  const t = label.trim();
+  if (!t) return t;
+  if (/s$/i.test(t)) return t;
+  return `${t}s`;
+}
+
+function archPhrase(arch: 'upper' | 'lower' | 'both' | null): string | null {
+  if (arch === 'upper') return 'upper arch';
+  if (arch === 'lower') return 'lower arch';
+  if (arch === 'both') return 'both arches';
+  return null;
+}
+
+// Compose the full booking phrase ("Upper retainer", "Upper & lower
+// retainers", "In-person impression appointment for both arches,
+// retainers") from the axis columns on the row. Mirrors
+// formatNativeBookingSummary in src/lib/queries/appointments.ts so
+// the reminder subject reads the same string the schedule shows.
 function labelForService(apt: AppointmentRow): string {
-  if (apt.event_type_label && apt.event_type_label.trim()) return apt.event_type_label.trim();
-  switch (apt.service_type) {
-    case 'denture_repair':
-      return 'Denture repair';
-    case 'click_in_veneers':
-      return 'Click-in veneers';
-    case 'same_day_appliance':
-      return 'Same-day appliance';
-    case 'impression_appointment':
-      return 'Impression appointment';
-    default:
-      return 'Appointment';
+  const service = apt.service_type;
+  const arch = apt.arch;
+  const eventLabel = apt.event_type_label?.trim() || null;
+
+  if (service && IMPRESSION_SERVICE_TYPES.has(service)) {
+    const base =
+      eventLabel ?? SERVICE_FALLBACK_LABEL[service] ?? 'Impression appointment';
+    const phraseArch = archPhrase(arch);
+    const item = apt.product_key
+      ? pluraliseApplianceForBoth(PRODUCT_NOUN[apt.product_key] ?? '')
+      : '';
+    if (phraseArch && item) return `${base} for ${phraseArch}, ${item}`;
+    if (phraseArch) return `${base} for ${phraseArch}`;
+    if (item) return `${base} for ${item}`;
+    return base;
   }
+
+  const productNoun = apt.product_key ? PRODUCT_NOUN[apt.product_key] : undefined;
+  // Click-in veneers IS the appliance (no separate product_key) —
+  // preserve the catalogue's branded "Click-in veneers" spelling
+  // (capital C) when composed with an arch prefix.
+  const serviceNoun = service === 'click_in_veneers' ? 'Click-in veneers' : undefined;
+  const fallback =
+    eventLabel ?? (service ? SERVICE_FALLBACK_LABEL[service] : undefined) ?? 'Appointment';
+  const applianceNoun = productNoun ?? serviceNoun ?? null;
+
+  if (applianceNoun) {
+    if (arch === 'upper') return `Upper ${applianceNoun}`;
+    if (arch === 'lower') return `Lower ${applianceNoun}`;
+    if (arch === 'both') return `Upper & lower ${pluraliseApplianceForBoth(applianceNoun)}`;
+    return applianceNoun;
+  }
+  if (arch === 'upper') return `Upper ${fallback}`;
+  if (arch === 'lower') return `Lower ${fallback}`;
+  return fallback;
 }
 
 function locationFreeform(location: LocationRow | null): string {
@@ -991,6 +1059,12 @@ interface AppointmentRow {
   status: string;
   service_type: string | null;
   event_type_label: string | null;
+  /** Catalogue axis pins populated for native widget AND staff-created
+   *  manual bookings. Used by labelForService() so the reminder email
+   *  reads "Upper retainer" / "Upper & lower retainers" instead of
+   *  the bare service-type label. */
+  arch: 'upper' | 'lower' | 'both' | null;
+  product_key: string | null;
   appointment_ref: string | null;
   join_url: string | null;
   manage_token: string | null;
