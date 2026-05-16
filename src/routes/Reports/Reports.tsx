@@ -26,6 +26,7 @@ import { SalesTab } from '../Financials/SalesTab.tsx';
 import { DiscountsTab } from '../Financials/DiscountsTab.tsx';
 import { VoidsTab } from '../Financials/VoidsTab.tsx';
 import { AnomaliesTab } from '../Financials/AnomaliesTab.tsx';
+import { CashDrawerTab } from '../Financials/CashDrawerTab.tsx';
 
 // Reports — combined operational + financial dashboards.
 //
@@ -52,6 +53,7 @@ type Tab =
   // ── Financial (gated by can_view_financials) ────────────────────
   | 'fin_overview'
   | 'sales'
+  | 'cash_drawer'
   | 'discounts'
   | 'voids'
   | 'anomalies';
@@ -67,11 +69,15 @@ const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
 ];
 
 // Cash reconciliation lives at /cash-counts (top-level route, kiosk
-// nav button) — staff use it every shift, so it deserves its own
-// destination instead of being buried as a tab here.
+// nav button) — staff use it every shift, so it stays as its own
+// destination. The "Cash drawer" tab here is a read-only sibling: it
+// surfaces expected cash + the contributing payment lines without
+// the count-now / sign-off flow, so finance can reconcile from
+// Reports without leaving the dashboard.
 const FINANCIAL_TABS: { value: Tab; label: string }[] = [
   { value: 'fin_overview', label: 'Financial overview' },
   { value: 'sales', label: 'Sales' },
+  { value: 'cash_drawer', label: 'Cash drawer' },
   { value: 'discounts', label: 'Discounts' },
   { value: 'voids', label: 'Voids' },
   { value: 'anomalies', label: 'Anomaly flags' },
@@ -180,6 +186,8 @@ export function Reports() {
           <FinancialOverviewTab range={range} />
         ) : tab === 'sales' ? (
           <SalesTab range={range} />
+        ) : tab === 'cash_drawer' ? (
+          <CashDrawerTab range={range} />
         ) : tab === 'discounts' ? (
           <DiscountsTab range={range} />
         ) : tab === 'voids' ? (

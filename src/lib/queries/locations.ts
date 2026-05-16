@@ -112,6 +112,54 @@ export function useEditableLocation(): EditableResult {
   return { data, loading, error, refresh };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// All visible locations — for cross-location reports (Reports → Cash drawer).
+// RLS narrows the result set for staff who only see their own location; admins
+// / financial managers with broader RLS see every location they can read.
+// Used by the location filter dropdown so the same component works whether
+// the viewer sees one location or many.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LocationOption {
+  id: string;
+  name: string;
+}
+
+interface LocationsResult {
+  data: LocationOption[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useLocations(): LocationsResult {
+  const [data, setData] = useState<LocationOption[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows, error: err } = await supabase
+        .from('locations')
+        .select('id, name')
+        .order('name', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      setData((rows ?? []) as LocationOption[]);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { data, loading, error };
+}
+
 /** Save name / city / address / phone back to the shared `locations`
  *  row. `id` is required so we don't accidentally update every row. */
 export async function saveLocation(input: {
