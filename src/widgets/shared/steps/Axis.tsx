@@ -229,17 +229,17 @@ function applianceNoun(productKey: string | undefined): string | null {
     case 'day_guard':
       return 'day guard';
     case 'missing_tooth':
-      return 'missing-tooth appliance';
+      return 'missing tooth retainer';
     default:
       return null;
   }
 }
 
 function pluraliseNoun(noun: string): string {
-  // Compound nouns ("missing-tooth appliance") still pluralise on
-  // the head word, which is the last whitespace-separated token.
+  // Compound nouns ("missing tooth retainer") still pluralise on the
+  // head word, which is the last whitespace-separated token.
   // "retainer" → "retainers", "night guard" → "night guards",
-  // "missing-tooth appliance" → "missing-tooth appliances".
+  // "missing tooth retainer" → "missing tooth retainers".
   return noun + 's';
 }
 

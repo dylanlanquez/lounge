@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { archToAnatomy, eventTypeCategory, formatBookingSummary, properCase } from './appointments.ts';
+import {
+  archToAnatomy,
+  eventTypeCategory,
+  formatArchedAppliance,
+  formatBookingSummary,
+  formatNativeBookingSummary,
+  normaliseArchKey,
+  properCase,
+} from './appointments.ts';
 import type { AppointmentRow, IntakeAnswer } from './appointments.ts';
 
 const makeRow = (
@@ -77,7 +85,7 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper Denture Broken Tooth');
   });
 
-  it('Denture Repairs + Cracked Denture + Both → "Upper and Lower Cracked Denture" (no double prefix)', () => {
+  it('Denture Repairs + Cracked Denture + Both → "Upper & Lower Cracked Denture" (repair branch keeps singular)', () => {
     expect(
       formatBookingSummary(
         makeRow('Denture Repairs', [
@@ -85,7 +93,18 @@ describe('formatBookingSummary', () => {
           { question: 'Arch', answer: 'Both' },
         ])
       )
-    ).toBe('Upper and Lower Cracked Denture');
+    ).toBe('Upper & Lower Cracked Denture');
+  });
+
+  it('Denture Repairs + Broken Tooth + Both → "Upper & Lower Denture Broken Tooth" (irregular plural skipped)', () => {
+    expect(
+      formatBookingSummary(
+        makeRow('Denture Repairs', [
+          { question: 'Repair Type', answer: 'Broken Tooth' },
+          { question: 'Arch', answer: 'Both' },
+        ])
+      )
+    ).toBe('Upper & Lower Denture Broken Tooth');
   });
 
   it('Same-day Appliances + Missing Tooth Retainer + Top → "Upper Missing Tooth Retainer"', () => {
@@ -116,10 +135,10 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper Click-in Veneers');
   });
 
-  it('Same-day Click-in Veneers + Both → "Upper and Lower Click-in Veneers"', () => {
+  it('Same-day Click-in Veneers + Both → "Upper & Lower Click-in Veneers"', () => {
     expect(
       formatBookingSummary(makeRow('Same-day Click-in Veneers', [{ question: 'Arch', answer: 'Both' }]))
-    ).toBe('Upper and Lower Click-in Veneers');
+    ).toBe('Upper & Lower Click-in Veneers');
   });
 
   it('Virtual Impression with no intake → full event label', () => {
@@ -265,7 +284,7 @@ describe('formatBookingSummary', () => {
           { question: 'Which jaw?', answer: 'Both' },
         ])
       )
-    ).toBe('Upper and Lower Sports guard');
+    ).toBe('Upper & Lower Sports guards');
   });
 
   it('falls back to answer-pattern arch detection when question is unrecognised', () => {
@@ -279,7 +298,7 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper Retainer');
   });
 
-  it('handles multi-line "Top\\nBottom" answers as Upper and Lower', () => {
+  it('handles multi-line "Top\\nBottom" answers as Upper & Lower Retainers', () => {
     expect(
       formatBookingSummary(
         makeRow('Same-day Appliances', [
@@ -287,7 +306,7 @@ describe('formatBookingSummary', () => {
           { question: 'Which Arch?', answer: 'Top\nBottom' },
         ])
       )
-    ).toBe('Upper and Lower Retainer');
+    ).toBe('Upper & Lower Retainers');
   });
 
   it('comma-joins multi-select repair-type answers and prepends Denture', () => {
@@ -356,5 +375,141 @@ describe('eventTypeCategory', () => {
     ['', 'consult'],
   ] as const)('maps "%s" → %s', (label, expected) => {
     expect(eventTypeCategory(label)).toBe(expected);
+  });
+});
+
+describe('normaliseArchKey', () => {
+  it.each([
+    ['upper', 'upper'],
+    ['Upper', 'upper'],
+    ['Top', 'upper'],
+    ['lower', 'lower'],
+    ['Bottom', 'lower'],
+    ['both', 'both'],
+    ['Both', 'both'],
+    ['Full mouth', 'both'],
+    ['Upper and Lower', 'both'],
+    ['Top\nBottom', 'both'],
+    [null, null],
+    ['', null],
+  ] as const)('maps "%s" → %s', (input, expected) => {
+    expect(normaliseArchKey(input)).toBe(expected);
+  });
+});
+
+describe('formatArchedAppliance', () => {
+  it('upper → "Upper retainer"', () => {
+    expect(formatArchedAppliance('upper', 'retainer')).toBe('Upper retainer');
+  });
+  it('lower → "Lower night guard"', () => {
+    expect(formatArchedAppliance('lower', 'night guard')).toBe('Lower night guard');
+  });
+  it('both + retainer → "Upper & lower retainers" (sentence, pluralised)', () => {
+    expect(formatArchedAppliance('both', 'retainer')).toBe('Upper & lower retainers');
+  });
+  it('both + night guard → "Upper & lower night guards"', () => {
+    expect(formatArchedAppliance('both', 'night guard')).toBe('Upper & lower night guards');
+  });
+  it('both + click-in veneers → "Upper & lower click-in veneers" (already plural)', () => {
+    expect(formatArchedAppliance('both', 'click-in veneers')).toBe(
+      'Upper & lower click-in veneers',
+    );
+  });
+  it('both + Retainer title case → "Upper & Lower Retainers"', () => {
+    expect(formatArchedAppliance('both', 'Retainer', 'title')).toBe('Upper & Lower Retainers');
+  });
+  it('both + Click-in Veneers title case → "Upper & Lower Click-in Veneers"', () => {
+    expect(formatArchedAppliance('both', 'Click-in Veneers', 'title')).toBe(
+      'Upper & Lower Click-in Veneers',
+    );
+  });
+  it('both + Broken Tooth + no plural → "Upper & Lower Broken Tooth"', () => {
+    expect(
+      formatArchedAppliance('both', 'Broken Tooth', 'title', { pluraliseForBoth: false }),
+    ).toBe('Upper & Lower Broken Tooth');
+  });
+  it('null arch → noun unchanged', () => {
+    expect(formatArchedAppliance(null, 'retainer')).toBe('retainer');
+  });
+});
+
+describe('formatNativeBookingSummary', () => {
+  const makeNative = (
+    service_type: string | null,
+    arch: string | null,
+    product_key: string | null,
+    event_type_label: string | null = null,
+  ) => ({ service_type, arch, product_key, event_type_label });
+
+  it('same_day_appliance + retainer + upper → "Upper retainer"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'upper', 'retainer')),
+    ).toBe('Upper retainer');
+  });
+
+  it('same_day_appliance + retainer + lower → "Lower retainer"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'lower', 'retainer')),
+    ).toBe('Lower retainer');
+  });
+
+  it('same_day_appliance + retainer + both → "Upper & lower retainers" (the bug Dylan flagged)', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'both', 'retainer')),
+    ).toBe('Upper & lower retainers');
+  });
+
+  it('same_day_appliance + night_guard + both → "Upper & lower night guards"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'both', 'night_guard')),
+    ).toBe('Upper & lower night guards');
+  });
+
+  it('same_day_appliance + missing_tooth + both → "Upper & lower missing tooth retainers" (matches catalogue name)', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'both', 'missing_tooth')),
+    ).toBe('Upper & lower missing tooth retainers');
+  });
+
+  it('click_in_veneers + upper → "Upper Click-in veneers"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('click_in_veneers', 'upper', null)),
+    ).toBe('Upper Click-in veneers');
+  });
+
+  it('click_in_veneers + both → "Upper & lower Click-in veneers"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('click_in_veneers', 'both', null)),
+    ).toBe('Upper & lower Click-in veneers');
+  });
+
+  it('denture_repair (no arch) → "Denture repair"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('denture_repair', null, null)),
+    ).toBe('Denture repair');
+  });
+
+  it('in_person_impression_appointment + retainer + both → impression-style "for both arches, retainers"', () => {
+    expect(
+      formatNativeBookingSummary(
+        makeNative('in_person_impression_appointment', 'both', 'retainer'),
+      ),
+    ).toBe('In-person impression appointment for both arches, retainers');
+  });
+
+  it('virtual_impression_appointment + upper (no product) → "for upper arch"', () => {
+    expect(
+      formatNativeBookingSummary(
+        makeNative('virtual_impression_appointment', 'upper', null),
+      ),
+    ).toBe('Virtual impression appointment for upper arch');
+  });
+
+  it('falls back to event_type_label when service_type is unrecognised', () => {
+    expect(
+      formatNativeBookingSummary(
+        makeNative('exotic_new_service', 'lower', null, 'Exotic new service'),
+      ),
+    ).toBe('Lower Exotic new service');
   });
 });

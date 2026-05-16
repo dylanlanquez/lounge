@@ -843,16 +843,22 @@ export function formatSlotLong(iso: string): string {
 //
 // Examples it produces:
 //   same_day_appliance + retainer + upper   → "Same-day upper retainer"
-//   same_day_appliance + retainer + both    → "Same-day upper and lower retainers"
+//   same_day_appliance + retainer + both    → "Same-day upper & lower retainers"
 //   same_day_appliance + night_guard + lower→ "Same-day lower night guard"
 //   click_in_veneers + upper                → "Upper click-in veneers"
-//   click_in_veneers + both                 → "Upper and lower click-in veneers"
+//   click_in_veneers + both                 → "Upper & lower click-in veneers"
 //   whitening_kit (no axes)                 → "Whitening kit"
 //
 // For services with axes but unknown to the wording rules, falls back
 // to "{Arch} {service.label.toLowerCase()}" so a new service type
 // added without updating this helper still reads as a sentence
 // instead of leaking the comma-joined raw axes through.
+//
+// Note the "upper & lower" connector (not "upper and lower") — Dylan
+// flagged the older "Both retainer" / "upper and lower retainer"
+// phrasings as amateur. Canonical is "Upper & lower retainers"
+// across every surface, with this card running the prose-form
+// variant ("upper & lower retainers" mid-sentence after "Same-day").
 function formatSummaryServiceLine(state: WidgetState): string | null {
   const svc = state.service;
   if (!svc) return null;
@@ -865,7 +871,7 @@ function formatSummaryServiceLine(state: WidgetState): string | null {
       : archKey === 'lower'
         ? 'lower'
         : archKey === 'both'
-          ? 'upper and lower'
+          ? 'upper & lower'
           : null;
 
   if (type === 'same_day_appliance') {
@@ -911,15 +917,16 @@ function capitaliseFirst(s: string): string {
 }
 
 // Lowercase appliance nouns for the summary card running prose.
-// Differs from APPLIANCE_TITLE in state.ts (which is Title Case for
-// headlines) — kept local so the wording surfaces can diverge
-// without one having to chase the other.
+// Mirrors `lwo_catalogue.name` (admin > Service types) so the
+// patient sees the same product label they saw on the booking-type
+// tile. If admin renames a catalogue row, update this map and the
+// product-noun map in `lib/queries/appointments.ts` together.
 const SUMMARY_APPLIANCE_LOWER: Record<string, string> = {
   retainer: 'retainer',
   night_guard: 'night guard',
   day_guard: 'day guard',
   click_in_veneers: 'click-in veneers',
-  missing_tooth: 'missing-tooth appliance',
+  missing_tooth: 'missing tooth retainer',
   aligner: 'replacement aligner',
   whitening_tray: 'whitening tray',
   whitening_kit: 'whitening kit',

@@ -285,6 +285,82 @@ export function archPhrase(raw: string | null | undefined): string | undefined {
   return anatomy.toLowerCase();
 }
 
+/**
+ * Normalise any incoming arch token (Top, top, Upper, Both, full mouth,
+ * multi-line "Top\nBottom", null/empty) into the canonical key
+ * 'upper' | 'lower' | 'both', or null when no arch info is present.
+ * Built on archToAnatomy so the input matrix stays in one place.
+ */
+export type ArchKey = 'upper' | 'lower' | 'both';
+export function normaliseArchKey(raw: string | null | undefined): ArchKey | null {
+  const anatomy = archToAnatomy(raw);
+  if (anatomy === 'Upper and Lower') return 'both';
+  if (anatomy === 'Upper') return 'upper';
+  if (anatomy === 'Lower') return 'lower';
+  return null;
+}
+
+/**
+ * Pluralise an appliance noun for the "both arches" phrasing.
+ *   "retainer"          → "retainers"
+ *   "night guard"       → "night guards"
+ *   "click-in veneers"  → "click-in veneers"   (already plural)
+ *   "Retainer"          → "Retainers"
+ * Mirrors the staged-item pluralisation rule used by the widget
+ * success card; if a future appliance has an irregular plural,
+ * special-case it here.
+ */
+function pluraliseAppliance(label: string): string {
+  const t = label.trim();
+  if (!t) return t;
+  if (/s$/i.test(t)) return t;
+  return `${t}s`;
+}
+
+/**
+ * Canonical "{arch} {appliance}" phrasing. Never emits the bare word
+ * "Both" alongside an appliance — for the both case it reads as
+ * "Upper & lower {pluralised appliance}". Casing controls the
+ * "Upper & lower" connector and the noun is rendered verbatim, so
+ * callers pass the noun in whichever form fits the surface (lowercase
+ * for prose, Title Case for headlines).
+ *
+ * The `pluraliseForBoth` flag (default true) controls whether the
+ * appliance noun is pluralised for the both-arches case. Appliances
+ * pluralise naturally ("retainer" → "retainers"); repair-type
+ * answers ("Broken Tooth", "Cracked Denture") plural irregularly in
+ * English, so callers in the repair path opt out and emit the
+ * singular form ("Upper & Lower Broken Tooth") to avoid producing
+ * malformed plurals ("Broken Tooths").
+ *
+ *   formatArchedAppliance('upper', 'retainer')              → "Upper retainer"
+ *   formatArchedAppliance('lower', 'night guard')           → "Lower night guard"
+ *   formatArchedAppliance('both',  'retainer')              → "Upper & lower retainers"
+ *   formatArchedAppliance('both',  'click-in veneers')      → "Upper & lower click-in veneers"
+ *   formatArchedAppliance('both',  'Retainer', 'title')     → "Upper & Lower Retainers"
+ *   formatArchedAppliance('both',  'Broken Tooth', 'title', { pluraliseForBoth: false })
+ *                                                           → "Upper & Lower Broken Tooth"
+ *   formatArchedAppliance(null,    'retainer')              → "retainer"
+ */
+export function formatArchedAppliance(
+  arch: ArchKey | null | undefined,
+  applianceNoun: string,
+  casing: 'sentence' | 'title' = 'sentence',
+  options?: { pluraliseForBoth?: boolean },
+): string {
+  const noun = applianceNoun.trim();
+  if (!noun) return '';
+  if (arch === 'upper') return `Upper ${noun}`;
+  if (arch === 'lower') return `Lower ${noun}`;
+  if (arch === 'both') {
+    const connector = casing === 'title' ? 'Upper & Lower' : 'Upper & lower';
+    const finalNoun =
+      options?.pluraliseForBoth === false ? noun : pluraliseAppliance(noun);
+    return `${connector} ${finalNoun}`;
+  }
+  return noun;
+}
+
 // Maps a Calendly event-type label to one of the muted category colors.
 // Match by inclusion (case-insensitive) so minor wording variations still
 // land in the right bucket. Virtual is checked before impression so a
@@ -330,43 +406,75 @@ function joinMultiSelect(answer: string | undefined | null): string | undefined 
 // Per-product noun map used by formatNativeBookingSummary. Native
 // widget bookings store the product as a stable enum key
 // (lng_widget_booking_types.product_key) so we don't have to
-// regex-parse a human label like the Calendly path does.
+// regex-parse a human label like the Calendly path does. Nouns are
+// in prose form (lowercase) — pluralisation happens in
+// formatArchedAppliance when arch='both'.
+//
+// These names mirror the catalogue rows in `lwo_catalogue.name` —
+// admin > Service types is the source of truth ("Retainer", "Night
+// guard", "Day guard", "Click-in veneers", "Missing tooth retainer").
+// Keep this map in sync if admin renames a catalogue row; the
+// downstream loader doesn't fetch the catalogue display name on
+// every appointment query yet.
 const NATIVE_PRODUCT_NOUN: Record<string, string> = {
   retainer: 'retainer',
   night_guard: 'night guard',
   day_guard: 'day guard',
   click_in_veneers: 'click-in veneers',
-  missing_tooth: 'missing-tooth appliance',
+  missing_tooth: 'missing tooth retainer',
 };
 
-// Short arch label for the hero title — Upper / Lower / Both. The
-// existing archToAnatomy() returns "Upper and Lower" for the both
-// case which reads clunkily as a sentence prefix ("Upper and Lower
-// Click-in veneers"). For the hero we want a single tight word.
-function archShort(raw: string | null | undefined): string | undefined {
-  if (!raw) return undefined;
-  const v = raw.toLowerCase().trim();
-  if (v === 'upper' || v === 'top') return 'Upper';
-  if (v === 'lower' || v === 'bottom') return 'Lower';
-  if (v === 'both' || v === 'full' || /upper.*lower|top.*bottom/.test(v)) return 'Both';
-  return undefined;
-}
+// Service types whose service_type IS the appliance (no separate
+// product_key). Click-in veneers is a branded product name, so it
+// stays Title Case in the composed label ("Upper Click-in veneers")
+// to match the established spelling everywhere else (edge function
+// email labels, schedule comments, render tests).
+const NATIVE_SERVICE_NOUN: Record<string, string> = {
+  click_in_veneers: 'Click-in veneers',
+};
+
+// Impression-flavoured service types use the "for {arch}" phrasing
+// (mirrors formatBookingSummary's Calendly branch) rather than the
+// "Upper & lower {appliance}" prefix, because the appointment is
+// an impression-taking visit, not the appliance itself.
+const IMPRESSION_SERVICE_TYPES = new Set([
+  'impression_appointment',
+  'in_person_impression_appointment',
+  'virtual_impression_appointment',
+]);
+
+// Humanised service-type label for fallback prose. Mirrors the
+// labels stored in event_type_label when a native widget creates an
+// appointment, so the rendered summary stays stable even if the
+// row's event_type_label is missing.
+const NATIVE_SERVICE_FALLBACK_LABEL: Record<string, string> = {
+  denture_repair: 'Denture repair',
+  click_in_veneers: 'Click-in veneers',
+  same_day_appliance: 'Same-day appliance',
+  impression_appointment: 'Impression appointment',
+  in_person_impression_appointment: 'In-person impression appointment',
+  virtual_impression_appointment: 'Virtual impression appointment',
+};
 
 /**
- * Compose a hero title for native widget bookings using the axis
- * columns stored on the row directly (arch + product_key +
- * service_type / event_type_label). Skips the Calendly intake-
- * parsing path entirely — those rows pre-date the axis columns
- * and need formatBookingSummary's heuristics.
+ * Compose a hero title for axis-pinned bookings (native widget AND
+ * staff-created "manual" bookings — both store arch / product_key /
+ * service_type on the row directly). Skips the Calendly intake-
+ * parsing path entirely; those rows pre-date the axis columns and
+ * need formatBookingSummary's heuristics.
  *
  * Examples:
- *   click_in_veneers + arch=upper                → "Upper Click-in veneers"
- *   same_day_appliance + product=retainer + lower → "Lower retainer"
- *   denture_repair (no arch)                     → "Denture repair"
+ *   click_in_veneers + arch=upper                       → "Upper click-in veneers"
+ *   click_in_veneers + arch=both                        → "Upper & lower click-in veneers"
+ *   same_day_appliance + product=retainer + arch=lower  → "Lower retainer"
+ *   same_day_appliance + product=retainer + arch=both   → "Upper & lower retainers"
+ *   denture_repair (no arch)                            → "Denture repair"
+ *   virtual_impression + product=retainer + arch=both   → "Virtual impression appointment for both arches, retainers"
  *
- * Both-arches case reads with the short "Both" prefix so the
- * sentence stays tight ("Both Click-in veneers") rather than the
- * full anatomy phrasing.
+ * Never emits the bare word "Both" alongside an appliance — Dylan
+ * called the previous "Both retainer" output amateur. All both-arch
+ * phrasing routes through formatArchedAppliance / archPhrase so the
+ * label reads as a proper noun phrase.
  */
 export function formatNativeBookingSummary(row: {
   service_type: string | null;
@@ -374,16 +482,53 @@ export function formatNativeBookingSummary(row: {
   arch: string | null;
   product_key: string | null;
 }): string {
-  const arch = archShort(row.arch);
-  // Services that wrap a product (same-day appliance, impression
-  // appointments) prefer the product noun. Services that ARE the
-  // appliance (click-in veneers, denture repair) fall back to the
-  // event_type_label since that's already the right word.
+  const arch = normaliseArchKey(row.arch);
+  const service = row.service_type;
+  const eventLabel = row.event_type_label?.trim() || null;
+
+  // Impression appointments take impressions OF something — the
+  // arch belongs in a "for {arch}" clause and the product_key (when
+  // present) follows as a comma-joined item. Mirrors the Calendly
+  // path's impression branch so the two surfaces read identically.
+  if (service && IMPRESSION_SERVICE_TYPES.has(service)) {
+    const base =
+      eventLabel ?? NATIVE_SERVICE_FALLBACK_LABEL[service] ?? 'Impression appointment';
+    const phraseArch = arch ? archPhrase(arch) : undefined;
+    const item = row.product_key
+      ? pluraliseAppliance(NATIVE_PRODUCT_NOUN[row.product_key] ?? '')
+      : '';
+    if (phraseArch && item) return `${base} for ${phraseArch}, ${item}`;
+    if (phraseArch) return `${base} for ${phraseArch}`;
+    if (item) return `${base} for ${item}`;
+    return base;
+  }
+
+  // Resolve the appliance noun in this priority:
+  //   1. product_key → its prose noun (retainer / night guard / …)
+  //   2. service_type that IS an appliance (click_in_veneers) → its noun
+  //   3. fallback to the persisted event_type_label or a humanised
+  //      service-type label.
   const productNoun = row.product_key ? NATIVE_PRODUCT_NOUN[row.product_key] : undefined;
-  const fallbackNoun = row.event_type_label?.trim() || null;
-  const noun = productNoun ?? fallbackNoun ?? 'Appointment';
-  if (arch) return `${arch} ${noun}`;
-  return noun;
+  const serviceNoun = service ? NATIVE_SERVICE_NOUN[service] : undefined;
+  const fallbackNoun =
+    eventLabel ?? (service ? NATIVE_SERVICE_FALLBACK_LABEL[service] : undefined) ?? 'Appointment';
+
+  const applianceNoun = productNoun ?? serviceNoun ?? null;
+
+  // When we have an identified appliance, arch+appliance composes
+  // through the shared helper — "Upper retainer" / "Upper & lower
+  // retainers". When we only have a fallback noun (denture repair,
+  // generic service), arch still composes through the helper but
+  // pluralisation is a no-op for service-name nouns that don't end
+  // in 's' — e.g. arch=both + "Denture repair" yields "Upper & lower
+  // denture repairs". That's awkward enough that we suppress the
+  // prefix when no appliance is identified and we're in the both
+  // case: the underlying service name carries the meaning.
+  if (applianceNoun) return formatArchedAppliance(arch, applianceNoun, 'sentence');
+  if (arch === 'upper' || arch === 'lower') {
+    return formatArchedAppliance(arch, fallbackNoun, 'sentence');
+  }
+  return fallbackNoun;
 }
 
 // Accepts the two fields actually needed — works with both AppointmentRow
@@ -458,9 +603,26 @@ export function formatBookingSummary(row: {
   const withDenturePrefix = (text: string): string =>
     isRepair && !/denture/i.test(text) ? `Denture ${text}` : text;
 
-  if (subjectLabel && archLabel) return `${archLabel} ${withDenturePrefix(subjectLabel)}`;
-  if (subjectLabel) return withDenturePrefix(subjectLabel);
-  if (archLabel && eventStripped) return `${archLabel} ${eventStripped}`;
+  // Calendly answers come in user-entered Title Case ("Retainer",
+  // "Night Guard", "Cracked Denture"). Route through the shared
+  // arch+appliance helper with 'title' casing so the both-arches
+  // case reads "Upper & Lower Retainers" instead of the previous
+  // amateur "Upper and Lower Retainer" (no plural, no &). Repair-
+  // type answers ("Broken Tooth", "Cracked Denture") pluralise
+  // irregularly in English, so the repair branch opts out — the
+  // singular form keeps the label grammatically correct.
+  const archKey = arch ? normaliseArchKey(arch.answer) : null;
+  if (subjectLabel) {
+    const noun = withDenturePrefix(subjectLabel);
+    return formatArchedAppliance(archKey, noun, 'title', {
+      pluraliseForBoth: !isRepair,
+    });
+  }
+  if (archKey && eventStripped) {
+    return formatArchedAppliance(archKey, eventStripped, 'title', {
+      pluraliseForBoth: !isRepair,
+    });
+  }
   if (answers.length > 0) {
     return answers
       .map((a) => joinMultiSelect(a.answer))

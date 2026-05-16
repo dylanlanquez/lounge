@@ -2942,18 +2942,15 @@ function buildVisitHeroProps(
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
   const dateLong = formatDateLongOrdinal(headlineIso);
-  // Service title for the hero ribbon. Native-widget bookings
-  // store the booking's axis pins (arch + product_key +
-  // service_type) on the row directly, so compose the title from
-  // those columns the same way AppointmentDetail's hero does —
-  // result reads "Upper Click-in veneers" / "Lower retainer" etc.
-  // Calendly-imported and walk-in rows fall back to the legacy
-  // event_type_label heuristic (no axis pins available).
-  const isNativeBooking =
-    !!appointment &&
-    appointment.source === 'native' &&
-    !!appointment.service_type;
-  const service = isNativeBooking
+  // Service title for the hero ribbon. Axis-pinned bookings (native
+  // widget + staff-created manual) store arch + product_key +
+  // service_type on the row directly, so compose the title from those
+  // columns the same way AppointmentDetail's hero does — result reads
+  // "Upper Click-in veneers" / "Lower retainer" / "Upper & lower
+  // retainers". Calendly-imported and walk-in rows fall back to the
+  // legacy event_type_label heuristic (no axis pins available).
+  const hasAxisPins = !!appointment && !!appointment.service_type;
+  const service = hasAxisPins
     ? formatNativeBookingSummary({
         service_type: appointment.service_type,
         event_type_label: appointment.event_type_label,

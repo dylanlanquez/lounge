@@ -924,23 +924,26 @@ function productLabelFor(productKey: string | undefined): string | null {
     case 'click_in_veneers':
       return 'click-in veneers';
     case 'missing_tooth':
-      return 'missing-tooth appliance';
+      return 'missing tooth retainer';
     default:
       return null;
   }
 }
 
 // Title-case appliance nouns for headline contexts (success card,
-// future confirmation email subject). Differs from productLabelFor
-// above which serves running-prose ("Which retainer do you need?").
-// Keep both — switching productLabelFor to title case would break
-// the question copy.
+// future confirmation email subject). Mirrors `lwo_catalogue.name`
+// (admin > Service types) so the booking headline matches the
+// product the patient picked. Differs from productLabelFor above
+// which serves running-prose ("Which retainer do you need?").
+// Catalogue names are sentence-cased in admin ("Night guard", not
+// "Night Guard") — preserve that exactly so the headline reads as
+// the admin labelled it.
 const APPLIANCE_TITLE: Record<string, string> = {
   retainer: 'Retainer',
-  night_guard: 'Night Guard',
-  day_guard: 'Day Guard',
-  click_in_veneers: 'Click-in Veneers',
-  missing_tooth: 'Missing-tooth Appliance',
+  night_guard: 'Night guard',
+  day_guard: 'Day guard',
+  click_in_veneers: 'Click-in veneers',
+  missing_tooth: 'Missing tooth retainer',
 };
 
 const ARCH_TITLE: Record<string, string> = {
@@ -956,8 +959,8 @@ const ARCH_TITLE: Record<string, string> = {
 };
 
 // Pluralise an appliance noun when arch=both. Catalogue labels are
-// stored as singular ("Retainer", "Night Guard", "Missing-tooth
-// Appliance") so we add 's' to the last word for the both-arches
+// stored as singular ("Retainer", "Night guard", "Missing tooth
+// retainer") so we add 's' to the last word for the both-arches
 // title. Labels that are already plural ("Click-in Veneers") pass
 // through untouched. Mirrors the simple rule the staff app uses for
 // staged-item labels; if a future appliance name needs irregular
@@ -984,7 +987,7 @@ function pluraliseApplianceForBoth(label: string): string {
  *   • arch='both' reads as "Upper & Lower" rather than "Both"
  *     so the headline is a noun phrase, not a count.
  *   • when arch='both' AND the appliance has a singular catalogue
- *     name (Retainer, Night Guard, Missing-tooth Appliance), the
+ *     name (Retainer, Night guard, Missing tooth retainer), the
  *     headline pluralises the appliance so subject/verb agreement
  *     reads correctly to the patient.
  *

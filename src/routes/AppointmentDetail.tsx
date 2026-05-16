@@ -806,25 +806,25 @@ function Hero({
       <span>{refTextParts.join(' · ')}</span>
     </span>
   );
-  // Native widget bookings store axis pins (arch + product_key +
-  // service_type) on the row directly, so compose the title from
-  // those columns instead of running the Calendly intake-parsing
-  // heuristics that formatBookingSummary uses. Result:
+  // Native widget bookings AND staff-created manual bookings both
+  // store axis pins (arch + product_key + service_type) on the row
+  // directly, so compose the title from those columns instead of
+  // running the Calendly intake-parsing heuristics. Result:
   //   click-in veneers + upper → "Upper Click-in veneers"
-  //   same-day appliance + lower retainer → "Lower retainer"
-  // Calendly-imported rows still get the legacy parsing path
-  // (they pre-date the axis columns).
-  const service =
-    appt.source === 'native'
-      ? formatNativeBookingSummary({
-          service_type: appt.service_type,
-          event_type_label: appt.event_type_label,
-          arch: appt.arch,
-          product_key: appt.product_key,
-        })
-      : formatBookingSummary({ event_type_label: appt.event_type_label, intake: appt.intake }) ||
-        humaniseEventTypeLabel(appt.event_type_label) ||
-        'Appointment';
+  //   same-day appliance + retainer + lower → "Lower retainer"
+  //   same-day appliance + retainer + both  → "Upper & lower retainers"
+  // Calendly-imported rows fall back to the legacy parsing path —
+  // they pre-date the axis columns and only carry intake answers.
+  const service = appt.service_type
+    ? formatNativeBookingSummary({
+        service_type: appt.service_type,
+        event_type_label: appt.event_type_label,
+        arch: appt.arch,
+        product_key: appt.product_key,
+      })
+    : formatBookingSummary({ event_type_label: appt.event_type_label, intake: appt.intake }) ||
+      humaniseEventTypeLabel(appt.event_type_label) ||
+      'Appointment';
 
   // State-driven ribbon — icon + dateLong + anchor + relative + tone
   // all picked together so a glance answers "what is this booking
