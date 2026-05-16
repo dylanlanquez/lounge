@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Banknote, ReceiptText } from 'lucide-react';
+import { Banknote, ChevronDown, ChevronRight, ReceiptText, ScrollText } from 'lucide-react';
 import {
   Card,
   DropdownSelect,
@@ -13,10 +13,13 @@ import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
 import { useLocations } from '../../lib/queries/locations.ts';
+import { useCashCountStatement } from '../../lib/queries/cashCounts.ts';
 import {
   type CashDrawerLine,
+  type PastSettlementRow,
   useCashDrawerSinceLastCount,
   useCashPaymentsInRange,
+  usePastSettlements,
 } from '../../lib/queries/cashDrawer.ts';
 
 // CashDrawerTab — read-only mirror of the cash-drawer reconciliation
@@ -83,6 +86,7 @@ export function CashDrawerTab({ range }: Props) {
 
   const sinceLastCount = useCashDrawerSinceLastCount(queryLocationId);
   const inRange = useCashPaymentsInRange(range, queryLocationId);
+  const pastSettlements = usePastSettlements(queryLocationId);
 
   const locationOptions = useMemo(() => {
     const opts = (locations ?? []).map((l) => ({
@@ -148,6 +152,13 @@ export function CashDrawerTab({ range }: Props) {
         data={sinceLastCount.data}
         loading={sinceLastCount.loading}
         error={sinceLastCount.error}
+      />
+
+      <PastSettlementsSection
+        locationName={selectedLocationName}
+        data={pastSettlements.data}
+        loading={pastSettlements.loading}
+        error={pastSettlements.error}
       />
 
       <InRangeSection
@@ -277,7 +288,360 @@ function SinceLastCountBody({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 2 — All cash sale records in range
+// Section 2 — Past settlements (signed counts)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Each row is one signed cash count, ordered newest first. Clicking a
+// row expands an inline drawer showing the payment lines that the
+// count was built from (immutable snapshot in lng_cash_count_lines).
+// Lines are loaded lazily via useCashCountStatement — one fetch at a
+// time, keyed on the expandedCountId, so opening a count is cheap
+// even when there are hundreds of past settlements visible.
+
+interface PastSettlementsSectionProps {
+  locationName: string | null;
+  data: PastSettlementRow[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+function PastSettlementsSection({
+  locationName,
+  data,
+  loading,
+  error,
+}: PastSettlementsSectionProps) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const statement = useCashCountStatement(expandedId);
+
+  return (
+    <Card padding="lg">
+      <SectionHeader
+        title="Past settlements"
+        subtitle={
+          locationName
+            ? `Every reconciled cash count at ${locationName}, newest first. Click a row to see the payments included in that settlement.`
+            : 'Every reconciled cash count across the locations you can see. Click a row to see the payments included in that settlement.'
+        }
+      />
+
+      {error ? (
+        <ErrorBlock message={error} />
+      ) : loading || !data ? (
+        <Skeleton height={200} />
+      ) : data.length === 0 ? (
+        <EmptyState
+          icon={<ScrollText size={20} />}
+          title="No settlements yet"
+          description="Once a cash count is signed off it shows here. The first count establishes the chain."
+        />
+      ) : (
+        <SettlementsList
+          rows={data}
+          expandedId={expandedId}
+          onToggle={(id) =>
+            setExpandedId((current) => (current === id ? null : id))
+          }
+          statementData={statement.data}
+          statementLoading={statement.loading}
+          statementError={statement.error}
+        />
+      )}
+    </Card>
+  );
+}
+
+function SettlementsList({
+  rows,
+  expandedId,
+  onToggle,
+  statementData,
+  statementLoading,
+  statementError,
+}: {
+  rows: PastSettlementRow[];
+  expandedId: string | null;
+  onToggle: (id: string) => void;
+  statementData: ReturnType<typeof useCashCountStatement>['data'];
+  statementLoading: boolean;
+  statementError: string | null;
+}) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          fontSize: theme.type.size.sm,
+        }}
+      >
+        <thead>
+          <tr>
+            <th style={{ ...th, width: 28 }} aria-hidden></th>
+            <th style={th}>Signed off</th>
+            <th style={th}>Counter / signer</th>
+            <th style={{ ...th, textAlign: 'right' }}>Expected</th>
+            <th style={{ ...th, textAlign: 'right' }}>Actual</th>
+            <th style={{ ...th, textAlign: 'right' }}>Variance</th>
+            <th style={th}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const open = expandedId === row.id;
+            // Only show statement when it matches the expanded row.
+            // useCashCountStatement keeps the previous data around while
+            // loading the next one — guard so we don't briefly flash the
+            // previous count's lines under the new one.
+            const matchedStatement =
+              open && statementData?.count.id === row.id ? statementData : null;
+            return (
+              <FragmentRow
+                key={row.id}
+                row={row}
+                open={open}
+                onToggle={() => onToggle(row.id)}
+                statement={matchedStatement}
+                statementLoading={open && statementLoading && !matchedStatement}
+                statementError={open ? statementError : null}
+              />
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FragmentRow({
+  row,
+  open,
+  onToggle,
+  statement,
+  statementLoading,
+  statementError,
+}: {
+  row: PastSettlementRow;
+  open: boolean;
+  onToggle: () => void;
+  statement: ReturnType<typeof useCashCountStatement>['data'];
+  statementLoading: boolean;
+  statementError: string | null;
+}) {
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        style={{
+          borderTop: `1px solid ${theme.color.border}`,
+          cursor: 'pointer',
+          background: open ? `${theme.color.accent}06` : 'transparent',
+          transition: 'background 0.15s ease',
+        }}
+      >
+        <td style={{ ...td, color: theme.color.inkMuted, paddingRight: 0 }}>
+          {open ? (
+            <ChevronDown size={14} aria-hidden />
+          ) : (
+            <ChevronRight size={14} aria-hidden />
+          )}
+        </td>
+        <td style={td}>
+          <div style={{ fontWeight: theme.type.weight.semibold }}>
+            {row.signed_off_at ? formatDateTime(row.signed_off_at) : '—'}
+          </div>
+          <div
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+            }}
+          >
+            Period to {formatDateTime(row.period_end)}
+          </div>
+        </td>
+        <td style={td}>
+          <div>{row.counted_by_name}</div>
+          {row.signed_off_by_name ? (
+            <div
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+              }}
+            >
+              Signed by {row.signed_off_by_name}
+            </div>
+          ) : null}
+        </td>
+        <td style={tdRight}>{formatPence(row.expected_pence)}</td>
+        <td style={tdRight}>
+          {row.actual_pence !== null ? formatPence(row.actual_pence) : '—'}
+        </td>
+        <td
+          style={{
+            ...tdRight,
+            color:
+              row.variance_pence === 0
+                ? theme.color.inkMuted
+                : row.variance_pence > 0
+                  ? theme.color.warn
+                  : theme.color.alert,
+            fontWeight:
+              row.variance_pence === 0
+                ? theme.type.weight.regular
+                : theme.type.weight.semibold,
+          }}
+        >
+          {row.variance_pence === 0
+            ? '£0.00'
+            : `${row.variance_pence > 0 ? '+' : '−'}${formatPence(Math.abs(row.variance_pence))}`}
+        </td>
+        <td style={td}>
+          <SettlementStatusPill status={row.status} />
+        </td>
+      </tr>
+      {open ? (
+        <tr style={{ background: `${theme.color.accent}04` }}>
+          <td colSpan={7} style={{ padding: 0 }}>
+            <div style={{ padding: theme.space[4] }}>
+              <ExpandedSettlement
+                row={row}
+                statement={statement}
+                loading={statementLoading}
+                error={statementError}
+              />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+function ExpandedSettlement({
+  row,
+  statement,
+  loading,
+  error,
+}: {
+  row: PastSettlementRow;
+  statement: ReturnType<typeof useCashCountStatement>['data'];
+  loading: boolean;
+  error: string | null;
+}) {
+  if (error) return <ErrorBlock message={error} />;
+  if (loading || !statement) return <Skeleton height={120} />;
+
+  if (statement.lines.length === 0) {
+    return (
+      <div
+        style={{
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          padding: theme.space[3],
+        }}
+      >
+        No cash payments were recorded for this settlement.
+        {row.notes ? ` Counter's note: ${row.notes}` : ''}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      {row.notes ? (
+        <div
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            background: `${theme.color.accent}08`,
+            borderLeft: `3px solid ${theme.color.accent}`,
+            padding: theme.space[3],
+            borderRadius: theme.radius.input,
+            lineHeight: 1.5,
+          }}
+        >
+          <span style={{ fontWeight: theme.type.weight.semibold }}>
+            Counter's note —{' '}
+          </span>
+          {row.notes}
+        </div>
+      ) : null}
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          fontSize: theme.type.size.sm,
+        }}
+      >
+        <thead>
+          <tr>
+            <th style={th}>When</th>
+            <th style={th}>Patient</th>
+            <th style={th}>Reference</th>
+            <th style={{ ...th, textAlign: 'right' }}>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {statement.lines.map((line) => (
+            <tr
+              key={line.payment_id}
+              style={{ borderTop: `1px solid ${theme.color.border}` }}
+            >
+              <td style={td}>{formatDateTime(line.taken_at)}</td>
+              <td style={td}>
+                <div style={{ fontWeight: theme.type.weight.semibold }}>
+                  {line.patient_name}
+                </div>
+              </td>
+              <td style={td}>
+                {line.appointment_ref ? (
+                  <span
+                    style={{
+                      fontVariantNumeric: 'tabular-nums',
+                      color: theme.color.inkMuted,
+                    }}
+                  >
+                    {line.appointment_ref}
+                  </span>
+                ) : (
+                  <span style={{ color: theme.color.inkMuted }}>—</span>
+                )}
+              </td>
+              <td style={{ ...tdRight, fontWeight: theme.type.weight.semibold }}>
+                {formatPence(line.amount_pence)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SettlementStatusPill({ status }: { status: 'pending' | 'signed' | 'disputed' }) {
+  if (status === 'signed') {
+    return (
+      <StatusPill tone="arrived" size="sm">
+        Signed
+      </StatusPill>
+    );
+  }
+  if (status === 'disputed') {
+    return (
+      <StatusPill tone="cancelled" size="sm">
+        Disputed
+      </StatusPill>
+    );
+  }
+  return (
+    <StatusPill tone="pending" size="sm">
+      Pending
+    </StatusPill>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 3 — All cash sale records in range
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface InRangeSectionProps {

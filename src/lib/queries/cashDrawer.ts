@@ -369,6 +369,123 @@ export function useCashPaymentsInRange(
   return { data, loading, error };
 }
 
+// ── Past settlements (signed counts) for a location ────────────────────────
+//
+// A "settlement" in Dylan's mental model is a signed cash count: the
+// moment the safe was reconciled, lines were frozen, and a manager
+// counter-signed. This list powers the Past settlements section of
+// the report so finance can scroll back through every reconciled
+// period and drill into any one's payment lines.
+//
+// Per-location query is separate from useCashCounts() in cashCounts.ts
+// because the page-side hook (/cash-counts) deliberately doesn't filter
+// — it relies on RLS to narrow to the viewer's own location. The
+// drawer report supports an admin choosing any location they can see,
+// so we need an explicit filter.
+
+export interface PastSettlementRow {
+  id: string;
+  period_start: string;
+  period_end: string;
+  expected_pence: number;
+  actual_pence: number | null;
+  variance_pence: number;
+  status: 'pending' | 'signed' | 'disputed';
+  notes: string | null;
+  counted_by_name: string;
+  counted_at: string;
+  signed_off_by_name: string | null;
+  signed_off_at: string | null;
+}
+
+interface RawSettlement {
+  id: string;
+  period_start: string;
+  period_end: string;
+  expected_pence: number;
+  actual_pence: number | null;
+  variance_pence: number;
+  status: 'pending' | 'signed' | 'disputed';
+  notes: string | null;
+  counted_at: string;
+  signed_off_at: string | null;
+  counted_by: OneOrMany<Person>;
+  signed_off_by: OneOrMany<Person>;
+}
+
+interface PastSettlementsResult {
+  data: PastSettlementRow[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function usePastSettlements(
+  locationId: string | null,
+): PastSettlementsResult {
+  const [data, setData] = useState<PastSettlementRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const query = supabase
+          .from('lng_cash_counts')
+          .select(
+            `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
+             status, notes, counted_at, signed_off_at,
+             counted_by:accounts!counted_by ( first_name, last_name, name ),
+             signed_off_by:accounts!signed_off_by ( first_name, last_name, name )`,
+          )
+          .order('period_end', { ascending: false });
+        if (locationId) query.eq('location_id', locationId);
+        const res = await query;
+        if (cancelled) return;
+        if (res.error) throw new Error(`past_settlements: ${res.error.message}`);
+        const rows = ((res.data ?? []) as RawSettlement[]).map((r) => ({
+          id: r.id,
+          period_start: r.period_start,
+          period_end: r.period_end,
+          expected_pence: r.expected_pence,
+          actual_pence: r.actual_pence,
+          variance_pence: r.variance_pence,
+          status: r.status,
+          notes: r.notes,
+          counted_by_name: composePersonName(pickOne(r.counted_by)),
+          counted_at: r.counted_at,
+          signed_off_by_name: r.signed_off_by
+            ? composePersonName(pickOne(r.signed_off_by))
+            : null,
+          signed_off_at: r.signed_off_at,
+        }));
+        if (cancelled) return;
+        setData(rows);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message =
+          e instanceof Error ? e.message : 'Could not load past settlements';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'cash.drawer.past_settlements',
+          severity: 'error',
+          message,
+          context: { locationId },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
+
+  return { data, loading, error };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function shapeLine(r: RawPayment): CashDrawerLine {
