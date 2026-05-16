@@ -40,7 +40,11 @@ interface MountDataset {
 }
 
 interface VloungeApi {
-  mount(container: HTMLElement, dataset: MountDataset): void;
+  mount(
+    container: HTMLElement,
+    dataset: MountDataset,
+    onClose?: () => void,
+  ): void;
   unmount(container: HTMLElement): void;
 }
 
@@ -121,15 +125,22 @@ function getVlounge(): VloungeApi | undefined {
       }
       // Clear the loading spinner contents — React will own this slot.
       openHandle.mountContainer.replaceChildren();
-      api.mount(openHandle.mountContainer, {
-        service: ds.service,
-        product: ds.product,
-        arch: ds.arch as MountDataset['arch'],
-        location: ds.location,
-        repairVariant: ds.repairVariant,
-        shopifyCustomerEmail: ds.shopifyCustomerEmail,
-        shopifyCustomerId: ds.shopifyCustomerId,
-      });
+      // Capture close before async mount in case openHandle is cleared
+      // (e.g. user clicks backdrop while bundle is loading).
+      const closeFromHost = openHandle.close;
+      api.mount(
+        openHandle.mountContainer,
+        {
+          service: ds.service,
+          product: ds.product,
+          arch: ds.arch as MountDataset['arch'],
+          location: ds.location,
+          repairVariant: ds.repairVariant,
+          shopifyCustomerEmail: ds.shopifyCustomerEmail,
+          shopifyCustomerId: ds.shopifyCustomerId,
+        },
+        closeFromHost,
+      );
     } catch (err) {
       // Bundle download failed — replace the spinner with a tiny
       // human-readable retry surface. Keeping the modal open so the

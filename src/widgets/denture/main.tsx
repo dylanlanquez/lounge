@@ -30,7 +30,14 @@ interface MountDataset {
 
 interface DloungeApi {
   brand: typeof brand;
-  mount(container: HTMLElement, dataset: MountDataset): void;
+  /** `onClose` is the close handler from embedHost.ts — wired through
+   *  to Widget so the React-rendered close button (inside the widget
+   *  header) fires the same close path as Esc / backdrop click. */
+  mount(
+    container: HTMLElement,
+    dataset: MountDataset,
+    onClose?: () => void,
+  ): void;
   unmount(container: HTMLElement): void;
 }
 
@@ -44,14 +51,14 @@ const roots = new WeakMap<HTMLElement, Root>();
 
 const api: DloungeApi = {
   brand,
-  mount(container, dataset) {
+  mount(container, dataset, onClose) {
     if (roots.has(container)) {
-      roots.get(container)!.render(renderTree(dataset));
+      roots.get(container)!.render(renderTree(dataset, onClose));
       return;
     }
     const root = createRoot(container);
     roots.set(container, root);
-    root.render(renderTree(dataset));
+    root.render(renderTree(dataset, onClose));
   },
   unmount(container) {
     const root = roots.get(container);
@@ -61,7 +68,7 @@ const api: DloungeApi = {
   },
 };
 
-function renderTree(dataset: MountDataset) {
+function renderTree(dataset: MountDataset, onClose: (() => void) | undefined) {
   const prefill: WidgetPrefill = {
     serviceKey: dataset.service ?? null,
     productKey: dataset.product ?? null,
@@ -73,7 +80,7 @@ function renderTree(dataset: MountDataset) {
   };
   return (
     <StrictMode>
-      <Widget brand={brand} prefill={prefill} embedded />
+      <Widget brand={brand} prefill={prefill} embedded onClose={onClose} />
     </StrictMode>
   );
 }

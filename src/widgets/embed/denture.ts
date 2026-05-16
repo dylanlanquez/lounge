@@ -24,7 +24,11 @@ interface MountDataset {
 }
 
 interface DloungeApi {
-  mount(container: HTMLElement, dataset: MountDataset): void;
+  mount(
+    container: HTMLElement,
+    dataset: MountDataset,
+    onClose?: () => void,
+  ): void;
   unmount(container: HTMLElement): void;
 }
 
@@ -86,15 +90,20 @@ function getDlounge(): DloungeApi | undefined {
         throw new Error('Widget bundle loaded but window.__dlounge is missing.');
       }
       openHandle.mountContainer.replaceChildren();
-      api.mount(openHandle.mountContainer, {
-        service: ds.service,
-        product: ds.product,
-        arch: ds.arch as MountDataset['arch'],
-        location: ds.location,
-        repairVariant: ds.repairVariant,
-        shopifyCustomerEmail: ds.shopifyCustomerEmail,
-        shopifyCustomerId: ds.shopifyCustomerId,
-      });
+      const closeFromHost = openHandle.close;
+      api.mount(
+        openHandle.mountContainer,
+        {
+          service: ds.service,
+          product: ds.product,
+          arch: ds.arch as MountDataset['arch'],
+          location: ds.location,
+          repairVariant: ds.repairVariant,
+          shopifyCustomerEmail: ds.shopifyCustomerEmail,
+          shopifyCustomerId: ds.shopifyCustomerId,
+        },
+        closeFromHost,
+      );
     } catch (err) {
       if (openHandle) {
         openHandle.mountContainer.replaceChildren(buildErrorState(err));

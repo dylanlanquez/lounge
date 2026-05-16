@@ -145,64 +145,29 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
     color: '#333',
   } as Partial<CSSStyleDeclaration>);
 
-  // Close button. Matches retainer-cart's .close-vt (line 5): a plain
-  // text × character, 28px, no background, no border, no circle. Top
-  // -right of the card. 28px keeps the touch target visible without
-  // adding chrome that fights the modal's clean look.
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.setAttribute('aria-label', 'Close booking');
-  closeBtn.textContent = '×';
-  Object.assign(closeBtn.style, {
-    position: 'absolute',
-    top: '14px',
-    right: '20px',
-    width: '32px',
-    height: '32px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'transparent',
-    border: '0',
-    borderRadius: '0',
-    cursor: 'pointer',
-    color: '#333',
-    padding: '0',
-    fontSize: '28px',
-    fontFamily: 'inherit',
-    lineHeight: '1',
-    zIndex: '2',
-    transition: 'transform 0.15s ease, opacity 0.15s ease',
-  } as Partial<CSSStyleDeclaration>);
-  closeBtn.addEventListener('mouseenter', () => {
-    closeBtn.style.transform = 'scale(1.1)';
-    closeBtn.style.opacity = '0.7';
-  });
-  closeBtn.addEventListener('mouseleave', () => {
-    closeBtn.style.transform = 'scale(1)';
-    closeBtn.style.opacity = '1';
-  });
-
   // Content slot. Starts as a loading spinner so the customer sees
   // activity within one frame; React replaces this once the brand
   // bundle has loaded + hydrated.
-  // mountContainer is the flex slot the React widget mounts into.
-  // The widget owns its own flex-column with a Header / scrollable
-  // Body / Footer pattern (see Widget.tsx ChromeShell), so this
-  // wrapper just stretches to fill remaining vertical space inside
-  // the card and clips overflow. Scrolling lives on the Body inside,
-  // not here — keeps the Footer pinned without `position: sticky`
-  // tricks that fail under iOS over-scroll.
+  //
+  // Previously embedHost owned a vanilla-DOM close button positioned
+  // absolutely against the card. That button is now rendered by React
+  // inside the widget header (Widget.tsx CloseButton) so it can share
+  // the header's flex row with the progress bar — alignment becomes
+  // structural rather than pixel-tuned. We keep tabIndex=-1 on this
+  // container so we still have a focusable element to land focus on
+  // during the brief window before React's first paint; once React
+  // mounts, CloseButton auto-focuses itself.
   const mountContainer = document.createElement('div');
+  mountContainer.tabIndex = -1;
   Object.assign(mountContainer.style, {
     flex: '1',
     minHeight: '0',
     overflow: 'hidden',
     position: 'relative',
+    outline: 'none',
   } as Partial<CSSStyleDeclaration>);
   mountContainer.appendChild(buildLoadingSpinner());
 
-  card.appendChild(closeBtn);
   card.appendChild(mountContainer);
   root.appendChild(backdrop);
   root.appendChild(card);
@@ -226,11 +191,12 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
   document.body.style.width = '100%';
 
   // Focus management. Snapshot the previously-focused element so we
-  // can return focus on close (a11y requirement for modals). The
-  // initial focus goes to the close button — it's the only element
-  // before React mounts so there's nowhere else useful to land.
+  // can return focus on close (a11y requirement for modals). Initial
+  // focus lands on the mountContainer (tabindex=-1) so it's inside
+  // the modal during the brief loading-spinner window. Once React
+  // mounts, CloseButton's useEffect pulls focus onto itself.
   const previousFocus = document.activeElement as HTMLElement | null;
-  closeBtn.focus();
+  mountContainer.focus({ preventScroll: true });
 
   // Animate in on the next frame so the browser sees the initial
   // opacity:0 / scale:0.96 state and animates from there.
@@ -304,10 +270,12 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
       return;
     }
     if (e.key === 'Tab') {
-      // Focus trap. The close button is the only stable focusable
-      // before React mounts; once React arrives there'll be inputs
-      // and buttons inside mountContainer. Query the live set every
-      // tab press so the trap stays correct as React re-renders.
+      // Focus trap. Pre-React there's no focusable inside the modal
+      // other than the mountContainer itself (tabindex=-1, so only
+      // programmatically focusable, never reached by Tab). Once
+      // React renders the CloseButton and step content, there's
+      // plenty. Query the live set every tab press so the trap stays
+      // correct across React re-renders.
       const focusables = collectFocusables(root);
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
@@ -326,16 +294,21 @@ export function openModal(opts: ModalOpenOptions): ModalHandle {
 
   function onFocusIn(e: FocusEvent) {
     // Catch the case where some external script grabs focus while
-    // we're open (e.g. Shopify's own quick-shop). Pull it back.
+    // we're open (e.g. Shopify's own quick-shop). Pull it back. We
+    // prefer the live React-rendered close button if it exists (the
+    // common case after React mounts) so the user lands on a useful
+    // control rather than the bare container.
     if (!root.contains(e.target as Node)) {
       e.stopPropagation();
-      closeBtn.focus();
+      const reactClose = root.querySelector<HTMLButtonElement>(
+        'button[aria-label="Close booking"]',
+      );
+      (reactClose ?? mountContainer).focus({ preventScroll: true });
     }
   }
   root.addEventListener('focusin', onFocusIn, true);
 
   backdrop.addEventListener('click', close);
-  closeBtn.addEventListener('click', close);
 
   return {
     root,

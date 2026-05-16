@@ -35,7 +35,16 @@ interface MountDataset {
 
 interface VloungeApi {
   brand: typeof brand;
-  mount(container: HTMLElement, dataset: MountDataset): void;
+  /** `onClose` is the close handler from embedHost.ts — we pass it
+   *  through to Widget so the React-rendered close button (now inside
+   *  the widget header) fires the same close path as Esc / backdrop
+   *  click. The opener is free to omit it (e.g. /book standalone)
+   *  in which case the widget renders no close button. */
+  mount(
+    container: HTMLElement,
+    dataset: MountDataset,
+    onClose?: () => void,
+  ): void;
   unmount(container: HTMLElement): void;
 }
 
@@ -52,17 +61,17 @@ const roots = new WeakMap<HTMLElement, Root>();
 
 const api: VloungeApi = {
   brand,
-  mount(container, dataset) {
+  mount(container, dataset, onClose) {
     if (roots.has(container)) {
       // Defensive — the opener should never call mount twice on the
       // same container, but if a re-trigger races a slow first
       // render, re-render in place rather than stacking roots.
-      roots.get(container)!.render(renderTree(dataset));
+      roots.get(container)!.render(renderTree(dataset, onClose));
       return;
     }
     const root = createRoot(container);
     roots.set(container, root);
-    root.render(renderTree(dataset));
+    root.render(renderTree(dataset, onClose));
   },
   unmount(container) {
     const root = roots.get(container);
@@ -72,7 +81,7 @@ const api: VloungeApi = {
   },
 };
 
-function renderTree(dataset: MountDataset) {
+function renderTree(dataset: MountDataset, onClose: (() => void) | undefined) {
   // Translate the raw Shopify data-* attributes into the WidgetPrefill
   // shape Widget's resolver expects. The trigger's data-arch value is
   // already type-narrowed by MountDataset, but data-service /
@@ -89,7 +98,7 @@ function renderTree(dataset: MountDataset) {
   };
   return (
     <StrictMode>
-      <Widget brand={brand} prefill={prefill} embedded />
+      <Widget brand={brand} prefill={prefill} embedded onClose={onClose} />
     </StrictMode>
   );
 }

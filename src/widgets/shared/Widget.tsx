@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
 import { PaymentStep, type PaymentApi } from './steps/Payment.tsx';
 import {
   type BookingStateApi,
@@ -105,9 +105,14 @@ export interface WidgetProps {
   embedded?: boolean;
   brand?: WidgetBrand;
   prefill?: WidgetPrefill;
+  /** Provided by the modal host (embedHost.ts via the brand main.tsx
+   *  mount API) so the close button inside the widget header can fire
+   *  the same close path as Esc / backdrop click. Omitted for the
+   *  standalone /book route where there's no modal to close. */
+  onClose?: () => void;
 }
 
-export function Widget({ brand, prefill }: WidgetProps = {}) {
+export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
   // Gate the first render on locations + booking types + copy so a
   // deep-linked service has its matching booking-type object
   // resolved before useBookingState seeds initial state.
@@ -134,6 +139,7 @@ export function Widget({ brand, prefill }: WidgetProps = {}) {
       copy={copy}
       brand={brand}
       prefill={prefill}
+      onClose={onClose}
     />
   );
 }
@@ -144,12 +150,14 @@ function WidgetReady({
   copy,
   brand,
   prefill,
+  onClose,
 }: {
   locations: WidgetLocation[];
   bookingTypes: WidgetBookingType[];
   copy: WidgetCopy;
   brand?: WidgetBrand;
   prefill?: WidgetPrefill;
+  onClose?: () => void;
 }) {
   // Inject the keyframes used by the chrome (modal-slide-in, step
   // fade-in, progress shimmer) once per page. Cheap and idempotent.
@@ -484,6 +492,7 @@ function WidgetReady({
       paymentPaying={paymentPaying}
       onPaymentReadyChange={setPaymentReady}
       onPaymentPayingChange={setPaymentPaying}
+      onClose={onClose}
     />
   );
 }
@@ -507,6 +516,7 @@ function ChromeShell({
   paymentPaying,
   onPaymentReadyChange,
   onPaymentPayingChange,
+  onClose,
 }: {
   api: BookingStateApi;
   copy: WidgetCopy;
@@ -522,6 +532,7 @@ function ChromeShell({
   paymentPaying: boolean;
   onPaymentReadyChange: (ready: boolean) => void;
   onPaymentPayingChange: (paying: boolean) => void;
+  onClose?: () => void;
 }) {
   const accent = brand?.accent ?? QUIZ.ACCENT;
   const isHostEmbedded =
@@ -547,13 +558,21 @@ function ChromeShell({
         overflow: 'hidden',
       }}
     >
+      {/* Header is now a single flex row: progress bar grows to fill,
+          close × sits at the right. alignItems:center pairs the bar's
+          vertical centre with the button's, so the close glyph is
+          horizontally on the same line as the bar without any pixel-
+          tuned absolute coordinates. Previous structure positioned
+          the close button absolutely against the card and the row
+          re-broke every time header padding changed. */}
       <header
         style={{
           flexShrink: 0,
-          padding: '18px 60px 10px 20px', // right padding leaves room for close ×
+          padding: '18px 20px 10px 20px',
           display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 16,
         }}
       >
         <ProgressBar
@@ -561,6 +580,7 @@ function ChromeShell({
           total={api.visibleTotalSteps}
           still={api.stepKey === 'payment'}
         />
+        {onClose ? <CloseButton onClick={onClose} /> : null}
       </header>
 
       <div
@@ -620,6 +640,76 @@ function ChromeShell({
         paymentPaying={paymentPaying}
       />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Close button — flex sibling of ProgressBar inside the header.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Lives in React (not in embedHost.ts vanilla DOM) so it can share the
+// header's flex row with the ProgressBar. alignItems:center on the
+// header keeps the × glyph horizontally aligned with the bar's
+// vertical centre regardless of header padding or bar height.
+//
+// aria-label is preserved verbatim because the locked-state CSS rule
+// in embedHost.ts targets `button[aria-label="Close booking"]` — the
+// selector still matches when the button is rendered by React, so
+// the modal's locked / disabled treatment survives the move.
+//
+// The lucide X icon at size=22 inside a 32×32 button gives a touch
+// target that matches the original 32×32 textual × button (font-size
+// 28, line-height 1) while keeping the glyph crisp at every density.
+// Hover scale + opacity match the storefront retainer-cart close-vt.
+
+function CloseButton({ onClick }: { onClick: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+
+  // Mirror embedHost's pre-React behaviour: focus lands on the close
+  // button when the modal first becomes interactive, so keyboard
+  // users have an immediate, predictable focus target inside the
+  // modal. requestAnimationFrame defers one frame so React's render
+  // commits before .focus() runs — otherwise the focus call can race
+  // with the initial layout on slow phones.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      ref.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label="Close booking"
+      onClick={onClick}
+      style={{
+        flexShrink: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 32,
+        height: 32,
+        padding: 0,
+        background: 'transparent',
+        border: 0,
+        borderRadius: 0,
+        color: '#333',
+        cursor: 'pointer',
+        transition: 'transform 0.15s ease, opacity 0.15s ease',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = 'scale(1.1)';
+        e.currentTarget.style.opacity = '0.7';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = 'scale(1)';
+        e.currentTarget.style.opacity = '1';
+      }}
+    >
+      <X size={22} strokeWidth={2} aria-hidden />
+    </button>
   );
 }
 
