@@ -143,10 +143,11 @@ function PhaseRow({
         {/* The "ends HH:MM" sub-line was removed at Dylan's request —
             it duplicated information the connecting next-phase's start
             time already carries (this phase's end IS the next phase's
-            start), and the patient-facing copy in PresenceNote
-            ("back by …") communicates the same return-time signal
-            for passive phases. The wrapping flex column stays so the
-            start label keeps its right-aligned, tabular-nums layout. */}
+            start), and the staff-register copy in PresenceNote
+            ("Patient back by …") communicates the same return-time
+            signal for passive phases. The wrapping flex column stays
+            so the start label keeps its right-aligned, tabular-nums
+            layout. */}
       </div>
 
       {/* Rail — dot at the top, connector segment beneath */}
@@ -293,13 +294,15 @@ function PresenceNote({
   active: boolean;
   endStr: string;
 }): ReactNode {
+  // Staff register — the PhaseTimeline is only rendered on the
+  // Appointment Detail + Visit Detail hero sheets, both staff-only
+  // surfaces. Copy describes the patient's state from the
+  // receptionist's POV ("Patient required" / "Patient back by
+  // 16:20"), not addressing the patient directly.
   if (active) {
-    return <span>You're with the team</span>;
+    return <span>Patient required</span>;
   }
-  // Passive phase — patient is free to leave. Tell them when we'll
-  // need them back so the message reads as actionable rather than
-  // open-ended.
-  return <span>You can step out, back by {endStr}</span>;
+  return <span>Patient back by {endStr}</span>;
 }
 
 // ─────────────────────────────────────────────────────────────────
