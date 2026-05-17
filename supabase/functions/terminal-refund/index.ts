@@ -121,9 +121,10 @@ Deno.serve(async (req) => {
   const { data: meRow } = await userClient.rpc('auth_account_id');
   const refundedBy = (meRow as string | null) ?? null;
   if (!refundedBy) return j(401, { ok: false, error: 'Could not resolve staff member' });
-  if (body.approver_account_id === refundedBy) {
-    return j(403, { ok: false, error: 'Approver must be a different staff member.' });
-  }
+  // Self-approval is allowed — a manager pressing Refund can pick
+  // themselves from the dropdown. The audit row stamps both
+  // performed_by and approver so the timeline still reads "Refund
+  // issued by Dylan, approved by Dylan" when that's the case.
 
   // Resolve the refund source into a common shape regardless of
   // whether it came from a payment or a deposit. From here down the

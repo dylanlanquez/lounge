@@ -7,7 +7,6 @@ import { Input } from '../Input/Input.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   REFUND_REASON_CATEGORIES,
-  approveAsManager,
   refundPartial,
   useRefundableSources,
   type RefundReasonCategory,
@@ -76,7 +75,6 @@ export function RefundSheet({
   const [reasonNote, setReasonNote] = useState('');
   const [managers, setManagers] = useState<ManagerRow[]>([]);
   const [managerAccountId, setManagerAccountId] = useState('');
-  const [managerPassword, setManagerPassword] = useState('');
   const [managersError, setManagersError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -88,7 +86,6 @@ export function RefundSheet({
     setReasonCategory(defaultCategory);
     setReasonNote('');
     setManagerAccountId('');
-    setManagerPassword('');
     setSubmitError(null);
     setPerRowErrors({});
   }, [open, defaultCategory]);
@@ -136,7 +133,7 @@ export function RefundSheet({
   const allocationShortfallPence = Math.max(0, suggestedPence - totalAllocatedPence);
 
   const noteOk = reasonNote.trim().length > 0;
-  const managerOk = managerAccountId.length > 0 && managerPassword.length > 0;
+  const managerOk = managerAccountId.length > 0;
   const canSubmit =
     !submitting &&
     allocations.length > 0 &&
@@ -153,7 +150,11 @@ export function RefundSheet({
       if (!manager) {
         throw new Error('Pick an approving manager.');
       }
-      const approverId = await approveAsManager(manager.login_email, managerPassword);
+      // Approver id is taken straight from the dropdown — no
+      // password verification step. The manager's email +
+      // account id are stamped on every audit row downstream so
+      // the timeline still records who signed off.
+      const approverId = manager.account_id;
       const errors: Record<string, string> = {};
       let succeeded = 0;
       for (const alloc of allocations) {
@@ -320,28 +321,17 @@ export function RefundSheet({
             label="Approving manager"
             required
             value={managerAccountId}
-            options={managers.map((m) => ({ value: m.account_id, label: m.name }))}
+            options={managers.map((m) => ({
+              value: m.account_id,
+              label: `${m.name} (${m.login_email})`,
+            }))}
             onChange={(v) => setManagerAccountId(v)}
             placeholder={
               managers.length === 0
                 ? 'No managers configured. Add one in Admin, Staff.'
-                : 'Pick a manager'
+                : 'Pick the manager who approved this'
             }
             disabled={managers.length === 0 || submitting}
-          />
-          <Input
-            label="Manager password"
-            type="password"
-            // Manager re-enters their password live every time. Block
-            // any cached / saved-password autofill so a second person
-            // can't be approved by stale credentials.
-            autoComplete="new-password"
-            name="lng-refund-approver-password"
-            data-lpignore="true"
-            data-1p-ignore
-            value={managerPassword}
-            onChange={(e) => setManagerPassword(e.target.value)}
-            disabled={submitting}
           />
         </SheetSection>
 

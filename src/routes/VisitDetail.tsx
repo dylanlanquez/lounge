@@ -107,7 +107,6 @@ import {
   applyCartDiscount,
   listManagers,
   removeCartDiscount,
-  setManagerEmailLookup,
   useActiveCartDiscount,
   type ManagerRow,
 } from '../lib/queries/cartDiscounts.ts';
@@ -342,14 +341,13 @@ export function VisitDetail() {
   const [visitTimelineOpen, setVisitTimelineOpen] = useState(false);
 
   // Cart-level discount state. Apply / Remove share the same sheet
-  // shape — picker for the manager, password for the manager,
-  // reason text. Manager re-auths via approveAsManager (parallel
-  // Supabase client; doesn't disturb the cashier's session).
+  // shape — manager picker + reason text. Whoever's picked from the
+  // dropdown lands on the audit row as the approver; no password
+  // verification (speed > strict proof per Dylan's call).
   const [discountSheet, setDiscountSheet] = useState<'apply' | 'amend' | 'remove' | null>(null);
   const [discountAmountText, setDiscountAmountText] = useState('');
   const [discountReason, setDiscountReason] = useState('');
   const [discountManagerId, setDiscountManagerId] = useState<string>('');
-  const [discountManagerPassword, setDiscountManagerPassword] = useState('');
   const [discountManagers, setDiscountManagers] = useState<ManagerRow[]>([]);
   const [discountBusy, setDiscountBusy] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
@@ -895,14 +893,10 @@ export function VisitDetail() {
       setDiscountReason('');
     }
     setDiscountManagerId('');
-    setDiscountManagerPassword('');
     setDiscountSheet(mode);
     try {
       const list = await listManagers();
       setDiscountManagers(list);
-      // Cache the email-by-id map so approveAsManager can look up
-      // the manager's login_email when verifying their password.
-      setManagerEmailLookup(list);
     } catch (e) {
       setDiscountError(e instanceof Error ? e.message : 'Could not load managers');
     }
@@ -936,7 +930,6 @@ export function VisitDetail() {
         amount_pence: pence,
         reason: discountReason,
         approver_id: discountManagerId,
-        approver_password: discountManagerPassword,
       });
       setDiscountSheet(null);
       refresh();
@@ -957,7 +950,6 @@ export function VisitDetail() {
         cart_id: cart.id,
         reason: discountReason,
         approver_id: discountManagerId,
-        approver_password: discountManagerPassword,
       });
       setDiscountSheet(null);
       refresh();
@@ -985,7 +977,6 @@ export function VisitDetail() {
         amount_pence: pence,
         reason: discountReason,
         approver_id: discountManagerId,
-        approver_password: discountManagerPassword,
       });
       setDiscountSheet(null);
       refresh();
@@ -2613,24 +2604,17 @@ export function VisitDetail() {
               label="Approving manager"
               required
               value={discountManagerId}
-              options={discountManagers.map((m) => ({ value: m.id, label: m.name }))}
+              options={discountManagers.map((m) => ({
+                value: m.id,
+                label: `${m.name} (${m.login_email})`,
+              }))}
               onChange={(v) => setDiscountManagerId(v)}
-              placeholder={discountManagers.length === 0 ? 'No managers configured. Add one in Admin > Staff.' : 'Pick a manager'}
+              placeholder={
+                discountManagers.length === 0
+                  ? 'No managers configured. Add one in Admin > Staff.'
+                  : 'Pick the manager who approved this'
+              }
               disabled={discountManagers.length === 0}
-            />
-            <Input
-              label="Manager password"
-              type="password"
-              // Manager re-enters their password live every time. Block
-              // any cached / saved-password autofill so a second person
-              // can't be approved by stale credentials sitting in the
-              // browser store.
-              autoComplete="new-password"
-              name="lng-discount-approver-password"
-              data-lpignore="true"
-              data-1p-ignore
-              value={discountManagerPassword}
-              onChange={(e) => setDiscountManagerPassword(e.target.value)}
             />
           </div>
           {discountError ? (

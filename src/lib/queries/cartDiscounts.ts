@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
-import { approveAsManager } from './payments.ts';
 import { listManagers as listManagersFromStaff } from './staff.ts';
 
 // Cart-level (sale-wide) discount audit + mutations.
@@ -160,15 +159,13 @@ export interface ApplyDiscountInput {
   amount_pence: number;
   reason: string;
   approver_id: string;
-  approver_password: string;
 }
 
 // Applies a sale-level discount. Requires:
 //   - cart in 'open' state (we don't mutate paid carts here)
 //   - amount > 0 and ≤ subtotal (no negative totals)
-//   - approver_id present, differs from the cashier
-//   - approver_password verified via approveAsManager (parallel
-//     Supabase client; doesn't disturb the cashier's session)
+//   - approver_id present (the picked manager; can be the cashier
+//     themselves if they have manager rights)
 //
 // Updates cart.discount_pence atomically with the audit insert.
 // One active discount per cart is enforced by a unique partial
@@ -178,23 +175,9 @@ export async function applyCartDiscount(input: ApplyDiscountInput): Promise<void
   if (reason.length === 0) throw new Error('A reason is required.');
   if (input.amount_pence <= 0) throw new Error('Discount amount must be positive.');
   if (!input.approver_id) throw new Error('Pick a manager to approve.');
-  if (!input.approver_password) throw new Error('Manager password is required.');
 
   const { data: meId } = await supabase.rpc('auth_account_id');
   const cashierId = (meId as string | null) ?? null;
-  if (cashierId && cashierId === input.approver_id) {
-    throw new Error('Approver must be a different staff member.');
-  }
-
-  // Verify the manager's password by re-authing in a parallel
-  // client. Throws if wrong; returns approver's accounts.id.
-  const verifiedId = await approveAsManager(_emailOf(input.approver_id), input.approver_password);
-  // The dropdown's selection should match what the password
-  // resolves to — block a mismatch ("clicked Sarah, used Tom's
-  // password").
-  if (verifiedId !== input.approver_id) {
-    throw new Error('That password belongs to a different manager than the one selected.');
-  }
 
   // Read cart for state + subtotal so we can validate amount
   // doesn't overshoot.
@@ -239,29 +222,20 @@ export interface RemoveDiscountInput {
   cart_id: string;
   reason: string;
   approver_id: string;
-  approver_password: string;
 }
 
 // Removes the active discount on a cart. Same approval shape as
-// apply: cashier picks manager, manager re-auths their password.
-// Soft-deletes the audit row (sets removed_at + removed_reason +
-// removed_by) and zeros the cart's discount_pence so total_pence
+// apply: cashier picks the manager whose name goes on the audit
+// row. Soft-deletes the audit row (sets removed_at + removed_reason
+// + removed_by) and zeros the cart's discount_pence so total_pence
 // flips back to the un-discounted total.
 export async function removeCartDiscount(input: RemoveDiscountInput): Promise<void> {
   const reason = input.reason.trim();
   if (reason.length === 0) throw new Error('A reason is required to remove the discount.');
   if (!input.approver_id) throw new Error('Pick a manager to approve.');
-  if (!input.approver_password) throw new Error('Manager password is required.');
 
   const { data: meId } = await supabase.rpc('auth_account_id');
   const cashierId = (meId as string | null) ?? null;
-  if (cashierId && cashierId === input.approver_id) {
-    throw new Error('Approver must be a different staff member.');
-  }
-  const verifiedId = await approveAsManager(_emailOf(input.approver_id), input.approver_password);
-  if (verifiedId !== input.approver_id) {
-    throw new Error('That password belongs to a different manager than the one selected.');
-  }
 
   // Find the active discount on this cart.
   const { data: active, error: readErr } = await supabase
@@ -296,7 +270,6 @@ export interface AmendDiscountInput {
   amount_pence: number;
   reason: string;
   approver_id: string;
-  approver_password: string;
 }
 
 // Amends an active discount: same approval shape, soft-deletes the
@@ -319,18 +292,9 @@ export async function amendCartDiscount(input: AmendDiscountInput): Promise<void
   if (reason.length === 0) throw new Error('A reason is required.');
   if (input.amount_pence <= 0) throw new Error('Discount amount must be positive.');
   if (!input.approver_id) throw new Error('Pick a manager to approve.');
-  if (!input.approver_password) throw new Error('Manager password is required.');
 
   const { data: meId } = await supabase.rpc('auth_account_id');
   const cashierId = (meId as string | null) ?? null;
-  if (cashierId && cashierId === input.approver_id) {
-    throw new Error('Approver must be a different staff member.');
-  }
-
-  const verifiedId = await approveAsManager(_emailOf(input.approver_id), input.approver_password);
-  if (verifiedId !== input.approver_id) {
-    throw new Error('That password belongs to a different manager than the one selected.');
-  }
 
   // Read cart for state + subtotal so we can validate amount doesn't
   // overshoot. Same checks as applyCartDiscount.
@@ -396,19 +360,3 @@ export async function amendCartDiscount(input: AmendDiscountInput): Promise<void
   if (updErr) throw new Error(updErr.message);
 }
 
-// Email lookup is needed because approveAsManager signs in with
-// email + password (Supabase auth model). We have approver_id
-// from the dropdown but need their login_email to authenticate.
-//
-// Resolves synchronously from the in-memory manager list cached on
-// the client (the Apply Discount sheet fetched it on open). Falls
-// back to an empty string if the id wasn't found, which makes
-// approveAsManager throw with "wrong email or password" — a clear
-// failure rather than silent.
-let _emailLookup: Map<string, string> = new Map();
-export function setManagerEmailLookup(rows: ManagerRow[]): void {
-  _emailLookup = new Map(rows.map((r) => [r.id, r.login_email]));
-}
-function _emailOf(accountId: string): string {
-  return _emailLookup.get(accountId) ?? '';
-}

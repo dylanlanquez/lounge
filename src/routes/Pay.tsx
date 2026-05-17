@@ -12,13 +12,14 @@ import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
 import { useCart, formatPence } from '../lib/queries/carts.ts';
 import {
-  approveAsManager,
   recordCashPayment,
   useCartPayments,
   useVisitPaidStatus,
   voidPayment,
   type CartPaymentRow,
 } from '../lib/queries/payments.ts';
+import { listManagers, type ManagerRow } from '../lib/queries/cartDiscounts.ts';
+import { DropdownSelect } from '../components/DropdownSelect/DropdownSelect.tsx';
 import { patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
@@ -148,25 +149,33 @@ export function Pay() {
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidTarget, setVoidTarget] = useState<CartPaymentRow | null>(null);
   const [voidReason, setVoidReason] = useState('');
-  const [voidApproverEmail, setVoidApproverEmail] = useState('');
-  const [voidApproverPassword, setVoidApproverPassword] = useState('');
+  const [voidManagerId, setVoidManagerId] = useState('');
+  const [voidManagers, setVoidManagers] = useState<ManagerRow[]>([]);
   const [voidBusy, setVoidBusy] = useState(false);
   const [voidError, setVoidError] = useState<string | null>(null);
-  const openVoidSheet = (p: CartPaymentRow) => {
+  const openVoidSheet = async (p: CartPaymentRow) => {
     setVoidTarget(p);
     setVoidReason('');
-    setVoidApproverEmail('');
-    setVoidApproverPassword('');
+    setVoidManagerId('');
     setVoidError(null);
     setVoidOpen(true);
+    try {
+      const list = await listManagers();
+      setVoidManagers(list);
+    } catch (e) {
+      setVoidError(e instanceof Error ? e.message : 'Could not load managers');
+    }
   };
   const submitVoid = async () => {
     if (!voidTarget) return;
+    if (!voidManagerId) {
+      setVoidError('Pick the manager who approved this.');
+      return;
+    }
     setVoidBusy(true);
     setVoidError(null);
     try {
-      const approverId = await approveAsManager(voidApproverEmail, voidApproverPassword);
-      await voidPayment(voidTarget.id, voidTarget.method, voidReason, approverId);
+      await voidPayment(voidTarget.id, voidTarget.method, voidReason, voidManagerId);
       setVoidOpen(false);
       setVoidTarget(null);
       // Both the paid roll-up and the captured-payments list need
@@ -791,33 +800,24 @@ export function Pay() {
                 Manager sign-off
               </h3>
               <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-                The approving manager signs in here. Both staff names land on the void's audit row.
+                Pick the manager who approved this void. Their email lands on the audit row.
               </p>
             </div>
-            <Input
-              label="Manager email"
-              type="email"
-              // Browser must not autofill the cashier's own credentials
-              // here. autoComplete=off + a non-standard name keeps
-              // Chromium / Safari from pattern-matching, and the password
-              // managers honour the data-* opt-outs.
-              autoComplete="off"
-              name="lng-void-approver-email"
-              data-lpignore="true"
-              data-1p-ignore
-              value={voidApproverEmail}
-              onChange={(e) => setVoidApproverEmail(e.target.value)}
-              placeholder="manager@venneir.com"
-            />
-            <Input
-              label="Manager password"
-              type="password"
-              autoComplete="new-password"
-              name="lng-void-approver-password"
-              data-lpignore="true"
-              data-1p-ignore
-              value={voidApproverPassword}
-              onChange={(e) => setVoidApproverPassword(e.target.value)}
+            <DropdownSelect<string>
+              label="Approving manager"
+              required
+              value={voidManagerId}
+              options={voidManagers.map((m) => ({
+                value: m.id,
+                label: `${m.name} (${m.login_email})`,
+              }))}
+              onChange={(v) => setVoidManagerId(v)}
+              placeholder={
+                voidManagers.length === 0
+                  ? 'No managers configured. Add one in Admin > Staff.'
+                  : 'Pick the manager who approved this'
+              }
+              disabled={voidManagers.length === 0}
             />
           </div>
           {voidError ? (

@@ -569,41 +569,6 @@ export async function voidPayment(
   });
 }
 
-// Verifies an approving manager's credentials WITHOUT changing the
-// active session. Returns the approver's accounts.id when the
-// password is valid, or throws.
-//
-// How it works: spins up a parallel Supabase client with
-// persistSession=false so signing in doesn't touch localStorage or
-// the global auth event bus. Calls auth_account_id() RPC on that
-// client to translate the new auth user back to an accounts.id,
-// then signs the temp client out so we leave no residue. The main
-// app session keeps running uninterrupted on the original client.
-export async function approveAsManager(
-  email: string,
-  password: string
-): Promise<string> {
-  const { createClient } = await import('@supabase/supabase-js');
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
-    throw new Error('Missing Supabase env vars for approver re-auth');
-  }
-  const tmp = createClient(supabaseUrl, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { error: signInErr } = await tmp.auth.signInWithPassword({ email, password });
-  if (signInErr) throw new Error('Approver email or password is wrong.');
-  try {
-    const { data: accountId, error: rpcErr } = await tmp.rpc('auth_account_id');
-    if (rpcErr) throw new Error(rpcErr.message);
-    if (!accountId) throw new Error('Approver has no account record.');
-    return accountId as string;
-  } finally {
-    await tmp.auth.signOut().catch(() => undefined);
-  }
-}
-
 export function useVisitPaidStatus(visitId: string | undefined) {
   const [data, setData] = useState<VisitPaidStatus | null>(null);
   const [loading, setLoading] = useState(true);

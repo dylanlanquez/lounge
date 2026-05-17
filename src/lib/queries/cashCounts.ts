@@ -678,7 +678,6 @@ function ensureNumber(v: number | undefined, key: string): number {
 // Each step throws on validation failure with a meaningful message,
 // no silent fallback.
 
-import { approveAsManager } from './payments.ts';
 
 export interface CreateCashCountInput {
   location_id: string;
@@ -867,17 +866,13 @@ export async function updateCashCountActual(
 
 export async function signCashCount(input: {
   count_id: string;
-  signer_email: string;
-  signer_password: string;
+  signer_account_id: string;
 }): Promise<void> {
-  if (!input.signer_email || !input.signer_password) {
-    throw new Error('Signer email and password are required.');
+  if (!input.signer_account_id) {
+    throw new Error('Pick the manager signing off this count.');
   }
-  // Manager re-auths via parallel client (doesn't disturb the
-  // counter's session). approveAsManager throws on bad credentials.
-  const verifiedAccountId = await approveAsManager(input.signer_email, input.signer_password);
 
-  // Sanity: the row must exist and the signer can't be the counter.
+  // Sanity: the row must exist.
   const { data: row, error: readErr } = await supabase
     .from('lng_cash_counts')
     .select('id, status, counted_by, actual_pence')
@@ -892,15 +887,12 @@ export async function signCashCount(input: {
   if (c.actual_pence === null) {
     throw new Error('Enter the actual amount in the safe before signing.');
   }
-  if (c.counted_by === verifiedAccountId) {
-    throw new Error('Signer must be a different staff member than the counter.');
-  }
 
   const { error: updErr } = await supabase
     .from('lng_cash_counts')
     .update({
       status: 'signed',
-      signed_off_by: verifiedAccountId,
+      signed_off_by: input.signer_account_id,
       signed_off_at: new Date().toISOString(),
     })
     .eq('id', input.count_id)

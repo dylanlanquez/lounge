@@ -773,8 +773,6 @@ function NewCountSheet({
   const [actualText, setActualText] = useState('');
   const [notes, setNotes] = useState('');
   const [managerId, setManagerId] = useState('');
-  const [managerEmail, setManagerEmail] = useState('');
-  const [managerPassword, setManagerPassword] = useState('');
   const [managers, setManagers] = useState<ManagerRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -784,11 +782,12 @@ function NewCountSheet({
     setActualText('');
     setNotes('');
     setManagerId('');
-    setManagerEmail('');
-    setManagerPassword('');
     setError(null);
+    // Show every active manager including the current account.
+    // Self-sign-off is permitted — the signer's name lands on the
+    // audit row regardless of who's logged in.
     listManagers()
-      .then((rows) => setManagers(rows.filter((r) => r.account_id !== currentAccountId)))
+      .then((rows) => setManagers(rows))
       .catch((e) => {
         const message = e instanceof Error ? e.message : String(e);
         setError(`Could not load managers: ${message}`);
@@ -826,11 +825,7 @@ function NewCountSheet({
       return;
     }
     if (!managerId) {
-      setError('Pick a different manager to sign off.');
-      return;
-    }
-    if (!managerPassword) {
-      setError('The signing manager needs to enter their password.');
+      setError('Pick the manager signing off this count.');
       return;
     }
     if (!position.last_signed_count && !position.earliest_payment_at) {
@@ -850,8 +845,7 @@ function NewCountSheet({
       await updateCashCountActual(created.count_id, actualPence, notes);
       await signCashCount({
         count_id: created.count_id,
-        signer_email: managerEmail,
-        signer_password: managerPassword,
+        signer_account_id: managerId,
       });
       onSigned();
     } catch (e) {
@@ -1023,7 +1017,7 @@ function NewCountSheet({
                 letterSpacing: theme.type.tracking.tight,
               }}
             >
-              Counter-sign by another manager
+              Manager sign-off
             </h3>
             <p
               style={{
@@ -1033,30 +1027,15 @@ function NewCountSheet({
                 lineHeight: theme.type.leading.normal,
               }}
             >
-              A second pair of eyes signs off. They re-enter their password to authorise.
+              Pick the manager signing off this count. Their email lands on the audit row.
             </p>
           </div>
           <ManagerPicker
             managers={managers}
             value={managerId}
-            onChange={(id, email) => {
+            onChange={(id) => {
               setManagerId(id);
-              setManagerEmail(email);
             }}
-          />
-          <Input
-            label="Manager password"
-            type="password"
-            // Block saved-password autofill — the manager must re-enter
-            // their password every count so the audit row reflects an
-            // intentional, in-the-room sign-off rather than a cached
-            // credential drifting across sessions.
-            autoComplete="new-password"
-            name="lng-cash-count-manager-password"
-            data-lpignore="true"
-            data-1p-ignore
-            value={managerPassword}
-            onChange={(e) => setManagerPassword(e.target.value)}
           />
         </div>
 
@@ -1088,12 +1067,12 @@ function ManagerPicker({
 }: {
   managers: ManagerRow[];
   value: string;
-  onChange: (id: string, email: string) => void;
+  onChange: (id: string) => void;
 }) {
   if (managers.length === 0) {
     return (
       <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.warn }}>
-        No other manager available. Add a Manager-flagged staff member in Admin, Staff first.
+        No managers configured. Add a Manager-flagged staff member in Admin, Staff first.
       </p>
     );
   }
@@ -1102,7 +1081,7 @@ function ManagerPicker({
       value={value}
       onChange={(e) => {
         const m = managers.find((mgr) => mgr.account_id === e.target.value);
-        if (m) onChange(m.account_id, m.login_email);
+        if (m) onChange(m.account_id);
       }}
       style={{
         appearance: 'none',
@@ -1121,7 +1100,7 @@ function ManagerPicker({
       </option>
       {managers.map((m) => (
         <option key={m.account_id} value={m.account_id}>
-          {m.name}
+          {m.name} ({m.login_email})
         </option>
       ))}
     </select>
