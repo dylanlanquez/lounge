@@ -155,6 +155,12 @@ export interface CashPositionLine {
   taken_at: string;
   patient_name: string;
   appointment_ref: string | null;
+  /** Visit the payment lives on — the click-through target from
+   *  the Cash counts table (visit detail page shows the
+   *  appointment / walk-in context, the full cart, and the
+   *  payment that made it onto this row). Null only for the
+   *  rare orphan case where the cart was disassociated. */
+  visit_id: string | null;
 }
 
 export interface CashPosition {
@@ -172,39 +178,20 @@ export interface CashPosition {
   lines: CashPositionLine[];
 }
 
+interface RawCashPositionVisit {
+  id: string;
+  patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
+  appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+  walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+}
+
 interface RawCashPosition {
   id: string;
   amount_pence: number;
   succeeded_at: string;
   cart:
-    | {
-        visit:
-          | {
-              patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-              appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-            }
-          | {
-              patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-              appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-            }[]
-          | null;
-      }
-    | {
-        visit:
-          | {
-              patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-              appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-            }
-          | {
-              patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-              appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-            }[]
-          | null;
-      }[]
+    | { visit: RawCashPositionVisit | RawCashPositionVisit[] | null }
+    | { visit: RawCashPositionVisit | RawCashPositionVisit[] | null }[]
     | null;
 }
 
@@ -246,6 +233,7 @@ export function useCashPosition(): CashPositionResult {
             `id, amount_pence, succeeded_at,
              cart:lng_carts (
                visit:lng_visits (
+                 id,
                  patient:patients ( first_name, last_name ),
                  appointment:lng_appointments ( appointment_ref ),
                  walk_in:lng_walk_ins ( appointment_ref )
@@ -278,6 +266,7 @@ export function useCashPosition(): CashPositionResult {
             taken_at: r.succeeded_at,
             patient_name: composePersonName(patient),
             appointment_ref: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
+            visit_id: visit?.id ?? null,
           };
         });
 

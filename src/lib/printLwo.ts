@@ -200,9 +200,15 @@ export function printLwo(input: PrintableLwoInput): void {
     '.page{font-size:11px;width:4.13in;height:4.13in;max-height:4.13in;padding:10px;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;break-inside:avoid-page}' +
     '.page+.page{page-break-before:always;break-before:page}' +
     '.hdr{display:flex;justify-content:space-between;align-items:center;border:1px solid #000;padding:8px 10px;margin-bottom:7px;flex-shrink:0}' +
-    '.hdr-title{font-size:12px;font-weight:700;margin-top:2px}' +
-    '.hdr-badge{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;margin-left:8px;letter-spacing:.04em}' +
-    '.hdr-part{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;margin-left:4px;letter-spacing:.04em;background:#000;color:#fff;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
+    '.hdr-title{font-size:12px;font-weight:700;margin-top:2px;white-space:nowrap}' +
+    '.hdr-badge{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;margin-left:8px;letter-spacing:.04em;white-space:nowrap}' +
+    // PART x OF y badge sits on its own line below the title so the
+    // header column has the full label width to itself. Margin-top
+    // separates it visually from the title without an extra row of
+    // chrome; inline-flex caps it to the natural badge width
+    // (otherwise it'd stretch to fill the column).
+    '.hdr-part-row{margin-top:3px;display:flex}' +
+    '.hdr-part{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;letter-spacing:.04em;background:#000;color:#fff;white-space:nowrap;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
     '.hdr-order{font-size:14px;font-weight:900;text-align:right}' +
     '.hdr-date{font-size:10px;font-weight:600;text-align:right;margin-top:1px}' +
     '.meta{display:flex;border:1px solid #000;flex-shrink:0}' +
@@ -252,9 +258,16 @@ export function printLwo(input: PrintableLwoInput): void {
     const tablesHtml = hasBoth
       ? buildTable(dentureRows, 'Denture Services') + buildTable(applianceRows, 'Appliances')
       : buildTable(items, null);
-    const partBadge =
+    // Rendered on its own row beneath the title so the badge can't
+    // wrap mid-text in a narrow header column. Only included when
+    // the cart spilled across multiple slips.
+    const partBadgeRow =
       totalPages > 1
-        ? '<span class="hdr-part">PART ' + pageNumber + ' OF ' + totalPages + '</span>'
+        ? '<div class="hdr-part-row"><span class="hdr-part">PART ' +
+          pageNumber +
+          ' OF ' +
+          totalPages +
+          '</span></div>'
         : '';
     const pageId = 'page-' + pageNumber;
     const pageNotesHtml =
@@ -269,8 +282,8 @@ export function printLwo(input: PrintableLwoInput): void {
             '<img src="' + logoUrl + '" style="height:14px;display:block;margin-bottom:3px" />' +
             '<div class="hdr-title">Lab Work Order ' +
               '<span class="hdr-badge">' + input.arrivalType + '</span>' +
-              partBadge +
             '</div>' +
+            partBadgeRow +
           '</div>' +
           '<div>' +
             '<div class="hdr-order">' + safeRef + '</div>' +
