@@ -448,7 +448,7 @@ function TemplateRow({
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-  const [bodyMode, setBodyMode] = useState<'edit' | 'preview'>('edit');
+  const [bodyMode, setBodyMode] = useState<'edit' | 'preview' | 'source'>('edit');
   const editorRef = useRef<Editor | null>(null);
   // When set, the preview pane shows this historical version's
   // content instead of the current draft. Lets the admin compare
@@ -653,6 +653,12 @@ function TemplateRow({
             />
             {bodyMode === 'edit' ? (
               <SnippetEditor value={body} onChange={setBody} editorRef={editorRef} />
+            ) : bodyMode === 'source' ? (
+              <HtmlSourceView
+                templateKey={template.key}
+                subject={viewingHistory?.subject ?? subject}
+                body={viewingHistory?.body_syntax ?? body}
+              />
             ) : (
               <BodyPreview
                 templateKey={template.key}
@@ -1003,8 +1009,8 @@ function BodyHeader({
   onPickHistory,
   onSendTest,
 }: {
-  mode: 'edit' | 'preview';
-  onModeChange: (next: 'edit' | 'preview') => void;
+  mode: 'edit' | 'preview' | 'source';
+  onModeChange: (next: 'edit' | 'preview' | 'source') => void;
   onInsertVariable: (name: string) => void;
   variables: ReadonlyArray<EmailTemplateVariable>;
   templateKey: string;
@@ -1097,8 +1103,8 @@ function ModeToggle({
   mode,
   onChange,
 }: {
-  mode: 'edit' | 'preview';
-  onChange: (next: 'edit' | 'preview') => void;
+  mode: 'edit' | 'preview' | 'source';
+  onChange: (next: 'edit' | 'preview' | 'source') => void;
 }) {
   // Two-segment pill — same visual language as SegmentedControl but
   // inline + compact, since we want it sitting tight to the body
@@ -1152,6 +1158,12 @@ function ModeToggle({
         () => onChange('preview'),
         <Eye size={12} aria-hidden />,
         'Preview',
+      )}
+      {seg(
+        mode === 'source',
+        () => onChange('source'),
+        <Braces size={12} aria-hidden />,
+        'HTML',
       )}
     </div>
   );
@@ -1306,6 +1318,73 @@ function VariablesPicker({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Body source view — renders the body to HTML using the email
+// renderer and shows the resulting markup as read-only code, with
+// sample variable values substituted in. Lets the admin inspect
+// the actual <p> / <strong> / <table> / <a> wrapping that lands in
+// the patient's inbox, useful for verifying a {{dentureRepairTable}}
+// expansion, custom `[button:…]` syntax, or any other placeholder
+// behaviour without sending a real email.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function HtmlSourceView({
+  templateKey,
+  subject,
+  body,
+}: {
+  templateKey: string;
+  subject: string;
+  body: string;
+}) {
+  const sampleVars = useMemo(() => sampleVariablesFor(templateKey), [templateKey]);
+  const clinicSettings = useClinicSettings();
+  const brand = useMemo(
+    () => ({
+      logoUrl: clinicSettings.data.brandLogoUrl,
+      logoShow: clinicSettings.data.brandLogoShow,
+      logoMaxWidth: clinicSettings.data.brandLogoMaxWidth,
+      accentColor: clinicSettings.data.brandAccentColor,
+      companyNumber: clinicSettings.data.companyNumber,
+      vatNumber: clinicSettings.data.vatNumber,
+      registeredAddress: clinicSettings.data.registeredAddress,
+    }),
+    [clinicSettings.data],
+  );
+  const rendered = useMemo(
+    () =>
+      renderEmail({ subject, bodySyntax: body, variables: sampleVars, shell: 'bare', brand }),
+    [subject, body, sampleVars, brand],
+  );
+  return (
+    <div
+      style={{
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+        background: theme.color.bg,
+        padding: theme.space[3],
+        maxHeight: 520,
+        overflow: 'auto',
+      }}
+    >
+      <pre
+        style={{
+          margin: 0,
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: theme.color.ink,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontFamily:
+            '"SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        }}
+      >
+        {rendered.html}
+      </pre>
     </div>
   );
 }
