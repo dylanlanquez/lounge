@@ -67,6 +67,49 @@ const SERVICE_PILLS: ReadonlyArray<{ label: string; value: string | null }> = [
   { label: 'Virtual impression', value: 'virtual_impression_appointment' },
 ];
 
+// Per-pill template-key allowlist. General shows everything; each
+// service-typed pill shows only the keys whose copy actually fires
+// for that booking type, so "Booking confirmation · Virtual
+// impression" doesn't appear on the Denture repair pill and
+// visit_shipped / payment_receipt stay under General.
+//
+//   * Non-virtual services share the 4 main booking keys.
+//   * Virtual impression uses the _virtual variants for confirmation
+//     / reschedule / reminder. Cancellation has no _virtual variant
+//     so it shares booking_cancellation.
+const KEYS_FOR_SERVICE: Record<string, ReadonlySet<string>> = {
+  click_in_veneers: new Set([
+    'booking_confirmation',
+    'booking_reschedule',
+    'booking_cancellation',
+    'appointment_reminder',
+  ]),
+  same_day_appliance: new Set([
+    'booking_confirmation',
+    'booking_reschedule',
+    'booking_cancellation',
+    'appointment_reminder',
+  ]),
+  denture_repair: new Set([
+    'booking_confirmation',
+    'booking_reschedule',
+    'booking_cancellation',
+    'appointment_reminder',
+  ]),
+  impression_appointment: new Set([
+    'booking_confirmation',
+    'booking_reschedule',
+    'booking_cancellation',
+    'appointment_reminder',
+  ]),
+  virtual_impression_appointment: new Set([
+    'booking_confirmation_virtual',
+    'booking_reschedule_virtual',
+    'booking_cancellation',
+    'appointment_reminder_virtual',
+  ]),
+};
+
 export function AdminEmailTemplatesTab() {
   const templates = useEmailTemplates();
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -154,7 +197,19 @@ export function AdminEmailTemplatesTab() {
         </Card>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          {groups.map(([groupName, keys]) => (
+          {groups.map(([groupName, keys]) => {
+            // Per-pill key allowlist. Drops virtual rows from non-
+            // virtual pills, visit_shipped / payment_receipt from
+            // service-typed pills, etc. General pill (selectedServiceType
+            // === null) sees everything.
+            const allow = selectedServiceType
+              ? KEYS_FOR_SERVICE[selectedServiceType] ?? null
+              : null;
+            const visibleKeys = allow
+              ? keys.filter((k) => allow.has(k))
+              : keys;
+            if (visibleKeys.length === 0) return null;
+            return (
             <section
               key={groupName}
               style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}
@@ -173,7 +228,7 @@ export function AdminEmailTemplatesTab() {
               </p>
               <Card padding="none">
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-                  {keys.map((key, idx) => {
+                  {visibleKeys.map((key, idx) => {
                     const def = EMAIL_TEMPLATE_DEFINITIONS.find((d) => d.key === key);
                     if (!def) return null;
                     // Resolve the variant for the active pill. General
@@ -223,7 +278,8 @@ export function AdminEmailTemplatesTab() {
                 </ul>
               </Card>
             </section>
-          ))}
+            );
+          })}
         </div>
       )}
 
