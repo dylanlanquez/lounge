@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabase.ts';
 
 // Booking-type config — the per-service / per-variant scheduling
@@ -672,6 +672,11 @@ export function useBookingTypePhases(configId: string | null | undefined): {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // Track whether we've ever returned data so subsequent refetches
+  // (e.g. after a drag-and-drop reorder) keep showing the existing
+  // ribbon instead of swapping in a skeleton mid-interaction. The
+  // skeleton flash is the visible glitch operators reported.
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
     if (!configId) {
@@ -680,7 +685,7 @@ export function useBookingTypePhases(configId: string | null | undefined): {
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    if (!hasDataRef.current) setLoading(true);
     setError(null);
     (async () => {
       // Pull phases + their pool junction rows in two parallel
@@ -721,6 +726,7 @@ export function useBookingTypePhases(configId: string | null | undefined): {
         pool_ids: (poolsByPhase.get(row.id) ?? []).sort(),
       }));
       setData(merged);
+      hasDataRef.current = true;
       setLoading(false);
     })();
     return () => {

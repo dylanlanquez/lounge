@@ -200,6 +200,15 @@ export function AdminBookingTypesTab() {
                   // resolved value lives on the parent row.
                   reload();
                 }}
+                onPhaseReordered={() => {
+                  // Reorder only changes phase_index on rows that
+                  // already exist locally; the parent config row
+                  // itself didn't change, so we deliberately DO NOT
+                  // refetch the config list here. Avoids the
+                  // re-mount + dropdown-collapse glitch operators
+                  // saw mid-drag.
+                  setToast({ tone: 'success', title: 'Order updated' });
+                }}
                 onPhaseDeleted={() => setToast({ tone: 'success', title: 'Phase deleted' })}
                 onPhaseError={(msg) => setToast({ tone: 'error', title: msg })}
               />
@@ -275,6 +284,7 @@ function ServiceNode({
   onAddChild,
   onRemoveChild,
   onPhaseSaved,
+  onPhaseReordered,
   onPhaseDeleted,
   onPhaseError,
 }: {
@@ -288,6 +298,10 @@ function ServiceNode({
   onAddChild: (target: EditTarget) => void;
   onRemoveChild: (row: BookingTypeConfigRow) => void;
   onPhaseSaved: () => void;
+  /** Toast-only callback for drag-and-drop reorder. Deliberately
+   *  does not refetch the parent config list — the reorder only
+   *  changes phase_index on rows that already exist locally. */
+  onPhaseReordered: () => void;
   onPhaseDeleted: () => void;
   onPhaseError: (msg: string) => void;
 }) {
@@ -471,11 +485,19 @@ function ServiceNode({
             onReorder={async (orderedKeys) => {
               // The parent ribbon's chip keys are the phase row ids
               // (see ribbonPhases above), so the new order is a
-              // direct argument to the renumber RPC.
+              // direct argument to the renumber RPC. After the RPC
+              // succeeds we reload phases (silent refetch — the
+              // hook keeps showing the existing ribbon during the
+              // network round-trip so the chips don't flash) and
+              // fire the toast-only callback. We intentionally do
+              // NOT call onPhaseSaved here, which would refetch the
+              // whole config list and re-mount the ServiceListItem
+              // (collapsing the override dropdown + scrolling the
+              // page back to the top — what operators were seeing).
               try {
                 await reorderBookingTypePhases(parent.id, orderedKeys);
                 phases.reload();
-                onPhaseSaved();
+                onPhaseReordered();
               } catch (e) {
                 onPhaseError(
                   e instanceof Error ? e.message : 'Could not reorder phases',
@@ -532,6 +554,7 @@ function ServiceNode({
                   onEdit={() => onEditChild(c)}
                   onRemove={() => onRemoveChild(c)}
                   onChanged={onPhaseSaved}
+                  onReordered={onPhaseReordered}
                   onError={onPhaseError}
                 />
               ))}
@@ -804,6 +827,7 @@ function ChildRow({
   onEdit,
   onRemove,
   onChanged,
+  onReordered,
   onError,
 }: {
   isFirst: boolean;
@@ -815,6 +839,9 @@ function ChildRow({
   onEdit: () => void;
   onRemove: () => void;
   onChanged: () => void;
+  /** Toast-only callback for drag-and-drop reorder. Does not refetch
+   *  the parent config list. See parent for rationale. */
+  onReordered: () => void;
   onError: (msg: string) => void;
 }) {
   const childPhases = useBookingTypePhases(row.id);
@@ -1076,8 +1103,15 @@ function ChildRow({
                   };
                 });
                 await reorderChildPhases(row.id, entries);
+                // Silent refetch — the hook keeps showing the
+                // existing ribbon during the round-trip so the
+                // chips don't flash a skeleton mid-interaction.
+                // onReordered is toast-only by design (does NOT
+                // refetch the parent config list, which would
+                // re-mount the row and collapse the override
+                // dropdown).
                 childPhases.reload();
-                onChanged();
+                onReordered();
               } catch (e) {
                 onError(
                   e instanceof Error ? e.message : 'Could not reorder phases',
