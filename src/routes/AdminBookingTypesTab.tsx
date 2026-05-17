@@ -974,6 +974,22 @@ function ChildRow({
                 parentLabel,
               });
             }}
+            onAddPhase={() =>
+              // Append a phase that exists only on this override — at
+              // an index beyond the parent's phase count, so the
+              // resolver returns it after every inherited parent phase.
+              // Useful for variants that need an extra step the parent
+              // shape doesn't have (e.g. a "Fitting" phase only Relining
+              // needs after Try In).
+              setPhaseEditorTarget({
+                kind: 'create',
+                config_id: row.id,
+                next_phase_index:
+                  ribbonPhases.length === 0
+                    ? 1
+                    : Math.max(...ribbonPhases.map((p) => p.phase_index)) + 1,
+              })
+            }
             onEditPatientFacing={() => setPatientFacingOpen(true)}
           />
         </div>
