@@ -28,6 +28,39 @@ interface State {
   resetCount: number;
 }
 
+// True when the error looks like a stale-chunk dynamic import
+// failure — what Vite throws after a new deploy when the open tab
+// still holds references to the OLD hashed chunk filenames. The CDN
+// has rotated to the new bundle, the old chunks 404, and the SPA's
+// `*` fallback serves index.html for the missing /assets/X.js — so
+// the browser reports both:
+//
+//   * "Failed to fetch dynamically imported module: …/Admin-….js"
+//   * "Expected a JavaScript-or-Wasm module script but the server
+//      responded with a MIME type of text/html"
+//
+// The fix is one reload. We do it automatically — no point asking
+// a receptionist mid-arrival to read an error toast. Defended
+// against an infinite reload loop by stamping a sessionStorage flag
+// so the SECOND consecutive stale-chunk error inside the same
+// session falls through to the regular error surface; if reloading
+// didn't help, the user can see the message instead of getting
+// stuck spinning.
+function isStaleChunkError(err: Error | null | undefined): boolean {
+  if (!err) return false;
+  const msg = String(err.message ?? '');
+  return (
+    /Failed to fetch dynamically imported module/i.test(msg) ||
+    /Importing a module script failed/i.test(msg) ||
+    // Safari's flavour of the same error.
+    /error loading dynamically imported module/i.test(msg) ||
+    // Chrome flavour when index.html lands in place of a 404.
+    /Expected a JavaScript-or-Wasm module script/i.test(msg)
+  );
+}
+
+const STALE_RELOAD_FLAG = 'lng.staleChunkReload';
+
 export class ErrorBoundary extends Component<Props, State> {
   override state: State = { hasError: false, error: null, resetCount: 0 };
 
@@ -40,6 +73,33 @@ export class ErrorBoundary extends Component<Props, State> {
     info: { componentStack: string | null | undefined }
   ): void {
     console.error('[ErrorBoundary]', error, info.componentStack);
+    // Auto-recover from a stale dynamic-import on first hit. We
+    // hard-reload so the browser fetches the new index.html and
+    // its new hashed chunk references. sessionStorage flag means
+    // we don't loop if the reload itself still produces the same
+    // error (e.g. the new bundle is actually broken).
+    if (isStaleChunkError(error)) {
+      try {
+        const alreadyReloaded = sessionStorage.getItem(STALE_RELOAD_FLAG);
+        if (!alreadyReloaded) {
+          sessionStorage.setItem(STALE_RELOAD_FLAG, String(Date.now()));
+          window.location.reload();
+        }
+      } catch {
+        // sessionStorage can throw in private mode / iframes; just
+        // reload anyway. Worst case we loop once and the user sees
+        // the error surface on the second hit.
+        window.location.reload();
+      }
+    } else {
+      // Non-stale-chunk error — clear the reload flag so a future
+      // stale-chunk crash gets its one auto-reload back.
+      try {
+        sessionStorage.removeItem(STALE_RELOAD_FLAG);
+      } catch {
+        // No-op.
+      }
+    }
   }
 
   reset = (): void => {
@@ -52,6 +112,38 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override render(): ReactNode {
     if (this.state.hasError) {
+      // For a stale-chunk error we trigger window.location.reload()
+      // in componentDidCatch. The reload is async (the browser
+      // navigates on the next event-loop tick) — render a quiet
+      // "Updating…" state in the gap so staff don't see the
+      // regular "This page hit an error" surface flash by.
+      const staleChunk = isStaleChunkError(this.state.error);
+      let alreadyReloaded = false;
+      try {
+        alreadyReloaded = sessionStorage.getItem(STALE_RELOAD_FLAG) !== null;
+      } catch {
+        alreadyReloaded = false;
+      }
+      if (staleChunk && !alreadyReloaded) {
+        return (
+          <main
+            role="status"
+            aria-live="polite"
+            style={{
+              minHeight: '100dvh',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: theme.space[6],
+              background: theme.color.bg,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+            }}
+          >
+            Updating to the latest version…
+          </main>
+        );
+      }
       return (
         <main
           role="alert"
