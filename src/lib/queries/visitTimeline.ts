@@ -79,7 +79,9 @@ export interface TimelineEvent {
     | 'mail'
     | 'deposit'
     | 'paid_in_full'
-    | 'discount';
+    | 'discount'
+    | 'refund_owed'
+    | 'refund_issued';
   // Optional tone override. When set, the icon dot uses this tone
   // directly instead of the type-derived fallback. Lets producers
   // (e.g. AppointmentTimeline) opt out of the visit-centric heuristics
@@ -930,6 +932,19 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // re-renders against current appointment data — a reschedule
       // between original send and resend produces the right new time.
       const resendInfo = appointmentResendInfoFor(r);
+      // Refund-shaped events get their own icon hints so they read
+      // as money movement rather than the generic flag we use for
+      // everything else. owed_to_patient is the "we noticed" moment;
+      // refund_issued is the "money went back". The tone override
+      // tints the owed_to_patient dot alert-red so it stands out as
+      // a thing-to-fix in the timeline.
+      const isOwedEvent = r.event_type === 'owed_to_patient';
+      const isRefundIssuedEvent = r.event_type === 'refund_issued';
+      const refundHint = isOwedEvent
+        ? ('refund_owed' as const)
+        : isRefundIssuedEvent
+          ? ('refund_issued' as const)
+          : null;
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,
@@ -937,8 +952,16 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         title: composePatientEventTitle(r),
         detail: composePatientEventDetail(r),
         actorAccountId: r.actor_account_id,
-        hint: isEmailEvent || skipped ? ('mail' as const) : ('flag' as const),
-        tone: deliveryFailed ? ('alert' as const) : skipped ? ('warn' as const) : undefined,
+        hint:
+          refundHint ??
+          (isEmailEvent || skipped ? ('mail' as const) : ('flag' as const)),
+        tone: isOwedEvent
+          ? ('alert' as const)
+          : deliveryFailed
+            ? ('alert' as const)
+            : skipped
+              ? ('warn' as const)
+              : undefined,
         emailMessageId,
         resendKind: resendInfo?.kind ?? null,
         resendAppointmentId: resendInfo?.appointmentId ?? null,

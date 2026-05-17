@@ -753,7 +753,6 @@ function Hero({
   tone: StatusTone;
 }) {
   const navigate = useNavigate();
-  const { account: currentAccount } = useCurrentAccount();
   // Sheet state for the phase timeline. Lives in the hero because
   // the "Estimated appointment length" affordance lives in the
   // hero's timeLine. Sheet itself renders via portal so DOM position
@@ -923,7 +922,6 @@ function Hero({
       <CancelledRefundBanner
         appt={appt}
         onOpenRefund={() => setRefundOpen(true)}
-        isCsOnly={currentAccount?.is_cs_only === true}
       />
       <RefundSheet
         open={refundOpen}
@@ -3166,11 +3164,9 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
 function CancelledRefundBanner({
   appt,
   onOpenRefund,
-  isCsOnly,
 }: {
   appt: AppointmentDetailRow;
   onOpenRefund: () => void;
-  isCsOnly: boolean;
 }) {
   if (appt.status !== 'cancelled') return null;
   if (appt.deposit_status !== 'paid') return null;
@@ -3206,11 +3202,12 @@ function CancelledRefundBanner({
           Appointment cancelled but the deposit has not been refunded yet.
         </span>
       </div>
-      {isCsOnly ? null : (
-        <Button variant="primary" size="sm" onClick={onOpenRefund}>
-          Refund {amount}
-        </Button>
-      )}
+      {/* Refund button stays available to Customer Service — they
+          field the "where's my money" emails. Manager approval
+          (email + password) at submit is the real gate. */}
+      <Button variant="primary" size="sm" onClick={onOpenRefund}>
+        Refund {amount}
+      </Button>
     </div>
   );
 }

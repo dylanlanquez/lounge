@@ -647,32 +647,38 @@ export function VisitDetail() {
   );
 
   // Owed-state transition logger. Writes a patient_events
-  // 'owed_to_patient' row the moment the cart math says we now owe
-  // money — OR the moment we owe MORE than we did before. Reads the
-  // trigger context from pendingOwedTriggerRef (stamped by the
-  // mutation handler that caused the change); falls back to a
-  // generic note when there's no specific staging. The audit row
-  // captures WHY at the moment it happened so the timeline doesn't
-  // depend on reconstructing intent from later events.
+  // 'owed_to_patient' row ONLY when a mutation handler has staged a
+  // trigger AND the new owed amount is genuinely higher than the
+  // last seen value.
+  //
+  // Why the staged-trigger gate: lastOwedRef resets to 0 on every
+  // page mount, so opening a visit that's already in the owed
+  // state would otherwise re-log the event every single time
+  // (Dylan caught three duplicate rows from page reloads). The
+  // event represents a moment-of-action — only mutation handlers
+  // produce one. If staff lands on a pre-existing owed state with
+  // no staged trigger, we just baseline the ref silently.
   useEffect(() => {
     if (!patient || !visit) return;
+    const staged = pendingOwedTriggerRef.current;
     const prev = lastOwedRef.current;
     lastOwedRef.current = owedToPatientPence;
+    // Mount / passive re-render: nothing staged, nothing to log.
+    if (!staged) return;
     if (owedToPatientPence <= prev) return;
     if (owedToPatientPence <= 0) return;
-    const staged = pendingOwedTriggerRef.current;
     pendingOwedTriggerRef.current = null;
     void recordOwedToPatient({
       patient_id: patient.id,
-      trigger: staged?.trigger ?? 'cart_line_removed',
+      trigger: staged.trigger,
       owed_pence: owedToPatientPence,
       visit_id: visit.id,
       appointment_id: visit.appointment_id ?? null,
       reason:
-        staged?.reason ??
+        staged.reason ||
         'Cart total dropped below what the patient already paid.',
       context: {
-        ...(staged?.context ?? {}),
+        ...(staged.context ?? {}),
         previous_owed_pence: prev,
         new_owed_pence: owedToPatientPence,
         amount_paid_pence: amountPaidPence,
@@ -1495,18 +1501,21 @@ export function VisitDetail() {
                     visit.
                   </span>
                 </div>
-                {isCsOnly ? null : (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      setRefundDefaultCategory('item_removed');
-                      setRefundOpen(true);
-                    }}
-                  >
-                    Refund {formatPence(owedToPatientPence)}
-                  </Button>
-                )}
+                {/* Refund button stays available to Customer Service
+                    — they're the ones fielding "I want my money back"
+                    emails. The RefundSheet's manager-approval step
+                    (email + password) is the real gate on who can
+                    actually issue, regardless of role. */}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setRefundDefaultCategory('item_removed');
+                    setRefundOpen(true);
+                  }}
+                >
+                  Refund {formatPence(owedToPatientPence)}
+                </Button>
               </div>
             ) : null}
 
