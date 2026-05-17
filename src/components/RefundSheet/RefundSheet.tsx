@@ -79,6 +79,14 @@ export function RefundSheet({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [perRowErrors, setPerRowErrors] = useState<Record<string, string>>({});
+  // Free-form refund amount as the operator typed it (in pounds with
+  // an optional decimal). Initialised on open from suggestedPence so
+  // the default keeps the "refund what we owe" behaviour. Staff can
+  // type any value from 0.01 up to the refundable ceiling — useful
+  // for goodwill-only partials ("only refund half, the rest is
+  // re-use credit"). We hold the raw string so the caret behaves
+  // naturally while typing.
+  const [amountInput, setAmountInput] = useState<string>('');
 
   // Reset every open so a previous half-filled attempt can't leak in.
   useEffect(() => {
@@ -88,7 +96,8 @@ export function RefundSheet({
     setManagerAccountId('');
     setSubmitError(null);
     setPerRowErrors({});
-  }, [open, defaultCategory]);
+    setAmountInput((suggestedPence / 100).toFixed(2));
+  }, [open, defaultCategory, suggestedPence]);
 
   // Load managers (active is_manager) once per open. Same query the
   // discount + void approvers use.
@@ -110,13 +119,31 @@ export function RefundSheet({
     };
   }, [open]);
 
-  // Auto-allocate the suggested amount across sources. Greedy, in
+  // Refundable ceiling — the most we can possibly hand back across
+  // all sources. Used to clamp the amount input + drive the "max"
+  // helper. Sum of every source's remaining refundable balance.
+  const refundableCeilingPence = useMemo(
+    () => sources.reduce((acc, s) => acc + s.refundable_pence, 0),
+    [sources],
+  );
+
+  // Parse the typed amount into pence. Tolerates trailing junk and
+  // empty input — both yield 0, which fails the submit gate so the
+  // operator sees the Refund button disabled instead of a confusing
+  // amount mismatch later.
+  const requestedPence = useMemo(() => {
+    const n = Number.parseFloat(amountInput.replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.round(n * 100);
+  }, [amountInput]);
+
+  // Auto-allocate the requested amount across sources. Greedy, in
   // display order (deposit first, then till payments oldest-first).
-  // The result is read-only — staff can't tweak per-row, the input
-  // we ask them for is the REASON, not the AMOUNT.
+  // Per-row tweaks aren't exposed — the operator picks the TOTAL,
+  // the breakdown follows.
   const allocations = useMemo<Allocation[]>(() => {
-    if (suggestedPence <= 0) return [];
-    let remaining = suggestedPence;
+    if (requestedPence <= 0) return [];
+    let remaining = requestedPence;
     const out: Allocation[] = [];
     for (const s of sources) {
       if (remaining <= 0) break;
@@ -127,15 +154,18 @@ export function RefundSheet({
       }
     }
     return out;
-  }, [sources, suggestedPence]);
+  }, [sources, requestedPence]);
 
   const totalAllocatedPence = allocations.reduce((acc, a) => acc + a.pence, 0);
-  const allocationShortfallPence = Math.max(0, suggestedPence - totalAllocatedPence);
+  const allocationShortfallPence = Math.max(0, requestedPence - totalAllocatedPence);
+  const overCeiling = requestedPence > refundableCeilingPence;
 
   const noteOk = reasonNote.trim().length > 0;
   const managerOk = managerAccountId.length > 0;
+  const amountOk = requestedPence > 0 && !overCeiling;
   const canSubmit =
     !submitting &&
+    amountOk &&
     allocations.length > 0 &&
     allocationShortfallPence === 0 &&
     noteOk &&
@@ -206,9 +236,11 @@ export function RefundSheet({
       onClose={onClose}
       title="Issue a refund"
       description={
-        suggestedPence > 0
-          ? `Returning ${formatPence(suggestedPence)} to the patient on the same cards or cash that paid for the visit.`
-          : 'Nothing to refund right now.'
+        refundableCeilingPence <= 0
+          ? 'Nothing to refund right now.'
+          : suggestedPence > 0 && suggestedPence === requestedPence
+            ? `Returning ${formatPence(suggestedPence)} on the same cards or cash that paid. Type a smaller amount if you only want to refund part of it.`
+            : 'Returning the amount below on the same cards or cash the patient paid with.'
       }
       footer={
         <div
@@ -241,34 +273,41 @@ export function RefundSheet({
             section header on this surface. */}
         {sourcesError ? (
           <ErrorLine message={sourcesError} />
-        ) : sourcesLoading && allocations.length === 0 ? (
+        ) : sourcesLoading && sources.length === 0 ? (
           <MutedLine>Loading payments…</MutedLine>
-        ) : allocations.length === 0 ? (
+        ) : refundableCeilingPence <= 0 ? (
           <MutedLine>
             No refundable payments on file for this visit. If they paid online, the
             refund may already be processing on Stripe.
           </MutedLine>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-            <AmountHero pence={totalAllocatedPence} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-              <SubLabel>Going back to</SubLabel>
+            <AmountInput
+              value={amountInput}
+              onChange={setAmountInput}
+              ceilingPence={refundableCeilingPence}
+              suggestedPence={suggestedPence}
+              overCeiling={overCeiling}
+              disabled={submitting}
+            />
+            {allocations.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                {allocations.map((a) => (
-                  <AllocationRow
-                    key={a.source.id}
-                    source={a.source}
-                    pence={a.pence}
-                    error={perRowErrors[a.source.id] ?? null}
-                  />
-                ))}
+                <SubLabel>Going back to</SubLabel>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                  {allocations.map((a) => (
+                    <AllocationRow
+                      key={a.source.id}
+                      source={a.source}
+                      pence={a.pence}
+                      error={perRowErrors[a.source.id] ?? null}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-            {allocationShortfallPence > 0 ? (
+            ) : null}
+            {overCeiling ? (
               <ErrorLine
-                message={`Only ${formatPence(totalAllocatedPence)} of the ${formatPence(
-                  suggestedPence,
-                )} owed can be refunded right now. An admin needs to reconcile the rest.`}
+                message={`The most you can refund right now is ${formatPence(refundableCeilingPence)}. Lower the amount, or ask an admin to reconcile the rest.`}
               />
             ) : null}
           </div>
@@ -277,7 +316,11 @@ export function RefundSheet({
         {/* Section 2 — reason */}
         <SheetSection
           title="Why are we refunding?"
-          subtitle="Pick the closest match, then add a short note. The note goes on the patient timeline word for word."
+          subtitle={
+            suggestedPence > 0 && requestedPence > 0 && requestedPence < suggestedPence
+              ? `Pick the closest match, then explain why only ${formatPence(requestedPence)} of the ${formatPence(suggestedPence)} owed is being refunded. The note goes on the patient timeline word for word.`
+              : 'Pick the closest match, then add a short note. The note goes on the patient timeline word for word.'
+          }
         >
           <DropdownSelect<RefundReasonCategory>
             label="Reason"
@@ -374,30 +417,142 @@ function SheetSection({
   );
 }
 
-// AmountHero — the headline figure that owns the top of the sheet.
-// Big tabular-num display so it reads as the source-of-truth amount
-// at a glance, regardless of how many rows the breakdown has below.
-function AmountHero({ pence }: { pence: number }) {
+// AmountInput — the headline figure that owns the top of the sheet,
+// and the field the operator types into for partial refunds. The £
+// prefix and the number share the same display-size weight so the
+// figure still reads as a hero, not a form input. Below it sits a
+// quiet helper line that explains the ceiling + offers a "Set to
+// max" shortcut when the operator hasn't already maxed out the
+// refundable balance.
+function AmountInput({
+  value,
+  onChange,
+  ceilingPence,
+  suggestedPence,
+  overCeiling,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  ceilingPence: number;
+  suggestedPence: number;
+  overCeiling: boolean;
+  disabled: boolean;
+}) {
+  const ceilingFmt = formatPence(ceilingPence);
+  const suggestedFmt = suggestedPence > 0 ? formatPence(suggestedPence) : null;
+  // Only allow digits + one decimal. Anything else gets stripped so
+  // a paste of "£60.00" still produces a valid "60.00".
+  const sanitise = (raw: string) => {
+    const cleaned = raw.replace(/[^0-9.]/g, '');
+    const firstDot = cleaned.indexOf('.');
+    if (firstDot === -1) return cleaned;
+    return (
+      cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '')
+    );
+  };
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'baseline',
-        gap: theme.space[3],
-      }}
-    >
-      <span
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <label
+        htmlFor="refund-amount-input"
         style={{
-          fontSize: theme.type.size.display,
-          fontWeight: theme.type.weight.bold,
-          letterSpacing: theme.type.tracking.tight,
-          color: theme.color.ink,
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1,
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: theme.space[2],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          borderRadius: theme.radius.input,
+          background: theme.color.bg,
+          border: `1px solid ${overCeiling ? theme.color.alert : theme.color.border}`,
         }}
       >
-        {formatPence(pence)}
-      </span>
+        <span
+          style={{
+            fontSize: theme.type.size.display,
+            fontWeight: theme.type.weight.bold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+            lineHeight: 1,
+          }}
+        >
+          £
+        </span>
+        <input
+          id="refund-amount-input"
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={value}
+          onChange={(e) => onChange(sanitise(e.target.value))}
+          disabled={disabled}
+          aria-invalid={overCeiling}
+          aria-describedby="refund-amount-helper"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            appearance: 'none',
+            border: 'none',
+            outline: 'none',
+            background: 'transparent',
+            fontFamily: 'inherit',
+            fontSize: theme.type.size.display,
+            fontWeight: theme.type.weight.bold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+            lineHeight: 1,
+            padding: 0,
+          }}
+        />
+      </label>
+      <div
+        id="refund-amount-helper"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.normal,
+        }}
+      >
+        <span>
+          {suggestedFmt && suggestedPence > 0 ? (
+            <>
+              We owe the patient {suggestedFmt}. Type any smaller amount to refund part
+              of it.
+            </>
+          ) : (
+            <>You can refund any amount up to {ceilingFmt}.</>
+          )}
+        </span>
+        {(() => {
+          const target = suggestedPence > 0 ? suggestedPence : ceilingPence;
+          const targetStr = (target / 100).toFixed(2);
+          if (value === targetStr || target <= 0) return null;
+          return (
+            <button
+              type="button"
+              onClick={() => onChange(targetStr)}
+              disabled={disabled}
+              style={{
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                color: theme.color.accent,
+                fontFamily: 'inherit',
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                cursor: 'pointer',
+                padding: 0,
+                flexShrink: 0,
+              }}
+            >
+              Use {formatPence(target)}
+            </button>
+          );
+        })()}
+      </div>
     </div>
   );
 }
