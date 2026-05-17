@@ -610,99 +610,37 @@ async function resolvePatientFacingRange(
   return { min, max };
 }
 
-// Per-product noun map. Mirrors `lwo_catalogue.name` (admin > Service
-// types) and the NATIVE_PRODUCT_NOUN constant in
-// src/lib/queries/appointments.ts. Keep in sync — the reminder
-// subject has to read the same as the in-app schedule label.
-const PRODUCT_NOUN: Record<string, string> = {
-  retainer: 'retainer',
-  night_guard: 'night guard',
-  day_guard: 'day guard',
-  click_in_veneers: 'click-in veneers',
-  missing_tooth: 'missing tooth retainer',
-  whitening_tray: 'whitening tray',
-  whitening_kit: 'whitening kit',
-  aligner: 'replacement aligner',
-};
-
-const SERVICE_FALLBACK_LABEL: Record<string, string> = {
-  denture_repair: 'Denture repair',
-  click_in_veneers: 'Click-in veneers',
-  same_day_appliance: 'Same-day appliance',
-  impression_appointment: 'Impression appointment',
-  in_person_impression_appointment: 'In-person impression appointment',
-  virtual_impression_appointment: 'Virtual impression appointment',
-};
-
-const IMPRESSION_SERVICE_TYPES = new Set([
-  'impression_appointment',
-  'in_person_impression_appointment',
-  'virtual_impression_appointment',
-]);
-
-function pluraliseApplianceForBoth(label: string): string {
-  const t = label.trim();
-  if (!t) return t;
-  if (/s$/i.test(t)) return t;
-  return `${t}s`;
-}
-
-function archPhrase(arch: 'upper' | 'lower' | 'both' | null): string | null {
-  if (arch === 'upper') return 'upper arch';
-  if (arch === 'lower') return 'lower arch';
-  if (arch === 'both') return 'both arches';
-  return null;
-}
-
-// Canonical reminder-subject phrasing for an appointment. Matches
-// the in-app schedule label produced by formatNativeBookingSummary
-// in src/lib/queries/appointments.ts:
+// Canonical reminder-subject phrasing for an appointment, in
+// Title Case. Mirrors formatCustomerServiceTitleLabel in
+// src/lib/queries/appointments.ts — keep both in sync. The Title
+// Case form is the single canonical phrasing used by every customer
+// surface (manage page, admin schedule, hero, success card, emails)
+// so the patient sees the same string everywhere.
 //
-//   same_day_appliance + retainer + upper → "Same-day upper retainer"
-//   same_day_appliance + whitening_kit    → "Same-day whitening kit"
-//   click_in_veneers + both               → "Upper & lower click-in veneers"
-//   denture_repair                        → "Denture repair"
-//   in_person_impression + retainer + both → "In-person impression appointment for both arches, retainers"
+//   same_day_appliance + retainer + upper → "Same-day Upper Retainer"
+//   same_day_appliance + whitening_kit    → "Same-day Whitening Kit"
+//   click_in_veneers + both               → "Same-day Upper & Lower Click-in Veneers"
+//   denture_repair                        → "Denture Repair"
+//   in_person_impression + retainer + both → "In-person Impression Appointment for Upper & Lower Retainers"
 function labelForService(apt: AppointmentRow): string {
   const service = apt.service_type;
-  const arch = apt.arch;
   const eventLabel = apt.event_type_label?.trim() || null;
 
-  if (service && IMPRESSION_SERVICE_TYPES.has(service)) {
-    const base =
-      eventLabel ?? SERVICE_FALLBACK_LABEL[service] ?? 'Impression appointment';
-    const phraseArch = archPhrase(arch);
-    const item = apt.product_key
-      ? pluraliseApplianceForBoth(PRODUCT_NOUN[apt.product_key] ?? '')
-      : '';
-    if (phraseArch && item) return `${base} for ${phraseArch}, ${item}`;
-    if (phraseArch) return `${base} for ${phraseArch}`;
-    if (item) return `${base} for ${item}`;
-    return base;
+  if (service === 'same_day_appliance' || service === 'click_in_veneers') {
+    const composed = composeSameDayServiceLabel(apt);
+    if (composed) return composed;
   }
-
-  const productNoun = apt.product_key ? PRODUCT_NOUN[apt.product_key] : undefined;
-  const serviceNoun = service === 'click_in_veneers' ? 'click-in veneers' : undefined;
-  const fallback =
-    eventLabel ?? (service ? SERVICE_FALLBACK_LABEL[service] : undefined) ?? 'Appointment';
-  const applianceNoun = productNoun ?? serviceNoun ?? null;
-
-  if (applianceNoun) {
-    const archlessProse = applianceNoun;
-    const inner =
-      arch === 'upper'
-        ? `upper ${applianceNoun}`
-        : arch === 'lower'
-          ? `lower ${applianceNoun}`
-          : arch === 'both'
-            ? `upper & lower ${pluraliseApplianceForBoth(applianceNoun)}`
-            : archlessProse;
-    if (service === 'same_day_appliance') return `Same-day ${inner}`;
-    return inner.charAt(0).toUpperCase() + inner.slice(1);
+  if (service === 'in_person_impression_appointment') {
+    const composed = composeImpressionLabel(apt, 'in-person');
+    if (composed) return composed;
   }
-  if (arch === 'upper') return `Upper ${fallback}`;
-  if (arch === 'lower') return `Lower ${fallback}`;
-  return fallback;
+  if (service === 'virtual_impression_appointment') {
+    const composed = composeImpressionLabel(apt, 'virtual');
+    if (composed) return composed;
+  }
+  if (service === 'denture_repair') return 'Denture Repair';
+
+  return eventLabel ?? 'Appointment';
 }
 
 function locationFreeform(location: LocationRow | null): string {

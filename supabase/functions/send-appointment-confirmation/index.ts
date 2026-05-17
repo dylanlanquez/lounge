@@ -1709,114 +1709,49 @@ function googleCalendarUrl(apt: AppointmentRow, location: LocationRow | null): s
   return `https://www.google.com/calendar/render?${params.toString()}`;
 }
 
-// Per-product noun map. Mirrors `lwo_catalogue.name` (admin > Service
-// types) and the NATIVE_PRODUCT_NOUN constant in
-// src/lib/queries/appointments.ts. Keep in sync — the email subject
-// has to read the same as the in-app schedule label.
-const PRODUCT_NOUN: Record<string, string> = {
-  retainer: 'retainer',
-  night_guard: 'night guard',
-  day_guard: 'day guard',
-  click_in_veneers: 'click-in veneers',
-  missing_tooth: 'missing tooth retainer',
-  whitening_tray: 'whitening tray',
-  whitening_kit: 'whitening kit',
-  aligner: 'replacement aligner',
-};
-
-const SERVICE_FALLBACK_LABEL: Record<string, string> = {
-  denture_repair: 'Denture repair',
-  click_in_veneers: 'Click-in veneers',
-  same_day_appliance: 'Same-day appliance',
-  impression_appointment: 'Impression appointment',
-  in_person_impression_appointment: 'In-person impression appointment',
-  virtual_impression_appointment: 'Virtual impression appointment',
-};
-
-const IMPRESSION_SERVICE_TYPES = new Set([
-  'impression_appointment',
-  'in_person_impression_appointment',
-  'virtual_impression_appointment',
-]);
-
-function pluraliseApplianceForBoth(label: string): string {
-  const t = label.trim();
-  if (!t) return t;
-  if (/s$/i.test(t)) return t;
-  return `${t}s`;
-}
-
-function archPhrase(arch: 'upper' | 'lower' | 'both' | null): string | null {
-  if (arch === 'upper') return 'upper arch';
-  if (arch === 'lower') return 'lower arch';
-  if (arch === 'both') return 'both arches';
-  return null;
-}
-
-// Canonical email-subject phrasing for an appointment. Matches the
-// in-app schedule label produced by formatNativeBookingSummary in
-// src/lib/queries/appointments.ts:
+// Canonical email-subject phrasing for an appointment, in Title
+// Case. Mirrors formatCustomerServiceTitleLabel in
+// src/lib/queries/appointments.ts — keep both in sync. The Title
+// Case form is the single canonical phrasing used by every customer
+// surface (manage page, admin schedule, hero, success card, emails)
+// so the patient sees the same string everywhere.
 //
-//   same_day_appliance + retainer + upper → "Same-day upper retainer"
-//   same_day_appliance + whitening_kit    → "Same-day whitening kit"
-//   click_in_veneers + both               → "Upper & lower click-in veneers"
-//   denture_repair                        → "Denture repair"
-//   in_person_impression + retainer + both → "In-person impression appointment for both arches, retainers"
+//   same_day_appliance + retainer + upper → "Same-day Upper Retainer"
+//   same_day_appliance + whitening_kit    → "Same-day Whitening Kit"
+//   click_in_veneers + both               → "Same-day Upper & Lower Click-in Veneers"
+//   denture_repair                        → "Denture Repair"
+//   in_person_impression + retainer + both → "In-person Impression Appointment for Upper & Lower Retainers"
 //
-// Same-day appliance gets the "Same-day " prefix; click-in veneers
-// doesn't (product name already implies same-day). When service_type
-// is missing (legacy / Calendly rows that pre-date the axis columns)
-// we fall back to the persisted event_type_label or a humanised
-// service-type label.
+// When service_type is missing (legacy / Calendly rows that
+// pre-date the axis columns) we fall back to the persisted
+// event_type_label or "Appointment".
 function labelForService(apt: AppointmentRow): string {
   const service = apt.service_type;
-  const arch = apt.arch;
   const eventLabel = apt.event_type_label?.trim() || null;
 
-  if (service && IMPRESSION_SERVICE_TYPES.has(service)) {
-    const base =
-      eventLabel ?? SERVICE_FALLBACK_LABEL[service] ?? 'Impression appointment';
-    const phraseArch = archPhrase(arch);
-    const item = apt.product_key
-      ? pluraliseApplianceForBoth(PRODUCT_NOUN[apt.product_key] ?? '')
-      : '';
-    if (phraseArch && item) return `${base} for ${phraseArch}, ${item}`;
-    if (phraseArch) return `${base} for ${phraseArch}`;
-    if (item) return `${base} for ${item}`;
-    return base;
+  // Same-day appliance OR click-in veneers — composeSameDayServiceLabel
+  // already produces the canonical Title Case string. Reuse it.
+  if (service === 'same_day_appliance' || service === 'click_in_veneers') {
+    const composed = composeSameDayServiceLabel(apt);
+    if (composed) return composed;
   }
 
-  const productNoun = apt.product_key ? PRODUCT_NOUN[apt.product_key] : undefined;
-  // click-in veneers carries its noun on service_type, not
-  // product_key. Same lowercased prose form as elsewhere.
-  const serviceNoun = service === 'click_in_veneers' ? 'click-in veneers' : undefined;
-  const fallback =
-    eventLabel ?? (service ? SERVICE_FALLBACK_LABEL[service] : undefined) ?? 'Appointment';
-  const applianceNoun = productNoun ?? serviceNoun ?? null;
-
-  // Compose "<arch> <appliance>" in prose, then optionally prefix
-  // with "Same-day ". archlessProse covers the whitening_kit case
-  // where the catalogue's arch_match='any' means no arch was asked.
-  if (applianceNoun) {
-    const archlessProse = applianceNoun;
-    const inner =
-      arch === 'upper'
-        ? `upper ${applianceNoun}`
-        : arch === 'lower'
-          ? `lower ${applianceNoun}`
-          : arch === 'both'
-            ? `upper & lower ${pluraliseApplianceForBoth(applianceNoun)}`
-            : archlessProse;
-    if (service === 'same_day_appliance') return `Same-day ${inner}`;
-    // Click-in veneers and other axis-pinned services: capitalise
-    // the first word so the sentence starts cleanly.
-    return inner.charAt(0).toUpperCase() + inner.slice(1);
+  // Impression appointments — composeImpressionLabel already
+  // produces the canonical Title Case string.
+  if (service === 'in_person_impression_appointment') {
+    const composed = composeImpressionLabel(apt, 'in-person');
+    if (composed) return composed;
   }
-  // No identified appliance — keep the legacy "<Arch> <fallback>"
-  // shape so emails still describe the slot.
-  if (arch === 'upper') return `Upper ${fallback}`;
-  if (arch === 'lower') return `Lower ${fallback}`;
-  return fallback;
+  if (service === 'virtual_impression_appointment') {
+    const composed = composeImpressionLabel(apt, 'virtual');
+    if (composed) return composed;
+  }
+
+  // Denture repair — no axis prefix.
+  if (service === 'denture_repair') return 'Denture Repair';
+
+  // Anything else: fall back to the persisted event_type_label.
+  return eventLabel ?? 'Appointment';
 }
 
 function fullName(p: PatientRow): string {

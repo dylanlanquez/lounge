@@ -11,6 +11,7 @@ import {
   type CatalogueArchMatch,
 } from '../../lib/queries/bookingTypeAxes.ts';
 import type { BookingServiceType } from '../../lib/queries/bookingTypes.ts';
+import { formatCustomerServiceTitleLabel } from '../../lib/queries/appointments.ts';
 import {
   configFor,
   type ProductWidgetConfig,
@@ -962,115 +963,46 @@ function applianceNounForQuestion(
   }
 }
 
-// Fallback appliance names — only consulted when the resolved
-// catalogue row hasn't loaded yet (the first paint of the success
-// card before the resolver settles). The live render reads
-// `resolvedRow.name` from lwo_catalogue directly, so renames in
-// admin > Service types propagate automatically without needing
-// this map updated. Kept here purely so the first paint isn't
-// blank; mirrors what the admin currently has set so the fallback
-// reads correctly even when the resolver hasn't returned.
-const APPLIANCE_TITLE_FALLBACK: Record<string, string> = {
-  retainer: 'Retainer',
-  night_guard: 'Night guard',
-  day_guard: 'Day guard',
-  click_in_veneers: 'Click-in veneers',
-  missing_tooth: 'Missing Tooth Retainer',
-};
-
-// Pluralise an appliance noun when arch=both. Catalogue labels are
-// stored as singular ("Retainer", "Night guard", "Missing tooth
-// retainer") so we add 's' to the last word for the both-arches
-// title. Labels that are already plural ("Click-in Veneers") pass
-// through untouched. Mirrors the simple rule the staff app uses for
-// staged-item labels; if a future appliance name needs irregular
-// plural handling, special-case it here.
-function pluraliseApplianceForBoth(label: string): string {
-  const trimmed = label.trim();
-  if (trimmed.length === 0) return trimmed;
-  if (trimmed.endsWith('s') || trimmed.endsWith('S')) return trimmed;
-  return `${trimmed}s`;
-}
-
 /**
  * Compose the service line shown on the success card. Canonical
- * phrasing matches every other surface (Lounge admin schedule,
- * AppointmentDetail hero, emails, the customer-facing manage page):
+ * Title Case phrasing matches every other surface (Lounge admin
+ * schedule, AppointmentDetail hero, emails, customer manage page):
  *
- *   same_day_appliance + retainer + upper  → "Same-day upper retainer"
- *   same_day_appliance + retainer + both   → "Same-day upper & lower retainers"
- *   same_day_appliance + whitening_kit     → "Same-day whitening kit"
- *   click_in_veneers + upper               → "Upper click-in veneers"
- *   click_in_veneers + both                → "Upper & lower click-in veneers"
- *   denture_repair + arch=upper            → "Upper denture repair"
+ *   same_day_appliance + retainer + upper  → "Same-day Upper Retainer"
+ *   same_day_appliance + retainer + both   → "Same-day Upper & Lower Retainers"
+ *   same_day_appliance + whitening_kit     → "Same-day Whitening Kit"
+ *   click_in_veneers + upper               → "Same-day Upper Click-in Veneers"
+ *   click_in_veneers + both                → "Same-day Upper & Lower Click-in Veneers"
+ *   denture_repair                         → "Denture Repair"
  *
- * Same-day appliance gets the "Same-day " prefix; click-in veneers
- * doesn't (the product name already implies same-day). Prose case
- * throughout so the line reads as one sentence regardless of
- * service type, instead of mixing Title Case here with sentence
- * case elsewhere.
+ * Delegates to `formatCustomerServiceTitleLabel` so admin schedule,
+ * customer widget Success, and email subjects all read identically.
+ * The `resolvedCatalogueName` parameter is kept for callsite
+ * compatibility but no longer consulted — the canonical Title Case
+ * map in formatCustomerServiceTitleLabel is the single source of
+ * truth, and admin renames in `lwo_catalogue.name` are surfaced
+ * through that map by updating its `TITLE_PRODUCT_NOUN` entries
+ * (which mirror the admin Service-types screen).
  *
- * Strips any HTML tags from the booking-type label before composing
- * — `lng_widget_booking_types.display_label` is rendered with
- * dangerouslySetInnerHTML elsewhere but the headline context wants
- * plain text only.
+ * Strips any HTML tags from the booking-type label before passing
+ * it as event_type_label fallback — `lng_widget_booking_types
+ * .display_label` is rendered with dangerouslySetInnerHTML elsewhere
+ * but the headline context wants plain text only.
  */
 export function formatBookingSuccessTitle(
   state: WidgetState,
-  resolvedCatalogueName?: string | null,
+  // Kept for signature stability; no longer read. See doc above.
+  _resolvedCatalogueName?: string | null,
 ): string {
   const svc = state.service;
   if (!svc) return '';
-  const type = svc.serviceType;
-  const archKey = state.axes.arch;
-  const isBoth = archKey === 'both';
-
-  // For appliance-shaped services (click-in veneers, same-day
-  // appliance) we want the actual catalogue name lowercased —
-  // that's what admin set in Service types, and lowercasing it
-  // means it integrates naturally with the prose phrase.
-  // Falls back to the hardcoded map ONLY when the resolver hasn't
-  // returned yet (first paint), so a stale rename in the map can
-  // never out-shout the DB.
-  if (type === 'click_in_veneers' || type === 'same_day_appliance') {
-    const fallback =
-      type === 'click_in_veneers'
-        ? 'Click-in veneers'
-        : state.axes.product_key
-          ? (APPLIANCE_TITLE_FALLBACK[state.axes.product_key] ?? 'Appliance')
-          : 'Appliance';
-    const rawName = (resolvedCatalogueName?.trim() || fallback).toLowerCase();
-    const name = isBoth ? pluraliseApplianceForBoth(rawName) : rawName;
-    const archProse =
-      archKey === 'upper'
-        ? 'upper'
-        : archKey === 'lower'
-          ? 'lower'
-          : archKey === 'both'
-            ? 'upper & lower'
-            : null;
-    const inner = archProse ? `${archProse} ${name}` : name;
-    if (type === 'same_day_appliance') return `Same-day ${inner}`;
-    // Click-in veneers — capitalise the first word of the resulting
-    // sentence ("Upper click-in veneers"), no Same-day prefix.
-    return inner.charAt(0).toUpperCase() + inner.slice(1);
-  }
-
-  // Everything else: strip HTML, prefix arch when set. Same prose
-  // form as above so denture-repair etc. read identically.
   const cleanLabel = svc.label.replace(/<[^>]*>/g, '').trim();
-  const archProse =
-    archKey === 'upper'
-      ? 'upper'
-      : archKey === 'lower'
-        ? 'lower'
-        : archKey === 'both'
-          ? 'upper & lower'
-          : null;
-  if (archProse) {
-    return `${archProse.charAt(0).toUpperCase()}${archProse.slice(1)} ${cleanLabel.toLowerCase()}`;
-  }
-  return cleanLabel;
+  return formatCustomerServiceTitleLabel({
+    service_type: svc.serviceType,
+    event_type_label: cleanLabel || null,
+    arch: state.axes.arch ?? null,
+    product_key: state.axes.product_key ?? null,
+  });
 }
 
 const GBP_FORMATTER = new Intl.NumberFormat('en-GB', {

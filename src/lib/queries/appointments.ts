@@ -425,62 +425,6 @@ function joinMultiSelect(answer: string | undefined | null): string | undefined 
   return parts.join(', ');
 }
 
-// Per-product noun map used by formatNativeBookingSummary. Native
-// widget bookings store the product as a stable enum key
-// (lng_widget_booking_types.product_key) so we don't have to
-// regex-parse a human label like the Calendly path does. Nouns are
-// in prose form (lowercase) — pluralisation happens in
-// formatArchedAppliance when arch='both'.
-//
-// These names mirror the catalogue rows in `lwo_catalogue.name` —
-// admin > Service types is the source of truth ("Retainer", "Night
-// guard", "Day guard", "Click-in veneers", "Missing tooth retainer").
-// Keep this map in sync if admin renames a catalogue row; the
-// downstream loader doesn't fetch the catalogue display name on
-// every appointment query yet.
-const NATIVE_PRODUCT_NOUN: Record<string, string> = {
-  retainer: 'retainer',
-  night_guard: 'night guard',
-  day_guard: 'day guard',
-  click_in_veneers: 'click-in veneers',
-  missing_tooth: 'missing tooth retainer',
-  whitening_tray: 'whitening tray',
-  whitening_kit: 'whitening kit',
-  aligner: 'replacement aligner',
-};
-
-// Service types whose service_type IS the appliance (no separate
-// product_key). Click-in veneers is a branded product name, so it
-// stays Title Case in the composed label ("Upper Click-in veneers")
-// to match the established spelling everywhere else (edge function
-// email labels, schedule comments, render tests).
-const NATIVE_SERVICE_NOUN: Record<string, string> = {
-  click_in_veneers: 'Click-in veneers',
-};
-
-// Impression-flavoured service types use the "for {arch}" phrasing
-// (mirrors formatBookingSummary's Calendly branch) rather than the
-// "Upper & lower {appliance}" prefix, because the appointment is
-// an impression-taking visit, not the appliance itself.
-const IMPRESSION_SERVICE_TYPES = new Set([
-  'impression_appointment',
-  'in_person_impression_appointment',
-  'virtual_impression_appointment',
-]);
-
-// Humanised service-type label for fallback prose. Mirrors the
-// labels stored in event_type_label when a native widget creates an
-// appointment, so the rendered summary stays stable even if the
-// row's event_type_label is missing.
-const NATIVE_SERVICE_FALLBACK_LABEL: Record<string, string> = {
-  denture_repair: 'Denture repair',
-  click_in_veneers: 'Click-in veneers',
-  same_day_appliance: 'Same-day appliance',
-  impression_appointment: 'Impression appointment',
-  in_person_impression_appointment: 'In-person impression appointment',
-  virtual_impression_appointment: 'Virtual impression appointment',
-};
-
 /**
  * Compose a hero title for axis-pinned bookings (native widget AND
  * staff-created "manual" bookings — both store arch / product_key /
@@ -516,64 +460,16 @@ export function formatNativeBookingSummary(row: {
   arch: string | null;
   product_key: string | null;
 }): string {
-  const arch = normaliseArchKey(row.arch);
-  const service = row.service_type;
-  const eventLabel = row.event_type_label?.trim() || null;
-
-  // Impression appointments take impressions OF something — the
-  // arch belongs in a "for {arch}" clause and the product_key (when
-  // present) follows as a comma-joined item. Mirrors the Calendly
-  // path's impression branch so the two surfaces read identically.
-  if (service && IMPRESSION_SERVICE_TYPES.has(service)) {
-    const base =
-      eventLabel ?? NATIVE_SERVICE_FALLBACK_LABEL[service] ?? 'Impression appointment';
-    const phraseArch = arch ? archPhrase(arch) : undefined;
-    const item = row.product_key
-      ? pluraliseAppliance(NATIVE_PRODUCT_NOUN[row.product_key] ?? '')
-      : '';
-    if (phraseArch && item) return `${base} for ${phraseArch}, ${item}`;
-    if (phraseArch) return `${base} for ${phraseArch}`;
-    if (item) return `${base} for ${item}`;
-    return base;
-  }
-
-  // Resolve the appliance noun in this priority:
-  //   1. product_key → its prose noun (retainer / night guard / …)
-  //   2. service_type that IS an appliance (click_in_veneers) → its noun
-  //   3. fallback to the persisted event_type_label or a humanised
-  //      service-type label.
-  const productNoun = row.product_key ? NATIVE_PRODUCT_NOUN[row.product_key] : undefined;
-  const serviceNoun = service ? NATIVE_SERVICE_NOUN[service] : undefined;
-  const fallbackNoun =
-    eventLabel ?? (service ? NATIVE_SERVICE_FALLBACK_LABEL[service] : undefined) ?? 'Appointment';
-
-  const applianceNoun = productNoun ?? serviceNoun ?? null;
-
-  // Same-day appliances render with the "Same-day " prefix and prose
-  // (fully lowercase) inner phrase so the whole reads as one
-  // sentence ("Same-day upper retainer", "Same-day upper & lower
-  // night guards", "Same-day whitening kit"). Matches the customer-
-  // facing widget Review card so admin + customer surfaces read
-  // identically. Falls back to "Same-day appliance" only when
-  // neither the product nor the service noun resolved — the row is
-  // mid-flight and the catalogue hasn't been pinned.
-  if (service === 'same_day_appliance') {
-    if (applianceNoun) {
-      return `Same-day ${formatArchedAppliance(arch, applianceNoun, 'prose')}`;
-    }
-    return fallbackNoun;
-  }
-
-  // Click-in veneers + other axis-pinned services use sentence
-  // casing ("Upper click-in veneers") — first letter capitalised,
-  // the rest lowercase. No "Same-day" prefix because the click-in
-  // veneers product name already implies same-day, and adding it
-  // would read redundant.
-  if (applianceNoun) return formatArchedAppliance(arch, applianceNoun, 'sentence');
-  if (arch === 'upper' || arch === 'lower') {
-    return formatArchedAppliance(arch, fallbackNoun, 'sentence');
-  }
-  return fallbackNoun;
+  // Single source of truth — Title Case canonical label used on
+  // every surface (admin schedule + hero + timeline + visit
+  // detail, customer widget Success + Review, emails, manage
+  // page). Past versions of this function produced sentence /
+  // prose case for the admin app and Title Case for the customer
+  // surfaces; that drift produced "Same-day upper retainer" on
+  // one screen and "Same-day Upper Retainer" on the next.
+  // Dylan asked for the Title Case form everywhere — this
+  // delegation collapses both shapes onto one helper.
+  return formatCustomerServiceTitleLabel(row);
 }
 
 // Accepts the two fields actually needed — works with both AppointmentRow
@@ -650,36 +546,27 @@ export function formatBookingSummary(row: {
 
   // Calendly answers come in user-entered Title Case ("Retainer",
   // "Night Guard", "Cracked Denture"). Route through the shared
-  // arch+appliance helper. Casing depends on the service category:
-  //
-  //   • Same-day appliance ('appliance' category) → prose form
-  //     prefixed with "Same-day ", matching the native + widget
-  //     surfaces ("Same-day upper retainer").
-  //   • Everything else (click-in veneers, denture repair) → 'title'
-  //     casing so the answer keeps the customer-entered Title Case
-  //     spelling ("Upper Cracked Denture"). Repair-type answers
-  //     pluralise irregularly in English so the repair branch opts
-  //     out of pluralisation to avoid producing "Broken Tooths".
+  // arch+appliance helper. Casing is always 'title' so customer-
+  // facing surfaces read identically to the native widget output
+  // composed by formatCustomerServiceTitleLabel ("Same-day Upper
+  // Retainer", "Upper & Lower Cracked Denture"). Same-day appliance
+  // bookings get the "Same-day " prefix prepended. Repair-type
+  // answers pluralise irregularly in English so the repair branch
+  // opts out of pluralisation to avoid producing "Broken Tooths".
   const archKey = arch ? normaliseArchKey(arch.answer) : null;
   const isSameDayAppliance = eventTypeCategory(event) === 'appliance';
   if (subjectLabel) {
     const noun = withDenturePrefix(subjectLabel);
-    if (isSameDayAppliance) {
-      const inner = formatArchedAppliance(archKey, noun.toLowerCase(), 'prose');
-      return `Same-day ${inner}`;
-    }
-    return formatArchedAppliance(archKey, noun, 'title', {
+    const phrase = formatArchedAppliance(archKey, noun, 'title', {
       pluraliseForBoth: !isRepair,
     });
+    return isSameDayAppliance ? `Same-day ${phrase}` : phrase;
   }
   if (archKey && eventStripped) {
-    if (isSameDayAppliance) {
-      const inner = formatArchedAppliance(archKey, eventStripped.toLowerCase(), 'prose');
-      return `Same-day ${inner}`;
-    }
-    return formatArchedAppliance(archKey, eventStripped, 'title', {
+    const phrase = formatArchedAppliance(archKey, eventStripped, 'title', {
       pluraliseForBoth: !isRepair,
     });
+    return isSameDayAppliance ? `Same-day ${phrase}` : phrase;
   }
   if (answers.length > 0) {
     return answers

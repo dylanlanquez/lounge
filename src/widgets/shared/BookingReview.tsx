@@ -1,6 +1,7 @@
 import { MapPin, BadgeCheck, Calendar, Check, CheckCircle2 } from 'lucide-react';
 import type { BookingStateApi, RepairLine, WidgetState } from './state.ts';
 import { customerRepairLabel, formatPrice } from './state.ts';
+import { formatCustomerServiceTitleLabel } from '../../lib/queries/appointments.ts';
 import type { WidgetCopy } from './copy.ts';
 import { QUIZ } from './quizTokens.ts';
 
@@ -841,115 +842,35 @@ export function formatSlotLong(iso: string): string {
 // where it earns its place) rather than the previous comma-joined
 // backend jargon like "Same-day appliance, Retainer, Upper".
 //
-// Examples it produces:
-//   same_day_appliance + retainer + upper   → "Same-day upper retainer"
-//   same_day_appliance + retainer + both    → "Same-day upper & lower retainers"
-//   same_day_appliance + night_guard + lower→ "Same-day lower night guard"
-//   click_in_veneers + upper                → "Upper click-in veneers"
-//   click_in_veneers + both                 → "Upper & lower click-in veneers"
-//   whitening_kit (no axes)                 → "Whitening kit"
+// Examples it produces (all Title Case — the canonical customer-
+// facing phrasing used by the manage page, emails, and admin
+// schedule too):
+//   same_day_appliance + retainer + upper   → "Same-day Upper Retainer"
+//   same_day_appliance + retainer + both    → "Same-day Upper & Lower Retainers"
+//   same_day_appliance + night_guard + lower→ "Same-day Lower Night Guard"
+//   click_in_veneers + upper                → "Same-day Upper Click-in Veneers"
+//   click_in_veneers + both                 → "Same-day Upper & Lower Click-in Veneers"
+//   whitening_kit                           → "Same-day Whitening Kit"
+//   denture_repair                          → "Denture Repair"
 //
-// For services with axes but unknown to the wording rules, falls back
-// to "{Arch} {service.label.toLowerCase()}" so a new service type
-// added without updating this helper still reads as a sentence
-// instead of leaking the comma-joined raw axes through.
-//
-// Note the "upper & lower" connector (not "upper and lower") — Dylan
-// flagged the older "Both retainer" / "upper and lower retainer"
-// phrasings as amateur. Canonical is "Upper & lower retainers"
-// across every surface, with this card running the prose-form
-// variant ("upper & lower retainers" mid-sentence after "Same-day").
+// Delegates to formatCustomerServiceTitleLabel so this card, the
+// success screen, the admin app, and the email subjects all read
+// identically. The `resolvedCatalogueName` parameter is kept for
+// signature stability but no longer consulted — the canonical
+// Title Case map in formatCustomerServiceTitleLabel is the single
+// source of truth.
 function formatSummaryServiceLine(
   state: WidgetState,
-  resolvedCatalogueName: string | null,
+  // Kept for signature stability; no longer read. See doc above.
+  _resolvedCatalogueName: string | null,
 ): string | null {
   const svc = state.service;
   if (!svc) return null;
-  const type = svc.serviceType;
-  const archKey = state.axes.arch;
-  const isBoth = archKey === 'both';
-  const archLower =
-    archKey === 'upper'
-      ? 'upper'
-      : archKey === 'lower'
-        ? 'lower'
-        : archKey === 'both'
-          ? 'upper & lower'
-          : null;
-
-  // Prefer the live catalogue name over the local fallback map so a
-  // rename in admin > Service types propagates here automatically.
-  // Lowercased for the prose register this card uses ("Same-day
-  // upper retainer"). Falls back to SUMMARY_APPLIANCE_LOWER only
-  // while the resolver is still in flight on first paint.
-  if (type === 'same_day_appliance') {
-    const productKey = state.axes.product_key;
-    const fallback = productKey
-      ? (SUMMARY_APPLIANCE_LOWER[productKey] ?? 'appliance')
-      : 'appliance';
-    const baseAppliance = resolvedCatalogueName?.trim().toLowerCase() || fallback;
-    const appliance = isBoth
-      ? pluraliseLowerApplianceForBoth(baseAppliance)
-      : baseAppliance;
-    const parts = ['Same-day'];
-    if (archLower) parts.push(archLower);
-    parts.push(appliance);
-    return parts.join(' ');
-  }
-
-  if (type === 'click_in_veneers') {
-    const fallback = 'click-in veneers';
-    const noun = resolvedCatalogueName?.trim().toLowerCase() || fallback;
-    const parts: string[] = [];
-    if (archLower) parts.push(capitaliseFirst(archLower));
-    parts.push(noun);
-    return parts.join(' ');
-  }
-
-  // Fallback for services without bespoke wording — strip HTML from
-  // the configured display_label and prefix arch when set. This
-  // keeps a new service type added to lng_widget_booking_types
-  // readable even before this helper learns about it.
   const cleanLabel = svc.label.replace(/<[^>]*>/g, '').trim();
-  if (archLower) {
-    return `${capitaliseFirst(archLower)} ${cleanLabel.toLowerCase()}`;
-  }
-  return cleanLabel;
-}
-
-// Capitalise only the first letter, leaving the rest intact ("upper
-// and lower" → "Upper and lower"). The `&` rendering you might want
-// on a hero stays the responsibility of the hero formatter — here
-// the running-prose form ("upper and lower") fits the summary card's
-// inline copy register better.
-function capitaliseFirst(s: string): string {
-  if (!s) return s;
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// Lowercase appliance nouns for the summary card running prose.
-// Mirrors `lwo_catalogue.name` (admin > Service types) so the
-// patient sees the same product label they saw on the booking-type
-// tile. If admin renames a catalogue row, update this map and the
-// product-noun map in `lib/queries/appointments.ts` together.
-const SUMMARY_APPLIANCE_LOWER: Record<string, string> = {
-  retainer: 'retainer',
-  night_guard: 'night guard',
-  day_guard: 'day guard',
-  click_in_veneers: 'click-in veneers',
-  missing_tooth: 'missing tooth retainer',
-  aligner: 'replacement aligner',
-  whitening_tray: 'whitening tray',
-  whitening_kit: 'whitening kit',
-};
-
-// Pluralise the lower-case appliance noun for both-arches bookings.
-// Same rule the success-screen helper uses: catalogue labels stored
-// as singular get a +s suffix; words already ending in 's' (e.g.
-// "click-in veneers") pass through untouched.
-function pluraliseLowerApplianceForBoth(label: string): string {
-  const trimmed = label.trim();
-  if (trimmed.length === 0) return trimmed;
-  if (trimmed.endsWith('s')) return trimmed;
-  return `${trimmed}s`;
+  return formatCustomerServiceTitleLabel({
+    service_type: svc.serviceType,
+    event_type_label: cleanLabel || null,
+    arch: state.axes.arch ?? null,
+    product_key: state.axes.product_key ?? null,
+  });
 }
