@@ -631,6 +631,26 @@ Deno.serve(async (req) => {
     .select('id, appointment_ref, manage_token')
     .single();
   if (apptErr || !appt) {
+    // SQLSTATE 23P01 = the lng_appointments_overlap_guard trigger
+    // caught a race between the pre-check above and this insert.
+    // Return the same 409 + conflicts shape so the customer widget's
+    // banner reads identically to a pre-check conflict.
+    if ((apptErr as { code?: string } | null)?.code === '23P01') {
+      const { data: retryConflicts } = await supabase.rpc('lng_booking_check_conflict', {
+        p_location_id: resolvedLocationId,
+        p_service_type: body.serviceType,
+        p_start_at: startAt.toISOString(),
+        p_end_at: endAt.toISOString(),
+        p_exclude_appointment_id: null,
+        p_repair_variant: effectiveRepairVariant,
+        p_product_key: body.productKey ?? null,
+        p_arch: body.arch ?? null,
+      });
+      return jsonResponse(409, {
+        error: 'slot_unavailable',
+        conflicts: Array.isArray(retryConflicts) ? retryConflicts : [],
+      });
+    }
     await logFailure('appointment_insert_failed', { error: apptErr?.message, patientId });
     return jsonResponse(500, { error: 'appointment_insert_failed' });
   }

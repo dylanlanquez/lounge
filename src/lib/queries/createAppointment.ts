@@ -8,6 +8,8 @@ import {
   type RescheduleConflict,
   RescheduleConflictError,
   mapConflictRow,
+  OVERLAP_GUARD_SQLSTATE,
+  throwOverlapAsConflictError,
 } from './rescheduleAppointment.ts';
 import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 
@@ -170,6 +172,21 @@ export async function createAppointment(input: {
     .select('id')
     .single();
   if (insertErr || !insertedRaw) {
+    // SQLSTATE 23P01 = the database-level overlap guard caught a
+    // race that slipped past the pre-check above. Re-fetch the
+    // conflicts so the UI shows the same banner the pre-check
+    // would have shown.
+    if ((insertErr as { code?: string } | null)?.code === OVERLAP_GUARD_SQLSTATE) {
+      await throwOverlapAsConflictError({
+        locationId: input.locationId,
+        serviceType: input.serviceType,
+        startAt: start.toISOString(),
+        endAt: end.toISOString(),
+        repairVariant: input.repairVariant,
+        productKey: input.productKey,
+        arch: input.arch,
+      });
+    }
     throw new Error(`Couldn't create appointment: ${insertErr?.message ?? 'unknown error'}`);
   }
   const appointmentId = (insertedRaw as { id: string }).id;

@@ -101,6 +101,66 @@ interface AppointmentRowMin {
   shopify_order_linked_by: string | null;
 }
 
+// Postgres SQLSTATE raised by lng_appointments_overlap_guard when
+// the post-insert check finds a collision. The guard is the
+// database-level backstop for the rare race between the app's
+// pre-check and the actual write; surfacing it as the same
+// RescheduleConflictError the pre-check throws means the UI
+// presents both kinds of conflict identically.
+export const OVERLAP_GUARD_SQLSTATE = '23P01';
+
+// Helper: when an insert into lng_appointments fails with the guard
+// SQLSTATE, re-run the conflict checker to fetch the precise
+// conflicts list and throw RescheduleConflictError. Falls back to a
+// generic "slot just got taken" RescheduleConflictError if the
+// re-check itself fails or returns nothing (which would be unusual
+// — a race so fast the conflict cleared between insert + re-check).
+export async function throwOverlapAsConflictError(args: {
+  locationId: string;
+  serviceType: BookingServiceType;
+  startAt: string;
+  endAt: string;
+  excludeAppointmentId?: string;
+  repairVariant?: string | null;
+  productKey?: string | null;
+  arch?: 'upper' | 'lower' | 'both' | null;
+}): Promise<never> {
+  let conflicts: RescheduleConflict[] = [];
+  try {
+    conflicts = await checkBookingConflict({
+      locationId: args.locationId,
+      serviceType: args.serviceType,
+      startAt: args.startAt,
+      endAt: args.endAt,
+      excludeAppointmentId: args.excludeAppointmentId,
+      repairVariant: args.repairVariant,
+      productKey: args.productKey,
+      arch: args.arch,
+    });
+  } catch {
+    // ignore — fall through to generic conflict below
+  }
+  if (conflicts.length === 0) {
+    // The race-clear case: the colliding booking was cancelled in
+    // the same millisecond. Surface a minimal conflict so the user
+    // sees "this slot is no longer free" instead of "ok everything's
+    // fine"; they can retry the picker and find a real slot.
+    conflicts = [
+      {
+        conflict_kind: 'max_concurrent',
+        pool_id: null,
+        pool_capacity: 0,
+        current_count: 1,
+        phase_index: null,
+        phase_label: null,
+        conflict_start_at: args.startAt,
+        conflict_end_at: args.endAt,
+      },
+    ];
+  }
+  throw new RescheduleConflictError(conflicts);
+}
+
 // Pre-flight conflict check — used by the reschedule sheet to give
 // live feedback before the user submits. Returns the conflicts list
 // (empty = slot is free). Optional axis pins are forwarded to the RPC
@@ -289,6 +349,22 @@ export async function rescheduleAppointment(input: {
     .select('id')
     .single();
   if (insertErr || !insertedRaw) {
+    // SQLSTATE 23P01 surfaces the lng_appointments_overlap_guard
+    // trigger catching a race that slipped past the pre-check (or
+    // any direct-insert path future-us might add). Re-fetch the
+    // conflicts so the UI shows the same banner as the pre-check.
+    if ((insertErr as { code?: string } | null)?.code === OVERLAP_GUARD_SQLSTATE) {
+      await throwOverlapAsConflictError({
+        locationId: existing.location_id,
+        serviceType,
+        startAt: newStart.toISOString(),
+        endAt: newEnd.toISOString(),
+        excludeAppointmentId: existing.id,
+        repairVariant: existing.repair_variant,
+        productKey: existing.product_key,
+        arch: existing.arch,
+      });
+    }
     throw new Error(`Couldn't create new appointment: ${insertErr?.message ?? 'unknown error'}`);
   }
   const newAppointmentId = (insertedRaw as { id: string }).id;
