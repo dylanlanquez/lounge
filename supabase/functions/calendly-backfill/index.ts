@@ -11,6 +11,7 @@
 // using is_admin() RLS via a service-role probe.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { serviceTypeFromCalendlyLabel } from '../_shared/serviceTypeFromCalendly.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -329,7 +330,7 @@ async function applyInvitee(
   // re-resolve: create a new patient and re-point the appointment.
   const { data: existingAppt } = await supabase
     .from('lng_appointments')
-    .select('id, intake, event_type_label, patient_id, join_url, deposit_pence')
+    .select('id, intake, event_type_label, patient_id, join_url, deposit_pence, service_type')
     .eq('calendly_invitee_uri', inv.uri)
     .maybeSingle();
 
@@ -341,6 +342,7 @@ async function applyInvitee(
       patient_id: string;
       join_url: string | null;
       deposit_pence: number | null;
+      service_type: string | null;
     };
 
     let nextPatientId = cur.patient_id;
@@ -393,6 +395,15 @@ async function applyInvitee(
     if (cur.event_type_label == null && evt.name) patch.event_type_label = evt.name;
     if (cur.join_url == null && join_url) patch.join_url = join_url;
     if (nextPatientId !== cur.patient_id) patch.patient_id = nextPatientId;
+    // Fill-blanks service_type so the phase-materialise trigger
+    // resolves the right phase shape on backfilled rows. Without
+    // this the appointment stays unphased and the conflict checker
+    // sees no pool claims, letting the customer widget overbook
+    // the impression clinician.
+    if (cur.service_type == null) {
+      const derived = serviceTypeFromCalendlyLabel(evt.name ?? cur.event_type_label);
+      if (derived) patch.service_type = derived;
+    }
     // Fill-blanks the deposit so backfill picks up payments on bookings
     // that pre-date deposit ingest. Never overwrite an existing deposit
     // — the receptionist may have manually corrected it.
@@ -436,6 +447,7 @@ async function applyInvitee(
     start_at: evt.start_time,
     end_at: evt.end_time,
     event_type_label: evt.name,
+    service_type: serviceTypeFromCalendlyLabel(evt.name),
     intake,
     join_url,
     status: 'booked',

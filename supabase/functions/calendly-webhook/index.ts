@@ -14,6 +14,7 @@
 // Supabase. We rely entirely on the HMAC signature for auth.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { serviceTypeFromCalendlyLabel } from '../_shared/serviceTypeFromCalendly.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -288,7 +289,11 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
     });
   }
 
-  // Insert lng_appointments
+  // Insert lng_appointments. service_type is derived from the
+  // Calendly event-type name so the phase-materialise trigger can
+  // resolve the right phase shape — without it the appointment
+  // lands with zero pool claims and overlapping impression
+  // bookings would slip past the conflict check.
   const { error: apptErr } = await supabase
     .from('lng_appointments')
     .insert({
@@ -300,6 +305,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       start_at: startAt,
       end_at: endAt,
       event_type_label: eventTypeLabel,
+      service_type: serviceTypeFromCalendlyLabel(eventTypeLabel),
       intake,
       join_url,
       status: 'booked',
