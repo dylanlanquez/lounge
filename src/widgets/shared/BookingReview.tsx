@@ -51,7 +51,7 @@ export function BookingReview({
   const serviceLine = state.service
     ? isRepair
       ? state.service.label.replace(/<[^>]*>/g, '').trim()
-      : formatSummaryServiceLine(state)
+      : formatSummaryServiceLine(state, api.resolvedRow?.name ?? null)
     : null;
 
   // Build the row set in order so we can render hairlines between
@@ -859,7 +859,10 @@ export function formatSlotLong(iso: string): string {
 // phrasings as amateur. Canonical is "Upper & lower retainers"
 // across every surface, with this card running the prose-form
 // variant ("upper & lower retainers" mid-sentence after "Same-day").
-function formatSummaryServiceLine(state: WidgetState): string | null {
+function formatSummaryServiceLine(
+  state: WidgetState,
+  resolvedCatalogueName: string | null,
+): string | null {
   const svc = state.service;
   if (!svc) return null;
   const type = svc.serviceType;
@@ -874,11 +877,17 @@ function formatSummaryServiceLine(state: WidgetState): string | null {
           ? 'upper & lower'
           : null;
 
+  // Prefer the live catalogue name over the local fallback map so a
+  // rename in admin > Service types propagates here automatically.
+  // Lowercased for the prose register this card uses ("Same-day
+  // upper retainer"). Falls back to SUMMARY_APPLIANCE_LOWER only
+  // while the resolver is still in flight on first paint.
   if (type === 'same_day_appliance') {
     const productKey = state.axes.product_key;
-    const baseAppliance = productKey
+    const fallback = productKey
       ? (SUMMARY_APPLIANCE_LOWER[productKey] ?? 'appliance')
       : 'appliance';
+    const baseAppliance = resolvedCatalogueName?.trim().toLowerCase() || fallback;
     const appliance = isBoth
       ? pluraliseLowerApplianceForBoth(baseAppliance)
       : baseAppliance;
@@ -889,9 +898,11 @@ function formatSummaryServiceLine(state: WidgetState): string | null {
   }
 
   if (type === 'click_in_veneers') {
+    const fallback = 'click-in veneers';
+    const noun = resolvedCatalogueName?.trim().toLowerCase() || fallback;
     const parts: string[] = [];
     if (archLower) parts.push(capitaliseFirst(archLower));
-    parts.push('click-in veneers');
+    parts.push(noun);
     return parts.join(' ');
   }
 

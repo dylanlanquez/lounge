@@ -930,20 +930,20 @@ function productLabelFor(productKey: string | undefined): string | null {
   }
 }
 
-// Title-case appliance nouns for headline contexts (success card,
-// future confirmation email subject). Mirrors `lwo_catalogue.name`
-// (admin > Service types) so the booking headline matches the
-// product the patient picked. Differs from productLabelFor above
-// which serves running-prose ("Which retainer do you need?").
-// Catalogue names are sentence-cased in admin ("Night guard", not
-// "Night Guard") — preserve that exactly so the headline reads as
-// the admin labelled it.
-const APPLIANCE_TITLE: Record<string, string> = {
+// Fallback appliance names — only consulted when the resolved
+// catalogue row hasn't loaded yet (the first paint of the success
+// card before the resolver settles). The live render reads
+// `resolvedRow.name` from lwo_catalogue directly, so renames in
+// admin > Service types propagate automatically without needing
+// this map updated. Kept here purely so the first paint isn't
+// blank; mirrors what the admin currently has set so the fallback
+// reads correctly even when the resolver hasn't returned.
+const APPLIANCE_TITLE_FALLBACK: Record<string, string> = {
   retainer: 'Retainer',
   night_guard: 'Night guard',
   day_guard: 'Day guard',
   click_in_veneers: 'Click-in veneers',
-  missing_tooth: 'Missing tooth retainer',
+  missing_tooth: 'Missing Tooth Retainer',
 };
 
 const ARCH_TITLE: Record<string, string> = {
@@ -996,7 +996,10 @@ function pluraliseApplianceForBoth(label: string): string {
  * dangerouslySetInnerHTML elsewhere but the headline context wants
  * plain text only.
  */
-export function formatBookingSuccessTitle(state: WidgetState): string {
+export function formatBookingSuccessTitle(
+  state: WidgetState,
+  resolvedCatalogueName?: string | null,
+): string {
   const svc = state.service;
   if (!svc) return '';
   const type = svc.serviceType;
@@ -1004,25 +1007,24 @@ export function formatBookingSuccessTitle(state: WidgetState): string {
   const isBoth = archKey === 'both';
   const arch = archKey ? ARCH_TITLE[archKey] : null;
 
-  if (type === 'click_in_veneers') {
-    // Click-in Veneers is already plural in its singular form, so
-    // pluralisation is a no-op. Arch first, name second.
+  // For appliance-shaped services (click-in veneers, same-day
+  // appliance) we want the actual catalogue name — that's what the
+  // admin set in admin > Service types and what every other surface
+  // (cart, receipts, schedule) shows. Falls back to the hardcoded
+  // map ONLY when the resolver hasn't returned yet (first paint),
+  // so a stale rename in the map can never out-shout the DB.
+  if (type === 'click_in_veneers' || type === 'same_day_appliance') {
+    const fallback =
+      type === 'click_in_veneers'
+        ? 'Click-in veneers'
+        : state.axes.product_key
+          ? (APPLIANCE_TITLE_FALLBACK[state.axes.product_key] ?? 'Appliance')
+          : 'Appliance';
+    const baseName = resolvedCatalogueName?.trim() || fallback;
+    const name = isBoth ? pluraliseApplianceForBoth(baseName) : baseName;
     const parts: string[] = [];
     if (arch) parts.push(arch);
-    parts.push('Click-in Veneers');
-    return parts.join(' ');
-  }
-
-  if (type === 'same_day_appliance') {
-    const baseAppliance = state.axes.product_key
-      ? (APPLIANCE_TITLE[state.axes.product_key] ?? 'Appliance')
-      : 'Appliance';
-    const appliance = isBoth
-      ? pluraliseApplianceForBoth(baseAppliance)
-      : baseAppliance;
-    const parts: string[] = [];
-    if (arch) parts.push(arch);
-    parts.push(appliance);
+    parts.push(name);
     return parts.join(' ');
   }
 

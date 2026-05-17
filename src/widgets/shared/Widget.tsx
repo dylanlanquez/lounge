@@ -437,6 +437,7 @@ function WidgetReady({
     return (
       <SuccessScreen
         state={api.state}
+        resolvedCatalogueName={api.resolvedRow?.name ?? null}
         upgrades={api.upgrades}
         priceBreakdown={api.priceBreakdown}
         appointmentRef={submission.appointmentRef}

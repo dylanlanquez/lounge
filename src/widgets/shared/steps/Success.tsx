@@ -45,6 +45,7 @@ import { env } from '../../../lib/env.ts';
 
 export function SuccessScreen({
   state,
+  resolvedCatalogueName,
   upgrades,
   priceBreakdown,
   appointmentRef,
@@ -55,6 +56,12 @@ export function SuccessScreen({
   onClose,
 }: {
   state: WidgetState;
+  /** The live `lwo_catalogue.name` for the resolved booking. Used to
+   *  render the success-card sub-title with the admin-configured
+   *  product spelling instead of a hardcoded map. Null when the
+   *  resolver hasn't returned yet — the fallback in
+   *  formatBookingSuccessTitle handles that case. */
+  resolvedCatalogueName: string | null;
   /** The full upgrade rows loaded by the booking-state hook. Used to
    *  resolve the names of `state.upgradeIds` for the "What you booked"
    *  section. Empty array for services without upgrades. */
@@ -173,7 +180,7 @@ export function SuccessScreen({
                 lineHeight: 1.45,
               }}
             >
-              {formatBookingSuccessTitle(state)}
+              {formatBookingSuccessTitle(state, resolvedCatalogueName)}
             </div>
           ) : null}
 
