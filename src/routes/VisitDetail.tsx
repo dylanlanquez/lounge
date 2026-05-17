@@ -3427,17 +3427,21 @@ function Totals({
     >
       <Row label="Subtotal" value={formatPence(subtotal)} />
       {discount > 0 ? (
-        <>
+        activeDiscount ? (
+          // Manager-approved cart discount: the Discount row AND
+          // the approver row live inside the same accent banner so
+          // the reduction + its authorisation read as one unit.
+          <DiscountBanner
+            amountPence={discount}
+            approverName={activeDiscount.approver_name}
+            reason={activeDiscount.reason}
+            onAmend={discountEditable ? onAmendDiscount : undefined}
+            onRemove={discountEditable ? onRemoveDiscount : undefined}
+          />
+        ) : (
+          // Per-line discounts (no manager approval) — plain row.
           <Row label="Discount" value={`-${formatPence(discount)}`} />
-          {activeDiscount ? (
-            <DiscountApproverRow
-              approverName={activeDiscount.approver_name}
-              reason={activeDiscount.reason}
-              onAmend={discountEditable ? onAmendDiscount : undefined}
-              onRemove={discountEditable ? onRemoveDiscount : undefined}
-            />
-          ) : null}
-        </>
+        )
       ) : null}
       {depositPence > 0 ? (
         <Row
@@ -3818,16 +3822,20 @@ function Row({ label, value, accent = false }: { label: string; value: string; a
   );
 }
 
-// Hairline approver row that sits directly under the "Discount" row
-// in the Totals so staff can see at a glance who authorised the
-// reduction and why. The DiscountIcon picks up the accent colour so
-// the row reads as visually tied to the line above — quiet, not OTT.
-function DiscountApproverRow({
+// Combined Discount row + approver banner. Renders the reduction
+// amount and the authorising-manager / reason / controls inside
+// one soft accent box so the bill, the approval, and the controls
+// all read as a single unit. Mirrors the muted treatment used for
+// status banners elsewhere (Waiver card, paid pill) without
+// competing with them.
+function DiscountBanner({
+  amountPence,
   approverName,
   reason,
   onAmend,
   onRemove,
 }: {
+  amountPence: number;
   approverName: string | null;
   reason: string;
   onAmend: (() => void) | undefined;
@@ -3836,57 +3844,85 @@ function DiscountApproverRow({
   return (
     <div
       style={{
-        // Soft accent banner so the row reads as a distinct
-        // approval pill tied to the Discount line above. Mirrors
-        // the muted treatment used for status banners elsewhere
-        // (Waiver card, paid pill) without competing with them
-        // for attention.
         background: theme.color.accentBg,
         borderRadius: theme.radius.input,
-        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        padding: `${theme.space[3]}px ${theme.space[3]}px`,
         marginTop: theme.space[1],
         marginBottom: theme.space[1],
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: theme.space[3],
-        flexWrap: 'wrap',
+        flexDirection: 'column',
+        gap: theme.space[2],
       }}
     >
-      <span
+      {/* Top — the Discount amount line. Same layout as the other
+          Totals rows so the eye lands on the same right-aligned
+          number column. */}
+      <div
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          fontSize: theme.type.size.sm,
-          color: theme.color.ink,
-          lineHeight: theme.type.leading.snug,
-          minWidth: 0,
-          fontWeight: theme.type.weight.medium,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
         }}
       >
-        <span style={{ display: 'inline-flex', flexShrink: 0 }} aria-hidden>
-          <DiscountIcon size={14} color={theme.color.accent} />
+        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+          Discount
         </span>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          Approved by {approverName ?? 'manager'}
-          {reason ? ` · ${reason}` : ''}
+        <span
+          style={{
+            color: theme.color.accent,
+            fontVariantNumeric: 'tabular-nums',
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+          }}
+        >
+          -{formatPence(amountPence)}
         </span>
-      </span>
-      {(onAmend || onRemove) ? (
-        <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
-          {onAmend ? (
-            <Button variant="tertiary" size="sm" onClick={onAmend}>
-              Amend
-            </Button>
-          ) : null}
-          {onRemove ? (
-            <Button variant="tertiary" size="sm" onClick={onRemove}>
-              Remove
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      </div>
+      {/* Bottom — approver + controls. */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: theme.space[3],
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.snug,
+            minWidth: 0,
+            fontWeight: theme.type.weight.medium,
+          }}
+        >
+          <span style={{ display: 'inline-flex', flexShrink: 0 }} aria-hidden>
+            <DiscountIcon size={14} color={theme.color.accent} />
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            Approved by {approverName ?? 'manager'}
+            {reason ? ` · ${reason}` : ''}
+          </span>
+        </span>
+        {(onAmend || onRemove) ? (
+          <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
+            {onAmend ? (
+              <Button variant="tertiary" size="sm" onClick={onAmend}>
+                Amend
+              </Button>
+            ) : null}
+            {onRemove ? (
+              <Button variant="tertiary" size="sm" onClick={onRemove}>
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
