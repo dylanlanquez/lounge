@@ -127,3 +127,76 @@ export async function previewPreLaunchBackfillCount(iso: string): Promise<number
   if (error) throw new Error(error.message);
   return count ?? 0;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Test-patient appointment wipe
+// ─────────────────────────────────────────────────────────────────────
+//
+// Hard-coded list of Dylan's pre-launch test inboxes. Centralised so
+// the preview + the wipe use the same set and so there's a single
+// place to add an inbox if Dylan starts using another address.
+
+export const TEST_PATIENT_EMAILS: readonly string[] = [
+  'dylan@venneir.com',
+  'dylanjmlane@icloud.com',
+  'dylan@lanquez.com',
+  'hello@lanquez.com',
+  'alex@venneir.com',
+];
+
+export interface WipeTestPatientAppointmentsResult {
+  patients: number;
+  appointments: number;
+}
+
+/**
+ * Preview how many patients + appointments the wipe would affect.
+ * Uses two cheap count queries instead of running the RPC, so the
+ * confirm sheet can show real numbers before the operator commits.
+ */
+export async function previewTestPatientAppointmentsWipe(
+  emails: readonly string[],
+): Promise<WipeTestPatientAppointmentsResult> {
+  const lowered = emails.map((e) => e.toLowerCase());
+  const patientsRes = await supabase
+    .from('patients')
+    .select('id')
+    .in('email', lowered);
+  if (patientsRes.error) throw new Error(patientsRes.error.message);
+  const patientIds = (patientsRes.data ?? []).map((r) => (r as { id: string }).id);
+  if (patientIds.length === 0) return { patients: 0, appointments: 0 };
+
+  const apptRes = await supabase
+    .from('lng_appointments')
+    .select('id', { head: true, count: 'exact' })
+    .in('patient_id', patientIds);
+  if (apptRes.error) throw new Error(apptRes.error.message);
+  return { patients: patientIds.length, appointments: apptRes.count ?? 0 };
+}
+
+/**
+ * Invoke lng_wipe_test_patient_appointments(p_emails). Deletes every
+ * appointment + cascaded artefact for patients whose email matches one
+ * in the supplied list. Idempotent — a re-run with the same emails
+ * after a successful wipe deletes zero extra rows. Returns the count
+ * pair the RPC computed.
+ */
+export async function wipeTestPatientAppointments(
+  emails: readonly string[],
+): Promise<WipeTestPatientAppointmentsResult> {
+  const { data, error } = await supabase.rpc('lng_wipe_test_patient_appointments', {
+    p_emails: emails,
+  });
+  if (error) throw new Error(error.message);
+  // Supabase returns set-returning function results as an array of
+  // rows; the function emits exactly one row.
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== 'object') {
+    throw new Error('Unexpected response from lng_wipe_test_patient_appointments');
+  }
+  const r = row as { patients?: number; appointments?: number };
+  return {
+    patients: Number(r.patients ?? 0),
+    appointments: Number(r.appointments ?? 0),
+  };
+}

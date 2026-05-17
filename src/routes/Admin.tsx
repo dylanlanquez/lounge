@@ -76,9 +76,12 @@ import {
 } from '../lib/queries/admin.ts';
 import {
   previewPreLaunchBackfillCount,
+  previewTestPatientAppointmentsWipe,
   runPreLaunchBackfill,
   setLaunchDate,
+  TEST_PATIENT_EMAILS,
   useLaunchDate,
+  wipeTestPatientAppointments,
 } from '../lib/queries/launchDate.ts';
 import { humaniseStatus } from '../lib/queries/appointments.ts';
 import {
@@ -918,6 +921,13 @@ function TestingTab() {
           cleanup) follows from it. */}
       <LaunchCard onToast={setToast} />
 
+      {/* Test-patient wipe — deletes every appointment + downstream
+          artefact for Dylan's five test inboxes. Sits between Launch
+          and Legacy cash count because it's the "make the schedule
+          actually empty" step before flipping the launch switch.
+          Destructive: rows go for good (no soft-delete fallback). */}
+      <WipeTestAppointmentsCard onToast={setToast} />
+
       {/* Legacy cash count — admin entry point for resetting the cash
           chain at launch / re-launch. Card sits at the top of the
           Testing tab because it's a launch-prep tool (everything below
@@ -1371,6 +1381,195 @@ function LaunchCard({
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
             Idempotent. Running it again later updates zero extra rows.
           </p>
+        </div>
+      </BottomSheet>
+    </Card>
+  );
+}
+
+// Wipe-test-appointments card on the Testing tab. Hard-coded inbox
+// list (TEST_PATIENT_EMAILS in launchDate.ts) so the operator can't
+// accidentally point this at a real patient — the surface is "wipe
+// MY test data", not "wipe arbitrary patient data". The RPC keeps
+// the patient profile rows but removes every appointment + every
+// cascaded artefact (visits, carts, payments, receipts, phases,
+// upgrades, repair items, intake photos, meet hosts, email
+// messages, appointment-keyed patient_events).
+function WipeTestAppointmentsCard({
+  onToast,
+}: {
+  onToast: (toast: { tone: 'success' | 'error'; title: string; description?: string }) => void;
+}) {
+  const [preview, setPreview] = useState<{ patients: number; appointments: number } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(true);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewLoading(true);
+    (async () => {
+      try {
+        const res = await previewTestPatientAppointmentsWipe(TEST_PATIENT_EMAILS);
+        if (cancelled) return;
+        setPreview(res);
+        setPreviewError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setPreview(null);
+        setPreviewError(e instanceof Error ? e.message : 'Could not preview wipe');
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [nonce]);
+
+  const refresh = () => setNonce((n) => n + 1);
+
+  const onRun = async () => {
+    if (running) return;
+    setRunning(true);
+    try {
+      const res = await wipeTestPatientAppointments(TEST_PATIENT_EMAILS);
+      onToast({
+        tone: 'success',
+        title:
+          res.appointments === 0
+            ? 'Nothing to wipe'
+            : `Wiped ${res.appointments} appointment${res.appointments === 1 ? '' : 's'}`,
+        description:
+          res.appointments === 0
+            ? 'Test inboxes already have a clean slate.'
+            : `Across ${res.patients} patient${res.patients === 1 ? '' : 's'}. Profile rows kept; every booking + downstream record removed.`,
+      });
+      setConfirmOpen(false);
+      refresh();
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Wipe failed',
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const hasAny = (preview?.appointments ?? 0) > 0;
+
+  return (
+    <Card padding="lg">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Trash2 size={20} /> Wipe test appointments
+            </span>
+          </h2>
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+              lineHeight: theme.type.leading.normal,
+            }}
+          >
+            Deletes every appointment, visit, cart, payment, receipt, phase, upgrade, repair line, intake photo, and timeline event tied to these five test inboxes. Patient profile rows stay so Dylan can keep re-using them post-launch. Destructive — no undo.
+          </p>
+          <ul
+            style={{
+              margin: `${theme.space[3]}px 0 0`,
+              padding: 0,
+              listStyle: 'none',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: theme.space[2],
+            }}
+          >
+            {TEST_PATIENT_EMAILS.map((e) => (
+              <li
+                key={e}
+                style={{
+                  padding: `${theme.space[1]}px ${theme.space[2]}px`,
+                  borderRadius: 999,
+                  background: theme.color.surface,
+                  border: `1px solid ${theme.color.border}`,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {e}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => setConfirmOpen(true)}
+          disabled={previewLoading || !hasAny}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Trash2 size={14} /> Wipe appointments
+          </span>
+        </Button>
+      </div>
+
+      <div style={{ marginTop: theme.space[4], fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontVariantNumeric: 'tabular-nums' }}>
+        {previewLoading
+          ? 'Counting test bookings…'
+          : previewError
+            ? previewError
+            : !preview
+              ? 'No data.'
+              : preview.appointments === 0
+                ? `${preview.patients} test patient${preview.patients === 1 ? '' : 's'} found, no appointments to wipe.`
+                : `${preview.appointments.toLocaleString('en-GB')} appointment${preview.appointments === 1 ? '' : 's'} across ${preview.patients} test patient${preview.patients === 1 ? '' : 's'} ready to wipe.`}
+      </div>
+
+      <BottomSheet
+        open={confirmOpen}
+        onClose={running ? () => undefined : () => setConfirmOpen(false)}
+        title="Wipe every test appointment?"
+        description={
+          preview && preview.appointments > 0
+            ? `${preview.appointments.toLocaleString('en-GB')} appointment${preview.appointments === 1 ? '' : 's'} across ${preview.patients} test patient${preview.patients === 1 ? '' : 's'}. Every visit, cart, payment, receipt, phase, repair line, upgrade, intake photo, meet host, email record, and appointment-keyed timeline event for these inboxes will be deleted. There is no undo.`
+            : 'Nothing to wipe.'
+        }
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={running}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Not yet
+              </span>
+            </Button>
+            <Button variant="primary" onClick={onRun} loading={running} disabled={!hasAny}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Trash2 size={16} aria-hidden />
+                {preview && preview.appointments > 0
+                  ? `Wipe ${preview.appointments.toLocaleString('en-GB')}`
+                  : 'Wipe'}
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
+            Idempotent. A re-run after a successful wipe finds nothing and reports 0.
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+            {TEST_PATIENT_EMAILS.map((e) => (
+              <li key={e} style={{ fontSize: theme.type.size.sm, color: theme.color.ink, fontFamily: 'monospace' }}>
+                {e}
+              </li>
+            ))}
+          </ul>
         </div>
       </BottomSheet>
     </Card>
