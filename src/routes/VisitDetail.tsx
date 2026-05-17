@@ -3836,15 +3836,20 @@ function DiscountApproverRow({
   return (
     <div
       style={{
+        // Soft accent banner so the row reads as a distinct
+        // approval pill tied to the Discount line above. Mirrors
+        // the muted treatment used for status banners elsewhere
+        // (Waiver card, paid pill) without competing with them
+        // for attention.
+        background: theme.color.accentBg,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        marginTop: theme.space[1],
+        marginBottom: theme.space[1],
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
         gap: theme.space[3],
-        // Indent so the row reads as a child of the Discount line
-        // above. paddingLeft matches the left edge of the Discount
-        // label visually.
-        paddingLeft: theme.space[3],
-        marginTop: -theme.space[1],
         flexWrap: 'wrap',
       }}
     >
@@ -3853,14 +3858,15 @@ function DiscountApproverRow({
           display: 'inline-flex',
           alignItems: 'center',
           gap: theme.space[2],
-          fontSize: theme.type.size.xs,
-          color: theme.color.inkMuted,
+          fontSize: theme.type.size.sm,
+          color: theme.color.ink,
           lineHeight: theme.type.leading.snug,
           minWidth: 0,
+          fontWeight: theme.type.weight.medium,
         }}
       >
         <span style={{ display: 'inline-flex', flexShrink: 0 }} aria-hidden>
-          <DiscountIcon size={12} color={theme.color.accent} />
+          <DiscountIcon size={14} color={theme.color.accent} />
         </span>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
           Approved by {approverName ?? 'manager'}
@@ -3868,7 +3874,7 @@ function DiscountApproverRow({
         </span>
       </span>
       {(onAmend || onRemove) ? (
-        <div style={{ display: 'flex', gap: theme.space[2], flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: theme.space[1], flexShrink: 0 }}>
           {onAmend ? (
             <Button variant="tertiary" size="sm" onClick={onAmend}>
               Amend
