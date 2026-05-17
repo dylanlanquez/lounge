@@ -104,24 +104,62 @@ async function handle(req: Request): Promise<Response> {
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   // ── Load templates ─────────────────────────────────────────────
-  // Load standard + virtual reminder templates in parallel. The
-  // virtual template is optional — a missing row means virtual
-  // appointments are skipped (logged per-row), not a hard failure.
-  const [stdResult, vrtResult] = await Promise.all([
-    admin.from('lng_email_templates').select('subject, body_syntax, enabled').eq('key', 'appointment_reminder').maybeSingle(),
-    admin.from('lng_email_templates').select('subject, body_syntax, enabled').eq('key', 'appointment_reminder_virtual').maybeSingle(),
-  ]);
-  if (stdResult.error) {
-    return jsonResponse(200, { ok: false, error: `Template read failed: ${stdResult.error.message}` });
+  // Per-service overrides (M17): we may have multiple rows per
+  // template key — the General (service_type=null) plus a row per
+  // booking service that's been customised. Fetch every variant in
+  // a single read and resolve per appointment inside the loop.
+  //
+  // The virtual template is optional — a missing General row means
+  // virtual appointments are skipped (logged per-row), not a hard
+  // failure for the whole sweep.
+  const { data: tplRows, error: tplErr } = await admin
+    .from('lng_email_templates')
+    .select('key, service_type, subject, body_syntax, enabled')
+    .in('key', ['appointment_reminder', 'appointment_reminder_virtual']);
+  if (tplErr) {
+    return jsonResponse(200, { ok: false, error: `Template read failed: ${tplErr.message}` });
   }
-  if (!stdResult.data) {
+  // variantsByKey[key].get(serviceType ?? '__general__') → row.
+  // resolveTemplate() walks that map: prefer the service-typed
+  // entry, fall back to the General.
+  type TemplateVariant = { subject: string; body_syntax: string; enabled: boolean };
+  const variantsByKey: Record<string, Map<string, TemplateVariant>> = {};
+  for (const row of (tplRows ?? []) as Array<{
+    key: string;
+    service_type: string | null;
+    subject: string;
+    body_syntax: string;
+    enabled: boolean;
+  }>) {
+    const slot = variantsByKey[row.key] ?? new Map<string, TemplateVariant>();
+    slot.set(row.service_type ?? '__general__', {
+      subject: row.subject,
+      body_syntax: row.body_syntax,
+      enabled: row.enabled,
+    });
+    variantsByKey[row.key] = slot;
+  }
+  const resolveTemplate = (
+    key: string,
+    serviceType: string | null,
+  ): TemplateVariant | null => {
+    const slot = variantsByKey[key];
+    if (!slot) return null;
+    if (serviceType && slot.has(serviceType)) return slot.get(serviceType)!;
+    return slot.get('__general__') ?? null;
+  };
+  // Backwards-compatible aliases the rest of the function still
+  // reads. standardTemplate is the General default for the
+  // non-virtual reminder; virtualTemplate the General for virtual.
+  // Per-service overrides are resolved per row via resolveTemplate.
+  const standardTemplate = resolveTemplate('appointment_reminder', null);
+  if (!standardTemplate) {
     return jsonResponse(200, { ok: false, error: 'No appointment_reminder template configured' });
   }
-  const standardTemplate = stdResult.data as { subject: string; body_syntax: string; enabled: boolean };
   if (!standardTemplate.enabled) {
     return jsonResponse(200, { ok: true, sent: 0, skipped: 0, failed: 0, paused: true });
   }
-  const virtualTemplate = (vrtResult.data ?? null) as { subject: string; body_syntax: string; enabled: boolean } | null;
+  const virtualTemplate = resolveTemplate('appointment_reminder_virtual', null);
 
   // ── Optional single-shot path ─────────────────────────────────
   // Body { appointmentId } bypasses the sweep entirely so the
@@ -196,7 +234,18 @@ async function handle(req: Request): Promise<Response> {
 
   for (const apt of rows) {
     try {
-      const result = await processOne(admin, { standard: standardTemplate, virtual: virtualTemplate }, apt);
+      // Per-row template resolution (M17): prefer the service-
+      // specific override for this booking's service_type, fall
+      // back to the General. Virtual reminders read the
+      // appointment_reminder_virtual variant set; non-virtual
+      // reads appointment_reminder.
+      const perRowStandard =
+        resolveTemplate('appointment_reminder', apt.service_type ?? null) ??
+        standardTemplate;
+      const perRowVirtual =
+        resolveTemplate('appointment_reminder_virtual', apt.service_type ?? null) ??
+        virtualTemplate;
+      const result = await processOne(admin, { standard: perRowStandard, virtual: perRowVirtual }, apt);
       if (result.outcome === 'sent') sent += 1;
       else if (result.outcome === 'skipped') skipped += 1;
       else {

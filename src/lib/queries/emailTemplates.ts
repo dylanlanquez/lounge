@@ -21,6 +21,11 @@ import { supabase } from '../supabase.ts';
 
 export interface EmailTemplateRow {
   key: string;
+  /** null = General default row; non-null = per-service override
+   *  (M17). Edge functions prefer the service-typed override when
+   *  the appointment's service_type matches, fall back to the
+   *  General when no override exists for that service. */
+  service_type: string | null;
   subject: string;
   body_syntax: string;
   default_subject: string;
@@ -35,6 +40,7 @@ export interface EmailTemplateRow {
 export interface EmailTemplateHistoryRow {
   id: string;
   template_key: string;
+  service_type: string | null;
   version: number;
   subject: string;
   body_syntax: string;
@@ -87,7 +93,10 @@ interface UseEmailTemplateHistoryResult {
   refresh: () => void;
 }
 
-export function useEmailTemplateHistory(templateKey: string): UseEmailTemplateHistoryResult {
+export function useEmailTemplateHistory(
+  templateKey: string,
+  serviceType: string | null = null,
+): UseEmailTemplateHistoryResult {
   const [data, setData] = useState<EmailTemplateHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,11 +107,15 @@ export function useEmailTemplateHistory(templateKey: string): UseEmailTemplateHi
     (async () => {
       setLoading(true);
       setError(null);
-      const { data: rows, error: err } = await supabase
+      let q = supabase
         .from('lng_email_template_history')
         .select('*')
-        .eq('template_key', templateKey)
-        .order('version', { ascending: false });
+        .eq('template_key', templateKey);
+      // History is scoped per (template_key, service_type) so the
+      // General default's version trail and a service-specific
+      // override's version trail don't bleed into each other.
+      q = serviceType ? q.eq('service_type', serviceType) : q.is('service_type', null);
+      const { data: rows, error: err } = await q.order('version', { ascending: false });
       if (cancelled) return;
       if (err) {
         setError(err.message);
@@ -114,7 +127,7 @@ export function useEmailTemplateHistory(templateKey: string): UseEmailTemplateHi
     return () => {
       cancelled = true;
     };
-  }, [templateKey, tick]);
+  }, [templateKey, serviceType, tick]);
 
   return { data, loading, error, refresh: () => setTick((t) => t + 1) };
 }
@@ -135,18 +148,69 @@ export function useEmailTemplateHistory(templateKey: string): UseEmailTemplateHi
 
 export async function saveEmailTemplate(input: {
   key: string;
+  /** null = General default; non-null = service-specific override.
+   *  When non-null and no override row exists yet, the helper
+   *  creates one by copying default_* columns from the General
+   *  row so the new override has a sensible starting point and a
+   *  valid "default to reset to". */
+  service_type?: string | null;
   subject: string;
   body_syntax: string;
   enabled?: boolean;
 }): Promise<{ ok: true; version: number }> {
-  const { data: existing, error: readErr } = await supabase
+  const serviceType = input.service_type ?? null;
+
+  // Read the (key, service_type) row directly.
+  let read = supabase
     .from('lng_email_templates')
-    .select('version, subject, body_syntax')
-    .eq('key', input.key)
-    .maybeSingle();
+    .select('version, subject, body_syntax, default_subject, default_body_syntax')
+    .eq('key', input.key);
+  read = serviceType ? read.eq('service_type', serviceType) : read.is('service_type', null);
+  const { data: existing, error: readErr } = await read.maybeSingle();
   if (readErr) throw new Error(`Couldn't read template: ${readErr.message}`);
-  if (!existing) throw new Error(`Template "${input.key}" not found.`);
-  const existingRow = existing as { version: number; subject: string; body_syntax: string };
+
+  // Resolve the actor account for the audit columns.
+  const { data: actorRaw } = await supabase.rpc('auth_account_id');
+  const actorAccountId = (actorRaw as string | null) ?? null;
+
+  // No row yet for this (key, service_type) — happens the first
+  // time an admin customises a service-typed override. Seed it
+  // from the General row so the override has its own default_*
+  // baseline to reset back to.
+  if (!existing) {
+    if (!serviceType) {
+      throw new Error(`Template "${input.key}" not found.`);
+    }
+    const { data: general, error: genErr } = await supabase
+      .from('lng_email_templates')
+      .select('default_subject, default_body_syntax')
+      .eq('key', input.key)
+      .is('service_type', null)
+      .maybeSingle();
+    if (genErr) throw new Error(`Couldn't read General template: ${genErr.message}`);
+    if (!general) throw new Error(`No General row to seed override from for "${input.key}".`);
+    const seedDefaults = general as { default_subject: string; default_body_syntax: string };
+    const { error: insErr } = await supabase.from('lng_email_templates').insert({
+      key: input.key,
+      service_type: serviceType,
+      subject: input.subject,
+      body_syntax: input.body_syntax,
+      default_subject: seedDefaults.default_subject,
+      default_body_syntax: seedDefaults.default_body_syntax,
+      version: 1,
+      enabled: input.enabled ?? true,
+      updated_by: actorAccountId,
+    });
+    if (insErr) throw new Error(`Couldn't create override: ${insErr.message}`);
+    return { ok: true, version: 1 };
+  }
+  const existingRow = existing as {
+    version: number;
+    subject: string;
+    body_syntax: string;
+    default_subject: string;
+    default_body_syntax: string;
+  };
 
   // Skip writing if nothing changed — saves a wasted history row
   // and a bumped version number for a no-op click. The admin UI's
@@ -159,29 +223,23 @@ export async function saveEmailTemplate(input: {
     return { ok: true, version: existingRow.version };
   }
 
-  // Resolve the actor account for the audit columns.
-  const { data: actorRaw } = await supabase.rpc('auth_account_id');
-  const actorAccountId = (actorRaw as string | null) ?? null;
-
   // Snapshot the current row to history at the OLD version so the
   // history has a complete trail. version 1 was already inserted at
   // seed time so the table starts populated.
   if (!subjectSame || !bodySame) {
     const { error: histErr } = await supabase.from('lng_email_template_history').insert({
       template_key: input.key,
+      service_type: serviceType,
       version: existingRow.version,
       subject: existingRow.subject,
       body_syntax: existingRow.body_syntax,
       saved_by: actorAccountId,
     });
     if (histErr && histErr.code !== '23505') {
-      // 23505 = unique violation. Means version 1 history was
-      // already seeded with these exact values — safe to skip.
       throw new Error(`Couldn't snapshot history: ${histErr.message}`);
     }
   }
 
-  // Apply the new content.
   const newVersion = existingRow.version + (subjectSame && bodySame ? 0 : 1);
   const patch: Record<string, unknown> = {
     subject: input.subject,
@@ -191,10 +249,9 @@ export async function saveEmailTemplate(input: {
   };
   if (enabledChange) patch.enabled = input.enabled;
 
-  const { error: updErr } = await supabase
-    .from('lng_email_templates')
-    .update(patch)
-    .eq('key', input.key);
+  let upd = supabase.from('lng_email_templates').update(patch).eq('key', input.key);
+  upd = serviceType ? upd.eq('service_type', serviceType) : upd.is('service_type', null);
+  const { error: updErr } = await upd;
   if (updErr) throw new Error(`Couldn't save template: ${updErr.message}`);
 
   return { ok: true, version: newVersion };
@@ -202,39 +259,70 @@ export async function saveEmailTemplate(input: {
 
 // Restore a previous version. Identical to a save with the
 // historical content — bumps the version number, snapshots the
-// current row before overwriting.
+// current row before overwriting. Reads service_type off the
+// history row so it persists back to the correct variant.
 export async function restoreEmailTemplateVersion(input: {
-  templateKey: string;
   historyId: string;
 }): Promise<{ ok: true; version: number }> {
   const { data: histRaw, error: histErr } = await supabase
     .from('lng_email_template_history')
-    .select('subject, body_syntax')
+    .select('template_key, service_type, subject, body_syntax')
     .eq('id', input.historyId)
     .maybeSingle();
   if (histErr) throw new Error(`Couldn't read history row: ${histErr.message}`);
   if (!histRaw) throw new Error('History row not found.');
-  const hist = histRaw as { subject: string; body_syntax: string };
+  const hist = histRaw as {
+    template_key: string;
+    service_type: string | null;
+    subject: string;
+    body_syntax: string;
+  };
   return saveEmailTemplate({
-    key: input.templateKey,
+    key: hist.template_key,
+    service_type: hist.service_type,
     subject: hist.subject,
     body_syntax: hist.body_syntax,
   });
 }
 
-// Reset to the seeded defaults. Identical save path; the
-// "default_*" columns are the source.
-export async function resetEmailTemplateToDefault(templateKey: string): Promise<{ ok: true; version: number }> {
+// Reset semantics depend on service_type:
+//   * General (service_type=null) — restores the row's content from
+//     its own default_subject / default_body_syntax columns. Same
+//     behaviour as before this migration.
+//   * Service-typed override — DELETES the override row entirely so
+//     the booking re-inherits the General default at send time. This
+//     is the "remove customisation" affordance for per-service
+//     templates; if the admin wants to keep the override active but
+//     reset its content, they can use restoreEmailTemplateVersion()
+//     against the first history row instead.
+export async function resetEmailTemplateToDefault(input: {
+  key: string;
+  service_type?: string | null;
+}): Promise<{ ok: true; version: number } | { ok: true; deleted: true }> {
+  const serviceType = input.service_type ?? null;
+
+  if (serviceType) {
+    const { error: delErr } = await supabase
+      .from('lng_email_templates')
+      .delete()
+      .eq('key', input.key)
+      .eq('service_type', serviceType);
+    if (delErr) throw new Error(`Couldn't remove override: ${delErr.message}`);
+    return { ok: true, deleted: true };
+  }
+
   const { data: tplRaw, error: tplErr } = await supabase
     .from('lng_email_templates')
     .select('default_subject, default_body_syntax')
-    .eq('key', templateKey)
+    .eq('key', input.key)
+    .is('service_type', null)
     .maybeSingle();
   if (tplErr) throw new Error(`Couldn't read template: ${tplErr.message}`);
   if (!tplRaw) throw new Error('Template not found.');
   const tpl = tplRaw as { default_subject: string; default_body_syntax: string };
   return saveEmailTemplate({
-    key: templateKey,
+    key: input.key,
+    service_type: null,
     subject: tpl.default_subject,
     body_syntax: tpl.default_body_syntax,
   });

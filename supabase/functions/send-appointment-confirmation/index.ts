@@ -270,21 +270,23 @@ async function handle(req: Request): Promise<Response> {
       ? isVirtual ? 'booking_reschedule_virtual' : 'booking_reschedule'
       : isVirtual ? 'booking_confirmation_virtual' : 'booking_confirmation';
 
-  const { data: tplRaw, error: tplErr } = await admin
-    .from('lng_email_templates')
-    .select('subject, body_syntax, enabled')
-    .eq('key', templateKey)
-    .maybeSingle();
+  // Resolve template via the per-service RPC so a service-specific
+  // override fires when present, else the General default (M17).
+  const { data: tplRaw, error: tplErr } = await admin.rpc(
+    'lng_resolve_email_template',
+    { p_key: templateKey, p_service_type: apt.service_type ?? null },
+  );
   if (tplErr) {
     await logFailure(admin, {
       severity: 'error',
       message: `Template read failed for ${templateKey}: ${tplErr.message}`,
-      context: { appointmentId, templateKey },
+      context: { appointmentId, templateKey, serviceType: apt.service_type },
       callerAccountAuthId,
     });
     return jsonResponse(200, { ok: false, error: tplErr.message });
   }
-  const template = tplRaw as
+  const tplRow = Array.isArray(tplRaw) && tplRaw.length > 0 ? tplRaw[0] : null;
+  const template = tplRow as
     | { subject: string; body_syntax: string; enabled: boolean }
     | null;
   if (!template) {

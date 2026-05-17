@@ -53,14 +53,36 @@ import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 // only one is open at a time — keeps the screen state simple and
 // matches Checkpoint's surface.
 
+// Pills nav — General + each service_type that customisation is
+// available for. Order matches Admin > Booking types so admins
+// reach for them in the same place. The label is what shows on
+// the pill; the value is the service_type sent to the DB
+// (null = General).
+const SERVICE_PILLS: ReadonlyArray<{ label: string; value: string | null }> = [
+  { label: 'General', value: null },
+  { label: 'Click-in veneers', value: 'click_in_veneers' },
+  { label: 'Same-day appliance', value: 'same_day_appliance' },
+  { label: 'Denture repair', value: 'denture_repair' },
+  { label: 'In-person impression', value: 'impression_appointment' },
+  { label: 'Virtual impression', value: 'virtual_impression_appointment' },
+];
+
 export function AdminEmailTemplatesTab() {
   const templates = useEmailTemplates();
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [selectedServiceType, setSelectedServiceType] = useState<string | null>(null);
   const [toast, setToast] = useState<{
     tone: 'success' | 'error' | 'info';
     title: string;
     description?: string;
   } | null>(null);
+
+  // Close any open row when the pill changes — the open key may
+  // not exist (or may not have an override) in the new tab, and
+  // re-opening picks up the right context cleanly.
+  useEffect(() => {
+    setOpenKey(null);
+  }, [selectedServiceType]);
 
   // Group templates by their definition's group field.
   const groups = useMemo(() => {
@@ -72,6 +94,18 @@ export function AdminEmailTemplatesTab() {
     }
     return Array.from(seen.entries());
   }, []);
+
+  // Index every row by (key, service_type) so the per-pill render
+  // can pick the right variant in O(1). General defaults are at
+  // serviceTypeKey = '__general__'; service-typed overrides at
+  // their own service_type.
+  const rowByKeyAndService = useMemo(() => {
+    const map = new Map<string, EmailTemplateRow>();
+    for (const r of templates.data) {
+      map.set(`${r.key}|${r.service_type ?? '__general__'}`, r);
+    }
+    return map;
+  }, [templates.data]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
@@ -97,9 +131,16 @@ export function AdminEmailTemplatesTab() {
         >
           Subject and body for the transactional emails Lounge sends to patients. Edits go live
           on the next send. Use {'{{variable}}'} placeholders to drop in patient and appointment
-          details — the variables sidebar (coming next) will list every available one.
+          details. Pick a booking type to customise its copy independently; if no override is
+          set, the booking falls back to the General default.
         </p>
       </header>
+
+      <ServicePills
+        pills={SERVICE_PILLS}
+        selected={selectedServiceType}
+        onSelect={setSelectedServiceType}
+      />
 
       {templates.loading ? (
         <Card padding="md">
@@ -133,14 +174,42 @@ export function AdminEmailTemplatesTab() {
               <Card padding="none">
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                   {keys.map((key, idx) => {
-                    const tpl = templates.data.find((t) => t.key === key);
                     const def = EMAIL_TEMPLATE_DEFINITIONS.find((d) => d.key === key);
-                    if (!tpl || !def) return null;
+                    if (!def) return null;
+                    // Resolve the variant for the active pill. General
+                    // pill: always the General row. Service-typed pill:
+                    // the override row if one exists, else null →
+                    // render the InheritedRow placeholder.
+                    const variantKey = `${key}|${selectedServiceType ?? '__general__'}`;
+                    const tpl = rowByKeyAndService.get(variantKey) ?? null;
+                    const generalRow =
+                      rowByKeyAndService.get(`${key}|__general__`) ?? null;
+
+                    if (selectedServiceType !== null && !tpl) {
+                      return (
+                        <InheritedTemplateRow
+                          key={key}
+                          definition={def}
+                          serviceType={selectedServiceType}
+                          serviceLabel={
+                            SERVICE_PILLS.find((p) => p.value === selectedServiceType)
+                              ?.label ?? 'this service'
+                          }
+                          generalRow={generalRow}
+                          isFirst={idx === 0}
+                          onCustomised={() => templates.refresh()}
+                          onToast={(t) => setToast(t)}
+                        />
+                      );
+                    }
+
+                    if (!tpl) return null;
                     return (
                       <TemplateRow
                         key={key}
                         template={tpl}
                         definition={def}
+                        serviceType={selectedServiceType}
                         isFirst={idx === 0}
                         isOpen={openKey === key}
                         onToggle={() =>
@@ -181,12 +250,175 @@ export function AdminEmailTemplatesTab() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pills nav — General + per-service tabs
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ServicePills({
+  pills,
+  selected,
+  onSelect,
+}: {
+  pills: ReadonlyArray<{ label: string; value: string | null }>;
+  selected: string | null;
+  onSelect: (next: string | null) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Customise emails per booking type"
+      style={{
+        display: 'flex',
+        gap: theme.space[2],
+        flexWrap: 'wrap',
+        // Horizontal scroll fallback if the row of pills doesn't
+        // fit — touch-friendly on the iPad form factor.
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
+      }}
+    >
+      {pills.map((pill) => {
+        const isActive = selected === pill.value;
+        return (
+          <button
+            key={pill.value ?? '__general__'}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onSelect(pill.value)}
+            style={{
+              appearance: 'none',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              padding: `${theme.space[2]}px ${theme.space[4]}px`,
+              borderRadius: theme.radius.pill,
+              border: `1px solid ${isActive ? theme.color.ink : theme.color.border}`,
+              background: isActive ? theme.color.ink : theme.color.surface,
+              color: isActive ? theme.color.surface : theme.color.ink,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
+              whiteSpace: 'nowrap',
+              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            }}
+          >
+            {pill.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Placeholder row shown on a service-typed pill when no override
+// row exists yet for that (key, service_type). The General default
+// fires for this booking type today; clicking "Customise" creates
+// the override (seeded from General) and opens the editor.
+function InheritedTemplateRow({
+  definition,
+  serviceType,
+  serviceLabel,
+  generalRow,
+  isFirst,
+  onCustomised,
+  onToast,
+}: {
+  definition: EmailTemplateDefinition;
+  serviceType: string;
+  serviceLabel: string;
+  generalRow: EmailTemplateRow | null;
+  isFirst: boolean;
+  onCustomised: () => void;
+  onToast: (t: { tone: 'success' | 'error' | 'info'; title: string; description?: string }) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const handleCustomise = async () => {
+    if (creating) return;
+    if (!generalRow) {
+      onToast({
+        tone: 'error',
+        title: "Can't customise yet",
+        description: `No General template for "${definition.label}" — seed it first.`,
+      });
+      return;
+    }
+    setCreating(true);
+    try {
+      await saveEmailTemplate({
+        key: definition.key,
+        service_type: serviceType,
+        subject: generalRow.subject,
+        body_syntax: generalRow.body_syntax,
+        enabled: true,
+      });
+      onToast({
+        tone: 'success',
+        title: `Customised for ${serviceLabel}`,
+        description: definition.label,
+      });
+      onCustomised();
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not create override',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <li
+      style={{
+        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <Mail size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {definition.label}
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Inherits the General copy. Customise to write {serviceLabel}-specific wording.
+        </p>
+      </div>
+      <Button
+        variant="tertiary"
+        size="sm"
+        onClick={handleCustomise}
+        loading={creating}
+        disabled={!generalRow}
+      >
+        Customise
+      </Button>
+    </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Single row: collapsed summary OR expanded editor pane
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TemplateRow({
   template,
   definition,
+  serviceType,
   isFirst,
   isOpen,
   onToggle,
@@ -195,6 +427,10 @@ function TemplateRow({
 }: {
   template: EmailTemplateRow;
   definition: EmailTemplateDefinition;
+  /** null when rendering inside the General pill, set when rendering
+   *  inside a service-typed pill. Threaded into save / reset /
+   *  restore so writes hit the correct variant. */
+  serviceType: string | null;
   isFirst: boolean;
   isOpen: boolean;
   onToggle: () => void;
@@ -246,6 +482,7 @@ function TemplateRow({
     try {
       await saveEmailTemplate({
         key: template.key,
+        service_type: serviceType,
         subject,
         body_syntax: body,
         enabled,
@@ -406,6 +643,7 @@ function TemplateRow({
               }}
               variables={definition.variables}
               templateKey={template.key}
+              serviceType={serviceType}
               currentVersion={template.version}
               onPickHistory={(h) => {
                 setViewingHistory(h);
@@ -428,7 +666,6 @@ function TemplateRow({
                   setRestoring(true);
                   try {
                     await restoreEmailTemplateVersion({
-                      templateKey: template.key,
                       historyId: viewingHistory.id,
                     });
                     setViewingHistory(null);
@@ -503,12 +740,16 @@ function TemplateRow({
         <BottomSheet
           open
           onClose={resetting ? () => undefined : () => setResetConfirmOpen(false)}
-          title="Reset to default copy?"
+          title={
+            serviceType
+              ? 'Remove this override?'
+              : 'Reset to default copy?'
+          }
           description={
             <span>
-              This replaces the current subject and body with the seeded baseline. Your edits
-              will be saved as the next version in the history, so you can roll back if you
-              change your mind.
+              {serviceType
+                ? "Deletes this booking type's override so the email re-inherits the General default at send time. The General copy itself isn't touched."
+                : 'This replaces the current subject and body with the seeded baseline. Your edits will be saved as the next version in the history, so you can roll back if you change your mind.'}
             </span>
           }
           footer={
@@ -526,12 +767,15 @@ function TemplateRow({
                 onClick={async () => {
                   setResetting(true);
                   try {
-                    await resetEmailTemplateToDefault(template.key);
+                    await resetEmailTemplateToDefault({
+                      key: template.key,
+                      service_type: serviceType,
+                    });
                     setResetConfirmOpen(false);
                     onRefresh();
                     onToast({
                       tone: 'success',
-                      title: 'Reset to default',
+                      title: serviceType ? 'Override removed' : 'Reset to default',
                       description: definition.label,
                     });
                   } catch (e) {
@@ -754,6 +998,7 @@ function BodyHeader({
   onInsertVariable,
   variables,
   templateKey,
+  serviceType,
   currentVersion,
   onPickHistory,
   onSendTest,
@@ -763,6 +1008,8 @@ function BodyHeader({
   onInsertVariable: (name: string) => void;
   variables: ReadonlyArray<EmailTemplateVariable>;
   templateKey: string;
+  /** History is scoped per (template_key, service_type). */
+  serviceType: string | null;
   currentVersion: number;
   onPickHistory: (h: {
     id: string;
@@ -802,6 +1049,7 @@ function BodyHeader({
         />
         <HistoryDropdown
           templateKey={templateKey}
+          serviceType={serviceType}
           currentVersion={currentVersion}
           onPick={onPickHistory}
         />
@@ -1313,10 +1561,12 @@ function BodyPreview({
 
 function HistoryDropdown({
   templateKey,
+  serviceType,
   currentVersion,
   onPick,
 }: {
   templateKey: string;
+  serviceType: string | null;
   currentVersion: number;
   onPick: (h: {
     id: string;
@@ -1328,11 +1578,10 @@ function HistoryDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  // Lazy-fetch: only hit the table the first time the menu opens.
-  // History rows are immutable so no re-fetch on subsequent opens
-  // unless the row's version has bumped (covered by the templateKey
-  // dep + the refresh on save path).
-  const history = useEmailTemplateHistory(templateKey);
+  // History is scoped per (template_key, service_type) so a
+  // service-typed override's trail doesn't contaminate the General's
+  // and vice versa.
+  const history = useEmailTemplateHistory(templateKey, serviceType);
 
   useEffect(() => {
     if (!open) return;
