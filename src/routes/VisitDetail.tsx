@@ -1461,61 +1461,6 @@ export function VisitDetail() {
                 issued. CS-only staff don't see the Refund button
                 (they can't act on the till) but DO see the banner so
                 they know to alert someone. */}
-            {owedToPatientPence > 0 ? (
-              <div
-                role="alert"
-                style={{
-                  marginBottom: theme.space[3],
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  borderRadius: theme.radius.input,
-                  background: 'rgba(220, 38, 38, 0.08)',
-                  border: '1px solid rgba(220, 38, 38, 0.30)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: theme.space[3],
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                  <span
-                    style={{
-                      fontSize: theme.type.size.sm,
-                      fontWeight: theme.type.weight.semibold,
-                      color: '#991b1b',
-                    }}
-                  >
-                    We owe {patient?.first_name ?? 'the patient'}{' '}
-                    {formatPence(owedToPatientPence)}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: theme.type.size.xs,
-                      color: '#7f1d1d',
-                    }}
-                  >
-                    Cart dropped below what they paid. Issue a refund before completing the
-                    visit.
-                  </span>
-                </div>
-                {/* Refund button stays available to Customer Service
-                    — they're the ones fielding "I want my money back"
-                    emails. The RefundSheet's manager-approval step
-                    (email + password) is the real gate on who can
-                    actually issue, regardless of role. */}
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setRefundDefaultCategory('item_removed');
-                    setRefundOpen(true);
-                  }}
-                >
-                  Refund {formatPence(owedToPatientPence)}
-                </Button>
-              </div>
-            ) : null}
-
             {/* Whole Cart card dims when the visit is unsuitable —
                 title, items, subtotal, totals all go quiet. The
                 action row below stays at full opacity so the
@@ -1596,6 +1541,11 @@ export function VisitDetail() {
                   tillCollectedPence={tillCollectedPence}
                   total={total}
                   owedToPatientPence={owedToPatientPence}
+                  patientFirstName={patient?.first_name ?? null}
+                  onOpenRefund={() => {
+                    setRefundDefaultCategory('item_removed');
+                    setRefundOpen(true);
+                  }}
                   // Suppress the giant "Outstanding £X.XX" row when the
                   // cart is paid — the PaidHeader above already carries
                   // that amount, and showing it twice was the exact
@@ -3594,6 +3544,8 @@ function Totals({
   tillCollectedPence,
   total,
   owedToPatientPence,
+  patientFirstName,
+  onOpenRefund,
   hideTotalRow = false,
   dim = false,
   activeDiscount,
@@ -3619,9 +3571,12 @@ function Totals({
   /** Amount we owe back to the patient. Positive when amount_paid
    *  exceeds the cart total. Drives the bottom-row swap from
    *  "Outstanding £0.00" (which read as "all good") to
-   *  "Owed back £60.00" in red so staff never misses that money
-   *  needs to go out. */
+   *  "Owed back £60.00" in red. The full "We owe Dylan £60.00 ·
+   *  Issue refund before completing" copy + Refund button live in
+   *  this same row now — no separate banner above the cart. */
   owedToPatientPence: number;
+  patientFirstName: string | null;
+  onOpenRefund: () => void;
   /** When true, suppress the bottom "Outstanding £X.XX" hero row —
    * used when the cart is paid and the PaidHeader already states the
    * amount. */
@@ -3698,41 +3653,77 @@ function Totals({
         />
       ) : null}
       {hideTotalRow ? null : owedToPatientPence > 0 ? (
-        // Overpaid state — flip the bottom row from "Outstanding
-        // £0.00" (which reads as "all balanced, nothing to do") to
-        // "Owed back £X" in alert red so staff can't miss the
-        // direction of the money. The persistent banner above the
-        // cart already calls this out; this row mirrors it so the
-        // Totals card itself stays truthful when read in isolation.
+        // Overpaid state. The bottom row now folds the standalone
+        // "We owe X" banner into itself so the explanation + Refund
+        // button live alongside the amount. One alert block, not two.
         <div
           style={{
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'baseline',
+            flexDirection: 'column',
+            gap: theme.space[3],
             paddingTop: theme.space[3],
             marginTop: theme.space[2],
-            borderTop: `1px solid ${theme.color.border}`,
+            borderTop: `1px solid ${theme.color.alert}`,
           }}
         >
-          <span
+          <div
             style={{
-              fontSize: theme.type.size.md,
-              color: theme.color.alert,
-              fontWeight: theme.type.weight.semibold,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
             }}
           >
-            Owed back
-          </span>
-          <span
+            <span
+              style={{
+                fontSize: theme.type.size.md,
+                color: theme.color.alert,
+                fontWeight: theme.type.weight.semibold,
+              }}
+            >
+              Owed back
+            </span>
+            <span
+              style={{
+                fontSize: theme.type.size.xxl,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.alert,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {formatPence(owedToPatientPence)}
+            </span>
+          </div>
+          <p
             style={{
-              fontSize: theme.type.size.xxl,
-              fontWeight: theme.type.weight.semibold,
+              margin: 0,
+              fontSize: theme.type.size.sm,
               color: theme.color.alert,
-              fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1.5,
             }}
           >
-            {formatPence(owedToPatientPence)}
-          </span>
+            {patientFirstName ? `We owe ${patientFirstName} ` : 'We owe the patient '}
+            {formatPence(owedToPatientPence)}. The cart dropped below what they
+            paid. Issue a refund before completing the visit.
+          </p>
+          <button
+            type="button"
+            onClick={onOpenRefund}
+            style={{
+              alignSelf: 'flex-start',
+              appearance: 'none',
+              border: 'none',
+              borderRadius: theme.radius.input,
+              background: theme.color.alert,
+              color: '#fff',
+              padding: `${theme.space[2]}px ${theme.space[4]}px`,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            Refund {formatPence(owedToPatientPence)}
+          </button>
         </div>
       ) : (
         <div
