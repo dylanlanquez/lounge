@@ -85,9 +85,16 @@ Deno.serve(async (req) => {
     return new Response('Bad JSON', { status: 400 });
   }
 
-  // Only act on refund.* events. Other event types ignored — Stripe
-  // sends 200 regardless.
-  if (!event.type.startsWith('charge.refund.')) {
+  // Only act on refund events. Stripe historically published these
+  // under charge.refund.* (charge.refund.updated) and now publishes
+  // a fuller set under the top-level refund.* namespace
+  // (refund.created / refund.updated / refund.failed). Accept both
+  // so older accounts on the legacy API version keep working
+  // alongside fresh ones subscribed to the new events. Anything
+  // else returns 200 (Stripe stops retrying).
+  const isRefundEvent =
+    event.type.startsWith('charge.refund.') || event.type.startsWith('refund.');
+  if (!isRefundEvent) {
     return new Response('ok', { status: 200 });
   }
 
