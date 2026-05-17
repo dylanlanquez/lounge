@@ -74,7 +74,7 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
-import { logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
@@ -535,18 +535,21 @@ function Loaded({
           <ReasonCard
             tone="cancelled"
             label="Cancellation reason"
-            text={appt.cancel_reason}
+            // cancel_reason carries either an enum (NoShowReason
+            // values, 'patient_self_serve', 'patient_self_serve_reschedule')
+            // or the free-text "Other" note typed by the receptionist.
+            // humaniseCancelReason returns the friendly label for known
+            // enums (including the two self-serve variants written by
+            // the widget edge functions) and passes free-text through
+            // verbatim.
+            text={humaniseCancelReason(appt.cancel_reason) ?? appt.cancel_reason}
           />
         ) : null}
         {appt.status === 'no_show' && appt.cancel_reason ? (
           <ReasonCard
             tone="no_show"
             label="No-show reason"
-            // cancel_reason is either one of the enum strings or the
-            // free-text note picked under "Other". humaniseNoShowReason
-            // returns the friendly label for known enums; non-enums
-            // are returned verbatim by its default branch.
-            text={humaniseNoShowReason(appt.cancel_reason)}
+            text={humaniseCancelReason(appt.cancel_reason) ?? appt.cancel_reason}
           />
         ) : null}
         {appt.status === 'rescheduled' && appt.reschedule_to_id ? (
@@ -1082,15 +1085,23 @@ function buildApptRibbon(
       return {
         icon: <UserX size={16} aria-hidden />,
         timeLine: 'Patient did not turn up',
-        relative: appt.cancel_reason ? humaniseNoShowReason(appt.cancel_reason) : null,
+        relative: humaniseCancelReason(appt.cancel_reason),
         tone: 'warn',
       };
     }
     case 'cancelled': {
+      // Customer self-serve cancels carry the dedicated enum
+      // 'patient_self_serve' from widget-cancel-booking. The
+      // humaniser turns it into "Customer cancelled via the
+      // self-service link in their email" so the ribbon makes
+      // clear it wasn't a staff action. Free-text "Other" notes
+      // (typed by the receptionist on the cancel sheet) still
+      // truncate so the ribbon doesn't grow on long reasons.
+      const friendly = humaniseCancelReason(appt.cancel_reason);
       return {
         icon: <Ban size={16} aria-hidden />,
         timeLine: 'Cancelled',
-        relative: appt.cancel_reason ? truncateRibbonReason(appt.cancel_reason) : null,
+        relative: friendly ? truncateRibbonReason(friendly) : null,
         tone: 'alert',
       };
     }
@@ -1103,10 +1114,19 @@ function buildApptRibbon(
       // with a clickable "Open new booking →" link that navigates
       // straight to the replacement, so the staff don't have to
       // hunt below to find it.
+      //
+      // Self-serve reschedules carry cancel_reason=
+      // 'patient_self_serve_reschedule' on the OLD row; surface
+      // that as the timeLine so the ribbon explicitly says the
+      // patient moved their own slot.
+      const isSelfServe =
+        appt.cancel_reason === 'patient_self_serve_reschedule';
       return {
         icon: <RotateCcw size={16} aria-hidden />,
         dateLong: `Was on ${formatDateLongOrdinal(appt.start_at)}`,
-        timeLine: 'This booking has been moved',
+        timeLine: isSelfServe
+          ? 'Customer rescheduled themselves via their email link'
+          : 'This booking has been moved',
         relative: null,
         tone: 'warn',
       };
@@ -2144,11 +2164,6 @@ function ReasonCard({
       </p>
     </Card>
   );
-}
-
-function humaniseNoShowReason(reason: string): string {
-  const match = NO_SHOW_REASONS.find((r) => r.value === reason);
-  return match?.label ?? reason;
 }
 
 function RescheduledTo({ apptId }: { apptId: string }) {

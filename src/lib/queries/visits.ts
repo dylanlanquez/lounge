@@ -190,6 +190,44 @@ export const NO_SHOW_REASONS: { value: NoShowReason; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
+// Humanise lng_appointments.cancel_reason. Handles:
+//   • NoShowReason enum values — the four reasons the receptionist
+//     picks from when marking a no-show (see NO_SHOW_REASONS).
+//   • 'patient_self_serve' — written by the widget-cancel-booking
+//     edge function when the patient cancels themselves from the
+//     manage page link sent in their confirmation email.
+//   • 'patient_self_serve_reschedule' — same, written on the OLD
+//     row by widget-reschedule-booking when the patient moves
+//     their own slot from the manage page. The NEW row carries
+//     reschedule_to_id pointing at the replacement.
+//   • Anything else — passed through verbatim. Operators can type
+//     a free-text "Other" reason on the no-show sheet; we want that
+//     to render exactly as they wrote it.
+// Returns null on null/empty input so callers can render nothing.
+export function humaniseCancelReason(
+  reason: string | null | undefined,
+): string | null {
+  if (!reason) return null;
+  const trimmed = reason.trim();
+  if (!trimmed) return null;
+  switch (trimmed) {
+    case 'did_not_turn_up':
+      return 'Did not turn up';
+    case 'patient_cancelled_late':
+      return 'Patient cancelled late';
+    case 'clinic_cancelled':
+      return 'Clinic cancelled';
+    case 'other':
+      return 'Other reason';
+    case 'patient_self_serve':
+      return 'Customer cancelled via the self-service link in their email';
+    case 'patient_self_serve_reschedule':
+      return 'Customer rescheduled via the self-service link in their email';
+    default:
+      return trimmed;
+  }
+}
+
 export interface MarkNoShowContext {
   patientId: string | null;
   wasVirtual: boolean;

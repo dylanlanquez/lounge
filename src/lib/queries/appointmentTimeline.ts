@@ -4,6 +4,7 @@ import { logFailure } from '../failureLog.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import type { TimelineEvent, TimelineFact, TimelineTone } from './visitTimeline.ts';
+import { humaniseCancelReason } from './visits.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useAppointmentTimeline — full audit trail for a single appointment.
@@ -521,20 +522,28 @@ function mapEvent(
       const newId = readString(row.payload, 'new_appointment_id');
       const reason = readString(row.payload, 'reason');
       const calendlyInvitee = readString(row.payload, 'calendly_invitee_uri');
+      const eventSource = readString(row.payload, 'source');
+      const isSelfServe = eventSource === 'widget_self_serve';
 
-      let title = 'Rescheduled';
+      // Self-serve reschedules came from the customer tapping the
+      // manage-page link in their confirmation email. Lead with that
+      // fact so the receptionist sees at a glance the slot wasn't
+      // moved by a staff action.
+      let title = isSelfServe
+        ? 'Customer rescheduled via the self-service link in their email'
+        : 'Rescheduled';
       const bits: Array<string | null | undefined> = [];
 
       if (oldId && newId) {
         if (oldId === appt.id) {
           // We're the source; render the destination.
           const target = siblingById.get(newId);
-          title = 'Rescheduled to a new slot';
+          if (!isSelfServe) title = 'Rescheduled to a new slot';
           if (target) bits.push(`new slot: ${formatWhen(target.start_at)}`);
         } else if (newId === appt.id) {
           // We're the destination; render the source.
           const target = siblingById.get(oldId);
-          title = 'Rescheduled here from an earlier slot';
+          if (!isSelfServe) title = 'Rescheduled here from an earlier slot';
           if (target) bits.push(`previous slot: ${formatWhen(target.start_at)}`);
         }
       } else if (calendlyInvitee) {
@@ -558,6 +567,15 @@ function mapEvent(
       const reason = readString(row.payload, 'reason');
       const previousStatus = readString(row.payload, 'previous_status');
       const calendlyInvitee = readString(row.payload, 'calendly_invitee_uri');
+      const eventSource = readString(row.payload, 'source');
+      const isSelfServe = eventSource === 'widget_self_serve';
+      // Self-serve cancellations came from the customer tapping the
+      // manage-page link in their confirmation email — make that
+      // explicit on the timeline title so the receptionist doesn't
+      // mistake it for a staff cancel.
+      const title = isSelfServe
+        ? 'Customer cancelled via the self-service link in their email'
+        : 'Cancelled';
       const detail = joinDetail(
         reason ? `reason: ${reason}` : null,
         previousStatus && previousStatus !== 'booked'
@@ -568,7 +586,7 @@ function mapEvent(
       return {
         ...base,
         type: 'patient_event',
-        title: 'Cancelled',
+        title,
         detail,
         hint: 'flag',
         tone: 'alert',
@@ -590,7 +608,7 @@ function mapEvent(
       const wasVirtual = readBool(row.payload, 'was_virtual');
       const joinedBefore = readBool(row.payload, 'joined_before_no_show');
       const detail = joinDetail(
-        reason ? humaniseNoShowReason(reason) : null,
+        humaniseCancelReason(reason),
         wasVirtual ? 'virtual appointment' : null,
         joinedBefore ? 'staff had joined the meeting' : null,
       );
@@ -1114,20 +1132,6 @@ function humaniseStatus(status: string): string {
   }
 }
 
-function humaniseNoShowReason(reason: string): string {
-  switch (reason) {
-    case 'did_not_turn_up':
-      return 'Did not turn up';
-    case 'patient_cancelled_late':
-      return 'Patient cancelled late';
-    case 'clinic_cancelled':
-      return 'Clinic cancelled';
-    case 'other':
-      return 'Other reason';
-    default:
-      return reason;
-  }
-}
 
 function humaniseReminderSkipReason(reason: string): string {
   switch (reason) {
