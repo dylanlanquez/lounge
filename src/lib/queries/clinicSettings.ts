@@ -182,6 +182,12 @@ export function useClinicSettings(): ReadResult {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface NormalisedDayHours {
+  open: string;
+  close: string;
+  break: { start: string; end: string } | null;
+}
+
 /** Pick the OpeningHoursDay for a YYYY-MM-DD string and normalise to
  *  the booking-sheet's internal shape ({ open, close, break }) where
  *  break is either an object or null. Null return means the clinic
@@ -191,11 +197,7 @@ export function useClinicSettings(): ReadResult {
 export function dayHoursForDate(
   week: OpeningHoursWeek,
   isoDate: string,
-): {
-  open: string;
-  close: string;
-  break: { start: string; end: string } | null;
-} | null {
+): NormalisedDayHours | null {
   const d = new Date(isoDate + 'T00:00:00Z');
   if (Number.isNaN(d.getTime())) return null;
   // Date#getUTCDay returns 0=Sun..6=Sat. Storage is Mon=0..Sun=6.
@@ -211,6 +213,23 @@ export function dayHoursForDate(
       ? { start: br[0], end: br[1] }
       : null,
   };
+}
+
+/** Effective day hours = per-booking-type when the resolver provided
+ *  working_hours, otherwise the clinic-wide row. Mirrors the same
+ *  fallback chain the slot RPCs run server-side (migration
+ *  20260518000001), so the client's pre-submit working-hours gate
+ *  agrees with the available-slots picker. Returns null when both
+ *  sources are closed on the requested date. */
+export function effectiveDayHoursForDate(
+  perTypeHours: OpeningHoursWeek | null | undefined,
+  clinicHours: OpeningHoursWeek,
+  isoDate: string,
+): NormalisedDayHours | null {
+  if (perTypeHours && perTypeHours.length === 7) {
+    return dayHoursForDate(perTypeHours, isoDate);
+  }
+  return dayHoursForDate(clinicHours, isoDate);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

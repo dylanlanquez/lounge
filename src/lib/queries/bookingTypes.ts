@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import type { OpeningHoursWeek } from './clinicSettings.ts';
 
 // Booking-type config — the per-service / per-variant scheduling
 // rules that drive the reschedule slot picker, the conflict checker,
@@ -33,36 +34,16 @@ export const BOOKING_SERVICE_TYPES: { value: BookingServiceType; label: string }
   { value: 'other', label: 'Other' },
 ];
 
-// Days run Mon-Sun in the JSONB. Tuple form so iteration order is
-// fixed and we don't depend on Object.keys() preserving insertion.
-export const DAYS_OF_WEEK: readonly DayOfWeek[] = [
-  'mon',
-  'tue',
-  'wed',
-  'thu',
-  'fri',
-  'sat',
-  'sun',
-] as const;
-
-export type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
-
-// One day's hours. null = closed. Optional `break` is the mid-day
-// closure (lunch); when present, slots whose start falls inside
-// [break.start, break.end) are not bookable. Mirrors the same field
-// on lng_settings.clinic.opening_hours so per-service hours stay
-// flexible enough to encode a lab pause that's independent of the
-// front-of-house clinic hours.
-export interface DayHours {
-  open: string;  // 'HH:MM' 24-hour
-  close: string; // 'HH:MM' 24-hour
-  break?: { start: string; end: string } | null;
-}
-
-// Working hours for the whole week. Each day is either DayHours
-// (open) or null (closed). The whole object can also be null on a
-// child row, meaning "inherit the parent's hours wholesale".
-export type WorkingHours = Partial<Record<DayOfWeek, DayHours | null>>;
+// Per-booking-type working hours share the exact same shape as the
+// clinic-wide opening hours (lng_settings.clinic.opening_hours): a
+// 7-element Mon-first JSONB array where each entry is either
+// { closed: true } or { open, close, break?: [start, end] }. Keeping
+// one shape across both sources means the slot RPCs read either
+// with the same parser. The booking_type column is nullable; null
+// means "inherit" — child override row inherits the parent, which
+// itself inherits the clinic-wide setting when its own column is
+// null. See migration 20260518000001 for the data-side specifics.
+export type WorkingHours = OpeningHoursWeek;
 
 // A row as it sits in the DB. Most fields nullable because of the
 // inheritance model.
@@ -162,7 +143,10 @@ export interface ResolvedBookingTypeConfig {
   repair_variant: string | null;
   product_key: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
-  working_hours: WorkingHours;
+  // Effective working hours after the resolver merged child →
+  // parent. Null when neither row set it; the slot RPCs and the
+  // staff sheet pick up the clinic-wide fallback in that case.
+  working_hours: WorkingHours | null;
   duration_min: number;
   duration_max: number;
   duration_default: number;
@@ -294,7 +278,7 @@ export async function resolveBookingTypeConfig(args: {
     repair_variant: row.repair_variant ?? null,
     product_key: row.product_key ?? null,
     arch: (row.arch as 'upper' | 'lower' | 'both' | null) ?? null,
-    working_hours: (row.working_hours ?? {}) as WorkingHours,
+    working_hours: (row.working_hours as WorkingHours | null | undefined) ?? null,
     duration_min: row.duration_min as number,
     duration_max: row.duration_max as number,
     duration_default: resolvedDuration as number,

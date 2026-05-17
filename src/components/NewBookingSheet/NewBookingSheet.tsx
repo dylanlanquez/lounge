@@ -48,7 +48,7 @@ import {
   useAvailableDates,
   useFirstAvailableSlot,
 } from '../../lib/queries/bookingAvailability.ts';
-import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
+import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
@@ -649,14 +649,20 @@ export function NewBookingSheet({
   ]);
 
   // ── Working-hours check ────────────────────────────────────────
-  // Single source of truth: lng_settings.clinic.opening_hours
-  // (edited in Admin → Branding → Opening times). Per-service
-  // working_hours is no longer read.
+  // Per-booking-type hours win when set (resolver merges child →
+  // parent already); otherwise the clinic-wide row supplies the
+  // hours. Mirrors the slot RPC's fallback chain so the picker and
+  // the JS gate agree on which times are bookable. See migration
+  // 20260518000001.
   const clinic = useClinicSettings();
   const hoursForDate = useMemo(() => {
     if (!date) return null;
-    return dayHoursForDate(clinic.data.openingHours, date);
-  }, [date, clinic.data.openingHours]);
+    return effectiveDayHoursForDate(
+      config?.working_hours ?? null,
+      clinic.data.openingHours,
+      date,
+    );
+  }, [date, clinic.data.openingHours, config?.working_hours]);
 
   const inWorkingHours = useMemo(() => {
     if (!hoursForDate || !time) return false;

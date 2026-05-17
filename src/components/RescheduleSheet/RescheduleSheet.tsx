@@ -28,7 +28,7 @@ import {
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
-import { dayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
+import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 
 // RescheduleSheet — bottom-sheet UI for moving a native (manual /
 // native-source) Lounge appointment to a different slot.
@@ -359,14 +359,19 @@ export function RescheduleSheet({
   ]);
 
   // ── Working-hours derivation for the chosen date ───────────────
-  // Single source of truth lives in lng_settings.clinic.opening_hours
-  // (Admin → Branding → Opening times). Per-service working_hours is
-  // no longer consulted.
+  // Per-booking-type hours win when set (resolver already merged
+  // child → parent); otherwise the clinic-wide row supplies them.
+  // Mirrors the slot RPC's fallback chain so the picker and the
+  // pre-submit gate agree.
   const clinic = useClinicSettings();
   const hoursForDate = useMemo(() => {
     if (!date) return null;
-    return dayHoursForDate(clinic.data.openingHours, date);
-  }, [date, clinic.data.openingHours]);
+    return effectiveDayHoursForDate(
+      config?.working_hours ?? null,
+      clinic.data.openingHours,
+      date,
+    );
+  }, [date, clinic.data.openingHours, config?.working_hours]);
 
   const inWorkingHours = useMemo(() => {
     if (!hoursForDate || !time) return false;
