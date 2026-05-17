@@ -1436,6 +1436,9 @@ const PRODUCT_NOUN: Record<string, string> = {
   day_guard: 'day guard',
   click_in_veneers: 'click-in veneers',
   missing_tooth: 'missing tooth retainer',
+  whitening_tray: 'whitening tray',
+  whitening_kit: 'whitening kit',
+  aligner: 'replacement aligner',
 };
 
 const SERVICE_FALLBACK_LABEL: Record<string, string> = {
@@ -1467,15 +1470,21 @@ function archPhrase(arch: 'upper' | 'lower' | 'both' | null): string | null {
   return null;
 }
 
-// Compose the full booking phrase ("Upper retainer", "Upper & lower
-// retainers", "In-person impression appointment for both arches,
-// retainers") from the axis columns on the row. Mirrors
-// formatNativeBookingSummary in src/lib/queries/appointments.ts so
-// the email subject reads the same string the schedule shows.
+// Canonical email-subject phrasing for an appointment. Matches the
+// in-app schedule label produced by formatNativeBookingSummary in
+// src/lib/queries/appointments.ts:
 //
-// When service_type is missing (legacy / Calendly rows that pre-date
-// the axis columns) we fall back to the persisted event_type_label
-// or a humanised service-type label.
+//   same_day_appliance + retainer + upper → "Same-day upper retainer"
+//   same_day_appliance + whitening_kit    → "Same-day whitening kit"
+//   click_in_veneers + both               → "Upper & lower click-in veneers"
+//   denture_repair                        → "Denture repair"
+//   in_person_impression + retainer + both → "In-person impression appointment for both arches, retainers"
+//
+// Same-day appliance gets the "Same-day " prefix; click-in veneers
+// doesn't (product name already implies same-day). When service_type
+// is missing (legacy / Calendly rows that pre-date the axis columns)
+// we fall back to the persisted event_type_label or a humanised
+// service-type label.
 function labelForService(apt: AppointmentRow): string {
   const service = apt.service_type;
   const arch = apt.arch;
@@ -1495,20 +1504,33 @@ function labelForService(apt: AppointmentRow): string {
   }
 
   const productNoun = apt.product_key ? PRODUCT_NOUN[apt.product_key] : undefined;
-  // Click-in veneers IS the appliance (no separate product_key) —
-  // keep the catalogue's branded spelling ("Click-in veneers", with
-  // capital C) when composed with an arch prefix.
-  const serviceNoun = service === 'click_in_veneers' ? 'Click-in veneers' : undefined;
+  // click-in veneers carries its noun on service_type, not
+  // product_key. Same lowercased prose form as elsewhere.
+  const serviceNoun = service === 'click_in_veneers' ? 'click-in veneers' : undefined;
   const fallback =
     eventLabel ?? (service ? SERVICE_FALLBACK_LABEL[service] : undefined) ?? 'Appointment';
   const applianceNoun = productNoun ?? serviceNoun ?? null;
 
+  // Compose "<arch> <appliance>" in prose, then optionally prefix
+  // with "Same-day ". archlessProse covers the whitening_kit case
+  // where the catalogue's arch_match='any' means no arch was asked.
   if (applianceNoun) {
-    if (arch === 'upper') return `Upper ${applianceNoun}`;
-    if (arch === 'lower') return `Lower ${applianceNoun}`;
-    if (arch === 'both') return `Upper & lower ${pluraliseApplianceForBoth(applianceNoun)}`;
-    return applianceNoun;
+    const archlessProse = applianceNoun;
+    const inner =
+      arch === 'upper'
+        ? `upper ${applianceNoun}`
+        : arch === 'lower'
+          ? `lower ${applianceNoun}`
+          : arch === 'both'
+            ? `upper & lower ${pluraliseApplianceForBoth(applianceNoun)}`
+            : archlessProse;
+    if (service === 'same_day_appliance') return `Same-day ${inner}`;
+    // Click-in veneers and other axis-pinned services: capitalise
+    // the first word so the sentence starts cleanly.
+    return inner.charAt(0).toUpperCase() + inner.slice(1);
   }
+  // No identified appliance — keep the legacy "<Arch> <fallback>"
+  // shape so emails still describe the slot.
   if (arch === 'upper') return `Upper ${fallback}`;
   if (arch === 'lower') return `Lower ${fallback}`;
   return fallback;

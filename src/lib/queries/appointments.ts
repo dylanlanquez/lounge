@@ -320,10 +320,21 @@ function pluraliseAppliance(label: string): string {
 /**
  * Canonical "{arch} {appliance}" phrasing. Never emits the bare word
  * "Both" alongside an appliance — for the both case it reads as
- * "Upper & lower {pluralised appliance}". Casing controls the
- * "Upper & lower" connector and the noun is rendered verbatim, so
- * callers pass the noun in whichever form fits the surface (lowercase
- * for prose, Title Case for headlines).
+ * "Upper & lower {pluralised appliance}". Three casings are
+ * supported so each caller can pick what fits its surface:
+ *
+ *   'sentence' (default) — "Upper retainer" / "Upper & lower retainers".
+ *                          First word capitalised; mid-sentence words
+ *                          stay lowercase. Used standalone on cards
+ *                          where the phrase IS the sentence.
+ *   'title'              — "Upper Retainer" / "Upper & Lower Retainers".
+ *                          Title Case throughout. Used in headline
+ *                          contexts where the whole phrase is a title.
+ *   'prose'              — "upper retainer" / "upper & lower retainers".
+ *                          Fully lowercase, intended to be embedded
+ *                          inside a larger sentence ("Same-day upper
+ *                          retainer") where the leading word is
+ *                          provided by the caller.
  *
  * The `pluraliseForBoth` flag (default true) controls whether the
  * appliance noun is pluralised for the both-arches case. Appliances
@@ -338,6 +349,8 @@ function pluraliseAppliance(label: string): string {
  *   formatArchedAppliance('both',  'retainer')              → "Upper & lower retainers"
  *   formatArchedAppliance('both',  'click-in veneers')      → "Upper & lower click-in veneers"
  *   formatArchedAppliance('both',  'Retainer', 'title')     → "Upper & Lower Retainers"
+ *   formatArchedAppliance('upper', 'retainer', 'prose')     → "upper retainer"
+ *   formatArchedAppliance('both',  'retainer', 'prose')     → "upper & lower retainers"
  *   formatArchedAppliance('both',  'Broken Tooth', 'title', { pluraliseForBoth: false })
  *                                                           → "Upper & Lower Broken Tooth"
  *   formatArchedAppliance(null,    'retainer')              → "retainer"
@@ -345,15 +358,24 @@ function pluraliseAppliance(label: string): string {
 export function formatArchedAppliance(
   arch: ArchKey | null | undefined,
   applianceNoun: string,
-  casing: 'sentence' | 'title' = 'sentence',
+  casing: 'sentence' | 'title' | 'prose' = 'sentence',
   options?: { pluraliseForBoth?: boolean },
 ): string {
   const noun = applianceNoun.trim();
   if (!noun) return '';
-  if (arch === 'upper') return `Upper ${noun}`;
-  if (arch === 'lower') return `Lower ${noun}`;
+  if (arch === 'upper') {
+    return casing === 'prose' ? `upper ${noun}` : `Upper ${noun}`;
+  }
+  if (arch === 'lower') {
+    return casing === 'prose' ? `lower ${noun}` : `Lower ${noun}`;
+  }
   if (arch === 'both') {
-    const connector = casing === 'title' ? 'Upper & Lower' : 'Upper & lower';
+    const connector =
+      casing === 'title'
+        ? 'Upper & Lower'
+        : casing === 'prose'
+          ? 'upper & lower'
+          : 'Upper & lower';
     const finalNoun =
       options?.pluraliseForBoth === false ? noun : pluraliseAppliance(noun);
     return `${connector} ${finalNoun}`;
@@ -422,6 +444,9 @@ const NATIVE_PRODUCT_NOUN: Record<string, string> = {
   day_guard: 'day guard',
   click_in_veneers: 'click-in veneers',
   missing_tooth: 'missing tooth retainer',
+  whitening_tray: 'whitening tray',
+  whitening_kit: 'whitening kit',
+  aligner: 'replacement aligner',
 };
 
 // Service types whose service_type IS the appliance (no separate
@@ -463,13 +488,22 @@ const NATIVE_SERVICE_FALLBACK_LABEL: Record<string, string> = {
  * parsing path entirely; those rows pre-date the axis columns and
  * need formatBookingSummary's heuristics.
  *
- * Examples:
- *   click_in_veneers + arch=upper                       → "Upper click-in veneers"
- *   click_in_veneers + arch=both                        → "Upper & lower click-in veneers"
- *   same_day_appliance + product=retainer + arch=lower  → "Lower retainer"
- *   same_day_appliance + product=retainer + arch=both   → "Upper & lower retainers"
- *   denture_repair (no arch)                            → "Denture repair"
- *   virtual_impression + product=retainer + arch=both   → "Virtual impression appointment for both arches, retainers"
+ * Canonical phrasing per service_type:
+ *   same_day_appliance      → "Same-day <arch> <appliance>"
+ *                             "Same-day upper retainer"
+ *                             "Same-day upper & lower night guards"
+ *                             "Same-day whitening kit" (arch_match=any)
+ *   click_in_veneers        → "<Arch> click-in veneers"
+ *                             "Upper click-in veneers"
+ *                             "Upper & lower click-in veneers"
+ *                             Click-in veneers carries its own
+ *                             "same day" implication via the product
+ *                             name, so no Same-day prefix is added.
+ *   denture_repair          → "Denture repair" (arch-less; per-arch
+ *                             repair lines render separately).
+ *   in_person_impression_*  → "<base> for <arch>, <item>"
+ *                             "In-person impression appointment for
+ *                              both arches, retainers"
  *
  * Never emits the bare word "Both" alongside an appliance — Dylan
  * called the previous "Both retainer" output amateur. All both-arch
@@ -515,15 +549,26 @@ export function formatNativeBookingSummary(row: {
 
   const applianceNoun = productNoun ?? serviceNoun ?? null;
 
-  // When we have an identified appliance, arch+appliance composes
-  // through the shared helper — "Upper retainer" / "Upper & lower
-  // retainers". When we only have a fallback noun (denture repair,
-  // generic service), arch still composes through the helper but
-  // pluralisation is a no-op for service-name nouns that don't end
-  // in 's' — e.g. arch=both + "Denture repair" yields "Upper & lower
-  // denture repairs". That's awkward enough that we suppress the
-  // prefix when no appliance is identified and we're in the both
-  // case: the underlying service name carries the meaning.
+  // Same-day appliances render with the "Same-day " prefix and prose
+  // (fully lowercase) inner phrase so the whole reads as one
+  // sentence ("Same-day upper retainer", "Same-day upper & lower
+  // night guards", "Same-day whitening kit"). Matches the customer-
+  // facing widget Review card so admin + customer surfaces read
+  // identically. Falls back to "Same-day appliance" only when
+  // neither the product nor the service noun resolved — the row is
+  // mid-flight and the catalogue hasn't been pinned.
+  if (service === 'same_day_appliance') {
+    if (applianceNoun) {
+      return `Same-day ${formatArchedAppliance(arch, applianceNoun, 'prose')}`;
+    }
+    return fallbackNoun;
+  }
+
+  // Click-in veneers + other axis-pinned services use sentence
+  // casing ("Upper click-in veneers") — first letter capitalised,
+  // the rest lowercase. No "Same-day" prefix because the click-in
+  // veneers product name already implies same-day, and adding it
+  // would read redundant.
   if (applianceNoun) return formatArchedAppliance(arch, applianceNoun, 'sentence');
   if (arch === 'upper' || arch === 'lower') {
     return formatArchedAppliance(arch, fallbackNoun, 'sentence');
@@ -605,20 +650,33 @@ export function formatBookingSummary(row: {
 
   // Calendly answers come in user-entered Title Case ("Retainer",
   // "Night Guard", "Cracked Denture"). Route through the shared
-  // arch+appliance helper with 'title' casing so the both-arches
-  // case reads "Upper & Lower Retainers" instead of the previous
-  // amateur "Upper and Lower Retainer" (no plural, no &). Repair-
-  // type answers ("Broken Tooth", "Cracked Denture") pluralise
-  // irregularly in English, so the repair branch opts out — the
-  // singular form keeps the label grammatically correct.
+  // arch+appliance helper. Casing depends on the service category:
+  //
+  //   • Same-day appliance ('appliance' category) → prose form
+  //     prefixed with "Same-day ", matching the native + widget
+  //     surfaces ("Same-day upper retainer").
+  //   • Everything else (click-in veneers, denture repair) → 'title'
+  //     casing so the answer keeps the customer-entered Title Case
+  //     spelling ("Upper Cracked Denture"). Repair-type answers
+  //     pluralise irregularly in English so the repair branch opts
+  //     out of pluralisation to avoid producing "Broken Tooths".
   const archKey = arch ? normaliseArchKey(arch.answer) : null;
+  const isSameDayAppliance = eventTypeCategory(event) === 'appliance';
   if (subjectLabel) {
     const noun = withDenturePrefix(subjectLabel);
+    if (isSameDayAppliance) {
+      const inner = formatArchedAppliance(archKey, noun.toLowerCase(), 'prose');
+      return `Same-day ${inner}`;
+    }
     return formatArchedAppliance(archKey, noun, 'title', {
       pluraliseForBoth: !isRepair,
     });
   }
   if (archKey && eventStripped) {
+    if (isSameDayAppliance) {
+      const inner = formatArchedAppliance(archKey, eventStripped.toLowerCase(), 'prose');
+      return `Same-day ${inner}`;
+    }
     return formatArchedAppliance(archKey, eventStripped, 'title', {
       pluraliseForBoth: !isRepair,
     });

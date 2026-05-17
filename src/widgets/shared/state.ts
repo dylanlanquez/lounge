@@ -978,18 +978,6 @@ const APPLIANCE_TITLE_FALLBACK: Record<string, string> = {
   missing_tooth: 'Missing Tooth Retainer',
 };
 
-const ARCH_TITLE: Record<string, string> = {
-  upper: 'Upper',
-  lower: 'Lower',
-  // Both arches reads naturally as a coordinated pair, not a count.
-  // "Both Retainer" was confusing — a quantity-sounding word in
-  // front of a singular noun. "Upper & Lower Retainers" reads as a
-  // proper noun phrase and tells the patient exactly what they
-  // booked. The pluralisation of the appliance happens inside
-  // formatBookingSuccessTitle so the same map can drive both arches.
-  both: 'Upper & Lower',
-};
-
 // Pluralise an appliance noun when arch=both. Catalogue labels are
 // stored as singular ("Retainer", "Night guard", "Missing tooth
 // retainer") so we add 's' to the last word for the both-arches
@@ -1005,23 +993,22 @@ function pluraliseApplianceForBoth(label: string): string {
 }
 
 /**
- * Compose the headline service title shown on the success card.
+ * Compose the service line shown on the success card. Canonical
+ * phrasing matches every other surface (Lounge admin schedule,
+ * AppointmentDetail hero, emails, the customer-facing manage page):
  *
- * Examples:
- *   click_in_veneers + arch=upper                  → "Upper Click-in Veneers"
- *   click_in_veneers + arch=both                   → "Upper & Lower Click-in Veneers"
- *   same_day_appliance + product=retainer + lower  → "Lower Retainer"
- *   same_day_appliance + product=retainer + both   → "Upper & Lower Retainers"
- *   denture_repair + arch=upper                    → "Upper Denture repair"
- *   whitening_kit (no axes)                        → "Whitening kit"
+ *   same_day_appliance + retainer + upper  → "Same-day upper retainer"
+ *   same_day_appliance + retainer + both   → "Same-day upper & lower retainers"
+ *   same_day_appliance + whitening_kit     → "Same-day whitening kit"
+ *   click_in_veneers + upper               → "Upper click-in veneers"
+ *   click_in_veneers + both                → "Upper & lower click-in veneers"
+ *   denture_repair + arch=upper            → "Upper denture repair"
  *
- * Two rules of thumb baked in:
- *   • arch='both' reads as "Upper & Lower" rather than "Both"
- *     so the headline is a noun phrase, not a count.
- *   • when arch='both' AND the appliance has a singular catalogue
- *     name (Retainer, Night guard, Missing tooth retainer), the
- *     headline pluralises the appliance so subject/verb agreement
- *     reads correctly to the patient.
+ * Same-day appliance gets the "Same-day " prefix; click-in veneers
+ * doesn't (the product name already implies same-day). Prose case
+ * throughout so the line reads as one sentence regardless of
+ * service type, instead of mixing Title Case here with sentence
+ * case elsewhere.
  *
  * Strips any HTML tags from the booking-type label before composing
  * — `lng_widget_booking_types.display_label` is rendered with
@@ -1037,14 +1024,14 @@ export function formatBookingSuccessTitle(
   const type = svc.serviceType;
   const archKey = state.axes.arch;
   const isBoth = archKey === 'both';
-  const arch = archKey ? ARCH_TITLE[archKey] : null;
 
   // For appliance-shaped services (click-in veneers, same-day
-  // appliance) we want the actual catalogue name — that's what the
-  // admin set in admin > Service types and what every other surface
-  // (cart, receipts, schedule) shows. Falls back to the hardcoded
-  // map ONLY when the resolver hasn't returned yet (first paint),
-  // so a stale rename in the map can never out-shout the DB.
+  // appliance) we want the actual catalogue name lowercased —
+  // that's what admin set in Service types, and lowercasing it
+  // means it integrates naturally with the prose phrase.
+  // Falls back to the hardcoded map ONLY when the resolver hasn't
+  // returned yet (first paint), so a stale rename in the map can
+  // never out-shout the DB.
   if (type === 'click_in_veneers' || type === 'same_day_appliance') {
     const fallback =
       type === 'click_in_veneers'
@@ -1052,17 +1039,37 @@ export function formatBookingSuccessTitle(
         : state.axes.product_key
           ? (APPLIANCE_TITLE_FALLBACK[state.axes.product_key] ?? 'Appliance')
           : 'Appliance';
-    const baseName = resolvedCatalogueName?.trim() || fallback;
-    const name = isBoth ? pluraliseApplianceForBoth(baseName) : baseName;
-    const parts: string[] = [];
-    if (arch) parts.push(arch);
-    parts.push(name);
-    return parts.join(' ');
+    const rawName = (resolvedCatalogueName?.trim() || fallback).toLowerCase();
+    const name = isBoth ? pluraliseApplianceForBoth(rawName) : rawName;
+    const archProse =
+      archKey === 'upper'
+        ? 'upper'
+        : archKey === 'lower'
+          ? 'lower'
+          : archKey === 'both'
+            ? 'upper & lower'
+            : null;
+    const inner = archProse ? `${archProse} ${name}` : name;
+    if (type === 'same_day_appliance') return `Same-day ${inner}`;
+    // Click-in veneers — capitalise the first word of the resulting
+    // sentence ("Upper click-in veneers"), no Same-day prefix.
+    return inner.charAt(0).toUpperCase() + inner.slice(1);
   }
 
-  // Everything else: strip HTML, prefix arch when set.
+  // Everything else: strip HTML, prefix arch when set. Same prose
+  // form as above so denture-repair etc. read identically.
   const cleanLabel = svc.label.replace(/<[^>]*>/g, '').trim();
-  if (arch) return `${arch} ${cleanLabel}`;
+  const archProse =
+    archKey === 'upper'
+      ? 'upper'
+      : archKey === 'lower'
+        ? 'lower'
+        : archKey === 'both'
+          ? 'upper & lower'
+          : null;
+  if (archProse) {
+    return `${archProse.charAt(0).toUpperCase()}${archProse.slice(1)} ${cleanLabel.toLowerCase()}`;
+  }
   return cleanLabel;
 }
 

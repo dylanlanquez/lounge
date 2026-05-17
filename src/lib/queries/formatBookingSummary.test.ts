@@ -107,7 +107,7 @@ describe('formatBookingSummary', () => {
     ).toBe('Upper & Lower Denture Broken Tooth');
   });
 
-  it('Same-day Appliances + Missing Tooth Retainer + Top → "Upper Missing Tooth Retainer"', () => {
+  it('Same-day Appliances + Missing Tooth Retainer + Top → "Same-day upper missing tooth retainer"', () => {
     expect(
       formatBookingSummary(
         makeRow('Same-day Appliances', [
@@ -115,10 +115,10 @@ describe('formatBookingSummary', () => {
           { question: 'Which Arch?', answer: 'Top' },
         ])
       )
-    ).toBe('Upper Missing Tooth Retainer');
+    ).toBe('Same-day upper missing tooth retainer');
   });
 
-  it('Same-day Appliances + Bottom → "Lower Night Guard"', () => {
+  it('Same-day Appliances + Bottom → "Same-day lower night guard"', () => {
     expect(
       formatBookingSummary(
         makeRow('Same-day Appliances', [
@@ -126,7 +126,7 @@ describe('formatBookingSummary', () => {
           { question: 'Arch', answer: 'Bottom' },
         ])
       )
-    ).toBe('Lower Night Guard');
+    ).toBe('Same-day lower night guard');
   });
 
   it('Same-day Click-in Veneers + Top → "Upper Click-in Veneers" (strips Same-day prefix)', () => {
@@ -265,7 +265,7 @@ describe('formatBookingSummary', () => {
           { question: 'Upper or Lower?', answer: 'Top' },
         ])
       )
-    ).toBe('Upper Night Guard');
+    ).toBe('Same-day upper night guard');
   });
 
   it('matches arch when question is "Top or Bottom?"', () => {
@@ -284,7 +284,7 @@ describe('formatBookingSummary', () => {
           { question: 'Which jaw?', answer: 'Both' },
         ])
       )
-    ).toBe('Upper & Lower Sports guards');
+    ).toBe('Same-day upper & lower sports guards');
   });
 
   it('falls back to answer-pattern arch detection when question is unrecognised', () => {
@@ -295,10 +295,10 @@ describe('formatBookingSummary', () => {
           { question: 'Anything else?', answer: 'Top' }, // unrecognised question, but answer is clearly arch
         ])
       )
-    ).toBe('Upper Retainer');
+    ).toBe('Same-day upper retainer');
   });
 
-  it('handles multi-line "Top\\nBottom" answers as Upper & Lower Retainers', () => {
+  it('handles multi-line "Top\\nBottom" answers as "Same-day upper & lower retainers"', () => {
     expect(
       formatBookingSummary(
         makeRow('Same-day Appliances', [
@@ -306,7 +306,7 @@ describe('formatBookingSummary', () => {
           { question: 'Which Arch?', answer: 'Top\nBottom' },
         ])
       )
-    ).toBe('Upper & Lower Retainers');
+    ).toBe('Same-day upper & lower retainers');
   });
 
   it('comma-joins multi-select repair-type answers and prepends Denture', () => {
@@ -327,7 +327,7 @@ describe('formatBookingSummary', () => {
           { question: 'Which Arch?', answer: 'Top' },
         ])
       )
-    ).toBe('Upper Retainer, Night Guard');
+    ).toBe('Same-day upper retainer, night guard');
   });
 
   it('strips empty lines and extra whitespace from multi-select', () => {
@@ -441,43 +441,61 @@ describe('formatNativeBookingSummary', () => {
     event_type_label: string | null = null,
   ) => ({ service_type, arch, product_key, event_type_label });
 
-  it('same_day_appliance + retainer + upper → "Upper retainer"', () => {
+  it('same_day_appliance + retainer + upper → "Same-day upper retainer"', () => {
     expect(
       formatNativeBookingSummary(makeNative('same_day_appliance', 'upper', 'retainer')),
-    ).toBe('Upper retainer');
+    ).toBe('Same-day upper retainer');
   });
 
-  it('same_day_appliance + retainer + lower → "Lower retainer"', () => {
+  it('same_day_appliance + retainer + lower → "Same-day lower retainer"', () => {
     expect(
       formatNativeBookingSummary(makeNative('same_day_appliance', 'lower', 'retainer')),
-    ).toBe('Lower retainer');
+    ).toBe('Same-day lower retainer');
   });
 
-  it('same_day_appliance + retainer + both → "Upper & lower retainers" (the bug Dylan flagged)', () => {
+  it('same_day_appliance + retainer + both → "Same-day upper & lower retainers"', () => {
     expect(
       formatNativeBookingSummary(makeNative('same_day_appliance', 'both', 'retainer')),
-    ).toBe('Upper & lower retainers');
+    ).toBe('Same-day upper & lower retainers');
   });
 
-  it('same_day_appliance + night_guard + both → "Upper & lower night guards"', () => {
+  it('same_day_appliance + night_guard + both → "Same-day upper & lower night guards"', () => {
     expect(
       formatNativeBookingSummary(makeNative('same_day_appliance', 'both', 'night_guard')),
-    ).toBe('Upper & lower night guards');
+    ).toBe('Same-day upper & lower night guards');
   });
 
-  it('same_day_appliance + missing_tooth + both → "Upper & lower missing tooth retainers" (matches catalogue name)', () => {
+  it('same_day_appliance + missing_tooth + both → "Same-day upper & lower missing tooth retainers"', () => {
     expect(
       formatNativeBookingSummary(makeNative('same_day_appliance', 'both', 'missing_tooth')),
-    ).toBe('Upper & lower missing tooth retainers');
+    ).toBe('Same-day upper & lower missing tooth retainers');
   });
 
-  it('click_in_veneers + upper → "Upper Click-in veneers"', () => {
+  it('same_day_appliance + whitening_kit (no arch) → "Same-day whitening kit"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', null, 'whitening_kit')),
+    ).toBe('Same-day whitening kit');
+  });
+
+  it('same_day_appliance + whitening_tray + upper → "Same-day upper whitening tray"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'upper', 'whitening_tray')),
+    ).toBe('Same-day upper whitening tray');
+  });
+
+  it('same_day_appliance + aligner + lower → "Same-day lower replacement aligner"', () => {
+    expect(
+      formatNativeBookingSummary(makeNative('same_day_appliance', 'lower', 'aligner')),
+    ).toBe('Same-day lower replacement aligner');
+  });
+
+  it('click_in_veneers + upper → "Upper Click-in veneers" (no Same-day prefix)', () => {
     expect(
       formatNativeBookingSummary(makeNative('click_in_veneers', 'upper', null)),
     ).toBe('Upper Click-in veneers');
   });
 
-  it('click_in_veneers + both → "Upper & lower Click-in veneers"', () => {
+  it('click_in_veneers + both → "Upper & lower Click-in veneers" (no Same-day prefix)', () => {
     expect(
       formatNativeBookingSummary(makeNative('click_in_veneers', 'both', null)),
     ).toBe('Upper & lower Click-in veneers');
