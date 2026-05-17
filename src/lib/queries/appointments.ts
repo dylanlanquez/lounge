@@ -661,14 +661,18 @@ export function formatCustomerServiceTitleLabel(row: {
   }
 
   // Impression appointments — "for {arch} {product}" suffix.
+  // Both 'impression_appointment' (current DB enum) and the legacy
+  // 'in_person_impression_appointment' alias map to the in-person
+  // base copy, alongside the virtual variant.
   if (
+    service === 'impression_appointment' ||
     service === 'in_person_impression_appointment' ||
     service === 'virtual_impression_appointment'
   ) {
     const base =
-      service === 'in_person_impression_appointment'
-        ? 'In-person Impression Appointment'
-        : 'Virtual Impression Appointment';
+      service === 'virtual_impression_appointment'
+        ? 'Virtual Impression Appointment'
+        : 'In-person Impression Appointment';
     const productNoun = row.product_key
       ? TITLE_PRODUCT_NOUN[row.product_key] ?? null
       : null;

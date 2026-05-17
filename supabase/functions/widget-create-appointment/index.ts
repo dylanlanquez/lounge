@@ -833,7 +833,7 @@ const SERVICE_LABELS: Record<string, string> = {
   same_day_appliance: 'Same-day appliance',
   denture_repair: 'Denture repair',
   whitening_kit: 'Whitening kit',
-  impression_appointment: 'Impression appointment',
+  impression_appointment: 'In-person impression appointment',
   virtual_impression_appointment: 'Virtual impression appointment',
 };
 function labelForService(service: string): string {
