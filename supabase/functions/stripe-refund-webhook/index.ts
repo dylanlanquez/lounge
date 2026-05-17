@@ -117,27 +117,88 @@ async function reconcileRefund(
   eventType: string,
   refund: StripeRefund,
 ): Promise<void> {
-  // Look up the local refund row by Stripe id. terminal-refund
-  // stamps stripe_refund_id when Stripe accepts the call, so any
-  // row this webhook is reconciling already has a match.
-  const { data: row, error: readErr } = await supabase
+  // Two-step lookup. terminal-refund:
+  //   1. Inserts the local row with stripe_refund_id NULL.
+  //   2. Calls Stripe /v1/refunds (stamping metadata[refund_id]
+  //      with the local row id).
+  //   3. Updates the local row with stripe_refund_id from the
+  //      Stripe response.
+  //
+  // Stripe can deliver charge.refund.* in the window between (2)
+  // and (3). If we only matched on stripe_refund_id we'd miss the
+  // row and log it as an orphan. Metadata fallback closes that:
+  //
+  //   • Fast path: match on stripe_refund_id (terminal-refund has
+  //     stamped it by now).
+  //   • Race path: match on metadata.refund_id (the local row id
+  //     we baked into the Stripe Refund object). When we hit this
+  //     path we ALSO write stripe_refund_id onto the row so any
+  //     subsequent retry of the same event goes through the fast
+  //     path and the audit trail carries the cross-reference.
+  //   • True orphan: no stripe_refund_id match, no metadata.
+  //     refund_id (or metadata.refund_id present but no row) →
+  //     log + 200 only when metadata.refund_id is absent
+  //     (dashboard-issued refund). When metadata.refund_id IS
+  //     set but the row isn't there yet, we throw so the handler
+  //     returns 5xx and Stripe retries — that path catches the
+  //     extreme case where the webhook somehow arrives before the
+  //     initial INSERT has committed.
+  const metaRefundId =
+    typeof refund.metadata?.refund_id === 'string'
+      ? refund.metadata.refund_id
+      : null;
+  const fastReadRes = await supabase
     .from('lng_payment_refunds')
-    .select('id, status, payment_id, deposit_appointment_id, amount_pence, visit_id, appointment_id')
+    .select('id, status, payment_id, deposit_appointment_id, amount_pence, visit_id, appointment_id, stripe_refund_id')
     .eq('stripe_refund_id', refund.id)
     .maybeSingle();
-  if (readErr) {
+  if (fastReadRes.error) {
     await logFailure('refund_row_read_failed', {
-      error: readErr.message,
+      error: fastReadRes.error.message,
       stripe_refund_id: refund.id,
     });
     return;
   }
+  let row = fastReadRes.data;
+  let matchedViaMetadata = false;
+  if (!row && metaRefundId) {
+    const metaReadRes = await supabase
+      .from('lng_payment_refunds')
+      .select('id, status, payment_id, deposit_appointment_id, amount_pence, visit_id, appointment_id, stripe_refund_id')
+      .eq('id', metaRefundId)
+      .maybeSingle();
+    if (metaReadRes.error) {
+      await logFailure('refund_row_read_failed_metadata_path', {
+        error: metaReadRes.error.message,
+        stripe_refund_id: refund.id,
+        meta_refund_id: metaRefundId,
+      });
+      return;
+    }
+    row = metaReadRes.data;
+    matchedViaMetadata = !!row;
+  }
   if (!row) {
-    // Orphan refund — Stripe says this refund exists but we don't
-    // know about it. Could be a refund issued directly from the
-    // Stripe dashboard (out-of-band). Log it for audit but don't
-    // create a row from the webhook — the audit table requires
-    // performer + approver ids we don't have here.
+    if (metaRefundId) {
+      // Stripe says we minted this refund (metadata.refund_id is
+      // ours) but the row isn't in the DB yet. Stripe's retry
+      // policy is our friend here — return 5xx, Stripe re-delivers
+      // after the row has had a chance to settle.
+      await logFailure(
+        'refund_webhook_metadata_no_row',
+        {
+          stripe_refund_id: refund.id,
+          meta_refund_id: metaRefundId,
+          stripe_event_type: eventType,
+        },
+        'warning',
+      );
+      throw new Error('refund_row_not_yet_visible');
+    }
+    // No metadata.refund_id — this is a refund issued outside
+    // Lounge (Stripe dashboard, partner integration, etc). Log
+    // for audit + 200 so Stripe stops retrying. The audit table
+    // requires performer + approver ids the webhook doesn't have.
     await supabase.from('lng_event_log').insert({
       source: 'stripe-refund-webhook',
       event_type: 'orphan_refund',
@@ -161,7 +222,20 @@ async function reconcileRefund(
     amount_pence: number;
     visit_id: string | null;
     appointment_id: string | null;
+    stripe_refund_id: string | null;
   };
+
+  // When we matched via metadata, the row's stripe_refund_id is
+  // still null — terminal-refund hadn't written it back yet.
+  // Write it now so the next webhook delivery for the same Stripe
+  // refund goes through the fast path. Best-effort: if the write
+  // fails we'll just take the metadata path again next time.
+  if (matchedViaMetadata && r.stripe_refund_id !== refund.id) {
+    await supabase
+      .from('lng_payment_refunds')
+      .update({ stripe_refund_id: refund.id })
+      .eq('id', r.id);
+  }
 
   const nextStatus = mapStripeStatus(refund.status);
 

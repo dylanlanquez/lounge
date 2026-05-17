@@ -387,6 +387,12 @@ Deno.serve(async (req) => {
         payment_intent: src.stripePaymentIntentId,
         amount: String(amountPence),
         reason: 'requested_by_customer',
+        // Stamp our refund row id into the Stripe Refund's metadata
+        // so the webhook can look us up even if it arrives BEFORE
+        // we've stored the stripe_refund_id back on the row. Closes
+        // the read-then-update race between this function's UPDATE
+        // and Stripe's async charge.refund.updated delivery.
+        'metadata[refund_id]': refundId,
       }).toString(),
     });
     const refundBody = (await r.json().catch(() => ({}))) as {
