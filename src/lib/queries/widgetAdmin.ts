@@ -246,7 +246,18 @@ export function useWidgetAdminServices(): ReadResult {
                 ? p.productKey !== null
                 : p.repairVariant !== null,
             )
-          : [];
+          : // Single-product services (e.g. click_in_veneers — its
+            // axis registry declares arch only, no product_key) still
+            // need their lone catalogue row surfaced so per-product
+            // toggles in admin > Widgets > Product settings (e.g.
+            // request_smile_photos) can target them. We fall back to
+            // any catalogue row with a non-null product_key —
+            // service.hasOptions stays false because there's just one
+            // row, so the per-booking-type "Options in this service"
+            // picker doesn't surface a meaningless single-item list.
+            (catByService.get(serviceType) ?? []).filter(
+              (p) => p.productKey !== null,
+            );
         const hasOptions = allProducts.length > 1;
         const optionsLabel =
           catalogueAxis?.key === 'repair_variant'
