@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -76,6 +76,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
+import { recordOwedToPatient, type OwedTrigger } from '../lib/queries/owedToPatient.ts';
 import {
   configFor,
   useAdminProductConfig,
@@ -305,6 +306,18 @@ export function VisitDetail() {
   const [refundDefaultCategory, setRefundDefaultCategory] = useState<
     'item_removed' | 'visit_cancelled' | 'visit_ended_early' | 'cart_correction'
   >('item_removed');
+  // Last-seen "owed back" amount + the trigger context staged by the
+  // most recent cart mutation. The effect below fires a single
+  // patient_events 'owed_to_patient' row whenever the derived owed
+  // amount crosses upward (0→positive, or positive→bigger-positive).
+  // The trigger ref lets each mutation handler stamp WHY before
+  // refresh kicks off the recompute.
+  const lastOwedRef = useRef(0);
+  const pendingOwedTriggerRef = useRef<{
+    trigger: OwedTrigger;
+    reason: string;
+    context?: Record<string, unknown>;
+  } | null>(null);
   const [shipToast, setShipToast] = useState<{ dispatch_ref: string; tracking_number: string | null } | null>(null);
 
   // Change-fulfilment sheet — opens post-completion when staff need
@@ -632,6 +645,41 @@ export function VisitDetail() {
     amountPaidPence,
     Math.max(0, amountPaidPence - subtotalAfterDiscount),
   );
+
+  // Owed-state transition logger. Writes a patient_events
+  // 'owed_to_patient' row the moment the cart math says we now owe
+  // money — OR the moment we owe MORE than we did before. Reads the
+  // trigger context from pendingOwedTriggerRef (stamped by the
+  // mutation handler that caused the change); falls back to a
+  // generic note when there's no specific staging. The audit row
+  // captures WHY at the moment it happened so the timeline doesn't
+  // depend on reconstructing intent from later events.
+  useEffect(() => {
+    if (!patient || !visit) return;
+    const prev = lastOwedRef.current;
+    lastOwedRef.current = owedToPatientPence;
+    if (owedToPatientPence <= prev) return;
+    if (owedToPatientPence <= 0) return;
+    const staged = pendingOwedTriggerRef.current;
+    pendingOwedTriggerRef.current = null;
+    void recordOwedToPatient({
+      patient_id: patient.id,
+      trigger: staged?.trigger ?? 'cart_line_removed',
+      owed_pence: owedToPatientPence,
+      visit_id: visit.id,
+      appointment_id: visit.appointment_id ?? null,
+      reason:
+        staged?.reason ??
+        'Cart total dropped below what the patient already paid.',
+      context: {
+        ...(staged?.context ?? {}),
+        previous_owed_pence: prev,
+        new_owed_pence: owedToPatientPence,
+        amount_paid_pence: amountPaidPence,
+        cart_total_after_discount_pence: subtotalAfterDiscount,
+      },
+    });
+  }, [owedToPatientPence, patient, visit, amountPaidPence, subtotalAfterDiscount]);
   // Pence collected at the till today, separate from the deposit and
   // any Shopify pre-paid credit. Used in the Totals card breakdown
   // so we can show "Deposit -£X · Collected -£Y" without overlap.
@@ -865,6 +913,18 @@ export function VisitDetail() {
     setDiscountBusy(true);
     setDiscountError(null);
     try {
+      pendingOwedTriggerRef.current = {
+        trigger: 'cart_discount_applied',
+        reason:
+          discountReason.trim().length > 0
+            ? `${formatPence(pence)} discount applied: ${discountReason.trim()}`
+            : `${formatPence(pence)} discount applied.`,
+        context: {
+          cart_id: cart.id,
+          discount_amount_pence: pence,
+          discount_reason: discountReason.trim() || null,
+        },
+      };
       await applyCartDiscount({
         cart_id: cart.id,
         amount_pence: pence,
@@ -943,6 +1003,27 @@ export function VisitDetail() {
   const dec = async (id: string, q: number) => {
     setBusyItem(id);
     try {
+      // Stamp the owed-trigger BEFORE the mutation so the post-
+      // refresh effect picks up the right context when it fires.
+      // Best-effort: we lift the line's display name + unit price
+      // from the current cart so the timeline row reads cleanly
+      // ("Decreased Whitening Tray from 2 to 1") without joining
+      // back to the cart_items table later.
+      const line = items.find((it) => it.id === id);
+      if (line) {
+        pendingOwedTriggerRef.current = {
+          trigger: 'cart_quantity_decreased',
+          reason: `Decreased ${line.name} from ${q} to ${q - 1}.`,
+          context: {
+            cart_item_id: id,
+            catalogue_id: line.catalogue_id,
+            line_name: line.name,
+            unit_price_pence: line.unit_price_pence,
+            quantity_before: q,
+            quantity_after: q - 1,
+          },
+        };
+      }
       await updateCartItemQuantity(id, q - 1);
       refresh();
     } finally {
@@ -963,6 +1044,24 @@ export function VisitDetail() {
     setRemoveBusy(true);
     setRemoveError(null);
     try {
+      // Stage the owed-trigger before mutation so the post-refresh
+      // effect logs with rich context (line name, reason category,
+      // staff note).
+      pendingOwedTriggerRef.current = {
+        trigger: 'cart_line_removed',
+        reason:
+          removeNote.trim().length > 0
+            ? `Removed ${itemBeingRemoved.name}: ${removeNote.trim()}`
+            : `Removed ${itemBeingRemoved.name}.`,
+        context: {
+          cart_item_id: removeItemId,
+          catalogue_id: itemBeingRemoved.catalogue_id,
+          line_name: itemBeingRemoved.name,
+          line_total_pence: itemBeingRemoved.line_total_pence,
+          remove_reason: removeReason,
+          remove_note: removeNote.trim() || null,
+        },
+      };
       await removeCartLineWithReason({
         cart_item_id: removeItemId,
         catalogue_id: itemBeingRemoved.catalogue_id,
@@ -1025,6 +1124,19 @@ export function VisitDetail() {
     setUnsuitBusy(true);
     setUnsuitError(null);
     try {
+      // Stage the owed-trigger so the post-refresh effect logs the
+      // visit-ended-early reason against any newly-overpaid balance.
+      // Captures the staff-typed reason verbatim so the timeline row
+      // reads exactly what was given.
+      pendingOwedTriggerRef.current = {
+        trigger: 'visit_ended_early',
+        reason: `Visit ended early (${endReason}): ${unsuitNote.trim()}`,
+        context: {
+          visit_id: visit.id,
+          end_reason: endReason,
+          end_note: unsuitNote.trim(),
+        },
+      };
       if (endReason === 'unsuitable') {
         // Loop through picked items via the unified removal flow.
         // The orchestrator handles termination once active items
@@ -1051,6 +1163,13 @@ export function VisitDetail() {
       }
       setUnsuitOpen(false);
       refresh();
+      refreshPaid();
+      // Auto-open the RefundSheet so staff doesn't forget. The
+      // useEffect downstream will reset lastOwedRef + log the event
+      // once the new owed amount lands; opening here gets the sheet
+      // in front of staff with the right default category preset.
+      setRefundDefaultCategory('visit_ended_early');
+      setRefundOpen(true);
     } catch (e) {
       setUnsuitError(e instanceof Error ? e.message : 'Could not save');
     } finally {

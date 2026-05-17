@@ -227,6 +227,8 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Unsuitable reversed';
     case 'cart_line_removed':
       return 'Cart line removed';
+    case 'owed_to_patient':
+      return 'We owe the patient money';
     case 'visit_ended_early':
       return 'Visit ended early';
     case 'visit_shipped':
@@ -987,6 +989,13 @@ function composePatientEventTitle(row: PatientEventRow): string {
     const lineName = typeof row.payload?.line_name === 'string' ? row.payload.line_name : null;
     if (lineName && lineName.trim().length > 0) return `Removed ${lineName}`;
   }
+  if (row.event_type === 'owed_to_patient') {
+    const owedRaw = row.payload?.owed_pence;
+    const owedPence = typeof owedRaw === 'number' ? owedRaw : null;
+    if (owedPence != null) {
+      return `We owe the patient ${formatPence(owedPence)}`;
+    }
+  }
   if (row.event_type === 'visit_shipped') {
     const payload = row.payload ?? {};
     const items = Array.isArray(payload.items) ? (payload.items as string[]).join(', ') : null;
@@ -1038,6 +1047,39 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     // payload still has the text.
     const reason = typeof payload.reason === 'string' ? payload.reason : row.notes ?? null;
     return reason && reason.trim().length > 0 ? reason : undefined;
+  }
+  if (row.event_type === 'owed_to_patient') {
+    // The reason captured at trigger time is the most useful single
+    // line — "Removed Whitening Tray (Upper)" or "Visit ended early
+    // (patient_declined): patient was anxious". Falls back to a
+    // trigger-keyed generic when the reason is empty.
+    const reason =
+      typeof payload.reason === 'string' && payload.reason.trim().length > 0
+        ? payload.reason.trim()
+        : typeof row.notes === 'string' && row.notes.trim().length > 0
+          ? row.notes.trim()
+          : null;
+    if (reason) return reason;
+    const trigger = typeof payload.trigger === 'string' ? payload.trigger : null;
+    if (trigger) {
+      switch (trigger) {
+        case 'cart_line_removed':
+          return 'A cart line was removed and dropped the cart below what the patient paid.';
+        case 'cart_quantity_decreased':
+          return 'A cart line quantity was reduced and dropped the cart below what the patient paid.';
+        case 'cart_discount_applied':
+          return 'A discount was applied and dropped the cart below what the patient paid.';
+        case 'visit_ended_early':
+          return 'The visit was ended early while the patient had money on file.';
+        case 'visit_cancelled':
+          return 'The visit was cancelled while the patient had money on file.';
+        case 'appointment_cancelled':
+          return 'The appointment was cancelled with a paid deposit on file.';
+        default:
+          break;
+      }
+    }
+    return undefined;
   }
   if (row.event_type === 'visit_shipped') {
     const dispatchRef = typeof payload.dispatch_ref === 'string' ? payload.dispatch_ref : null;

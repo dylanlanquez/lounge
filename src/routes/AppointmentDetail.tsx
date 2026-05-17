@@ -75,6 +75,8 @@ import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.t
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
+import { recordOwedToPatient } from '../lib/queries/owedToPatient.ts';
+import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
 import {
@@ -751,11 +753,15 @@ function Hero({
   tone: StatusTone;
 }) {
   const navigate = useNavigate();
+  const { account: currentAccount } = useCurrentAccount();
   // Sheet state for the phase timeline. Lives in the hero because
   // the "Estimated appointment length" affordance lives in the
   // hero's timeLine. Sheet itself renders via portal so DOM position
   // doesn't matter.
   const [timelineOpen, setTimelineOpen] = useState(false);
+  // Refund sheet for a cancelled appointment with a paid deposit on
+  // file. Opened from the CancelledRefundBanner rendered just below.
+  const [refundOpen, setRefundOpen] = useState(false);
   // Resolve the LIVE booking-type phases for this appointment.
   // Source is the admin's current config (lng_booking_type_resolve),
   // not the materialised snapshot, because the modal is a customer-
@@ -913,6 +919,25 @@ function Hero({
           tone: ribbon.tone,
           icon: ribbon.icon,
         }}
+      />
+      <CancelledRefundBanner
+        appt={appt}
+        onOpenRefund={() => setRefundOpen(true)}
+        isCsOnly={currentAccount?.is_cs_only === true}
+      />
+      <RefundSheet
+        open={refundOpen}
+        onClose={() => setRefundOpen(false)}
+        cartId={null}
+        appointmentId={appt.id}
+        suggestedPence={
+          appt.deposit_status === 'paid' &&
+          typeof appt.deposit_pence === 'number' &&
+          appt.deposit_pence > 0
+            ? appt.deposit_pence
+            : null
+        }
+        defaultCategory="visit_cancelled"
       />
       <BottomSheet
         open={timelineOpen}
@@ -2688,6 +2713,31 @@ function CancelDialog({
         reason: trimmedReason,
         notifyPatient: notify,
       });
+      // Patient-paid deposit on this appointment? We now owe it
+      // back. Log the moment with the cancel reason verbatim so the
+      // timeline shows WHY we're holding the money against the
+      // patient's pocket. Best-effort — the cancellation succeeded
+      // regardless.
+      if (
+        appt.deposit_status === 'paid' &&
+        typeof appt.deposit_pence === 'number' &&
+        appt.deposit_pence > 0
+      ) {
+        await recordOwedToPatient({
+          patient_id: appt.patient_id,
+          trigger: 'appointment_cancelled',
+          owed_pence: appt.deposit_pence,
+          visit_id: null,
+          appointment_id: appt.id,
+          reason: `Appointment cancelled: ${trimmedReason}`,
+          context: {
+            appointment_ref: appt.appointment_ref,
+            cancel_reason: trimmedReason,
+            deposit_currency: appt.deposit_currency,
+            deposit_provider: appt.deposit_provider,
+          },
+        });
+      }
       onCancelled();
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not cancel appointment';
@@ -3105,5 +3155,62 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
         </Button>
       </div>
     </Card>
+  );
+}
+
+// Banner that appears under the appointment hero when the booking
+// has been cancelled but the patient's widget deposit is still on
+// file. One click opens the RefundSheet pre-filled with the
+// deposit amount and the visit_cancelled category. CS-only staff
+// see the banner without the action button (they know to escalate).
+function CancelledRefundBanner({
+  appt,
+  onOpenRefund,
+  isCsOnly,
+}: {
+  appt: AppointmentDetailRow;
+  onOpenRefund: () => void;
+  isCsOnly: boolean;
+}) {
+  if (appt.status !== 'cancelled') return null;
+  if (appt.deposit_status !== 'paid') return null;
+  if (!appt.deposit_pence || appt.deposit_pence <= 0) return null;
+  const amount = formatPence(appt.deposit_pence);
+  return (
+    <div
+      role="alert"
+      style={{
+        marginTop: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: 'rgba(220, 38, 38, 0.08)',
+        border: '1px solid rgba(220, 38, 38, 0.30)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        flexWrap: 'wrap',
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: '#991b1b',
+          }}
+        >
+          We owe {appt.patient.first_name ?? 'the patient'} {amount}
+        </span>
+        <span style={{ fontSize: theme.type.size.xs, color: '#7f1d1d' }}>
+          Appointment cancelled but the deposit has not been refunded yet.
+        </span>
+      </div>
+      {isCsOnly ? null : (
+        <Button variant="primary" size="sm" onClick={onOpenRefund}>
+          Refund {amount}
+        </Button>
+      )}
+    </div>
   );
 }
