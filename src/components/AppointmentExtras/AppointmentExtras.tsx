@@ -155,11 +155,10 @@ function ArchHeader({ arch }: { arch: 'upper' | 'lower' | 'both' }) {
         margin: 0,
         marginTop: theme.space[2],
         marginBottom: theme.space[1],
-        fontSize: theme.type.size.xs,
+        fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.semibold,
         letterSpacing: theme.type.tracking.tight,
-        color: theme.color.inkMuted,
-        textTransform: 'uppercase',
+        color: theme.color.ink,
       }}
     >
       {label}

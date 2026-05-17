@@ -1391,62 +1391,32 @@ export function VisitDetail() {
                   // step them back so the eye stays on the PaidHeader
                   // as the headline fact.
                   dim={cart?.status === 'paid'}
+                  // Approver row renders directly under the Discount
+                  // line so the reason + amend / remove controls sit
+                  // visually attached to what they affect. Was
+                  // previously a separate row below the totals that
+                  // read as floating, with no connection to the
+                  // discount line above.
+                  activeDiscount={activeDiscount}
+                  onAmendDiscount={() => openDiscountSheet('amend')}
+                  onRemoveDiscount={() => openDiscountSheet('remove')}
+                  discountEditable={!productiveLocked}
                 />
               ) : null}
 
-              {/* Discount control sits beside the totals — that's where
-                  staff already look to verify the bill, and the apply /
-                  remove flow has manager-approval friction we don't
-                  want to bury. Only renders when there's a basket and
-                  the cart is still mutable; productive locks (paid /
-                  voided / unsuitable / ended_early) hide it like the
-                  rest of the cart actions. */}
-              {items.length > 0 && !productiveLocked ? (
+              {/* Apply-discount affordance — only renders when the cart
+                  has items, is mutable, and no active discount yet.
+                  Once a discount is applied the approver row inside
+                  Totals (above) carries the Amend / Remove buttons. */}
+              {items.length > 0 && !productiveLocked && !activeDiscount ? (
                 <div
                   style={{
-                    marginTop: theme.space[4],
-                    paddingTop: theme.space[3],
-                    borderTop: `1px dashed ${theme.color.border}`,
+                    marginTop: theme.space[3],
                     display: 'flex',
-                    flexDirection: 'column',
-                    gap: theme.space[2],
+                    justifyContent: 'flex-end',
                   }}
                 >
-                  {activeDiscount ? (
-                    <>
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          gap: theme.space[3],
-                          flexWrap: 'wrap',
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: theme.type.size.sm,
-                            color: theme.color.inkMuted,
-                          }}
-                        >
-                          Approved by {activeDiscount.approver_name ?? 'manager'}
-                          {activeDiscount.reason ? ` · ${activeDiscount.reason}` : ''}
-                        </span>
-                        <div style={{ display: 'flex', gap: theme.space[2] }}>
-                          <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('amend')}>
-                            Amend
-                          </Button>
-                          <Button variant="tertiary" size="sm" onClick={() => openDiscountSheet('remove')}>
-                            Remove
-                          </Button>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <ApplyDiscountLink onClick={() => openDiscountSheet('apply')} />
-                    </div>
-                  )}
+                  <ApplyDiscountLink onClick={() => openDiscountSheet('apply')} />
                 </div>
               ) : null}
             </Card>
@@ -3399,6 +3369,10 @@ function Totals({
   total,
   hideTotalRow = false,
   dim = false,
+  activeDiscount,
+  onAmendDiscount,
+  onRemoveDiscount,
+  discountEditable = false,
 }: {
   subtotal: number;
   discount: number;
@@ -3422,6 +3396,17 @@ function Totals({
   /** When true, fade the breakdown rows so the eye stays on the
    * PaidHeader. Used when the cart is paid. */
   dim?: boolean;
+  /** When set, renders the discount approver + reason as an indented
+   *  hairline row immediately under the Discount line so staff can
+   *  see at a glance who authorised it. Used for cart-wide manager-
+   *  approved discounts (per-line discounts don't have an approver). */
+  activeDiscount?: { approver_name: string | null; reason: string } | null;
+  onAmendDiscount?: () => void;
+  onRemoveDiscount?: () => void;
+  /** When true, the Amend / Remove buttons render under the
+   *  approver row. Productive locks (paid / voided / unsuitable /
+   *  ended-early) flip this off so the cart can't be mutated. */
+  discountEditable?: boolean;
 }) {
   // Any credit at all on the bill flips the headline label from
   // "Total" (full bill) to "Outstanding" (what's left after credits +
@@ -3441,7 +3426,19 @@ function Totals({
       }}
     >
       <Row label="Subtotal" value={formatPence(subtotal)} />
-      {discount > 0 ? <Row label="Discount" value={`-${formatPence(discount)}`} /> : null}
+      {discount > 0 ? (
+        <>
+          <Row label="Discount" value={`-${formatPence(discount)}`} />
+          {activeDiscount ? (
+            <DiscountApproverRow
+              approverName={activeDiscount.approver_name}
+              reason={activeDiscount.reason}
+              onAmend={discountEditable ? onAmendDiscount : undefined}
+              onRemove={discountEditable ? onRemoveDiscount : undefined}
+            />
+          ) : null}
+        </>
+      ) : null}
       {depositPence > 0 ? (
         <Row
           label={`${deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} (${formatDepositSourceSuffix(deposit)})`}
@@ -3817,6 +3814,73 @@ function Row({ label, value, accent = false }: { label: string; value: string; a
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+// Hairline approver row that sits directly under the "Discount" row
+// in the Totals so staff can see at a glance who authorised the
+// reduction and why. The DiscountIcon picks up the accent colour so
+// the row reads as visually tied to the line above — quiet, not OTT.
+function DiscountApproverRow({
+  approverName,
+  reason,
+  onAmend,
+  onRemove,
+}: {
+  approverName: string | null;
+  reason: string;
+  onAmend: (() => void) | undefined;
+  onRemove: (() => void) | undefined;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: theme.space[3],
+        // Indent so the row reads as a child of the Discount line
+        // above. paddingLeft matches the left edge of the Discount
+        // label visually.
+        paddingLeft: theme.space[3],
+        marginTop: -theme.space[1],
+        flexWrap: 'wrap',
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+          minWidth: 0,
+        }}
+      >
+        <span style={{ display: 'inline-flex', flexShrink: 0 }} aria-hidden>
+          <DiscountIcon size={12} color={theme.color.accent} />
+        </span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          Approved by {approverName ?? 'manager'}
+          {reason ? ` · ${reason}` : ''}
+        </span>
+      </span>
+      {(onAmend || onRemove) ? (
+        <div style={{ display: 'flex', gap: theme.space[2], flexShrink: 0 }}>
+          {onAmend ? (
+            <Button variant="tertiary" size="sm" onClick={onAmend}>
+              Amend
+            </Button>
+          ) : null}
+          {onRemove ? (
+            <Button variant="tertiary" size="sm" onClick={onRemove}>
+              Remove
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
