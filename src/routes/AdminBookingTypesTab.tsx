@@ -1483,6 +1483,22 @@ function BookingTypeEditorDialog({
     return !(row?.working_hours);
   });
 
+  // Sync the prefill buffer with clinic settings as long as the row
+  // is still inheriting AND no upstream source has set hours. The
+  // useState initialiser runs before useClinicSettings has resolved,
+  // so `hours` could otherwise hold the hard-coded DEFAULTS instead
+  // of the actual clinic.opening_hours value. When the operator then
+  // toggles to Custom we'd prefill from a stale baseline.
+  useEffect(() => {
+    if (!hoursInherits) return;
+    const fromRow = row?.working_hours as OpeningHoursWeek | null | undefined;
+    if (fromRow && fromRow.length === 7) return;
+    const fromParent = parent?.working_hours as OpeningHoursWeek | null | undefined;
+    if (fromParent && fromParent.length === 7) return;
+    if (clinic.loading) return;
+    setHours(cloneHoursWeek(clinic.data.openingHours));
+  }, [hoursInherits, row?.working_hours, parent?.working_hours, clinic.loading, clinic.data.openingHours]);
+
   // Editable display label — admin can rename any override row.
   // Empty / whitespace = clear, falls back to the catalogue / arch /
   // service-derived label. Only shown for non-parent rows; the
@@ -1663,18 +1679,20 @@ function BookingTypeEditorDialog({
               onChange={(v) => {
                 const next = v === 'inherit';
                 if (!next) {
-                  // Switching INTO custom: prefill from whatever's
-                  // being inherited today so the operator edits from
-                  // a sensible starting point rather than empty fields.
-                  setHours((current) => {
-                    const fromRow = row?.working_hours as OpeningHoursWeek | null | undefined;
-                    if (fromRow && fromRow.length === 7) return cloneHoursWeek(fromRow);
-                    if (parent?.working_hours && (parent.working_hours as OpeningHoursWeek).length === 7) {
-                      return cloneHoursWeek(parent.working_hours as OpeningHoursWeek);
-                    }
-                    if (current.length === 7) return current;
-                    return cloneHoursWeek(clinic.data.openingHours);
-                  });
+                  // Switching INTO custom: always re-prefill from the
+                  // current inheritance source. useClinicSettings may
+                  // have only resolved AFTER mount, so the `hours`
+                  // state initialised in useState could still be the
+                  // hard-coded DEFAULTS — re-reading here picks up the
+                  // real clinic hours the operator actually configured.
+                  const fromRow = row?.working_hours as OpeningHoursWeek | null | undefined;
+                  if (fromRow && fromRow.length === 7) {
+                    setHours(cloneHoursWeek(fromRow));
+                  } else if (parent?.working_hours && (parent.working_hours as OpeningHoursWeek).length === 7) {
+                    setHours(cloneHoursWeek(parent.working_hours as OpeningHoursWeek));
+                  } else {
+                    setHours(cloneHoursWeek(clinic.data.openingHours));
+                  }
                 }
                 setHoursInherits(next);
               }}
