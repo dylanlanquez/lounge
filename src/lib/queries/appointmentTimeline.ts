@@ -73,6 +73,11 @@ interface RawAppointmentRow {
    *  denture-services.co.uk" detail line under the Booking-placed
    *  timeline event. Null on Calendly / manual rows. */
   brand_id: string | null;
+  /** Origin tag for non-Lounge booking sources. 'checkpoint' means
+   *  staff booked from Checkpoint's ScanView page on the patient's
+   *  behalf; the actor field carries their display name. */
+  created_via: string | null;
+  created_via_actor: string | null;
   start_at: string;
   end_at: string;
   created_at: string;
@@ -145,7 +150,7 @@ export function useAppointmentTimeline(
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, source, brand_id, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id, paid_in_full_at_booking, appointment_ref',
+            'id, source, brand_id, created_via, created_via_actor, start_at, end_at, created_at, reschedule_to_id, calendly_invitee_uri, patient_id, event_type_label, intake, notes, walk_in_id, paid_in_full_at_booking, appointment_ref',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -374,7 +379,13 @@ export function useAppointmentTimeline(
               appt.event_type_label,
               `scheduled ${formatBookingSlot(appt.start_at)}`,
               appt.appointment_ref,
-              describeBookedBy(appt.source, appt.brand_id, undefined),
+              describeBookedBy(
+                appt.source,
+                appt.brand_id,
+                undefined,
+                appt.created_via,
+                appt.created_via_actor,
+              ),
             ),
             facts: bookingFacts(appt, walkIn),
             hint: 'calendar',
@@ -486,7 +497,13 @@ function mapEvent(
           appt.event_type_label,
           `scheduled ${formatBookingSlot(appt.start_at)}`,
           appt.appointment_ref,
-          describeBookedBy(effectiveSource, appt.brand_id, actor),
+          describeBookedBy(
+            effectiveSource,
+            appt.brand_id,
+            actor,
+            appt.created_via,
+            appt.created_via_actor,
+          ),
         ),
         facts: bookingFacts(appt, walkIn),
         hint: 'calendar',
@@ -878,16 +895,29 @@ function formatWhen(iso: string): string {
 // customer-driven name the storefront so reception can match the
 // row to the right Shopify dashboard.
 //
-//   • native (widget) → "By customer on venneir.com" /
-//                       "By customer on denture-services.co.uk"
-//   • calendly        → "By customer via Calendly"
-//   • manual (staff)  → "By {staff name}" if we resolved one,
-//                       otherwise plain "By staff"
+//   • native (widget)         → "By customer on venneir.com" /
+//                               "By customer on denture-services.co.uk"
+//   • calendly                → "By customer via Calendly"
+//   • manual + Checkpoint     → "By {staff name} via Checkpoint"
+//   • manual (in-app staff)   → "By {staff name}" if we resolved one,
+//                               otherwise plain "By staff"
 function describeBookedBy(
   source: string,
   brandId: string | null,
   staffName: string | undefined,
+  createdVia: string | null,
+  createdViaActor: string | null,
 ): string {
+  // Checkpoint-originated bookings carry created_via='checkpoint'
+  // + the staff member's display name on created_via_actor (anon-
+  // keyed callers can't write actor_account_id, so the audit lives
+  // on these columns). Prefer that name for the timeline label so
+  // the row reads "By Dylan Lane via Checkpoint" instead of the
+  // generic "By staff" the manual path would otherwise return.
+  if (createdVia === 'checkpoint') {
+    const name = (createdViaActor ?? '').trim() || staffName;
+    return name ? `By ${name} via Checkpoint` : 'Via Checkpoint';
+  }
   if (source === 'native') {
     const where = brandId === 'denture'
       ? 'denture-services.co.uk'
