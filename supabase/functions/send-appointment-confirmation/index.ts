@@ -489,6 +489,15 @@ interface AppointmentRow {
    *  instead of the bare service-type ("Same-day appliance"). */
   arch: 'upper' | 'lower' | 'both' | null;
   product_key: string | null;
+  /** Payment captured at booking time. deposit_status='paid' means
+   *  Stripe charged the deposit amount; paid_in_full_at_booking=true
+   *  means the patient picked the "Pay now in full" option so the
+   *  charged amount IS the full price (no balance left to settle).
+   *  Both drive the {{paymentStatusBlock}} placeholder. */
+  deposit_status: 'paid' | 'failed' | null;
+  deposit_pence: number | null;
+  deposit_currency: string | null;
+  paid_in_full_at_booking: boolean | null;
   appointment_ref: string | null;
   join_url: string | null;
   manage_token: string | null;
@@ -822,6 +831,91 @@ function composeImpressionLabel(
 // service that isn't denture_repair OR when no repair items were
 // captured (defensive — a denture-repair booking with no lines
 // would be an oddity, but the empty output is harmless either way).
+// {{paymentStatusBlock}} — styled HTML card reflecting the
+// payment captured at booking. Three states with distinct visual
+// tints so the patient can see at a glance whether anything is
+// outstanding:
+//
+//   Paid in full   →  green tint   "Paid in full · £249.00"
+//   Deposit paid   →  accent tint  "Deposit paid · £25.00"
+//   Pay on the day →  neutral tint "Paying on the day"
+//
+// Always returns a card (no empty branch) so a template can drop
+// this on its own line and every booking gets the right surface.
+// Returned as one line of raw HTML so parseFormatting's
+// raw-HTML rule emits it verbatim without a <p> wrap.
+function composePaymentStatusBlock(apt: AppointmentRow): string {
+  const cur = apt.deposit_currency ?? 'GBP';
+  const pence = apt.deposit_pence ?? 0;
+  const paidInFull = apt.paid_in_full_at_booking === true;
+  const depositPaid = apt.deposit_status === 'paid' && pence > 0;
+
+  type State = {
+    title: string;
+    detail: string;
+    bg: string;
+    border: string;
+    titleColor: string;
+    detailColor: string;
+  };
+
+  let state: State;
+  if (paidInFull && pence > 0) {
+    state = {
+      title: `Paid in full · ${formatCurrencyForEmail(pence, cur)}`,
+      detail:
+        "No balance to settle in clinic. Refunds handled per the clinic's cancellation policy.",
+      bg: '#E8F5EC',
+      border: '#B8DCC1',
+      titleColor: '#13502B',
+      detailColor: '#3D5C48',
+    };
+  } else if (depositPaid) {
+    state = {
+      title: `Deposit paid · ${formatCurrencyForEmail(pence, cur)}`,
+      detail:
+        "The remaining balance is settled in clinic. Refunds handled per the clinic's cancellation policy.",
+      bg: '#EEF1F4',
+      border: '#CFD6DE',
+      titleColor: '#0E1414',
+      detailColor: '#4A5159',
+    };
+  } else {
+    state = {
+      title: 'Paying on the day',
+      detail: 'No deposit captured. Settle the balance when you arrive.',
+      bg: '#F4F2EC',
+      border: '#E5E2DC',
+      titleColor: '#0E1414',
+      detailColor: '#4A5159',
+    };
+  }
+
+  return (
+    `<div style="margin:0 0 16px 0;background:${state.bg};border:1px solid ${state.border};border-radius:12px;padding:14px 16px;">` +
+    `<p style="margin:0;font-size:15px;font-weight:600;color:${state.titleColor};">${state.title}</p>` +
+    `<p style="margin:4px 0 0;font-size:13px;color:${state.detailColor};line-height:1.5;">${state.detail}</p>` +
+    `</div>`
+  );
+}
+
+// GBP-first currency formatter. Mirrors the catalogue / cart
+// pence-to-pounds rendering used elsewhere so the email reads
+// "£25.00" not "£25" or "25.00 GBP".
+function formatCurrencyForEmail(pence: number, currency: string): string {
+  const cur = currency?.toUpperCase() || 'GBP';
+  try {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: cur,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(pence / 100);
+  } catch {
+    return `£${(pence / 100).toFixed(2)}`;
+  }
+}
+
 function composeDentureRepairTable(
   apt: AppointmentRow,
   items: BookingItemsSnapshot,
@@ -900,7 +994,7 @@ async function readAppointment(
   const { data } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, arch, product_key, appointment_ref, join_url, manage_token, brand_id',
+      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, appointment_ref, join_url, manage_token, brand_id',
     )
     .eq('id', id)
     .maybeSingle();
@@ -1246,6 +1340,9 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     dentureRepairTable: composeDentureRepairTable(apt, ctx.bookingItems),
     inPersonImpressionLabel: composeImpressionLabel(apt, 'in-person'),
     virtualImpressionLabel: composeImpressionLabel(apt, 'virtual'),
+    // Payment status — always renders one of three styled cards
+    // (paid in full / deposit paid / paying on the day).
+    paymentStatusBlock: composePaymentStatusBlock(apt),
   };
 
   if (oldApt) {

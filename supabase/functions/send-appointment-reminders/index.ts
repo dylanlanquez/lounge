@@ -147,7 +147,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: oneRaw, error: oneErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, appointment_ref, join_url, manage_token',
       )
       .eq('id', singleId)
       .maybeSingle();
@@ -176,7 +176,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: rowsRaw, error: sweepErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, appointment_ref, join_url, manage_token',
       )
       .eq('status', 'booked')
       .neq('source', 'calendly')
@@ -482,6 +482,7 @@ function buildVariables(
     dentureRepairTable: composeDentureRepairTable(apt, bookingItems),
     inPersonImpressionLabel: composeImpressionLabel(apt, 'in-person'),
     virtualImpressionLabel: composeImpressionLabel(apt, 'virtual'),
+    paymentStatusBlock: composePaymentStatusBlock(apt),
   };
 }
 
@@ -855,6 +856,80 @@ function composeImpressionLabel(
   if (archToken) return `${base} for ${archToken}`;
   if (productNoun) return `${base} for ${productNoun}`;
   return base;
+}
+
+// {{paymentStatusBlock}} — see the byte-for-byte twin in
+// send-appointment-confirmation/index.ts for the visual spec.
+// Three states (paid in full / deposit paid / paying on the day)
+// each with its own colour tint, always renders something so the
+// reminder explicitly confirms what's been paid.
+function composePaymentStatusBlock(apt: AppointmentRow): string {
+  const cur = apt.deposit_currency ?? 'GBP';
+  const pence = apt.deposit_pence ?? 0;
+  const paidInFull = apt.paid_in_full_at_booking === true;
+  const depositPaid = apt.deposit_status === 'paid' && pence > 0;
+
+  type State = {
+    title: string;
+    detail: string;
+    bg: string;
+    border: string;
+    titleColor: string;
+    detailColor: string;
+  };
+
+  let state: State;
+  if (paidInFull && pence > 0) {
+    state = {
+      title: `Paid in full · ${formatCurrencyForEmailReminder(pence, cur)}`,
+      detail:
+        "No balance to settle in clinic. Refunds handled per the clinic's cancellation policy.",
+      bg: '#E8F5EC',
+      border: '#B8DCC1',
+      titleColor: '#13502B',
+      detailColor: '#3D5C48',
+    };
+  } else if (depositPaid) {
+    state = {
+      title: `Deposit paid · ${formatCurrencyForEmailReminder(pence, cur)}`,
+      detail:
+        "The remaining balance is settled in clinic. Refunds handled per the clinic's cancellation policy.",
+      bg: '#EEF1F4',
+      border: '#CFD6DE',
+      titleColor: '#0E1414',
+      detailColor: '#4A5159',
+    };
+  } else {
+    state = {
+      title: 'Paying on the day',
+      detail: 'No deposit captured. Settle the balance when you arrive.',
+      bg: '#F4F2EC',
+      border: '#E5E2DC',
+      titleColor: '#0E1414',
+      detailColor: '#4A5159',
+    };
+  }
+
+  return (
+    `<div style="margin:0 0 16px 0;background:${state.bg};border:1px solid ${state.border};border-radius:12px;padding:14px 16px;">` +
+    `<p style="margin:0;font-size:15px;font-weight:600;color:${state.titleColor};">${state.title}</p>` +
+    `<p style="margin:4px 0 0;font-size:13px;color:${state.detailColor};line-height:1.5;">${state.detail}</p>` +
+    `</div>`
+  );
+}
+
+function formatCurrencyForEmailReminder(pence: number, currency: string): string {
+  const cur = currency?.toUpperCase() || 'GBP';
+  try {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: cur,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(pence / 100);
+  } catch {
+    return `£${(pence / 100).toFixed(2)}`;
+  }
 }
 
 function composeDentureRepairTable(
@@ -1291,6 +1366,14 @@ interface AppointmentRow {
    *  the bare service-type label. */
   arch: 'upper' | 'lower' | 'both' | null;
   product_key: string | null;
+  /** Payment captured at booking. Drives the {{paymentStatusBlock}}
+   *  placeholder so the reminder reminds the patient what they've
+   *  already paid AND what (if anything) remains to settle in
+   *  clinic. Same shape as the confirmation edge function. */
+  deposit_status: 'paid' | 'failed' | null;
+  deposit_pence: number | null;
+  deposit_currency: string | null;
+  paid_in_full_at_booking: boolean | null;
   appointment_ref: string | null;
   join_url: string | null;
   manage_token: string | null;

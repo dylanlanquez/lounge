@@ -461,6 +461,14 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
       'Title-case service phrase for virtual impression bookings ONLY: "Virtual Impression Appointment for Upper & Lower Retainers", "Virtual Impression Appointment for Upper Click-in Veneers". Renders empty for every other service type.',
     sample: 'Virtual Impression Appointment for Upper & Lower Retainers',
   },
+  {
+    name: 'paymentStatusBlock',
+    label: 'Payment status block',
+    description:
+      'On-theme HTML card that reflects what the patient paid at booking. Three states: "Paid in full · £249.00" with a green tint (paid_in_full_at_booking=true), "Deposit paid · £25.00" with the brand accent and a "remaining balance settled in clinic" sub-line (deposit_status=paid), or "Paying on the day" with a neutral tint (nothing captured at booking). Drop on its own line in the template; the surrounding block rhythm collapses cleanly when the block is empty (none of the three states ever blank — every booking lands on one of the three).',
+    sample:
+      '<div style="margin:0 0 16px 0;background:#E8F5EC;border:1px solid #B8DCC1;border-radius:12px;padding:14px 16px;"><p style="margin:0;font-size:15px;font-weight:600;color:#0E1414;">Paid in full · £249.00</p><p style="margin:4px 0 0;font-size:13px;color:#4A5159;line-height:1.5;">No balance to settle in clinic. Refunds handled per the clinic\'s cancellation policy.</p></div>',
+  },
 ];
 
 // Virtual-appointment-specific variables — layered on APPOINTMENT_VARIABLES
