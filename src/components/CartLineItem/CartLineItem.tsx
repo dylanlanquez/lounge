@@ -21,6 +21,11 @@ export interface CartLineItemProps {
   // glyph on a tinted square — same treatment the catalogue picker
   // uses when a row has no image.
   thumbnailUrl?: string | null;
+  // When true, the qty stepper and remove button are hidden — the
+  // line is purely informational. Customer Service staff get this
+  // treatment on VisitDetail so they can see the cart contents
+  // without being able to mutate them.
+  readOnly?: boolean;
 }
 
 export function CartLineItem({
@@ -35,6 +40,7 @@ export function CartLineItem({
   disabled = false,
   quantityEnabled = true,
   thumbnailUrl = null,
+  readOnly = false,
 }: CartLineItemProps) {
   return (
     <div
@@ -77,7 +83,7 @@ export function CartLineItem({
         </p>
       </div>
 
-      {quantityEnabled ? (
+      {quantityEnabled && !readOnly ? (
         <QtyStepper
           value={quantity}
           onIncrement={onIncrement}
@@ -99,24 +105,26 @@ export function CartLineItem({
         {formatPence(lineTotalPence)}
       </div>
 
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={disabled}
-        aria-label="Remove line item"
-        style={{
-          appearance: 'none',
-          border: 'none',
-          background: 'transparent',
-          color: theme.color.inkMuted,
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          padding: theme.space[2],
-          borderRadius: theme.radius.pill,
-          flexShrink: 0,
-        }}
-      >
-        <Trash2 size={18} />
-      </button>
+      {readOnly ? null : (
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={disabled}
+          aria-label="Remove line item"
+          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            color: theme.color.inkMuted,
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            padding: theme.space[2],
+            borderRadius: theme.radius.pill,
+            flexShrink: 0,
+          }}
+        >
+          <Trash2 size={18} />
+        </button>
+      )}
     </div>
   );
 }

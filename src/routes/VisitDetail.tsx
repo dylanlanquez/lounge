@@ -143,6 +143,12 @@ export function VisitDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const { account: currentAccount } = useCurrentAccount();
+  // Customer Service-only staff lose every clinic-floor affordance on
+  // this page: no cart edits, no discounts, no payment, no Print LWO,
+  // no end-visit-early, no tech notes. They can still SEE the visit;
+  // they just can't act on it. Admins / managers flagged as CS keep
+  // their full access (is_cs_only is false for those).
+  const isCsOnly = currentAccount?.is_cs_only === true;
   // Per-product widget config — drives whether the Smile photos card
   // renders on the visit body. Composite key (service_type, product_key)
   // — see AppointmentDetail for the matching surface; both read the
@@ -1321,7 +1327,7 @@ export function VisitDetail() {
                   <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
                     Cart
                   </h2>
-                  {items.length > 0 && !productiveLocked ? (
+                  {items.length > 0 && !productiveLocked && !isCsOnly ? (
                     <Button variant="secondary" size="sm" onClick={openPicker}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                         <Plus size={16} /> Add item
@@ -1339,11 +1345,13 @@ export function VisitDetail() {
                   title="No items yet"
                   description="Pick from the shared catalogue. Suggestions populate based on the booking type and intake answers."
                   action={
-                    <Button variant="primary" onClick={openPicker} disabled={productiveLocked}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                        <Plus size={16} /> Add item
-                      </span>
-                    </Button>
+                    isCsOnly ? null : (
+                      <Button variant="primary" onClick={openPicker} disabled={productiveLocked}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                          <Plus size={16} /> Add item
+                        </span>
+                      </Button>
+                    )
                   }
                 />
               ) : (
@@ -1364,6 +1372,7 @@ export function VisitDetail() {
                         disabled={busyItem === it.id || productiveLocked}
                         quantityEnabled={it.quantity_enabled}
                         thumbnailUrl={it.image_url}
+                        readOnly={isCsOnly}
                       />
                     );
                   })}
@@ -1400,7 +1409,7 @@ export function VisitDetail() {
                   activeDiscount={activeDiscount}
                   onAmendDiscount={() => openDiscountSheet('amend')}
                   onRemoveDiscount={() => openDiscountSheet('remove')}
-                  discountEditable={!productiveLocked}
+                  discountEditable={!productiveLocked && !isCsOnly}
                 />
               ) : null}
 
@@ -1408,7 +1417,7 @@ export function VisitDetail() {
                   has items, is mutable, and no active discount yet.
                   Once a discount is applied the approver row inside
                   Totals (above) carries the Amend / Remove buttons. */}
-              {items.length > 0 && !productiveLocked && !activeDiscount ? (
+              {items.length > 0 && !productiveLocked && !activeDiscount && !isCsOnly ? (
                 <div
                   style={{
                     marginTop: theme.space[3],
@@ -1422,13 +1431,13 @@ export function VisitDetail() {
             </Card>
             </div>
 
-            {/* Action row is always visible when the visit exists.
-                Each button decides for itself whether it's relevant:
-                - End visit early shows whenever the visit is active,
-                  including on an empty cart (key exit ramp).
-                - Tech note is always available.
-                - Print LWO / Take payment only render with items.
-                - Resume replaces Take payment when terminated. */}
+            {/* Action row is always visible when the visit exists,
+                EXCEPT for Customer Service-only staff. CS agents
+                can't touch the till, edit notes, print LWOs, or
+                end the visit — those are clinic-floor actions. They
+                see the cart read-only and that's the end of their
+                authority on this page. */}
+            {!isCsOnly ? (
             <div
               style={{
                 marginTop: theme.space[6],
@@ -1528,6 +1537,7 @@ export function VisitDetail() {
                 )
               ) : null}
             </div>
+            ) : null}
 
             {patient ? (
               <>

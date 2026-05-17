@@ -46,6 +46,7 @@ import {
   setCanViewFinancials,
   setCanViewReports,
   setIsAdmin,
+  setIsCustomerService,
   setIsManager,
   setRequire2fa,
   setStaffName,
@@ -2431,6 +2432,19 @@ function StaffTab() {
     }
   };
 
+  const toggleCustomerService = async (staffMemberId: string, next: boolean) => {
+    setBusyId(staffMemberId);
+    setError(null);
+    try {
+      await setIsCustomerService(staffMemberId, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const openManage = (row: StaffRow) => {
     setManaging(row);
     setDraftFirst(row.first_name ?? '');
@@ -2986,6 +3000,7 @@ function StaffTab() {
                             </RolePill>
                           ) : null}
                           {s.is_manager ? <RolePill tone="neutral">Manager</RolePill> : null}
+                          {s.is_customer_service ? <RolePill tone="neutral">Customer Service</RolePill> : null}
                           {s.require_2fa ? <RolePill tone="neutral">2FA required</RolePill> : null}
                         </>
                       )}
@@ -3126,6 +3141,12 @@ function StaffTab() {
                   description="Required to sign off discounts, voided sales, and refunds at the till. Distinct from Admin: a manager doesn't see /admin unless they're also an admin."
                   checked={managing.is_manager}
                   onChange={(v) => toggleManager(managing.staff_member_id, v)}
+                />
+                <PermissionRow
+                  title="Customer Service"
+                  description="Patient-comms agent role. Sees a focused view: book, reschedule, cancel, and resend confirmation emails. Loses clinic-floor actions (arrival, no-show, cart, payment, Print LWO, end visit early, tech notes). Admins or managers flagged as CS keep their full access."
+                  checked={managing.is_customer_service}
+                  onChange={(v) => toggleCustomerService(managing.staff_member_id, v)}
                 />
               </div>
             </ManageSection>

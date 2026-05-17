@@ -578,6 +578,7 @@ function Loaded({
         appt={appt}
         actions={actions}
         resending={resending}
+        isCsOnly={currentAccount?.is_cs_only === true}
         onPatientProfile={() =>
           // Forward `from: 'appointment'` so the patient profile's
           // breadcrumb reads "Ledger › <Name>'s Appt N May › <Name>"
@@ -2404,6 +2405,7 @@ function Actions({
   appt,
   actions,
   resending,
+  isCsOnly,
   onPatientProfile,
   onMarkArrived,
   onJoinMeeting,
@@ -2419,6 +2421,10 @@ function Actions({
   appt: AppointmentDetailRow;
   actions: AppointmentAction[];
   resending: boolean;
+  // When true, hide clinic-floor actions (mark arrived, mark no-show,
+  // reverse no-show). Customer Service staff can still reschedule,
+  // cancel, and resend confirmations — those are patient-comms.
+  isCsOnly: boolean;
   onPatientProfile: () => void;
   onMarkArrived: () => void;
   onJoinMeeting: () => void;
@@ -2431,7 +2437,20 @@ function Actions({
   onReverseNoShow: () => void;
   onViewRescheduledTo: () => void;
 }) {
-  const has = (a: AppointmentAction) => actions.includes(a);
+  // Wrap `actions.includes` with a CS-aware filter: CS-only staff
+  // never see mark_arrived / mark_no_show / reverse_no_show, even
+  // when availableActions() returned them. Patient-comms actions
+  // (reschedule, cancel, resend_confirmation, reverse_cancellation,
+  // view_rescheduled_to, join_meeting) pass through unchanged.
+  const CS_HIDDEN: ReadonlyArray<AppointmentAction> = [
+    'mark_arrived',
+    'mark_no_show',
+    'reverse_no_show',
+  ];
+  const has = (a: AppointmentAction) => {
+    if (isCsOnly && CS_HIDDEN.includes(a)) return false;
+    return actions.includes(a);
+  };
   const isFirstAction = !has('join_meeting') && !has('mark_arrived');
   return (
     <section

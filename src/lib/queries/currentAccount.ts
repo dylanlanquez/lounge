@@ -49,6 +49,15 @@ export interface CurrentAccount {
   is_lng_staff: boolean;
   is_admin: boolean;
   is_manager: boolean;
+  // Customer Service flag (raw): true when the staff_members row sets
+  // is_customer_service. Admin / manager / super-admin users can be
+  // CS-flagged without losing their elevated access.
+  is_customer_service: boolean;
+  // Derived "CS only" flag: true when is_customer_service is on AND
+  // no other elevated permission is. THIS is the flag the UI button
+  // gates check — admins + managers flagged as CS keep their floor
+  // affordances; only pure-CS staff lose them.
+  is_cs_only: boolean;
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
@@ -147,6 +156,15 @@ export function useCurrentAccount(): Result {
       // bootstrap chicken-and-egg). For everyone else, the flag must
       // be explicitly true on the staff_members row AND the row must
       // be active.
+      const isAdminEff =
+        (isActiveStaff && membership?.is_admin === true) || isSuperAdmin;
+      const isManagerEff = isActiveStaff && membership?.is_manager === true;
+      const isCustomerService =
+        isActiveStaff && membership?.is_customer_service === true;
+      // CS-only = flagged as CS AND no elevated permission. Super
+      // admin always exits this branch because they're an admin.
+      const isCsOnly =
+        isCustomerService && !isAdminEff && !isManagerEff && !isSuperAdmin;
       setAccount({
         account_id: r.id,
         auth_user_id: r.auth_user_id,
@@ -158,8 +176,10 @@ export function useCurrentAccount(): Result {
         account_types: r.account_types ?? [],
         staff_member_id: membership?.staff_member_id ?? null,
         is_lng_staff: isActiveStaff || isSuperAdmin,
-        is_admin: (isActiveStaff && membership?.is_admin === true) || isSuperAdmin,
-        is_manager: isActiveStaff && membership?.is_manager === true,
+        is_admin: isAdminEff,
+        is_manager: isManagerEff,
+        is_customer_service: isCustomerService,
+        is_cs_only: isCsOnly,
         can_view_reports:
           (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
         can_view_financials:

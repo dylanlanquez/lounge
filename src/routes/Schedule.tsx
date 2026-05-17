@@ -50,6 +50,7 @@ import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { useNow } from '../lib/useNow.ts';
 import {
@@ -96,6 +97,12 @@ const LAYOUT_KEY = 'lounge.scheduleLayout';
 
 export function Schedule() {
   const { user, loading: authLoading } = useAuth();
+  const { account: currentAccount } = useCurrentAccount();
+  // Hide clinic-floor affordances on Schedule (Mark arrived) when
+  // the signed-in user is Customer Service only. They can still
+  // open appointments and book / reschedule / cancel — those are
+  // patient-comms, not floor actions.
+  const isCsOnly = currentAccount?.is_cs_only === true;
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const isDesktop = useIsDesktop();
@@ -661,12 +668,13 @@ export function Schedule() {
                   const isVirtualOnNonDesktop = isVirtual && !isDesktop;
                   const showNoShow =
                     !isVirtualOnNonDesktop &&
+                    !isCsOnly &&
                     (status === 'booked' || (isVirtual && (status === 'arrived' || status === 'joined')));
                   const showVirtualJoin =
                     isVirtual &&
                     isDesktop &&
                     (status === 'booked' || status === 'arrived' || status === 'joined' || status === 'no_show');
-                  const showMarkArrived = !isVirtual && status === 'booked';
+                  const showMarkArrived = !isVirtual && status === 'booked' && !isCsOnly;
                   const showCloseOnly =
                     !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
                   if (showCloseOnly) {
@@ -678,7 +686,7 @@ export function Schedule() {
                   }
                   const joinLabel =
                     status === 'arrived' || status === 'joined' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
-                  const showUndoNoShow = status === 'no_show';
+                  const showUndoNoShow = status === 'no_show' && !isCsOnly;
                   return (
                     <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                       {showUndoNoShow ? (
