@@ -255,6 +255,46 @@ Deno.serve(async (req) => {
     };
   }
 
+  // Location guard. The refund must happen at the same location
+  // as the source — Glasgow staff don't refund London cash (the
+  // till they're standing at isn't the one that took the payment).
+  // Cards are technically refundable from anywhere (Stripe doesn't
+  // care) but mixing locations on the audit trail breaks the
+  // reconciliation reports, so we enforce uniformly. Pulls the
+  // caller's location_id off accounts.
+  {
+    const { data: callerAcct } = await supabase
+      .from('accounts')
+      .select('location_id')
+      .eq('id', refundedBy)
+      .maybeSingle();
+    const callerLocationId =
+      (callerAcct as { location_id: string | null } | null)?.location_id ?? null;
+    let sourceLocationId: string | null = null;
+    if (src.visitId) {
+      const { data: visitLoc } = await supabase
+        .from('lng_visits')
+        .select('location_id')
+        .eq('id', src.visitId)
+        .maybeSingle();
+      sourceLocationId = (visitLoc as { location_id: string | null } | null)?.location_id ?? null;
+    } else if (src.appointmentId) {
+      const { data: apptLoc } = await supabase
+        .from('lng_appointments')
+        .select('location_id')
+        .eq('id', src.appointmentId)
+        .maybeSingle();
+      sourceLocationId = (apptLoc as { location_id: string | null } | null)?.location_id ?? null;
+    }
+    if (callerLocationId && sourceLocationId && callerLocationId !== sourceLocationId) {
+      return j(403, {
+        ok: false,
+        error: 'refund_location_mismatch',
+        detail: 'You can only issue refunds at the location where the payment was taken.',
+      });
+    }
+  }
+
   // Existing succeeded refunds against this source. Failed refunds
   // are excluded from the ceiling — they never moved money.
   const refundCol = src.kind === 'payment' ? 'payment_id' : 'deposit_appointment_id';
@@ -383,12 +423,10 @@ Deno.serve(async (req) => {
   }
 
   // Full-refund threshold (payment-source only): cumulative refunds
-  // now match the captured total. Flip the payment to cancelled and
-  // re-open the cart so it can be re-charged from scratch. Deposit
-  // sources keep the deposit row untouched — the
-  // lng_visit_paid_status view nets refunds against the deposit
-  // contribution, so the math is correct without mutating the
-  // appointment.
+  // now match the captured total. Flip the payment to cancelled —
+  // it no longer represents money on file. Deposit sources keep
+  // the deposit row untouched; the lng_visit_paid_status view nets
+  // refunds against the deposit contribution.
   const cumulativeRefunded = alreadyRefunded + amountPence;
   const isFullRefund = cumulativeRefunded >= src.capturedPence;
   if (src.kind === 'payment' && isFullRefund) {
@@ -396,11 +434,58 @@ Deno.serve(async (req) => {
       .from('lng_payments')
       .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
       .eq('id', src.sourceId);
-    if (src.cartId) {
-      await supabase
+  }
+
+  // Cart re-open. Two reasons we'd re-open a paid cart:
+  //   1. A full payment refund (above) means the payment that
+  //      flipped the cart to paid is now cancelled.
+  //   2. ANY refund (partial or deposit) that drops the net
+  //      amount_paid below the cart's total. Without this the
+  //      cart stays 'paid' while the view shows outstanding > 0,
+  //      and the Take Payment screen can't collect the new
+  //      shortfall because the cart is locked.
+  //
+  // Read the canonical view AFTER any payment-row update so the
+  // recomputed amount_paid is the latest.
+  const targetCartId = src.cartId;
+  const targetVisitId = src.visitId;
+  if (targetCartId || targetVisitId) {
+    let cartId: string | null = targetCartId;
+    if (!cartId && targetVisitId) {
+      const { data: cartRow } = await supabase
         .from('lng_carts')
-        .update({ status: 'open', closed_at: null })
-        .eq('id', src.cartId);
+        .select('id')
+        .eq('visit_id', targetVisitId)
+        .maybeSingle();
+      cartId = (cartRow as { id: string | null } | null)?.id ?? null;
+    }
+    if (cartId) {
+      const { data: cartStatusRow } = await supabase
+        .from('lng_carts')
+        .select('status, total_pence, visit_id')
+        .eq('id', cartId)
+        .maybeSingle();
+      const cartStatus = cartStatusRow as {
+        status: string;
+        total_pence: number | null;
+        visit_id: string | null;
+      } | null;
+      if (cartStatus && cartStatus.status === 'paid' && cartStatus.visit_id) {
+        const { data: paidRow } = await supabase
+          .from('lng_visit_paid_status')
+          .select('amount_paid_pence')
+          .eq('visit_id', cartStatus.visit_id)
+          .maybeSingle();
+        const amountPaid =
+          (paidRow as { amount_paid_pence: number } | null)?.amount_paid_pence ?? 0;
+        const total = cartStatus.total_pence ?? 0;
+        if (amountPaid < total) {
+          await supabase
+            .from('lng_carts')
+            .update({ status: 'open', closed_at: null })
+            .eq('id', cartId);
+        }
+      }
     }
   }
 

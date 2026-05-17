@@ -227,30 +227,59 @@ export function useCashPosition(): CashPositionResult {
         const last = lastRes.data as { id: string; period_end: string; actual_pence: number | null; signed_off_at: string } | null;
         const sinceIso = last ? last.period_end : '1970-01-01T00:00:00Z';
 
-        const paymentsRes = await supabase
-          .from('lng_payments')
-          .select(
-            `id, amount_pence, succeeded_at,
-             cart:lng_carts (
-               visit:lng_visits (
-                 id,
-                 patient:patients ( first_name, last_name ),
-                 appointment:lng_appointments ( appointment_ref ),
-                 walk_in:lng_walk_ins ( appointment_ref )
-               )
-             )`,
-          )
-          .eq('method', 'cash')
-          .eq('status', 'succeeded')
-          .gt('succeeded_at', sinceIso)
-          .order('succeeded_at', { ascending: false });
+        const [paymentsRes, refundsRes] = await Promise.all([
+          supabase
+            .from('lng_payments')
+            .select(
+              `id, amount_pence, succeeded_at,
+               cart:lng_carts (
+                 visit:lng_visits (
+                   id,
+                   patient:patients ( first_name, last_name ),
+                   appointment:lng_appointments ( appointment_ref ),
+                   walk_in:lng_walk_ins ( appointment_ref )
+                 )
+               )`,
+            )
+            .eq('method', 'cash')
+            .eq('status', 'succeeded')
+            .gt('succeeded_at', sinceIso)
+            .order('succeeded_at', { ascending: false }),
+          // Cash refunds in the same window. Partial cash refunds
+          // leave the lng_payments row as 'succeeded' but the cash
+          // is back out of the drawer, so the cash position needs
+          // to subtract every succeeded cash refund since the last
+          // signed count.
+          supabase
+            .from('lng_payment_refunds')
+            .select('id, amount_pence, refunded_at, payment_id')
+            .eq('method', 'cash')
+            .eq('status', 'succeeded')
+            .gt('refunded_at', sinceIso)
+            .order('refunded_at', { ascending: false }),
+        ]);
         if (cancelled) return;
         if (paymentsRes.error) throw new Error(`cash_payments: ${paymentsRes.error.message}`);
+        if (refundsRes.error) throw new Error(`cash_refunds: ${refundsRes.error.message}`);
 
         const raw = (paymentsRes.data ?? []) as RawCashPosition[];
-        let total = 0;
+        const refundRows = ((refundsRes.data ?? []) as Array<{
+          id: string;
+          amount_pence: number;
+          refunded_at: string;
+          payment_id: string | null;
+        }>);
+        const cashRefundsTotal = refundRows.reduce(
+          (acc, r) => acc + (r.amount_pence ?? 0),
+          0,
+        );
+        let total = -cashRefundsTotal; // start negative so refunds drop the running total
         let earliest: string | null = null;
         let latest: string | null = null;
+        for (const r of refundRows) {
+          if (!earliest || r.refunded_at < earliest) earliest = r.refunded_at;
+          if (!latest || r.refunded_at > latest) latest = r.refunded_at;
+        }
         const lines: CashPositionLine[] = raw.map((r) => {
           total += r.amount_pence;
           if (!earliest || r.succeeded_at < earliest) earliest = r.succeeded_at;
@@ -676,24 +705,42 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   // BEFORE inserting the count row so we know expected_pence up front.
   // Once the count is signed the lines are immutable; even if
   // payments are voided afterwards, the count's record stays exact.
-  const paymentsRes = await supabase
-    .from('lng_payments')
-    .select(
-      `id, amount_pence, succeeded_at,
-       cart:lng_carts (
-         total_pence,
-         visit:lng_visits (
-           patient:patients ( first_name, last_name ),
-           appointment:lng_appointments ( appointment_ref ),
-           walk_in:lng_walk_ins ( appointment_ref )
-         )
-       )`,
-    )
-    .eq('method', 'cash')
-    .eq('status', 'succeeded')
-    .gte('succeeded_at', input.period_start)
-    .lte('succeeded_at', input.period_end);
+  //
+  // Cash refunds in the same period drop expected_pence by exactly
+  // their amount — the cash left the drawer when the staff member
+  // handed it back. Partial refunds leave the payment as 'succeeded'
+  // so a naive query counted them as still on hand.
+  const [paymentsRes, refundsSnapshotRes] = await Promise.all([
+    supabase
+      .from('lng_payments')
+      .select(
+        `id, amount_pence, succeeded_at,
+         cart:lng_carts (
+           total_pence,
+           visit:lng_visits (
+             patient:patients ( first_name, last_name ),
+             appointment:lng_appointments ( appointment_ref ),
+             walk_in:lng_walk_ins ( appointment_ref )
+           )
+         )`,
+      )
+      .eq('method', 'cash')
+      .eq('status', 'succeeded')
+      .gte('succeeded_at', input.period_start)
+      .lte('succeeded_at', input.period_end),
+    supabase
+      .from('lng_payment_refunds')
+      .select('amount_pence')
+      .eq('method', 'cash')
+      .eq('status', 'succeeded')
+      .gte('refunded_at', input.period_start)
+      .lte('refunded_at', input.period_end),
+  ]);
   if (paymentsRes.error) throw new Error(paymentsRes.error.message);
+  if (refundsSnapshotRes.error) throw new Error(refundsSnapshotRes.error.message);
+  const cashRefundsTotal = ((refundsSnapshotRes.data ?? []) as Array<{
+    amount_pence: number;
+  }>).reduce((acc, r) => acc + (r.amount_pence ?? 0), 0);
 
   interface RawSnapshot {
     id: string;
@@ -733,7 +780,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       | null;
   }
   const raw = (paymentsRes.data ?? []) as RawSnapshot[];
-  const expected_pence = raw.reduce((s, r) => s + r.amount_pence, 0);
+  const expected_pence = raw.reduce((s, r) => s + r.amount_pence, 0) - cashRefundsTotal;
 
   // Insert the count row. lines come next.
   const kind = input.kind ?? 'regular';

@@ -27,22 +27,39 @@ export interface FinancialsOverviewPayment {
   taken_by: string | null;
 }
 
+export interface FinancialsOverviewRefund {
+  amount_pence: number;
+  method: string;
+  refunded_at: string;
+}
+
 export interface FinancialsOverviewData {
   total_revenue_pence: number;
   payments_count: number;
   voided_count: number;
   voided_pence: number;
   failed_count: number;
+  // Total succeeded-refund amount netted out of total_revenue_pence.
+  // Surfaced separately so the report can show "Net revenue £X
+  // (after £Y refunds)" rather than hiding the deduction.
+  refunds_pence: number;
+  refunds_count: number;
   // Daily revenue series for the line chart. Inclusive of every day
-  // in range, zero-padded.
+  // in range, zero-padded. Refunds subtract from the day they
+  // settled, not the day of the original payment — matches how
+  // accounting treats refund timing.
   daily: { date: string; pence: number }[];
-  // Method mix on succeeded payments only.
+  // Method mix on succeeded payments NET of refunds against each
+  // method. The till's "cash collected today" should agree with the
+  // till drawer; subtracting cash refunds against cash payments
+  // keeps the two reconciled.
   method_mix: { method: string; pence: number; count: number }[];
 }
 
 export function aggregateFinancialsOverview(
   range: DateRange,
   payments: FinancialsOverviewPayment[],
+  refunds: FinancialsOverviewRefund[] = [],
 ): FinancialsOverviewData {
   // Build the inclusive date list once for zero-padded daily totals.
   const dates: string[] = [];
@@ -78,12 +95,36 @@ export function aggregateFinancialsOverview(
     }
   }
 
+  // Subtract refunds. Partial refunds leave the payment as
+  // 'succeeded' so the loop above counted them as full revenue;
+  // here we walk the refunds and drop revenue / daily / method
+  // by the refunded amount.
+  let refunds_pence = 0;
+  let refunds_count = 0;
+  for (const r of refunds) {
+    total_revenue_pence -= r.amount_pence;
+    refunds_pence += r.amount_pence;
+    refunds_count += 1;
+    const date = r.refunded_at.slice(0, 10);
+    if (date in dailyMap) {
+      dailyMap[date] = (dailyMap[date] ?? 0) - r.amount_pence;
+    }
+    const prior = methodAgg.get(r.method);
+    if (prior) {
+      prior.pence -= r.amount_pence;
+      // Refunds don't reduce the payment count — they're separate
+      // events. count stays as the number of captures on that method.
+    }
+  }
+
   return {
     total_revenue_pence,
     payments_count,
     voided_count,
     voided_pence,
     failed_count,
+    refunds_pence,
+    refunds_count,
     daily: dates.map((d) => ({ date: d, pence: dailyMap[d] ?? 0 })),
     method_mix: Array.from(methodAgg.entries())
       .map(([method, agg]) => ({ method, pence: agg.pence, count: agg.count }))
@@ -112,7 +153,7 @@ export function useFinancialsOverview(range: DateRange): OverviewResult {
         // Cover both filter axes with one query: succeeded payments
         // are date-filtered on succeeded_at; cancelled/failed live
         // on created_at. Pull both windows then aggregate.
-        const [succeededRes, cancelledRes, failedRes] = await Promise.all([
+        const [succeededRes, cancelledRes, failedRes, refundsRes] = await Promise.all([
           supabase
             .from('lng_payments')
             .select('id, amount_pence, method, status, succeeded_at, cancelled_at, taken_by')
@@ -131,17 +172,28 @@ export function useFinancialsOverview(range: DateRange): OverviewResult {
             .eq('status', 'failed')
             .gte('created_at', fromIso)
             .lte('created_at', toIso),
+          // Partial + deposit refunds subtract from gross revenue.
+          // Without this the Overview shows gross collected — the
+          // till receipts don't reconcile with the bank.
+          supabase
+            .from('lng_payment_refunds')
+            .select('amount_pence, method, refunded_at')
+            .eq('status', 'succeeded')
+            .gte('refunded_at', fromIso)
+            .lte('refunded_at', toIso),
         ]);
         if (cancelled) return;
         if (succeededRes.error) throw new Error(`succeeded: ${succeededRes.error.message}`);
         if (cancelledRes.error) throw new Error(`cancelled: ${cancelledRes.error.message}`);
         if (failedRes.error) throw new Error(`failed: ${failedRes.error.message}`);
+        if (refundsRes.error) throw new Error(`refunds: ${refundsRes.error.message}`);
         const payments = [
           ...((succeededRes.data ?? []) as FinancialsOverviewPayment[]),
           ...((cancelledRes.data ?? []) as FinancialsOverviewPayment[]),
           ...((failedRes.data ?? []) as FinancialsOverviewPayment[]),
         ];
-        const out = aggregateFinancialsOverview(range, payments);
+        const refunds = (refundsRes.data ?? []) as FinancialsOverviewRefund[];
+        const out = aggregateFinancialsOverview(range, payments, refunds);
         if (cancelled) return;
         setData(out);
         setLoading(false);

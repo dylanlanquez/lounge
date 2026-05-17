@@ -137,15 +137,29 @@ Deno.serve(async (req) => {
   const brand = await loadBrand(supabase);
 
   // ── 4. Render variables ────────────────────────────────────
+  const isDeposit = refund.deposit_appointment_id != null;
+  const isCardRefund = refund.method === 'card_terminal';
+  // Method-specific settlement timing copy. Card refunds (including
+  // every deposit refund, which always goes via Stripe) get the
+  // "5 to 10 working days" note; cash gets the in-hand line; other
+  // methods (gift card, account credit) get no line at all rather
+  // than a misleading one.
+  const settlementNote =
+    isCardRefund || isDeposit
+      ? 'Card refunds usually appear within 5 to 10 working days, depending on your bank.'
+      : refund.method === 'cash'
+        ? 'The refund has been handed back to you at the till, so there’s no bank delay.'
+        : '';
   const variables: Record<string, string> = {
     patientFirstName: patient.first_name?.trim() || 'there',
     refundAmount: formatGbp(refund.amount_pence, refund.currency),
-    refundMethod: humaniseMethod(refund.method, refund.deposit_appointment_id != null),
+    refundMethod: humaniseMethod(refund.method, isDeposit),
     refundDate: formatDate(refund.refunded_at),
     reasonNote: refund.reason_note.trim() ||
       REASON_CATEGORY_LABELS[refund.reason_category] ||
       'No reason recorded',
     reference: refund.id.split('-')[0]?.toUpperCase() ?? refund.id,
+    settlementNote,
   };
 
   // ── 5. Resend ──────────────────────────────────────────────

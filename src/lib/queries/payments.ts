@@ -77,50 +77,22 @@ async function maybeFlipCartPaid(cartId: string): Promise<void> {
   if (c.status === 'paid' || c.status === 'voided') return;
   if (c.total_pence == null || c.total_pence <= 0) return;
 
-  const { data: rows } = await supabase
-    .from('lng_payments')
-    .select('amount_pence')
-    .eq('cart_id', cartId)
-    .eq('status', 'succeeded');
-  const succeeded = ((rows ?? []) as { amount_pence: number }[]).reduce(
-    (s, r) => s + r.amount_pence,
-    0,
-  );
-
-  // Pull the appointment deposit (if any) for this visit AND any
-  // Shopify-order credit attached at booking time. Walk-ins have no
-  // appointment so both terms are 0. Failed deposits
-  // (deposit_status='failed') don't credit the till; a Shopify order
-  // attached at booking is only stored after the order resolves as
-  // paid, so no status check is needed for that branch.
-  const { data: visit } = await supabase
-    .from('lng_visits')
-    .select('appointment_id')
-    .eq('id', c.visit_id)
+  // Use the canonical lng_visit_paid_status view as the single
+  // source of truth for "money on file". The view already nets out
+  // succeeded refunds against both lng_payments and the appointment
+  // deposit — without that, this function would see gross deposit
+  // and gross till captures and flip the cart to 'paid' even when
+  // a refund has put the net coverage below the total. Reusing the
+  // view also keeps this function in lockstep with the
+  // VisitDetail / Pay surfaces that read it.
+  const { data: paidRow } = await supabase
+    .from('lng_visit_paid_status')
+    .select('amount_paid_pence')
+    .eq('visit_id', c.visit_id)
     .maybeSingle();
-  let depositPaid = 0;
-  let shopifyCredit = 0;
-  const v = visit as { appointment_id: string | null } | null;
-  if (v?.appointment_id) {
-    const { data: appt } = await supabase
-      .from('lng_appointments')
-      .select('deposit_pence, deposit_status, shopify_order_total_pence')
-      .eq('id', v.appointment_id)
-      .maybeSingle();
-    const a = appt as {
-      deposit_pence: number | null;
-      deposit_status: string | null;
-      shopify_order_total_pence: number | null;
-    } | null;
-    if (a?.deposit_status === 'paid' && typeof a.deposit_pence === 'number') {
-      depositPaid = a.deposit_pence;
-    }
-    if (typeof a?.shopify_order_total_pence === 'number') {
-      shopifyCredit = a.shopify_order_total_pence;
-    }
-  }
+  const amountPaid = (paidRow as { amount_paid_pence: number } | null)?.amount_paid_pence ?? 0;
 
-  if (succeeded + depositPaid + shopifyCredit < c.total_pence) return;
+  if (amountPaid < c.total_pence) return;
 
   await supabase
     .from('lng_carts')

@@ -77,7 +77,11 @@ function Kpis({ data }: { data: FinancialsOverviewData }) {
       <StatCard
         label="Revenue"
         value={formatPence(data.total_revenue_pence)}
-        delta={`${formatNumber(data.payments_count)} payment${data.payments_count === 1 ? '' : 's'}`}
+        delta={
+          data.refunds_pence > 0
+            ? `${formatNumber(data.payments_count)} payment${data.payments_count === 1 ? '' : 's'} · net of ${formatPence(data.refunds_pence)} refunds`
+            : `${formatNumber(data.payments_count)} payment${data.payments_count === 1 ? '' : 's'}`
+        }
         tone="accent"
         icon={<Coins size={14} />}
       />
