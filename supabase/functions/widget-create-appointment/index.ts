@@ -817,6 +817,16 @@ Deno.serve(async (req) => {
             },
             'warning',
           );
+          // Step 2 failed after Step 1 succeeded — the Meet space
+          // exists on Google's side with no appointment to back it.
+          // End it now so we don't leak abandoned Meet rooms on the
+          // host's account. Best-effort: a failure here is logged
+          // but doesn't block the fallback path.
+          await endOrphanedMeetSpace(accessToken, meetSpace.name, {
+            appointmentId,
+            host_id: host.id,
+            reason: 'calendar_attach_failed',
+          });
           continue;
         }
         const calEvent = (await calRes.json()) as { id?: string };
@@ -826,6 +836,11 @@ Deno.serve(async (req) => {
             { appointmentId, host_id: host.id, meeting_code: meetSpace.meetingCode },
             'warning',
           );
+          await endOrphanedMeetSpace(accessToken, meetSpace.name, {
+            appointmentId,
+            host_id: host.id,
+            reason: 'calendar_no_event_id',
+          });
           continue;
         }
 
@@ -1223,6 +1238,60 @@ async function logFailure(
     });
   } catch {
     // best-effort
+  }
+}
+
+// endOrphanedMeetSpace — cleanup helper for the post-/v2/spaces,
+// pre-Calendar-event window. A Meet space exists on Google's side
+// but the corresponding lng_appointments row never got the
+// meet_space_id (because the Calendar attach failed). Without
+// cleanup we'd leak abandoned spaces on the host's account every
+// time Calendar has a hiccup.
+//
+// Uses spaces.endActiveConference + spaces are auto-recycled once
+// the active conference is ended; explicit DELETE isn't part of
+// the public Meet v2 API. Best-effort — a failure here is logged
+// but never blocks the caller's flow.
+async function endOrphanedMeetSpace(
+  accessToken: string,
+  spaceName: string,
+  context: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const res = await fetch(
+      `https://meet.googleapis.com/v2/${spaceName}:endActiveConference`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+    // 200 = ended a conference. 409 = no active conference (the
+    // space exists but nobody joined yet — fine, Google reclaims
+    // it on its own schedule). Anything else is a real failure
+    // worth logging.
+    if (!res.ok && res.status !== 409) {
+      const body = await res.text().catch(() => '');
+      await logFailure(
+        'meet_space_cleanup_failed',
+        {
+          ...context,
+          space_name: spaceName,
+          response_status: res.status,
+          response_body_preview: body.slice(0, 300),
+        },
+        'warning',
+      );
+    }
+  } catch (e) {
+    await logFailure(
+      'meet_space_cleanup_threw',
+      {
+        ...context,
+        space_name: spaceName,
+        error: e instanceof Error ? e.message : String(e),
+      },
+      'warning',
+    );
   }
 }
 

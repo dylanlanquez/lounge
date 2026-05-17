@@ -126,6 +126,15 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
+    // Clear the previous user's account before flipping loading
+    // back to true. Without this, when auth swaps user1 → user2
+    // mid-session (rare but real — admin impersonation, dev
+    // switching accounts in one tab, etc) consumers would briefly
+    // read user1's permissions tagged with loading=true. Setting
+    // account to null guarantees the only state a consumer can
+    // observe between user changes is { account: null, loading:
+    // true } — same shape as the very first mount.
+    setAccount(null);
     setLoading(true);
     setError(null);
     (async () => {

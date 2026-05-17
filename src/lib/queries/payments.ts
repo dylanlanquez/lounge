@@ -500,12 +500,18 @@ export function useRefundableSources({
           const results = (resp as {
             results: Array<{ brand: string | null; last4: string | null } | null>;
           }).results;
-          // Splice each result back into the corresponding source by
-          // matching order with needBackfill.
+          // Build a kind+id keyed map so the result lookup is
+          // unambiguous, even if sources or results were reordered
+          // by some upstream layer. The previous findIndex-by-
+          // position pattern silently fell back to "no match" when
+          // anything moved; the Map version makes that an explicit
+          // .get() === undefined.
+          const resultBySource = new Map<string, { brand: string | null; last4: string | null } | null>();
+          needBackfill.forEach((source, i) => {
+            resultBySource.set(`${source.kind}:${source.id}`, results[i] ?? null);
+          });
           const updated = sources.map((s) => {
-            const idx = needBackfill.findIndex((n) => n.id === s.id && n.kind === s.kind);
-            if (idx === -1) return s;
-            const r = results[idx];
+            const r = resultBySource.get(`${s.kind}:${s.id}`);
             if (!r) return s;
             return {
               ...s,
