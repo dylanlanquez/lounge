@@ -179,10 +179,51 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { error: 'no_location_resolved' });
   }
 
+  // ── Effective denture-repair variant ────────────────────────────
+  // For a denture_repair cart with multiple repair lines, the
+  // body's repair_variant is only the FIRST cart line's variant —
+  // so a "Cracked + Relining" cart would resolve the conflict
+  // check against the first line's shape and miss Relining's
+  // impression-clinician + consult-room pool claims. Pick the most
+  // restrictive variant across the whole cart via the same helper
+  // the slot picker uses, then use that effective variant for
+  // duration resolution, conflict check, AND the appointment row's
+  // persisted repair_variant column. After this point
+  // body.repairVariant is ignored — every downstream lookup reads
+  // effectiveRepairVariant instead.
+  let effectiveRepairVariant = body.repairVariant ?? null;
+  if (
+    body.serviceType === 'denture_repair' &&
+    Array.isArray(body.repairItems) &&
+    body.repairItems.length > 0
+  ) {
+    const variants = Array.from(
+      new Set(
+        body.repairItems
+          .map((r) => r.repairVariant)
+          .filter((v): v is string => !!v && v.trim() !== ''),
+      ),
+    );
+    if (variants.length > 0) {
+      const { data: pickRaw, error: pickErr } = await supabase.rpc(
+        'lng_denture_repair_effective_variant',
+        { p_variants: variants },
+      );
+      if (pickErr) {
+        await logFailure('effective_variant_pick_failed', {
+          error: pickErr.message,
+          variants,
+        }, 'warning');
+      } else if (typeof pickRaw === 'string' && pickRaw.length > 0) {
+        effectiveRepairVariant = pickRaw;
+      }
+    }
+  }
+
   // ── Resolve duration from booking type config ───────────────────
   const { data: resolvedRaw, error: resolveErr } = await supabase.rpc('lng_booking_type_resolve', {
     p_service_type: body.serviceType,
-    p_repair_variant: body.repairVariant ?? null,
+    p_repair_variant: effectiveRepairVariant,
     p_product_key: body.productKey ?? null,
     p_arch: body.arch ?? null,
   });
@@ -218,7 +259,7 @@ Deno.serve(async (req) => {
     p_start_at: startAt.toISOString(),
     p_end_at: endAt.toISOString(),
     p_exclude_appointment_id: null,
-    p_repair_variant: body.repairVariant ?? null,
+    p_repair_variant: effectiveRepairVariant,
     p_product_key: body.productKey ?? null,
     p_arch: body.arch ?? null,
   });
@@ -440,7 +481,7 @@ Deno.serve(async (req) => {
       event_type_label: eventLabel,
       appointment_ref: appointmentRef,
       notes: body.details.notes?.trim() || null,
-      repair_variant: body.repairVariant ?? null,
+      repair_variant: effectiveRepairVariant,
       product_key: body.productKey ?? null,
       arch: body.arch ?? null,
       // Whitelist guard: the column accepts any text but we only
@@ -525,7 +566,10 @@ Deno.serve(async (req) => {
       appointment_id: appointmentId,
       appointment_ref: appointmentRef,
       service_type: body.serviceType,
-      repair_variant: body.repairVariant ?? null,
+      // Reflect the effective variant we wrote to the row, not the
+      // first-line variant the body shipped — keeps reports + future
+      // event-replay queries consistent with the booking shape.
+      repair_variant: effectiveRepairVariant,
       product_key: body.productKey ?? null,
       arch: body.arch ?? null,
       start_at: startAt.toISOString(),

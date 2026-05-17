@@ -447,6 +447,13 @@ interface AvailableSlotsInput {
   repairVariant: string | null;
   productKey: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
+  /** Every repair_variant in the cart. Only populated for
+   *  denture_repair bookings — the server uses it to resolve the
+   *  most restrictive variant in the cart (e.g. Relining when the
+   *  cart mixes Cracked + Relining) so slot availability reflects
+   *  every variant's pool claims, not just the first cart line's.
+   *  Empty / undefined for single-variant flows. */
+  repairVariants?: string[] | null;
   // When set the RPC excludes this appointment from its conflict
   // count. The widget's reschedule flow passes the patient's
   // current appointment id so their existing slot still shows as
@@ -492,6 +499,13 @@ export function useWidgetAvailableSlots(input: AvailableSlotsInput): AvailableSl
         p_product_key: input.productKey,
         p_arch: input.arch,
         p_exclude_appointment_id: input.excludeAppointmentId ?? null,
+        // Cart-aware variant pick — the server uses this to find the
+        // most restrictive variant in a denture_repair cart so a
+        // booking that includes Relining alongside Cracked / Add-a-
+        // tooth still respects Relining's impression-clinician +
+        // consult-room pool claims. Empty / null for non-denture
+        // bookings; the RPC silently ignores it.
+        p_repair_variants: input.repairVariants ?? null,
       });
       if (cancelled) return;
       if (err) {
@@ -520,6 +534,14 @@ export function useWidgetAvailableSlots(input: AvailableSlotsInput): AvailableSl
     input.productKey,
     input.arch,
     input.excludeAppointmentId,
+    // Stable key for the cart — without this dependency, ticking /
+    // unticking repair lines mid-flow doesn't refetch availability,
+    // so the patient can see slots that became invalid the moment
+    // they added Relining to the cart. Sort-then-join makes the
+    // key order-independent and array-reference-stable so we don't
+    // refetch on every render when the underlying array literal is
+    // fresh but the contents haven't changed.
+    (input.repairVariants ?? []).slice().sort().join('|'),
   ]);
 
   return { data, loading, error };

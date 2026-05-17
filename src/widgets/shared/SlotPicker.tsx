@@ -60,6 +60,12 @@ export interface SlotPickerProps {
   serviceType: string | null;
   durationMinutes: number;
   repairVariant?: string | null;
+  /** Every repair_variant in the cart. Only used for denture_repair
+   *  bookings — the server resolves the most restrictive variant
+   *  in the cart for slot availability so multi-variant carts
+   *  honour every variant's pool claims. Empty / undefined for
+   *  single-variant flows. */
+  repairVariants?: string[] | null;
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
   selectedIso: string | null;
@@ -82,6 +88,7 @@ export function SlotPicker({
   serviceType,
   durationMinutes,
   repairVariant = null,
+  repairVariants = null,
   productKey = null,
   arch = null,
   selectedIso,
@@ -202,6 +209,7 @@ export function SlotPicker({
     serviceType,
     date: selectedDate,
     repairVariant,
+    repairVariants,
     productKey,
     arch,
     excludeAppointmentId,

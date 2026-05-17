@@ -96,7 +96,9 @@ export function SuccessScreen({
     : null;
   const timeLabel = slot ? formatHourMinute(slot) : null;
   const accent = brand?.accent ?? QUIZ.ACCENT;
-  const isClickInVeneers = state.service?.serviceType === 'click_in_veneers';
+  // isClickInVeneers used to drive marketing copy under the smile-
+  // photos heading; that copy was stripped 2026-05-17 so the flag
+  // is no longer needed.
   // Photo intake renders for any service that has Pre-visit smile
   // photos toggled on in Admin → Widget. Click-in veneers ships with
   // the toggle enabled by default; other services opt in via the
@@ -253,7 +255,6 @@ export function SuccessScreen({
             appointmentId={appointmentId!}
             manageToken={manageToken!}
             accent={accent}
-            isClickInVeneers={isClickInVeneers}
           />
         ) : null}
       </div>
@@ -817,16 +818,10 @@ function PhotoIntakeCard({
   appointmentId,
   manageToken,
   accent,
-  isClickInVeneers,
 }: {
   appointmentId: string;
   manageToken: string;
   accent: string;
-  /** Click-in veneers carries an additional pair of explanatory
-   *  paragraphs under the heading (the "deposit refunded if veneers
-   *  aren't right for you" reassurance). Other services that opt
-   *  into smile-photo capture only show the heading + photo grid. */
-  isClickInVeneers: boolean;
 }) {
   // Lift the per-tile done state up so the Submit button at the
   // bottom can disable itself when nothing is uploaded yet. Each
@@ -869,39 +864,10 @@ function PhotoIntakeCard({
       >
         Send us your smile photos
       </h3>
-      {/* The descriptive copy below stays only for click-in veneers
-          — its "your deposit is refunded if we decide veneers aren't
-          right for you" line is specific to that service. Other
-          services that opt into pre-visit smile photos just show
-          the heading + photo grid; the heading itself already says
-          what the patient needs to do. */}
-      {isClickInVeneers ? (
-        <>
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 14,
-              color: QUIZ.MUTED_2,
-              lineHeight: 1.5,
-            }}
-          >
-            Optional but highly recommended. These let our clinical team check
-            shade match and arch shape before you come in, so the visit goes
-            as smoothly as possible.
-          </div>
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 13,
-              color: QUIZ.MUTED_2,
-              lineHeight: 1.5,
-            }}
-          >
-            If we look at your photos and decide click-in veneers aren't the
-            right fit for you, your deposit is refunded in full, no questions.
-          </div>
-        </>
-      ) : null}
+      {/* Marketing prose intentionally stripped — the heading +
+          photo grid already communicate what the patient needs to
+          do, and the "Optional but highly recommended" / deposit-
+          refund copy read as filler on the success screen. */}
 
       {/* Grid → 3 columns on desktop, smooth horizontal-snap row on
           ≤520px. Class + media query live in quizTokens.ts so the
