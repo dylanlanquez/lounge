@@ -50,7 +50,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
-const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+// Stripe keys mirror the widget pattern: the legacy un-suffixed
+// STRIPE_SECRET_KEY is the live fallback, plus explicit _LIVE / _TEST
+// suffixes for projects that flip stripe.mode in lng_settings. A
+// deposit captured in test mode must be refunded with the test key
+// or Stripe returns HTTP 404 because the PI doesn't exist on the
+// live account.
+const STRIPE_SECRET_KEY_LEGACY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+const STRIPE_SECRET_KEY_LIVE =
+  Deno.env.get('STRIPE_SECRET_KEY_LIVE') ?? STRIPE_SECRET_KEY_LEGACY;
+const STRIPE_SECRET_KEY_TEST = Deno.env.get('STRIPE_SECRET_KEY_TEST') ?? '';
 
 const VALID_REASON_CATEGORIES = new Set([
   'item_removed',
@@ -357,13 +366,6 @@ Deno.serve(async (req) => {
   // both a till card payment AND a widget deposit; the PI source
   // differs but the API call is identical.
   if (goesViaStripe) {
-    if (!STRIPE_SECRET_KEY) {
-      await supabase
-        .from('lng_payment_refunds')
-        .update({ status: 'failed', failure_reason: 'STRIPE_SECRET_KEY missing' })
-        .eq('id', refundId);
-      return j(500, { ok: false, error: 'STRIPE_SECRET_KEY missing', refund_id: refundId });
-    }
     if (!src.stripePaymentIntentId) {
       await supabase
         .from('lng_payment_refunds')
@@ -375,39 +377,82 @@ Deno.serve(async (req) => {
         refund_id: refundId,
       });
     }
-    const r = await fetch('https://api.stripe.com/v1/refunds', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        // One idempotency key per refund row guarantees a retried
-        // request can't fire a second Stripe refund.
-        'Idempotency-Key': `refund:${refundId}`,
-      },
-      body: new URLSearchParams({
-        payment_intent: src.stripePaymentIntentId,
-        amount: String(amountPence),
-        reason: 'requested_by_customer',
-        // Stamp our refund row id into the Stripe Refund's metadata
-        // so the webhook can look us up even if it arrives BEFORE
-        // we've stored the stripe_refund_id back on the row. Closes
-        // the read-then-update race between this function's UPDATE
-        // and Stripe's async charge.refund.updated delivery.
-        'metadata[refund_id]': refundId,
-      }).toString(),
-    });
-    const refundBody = (await r.json().catch(() => ({}))) as {
-      id?: string;
-      status?: string;
-      failure_reason?: string;
-    };
-    if (!r.ok || !refundBody.id) {
+    // Pick the right Stripe key based on lng_settings.stripe.mode. A
+    // deposit captured in test mode lives on the test Stripe account
+    // and is invisible to the live key (Stripe returns HTTP 404).
+    // We try the configured mode first; on 404 we fall back to the
+    // other key, in case the operator flipped stripe.mode between
+    // capture and refund. Any other error short-circuits — only 404
+    // is "wrong account" territory.
+    const { data: modeRow } = await supabase
+      .from('lng_settings')
+      .select('value')
+      .eq('key', 'stripe.mode')
+      .is('location_id', null)
+      .maybeSingle();
+    const mode = (modeRow?.value as string | undefined) === 'test' ? 'test' : 'live';
+    const primary = mode === 'test' ? STRIPE_SECRET_KEY_TEST : STRIPE_SECRET_KEY_LIVE;
+    const fallback = mode === 'test' ? STRIPE_SECRET_KEY_LIVE : STRIPE_SECRET_KEY_TEST;
+    if (!primary && !fallback) {
       await supabase
         .from('lng_payment_refunds')
-        .update({
-          status: 'failed',
-          failure_reason: refundBody.failure_reason ?? `HTTP ${r.status}`,
-        })
+        .update({ status: 'failed', failure_reason: 'STRIPE_SECRET_KEY missing' })
+        .eq('id', refundId);
+      return j(500, { ok: false, error: 'STRIPE_SECRET_KEY missing', refund_id: refundId });
+    }
+    const callStripe = async (
+      key: string,
+    ): Promise<{ r: Response; body: { id?: string; status?: string; failure_reason?: string; error?: { message?: string; code?: string } } }> => {
+      const r = await fetch('https://api.stripe.com/v1/refunds', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          // One idempotency key per refund row guarantees a retried
+          // request can't fire a second Stripe refund. Idempotency is
+          // scoped per Stripe account so the same key works on both
+          // live and test if we end up trying the fallback.
+          'Idempotency-Key': `refund:${refundId}`,
+        },
+        body: new URLSearchParams({
+          payment_intent: src.stripePaymentIntentId!,
+          amount: String(amountPence),
+          reason: 'requested_by_customer',
+          // Stamp our refund row id into the Stripe Refund's metadata
+          // so the webhook can look us up even if it arrives BEFORE
+          // we've stored the stripe_refund_id back on the row.
+          'metadata[refund_id]': refundId,
+        }).toString(),
+      });
+      const body = (await r.json().catch(() => ({}))) as {
+        id?: string;
+        status?: string;
+        failure_reason?: string;
+        error?: { message?: string; code?: string };
+      };
+      return { r, body };
+    };
+    let attempt = primary
+      ? await callStripe(primary)
+      : ({ r: new Response('', { status: 404 }), body: {} } as Awaited<ReturnType<typeof callStripe>>);
+    // Stripe returns 404 when the PI belongs to the other account.
+    // Retry once with the fallback key if it's available.
+    if (!attempt.r.ok && attempt.r.status === 404 && fallback && fallback !== primary) {
+      attempt = await callStripe(fallback);
+    }
+    const { r, body: refundBody } = attempt;
+    if (!r.ok || !refundBody.id) {
+      // Surface Stripe's own error message when present so the
+      // failure_reason on the row tells staff what actually went
+      // wrong (e.g. "No such payment_intent") instead of a bare
+      // "HTTP 404".
+      const reason =
+        refundBody.error?.message ??
+        refundBody.failure_reason ??
+        `HTTP ${r.status}`;
+      await supabase
+        .from('lng_payment_refunds')
+        .update({ status: 'failed', failure_reason: reason })
         .eq('id', refundId);
       return j(502, {
         ok: false,

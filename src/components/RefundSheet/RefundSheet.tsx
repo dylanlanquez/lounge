@@ -233,46 +233,46 @@ export function RefundSheet({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[8] }}>
-        {/* Section 1 — amount + where it's going */}
-        <SheetSection
-          title="Refund amount"
-          subtitle="The amount and the cards or cash it's going back to. Locked, so the figures match what they paid."
-        >
-          {sourcesError ? (
-            <ErrorLine message={sourcesError} />
-          ) : sourcesLoading && allocations.length === 0 ? (
-            <MutedLine>Loading payments…</MutedLine>
-          ) : allocations.length === 0 ? (
-            <MutedLine>
-              No refundable payments on file for this visit. If they paid online, the
-              refund may already be processing on Stripe.
-            </MutedLine>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-              <AmountHero pence={totalAllocatedPence} />
+        {/* Section 1 — amount + where it's going. No SheetSection
+            wrapper here: the sheet title + description already say
+            "Returning £60.00 to the patient on the same cards or cash
+            that paid for the visit", so a second "Refund amount"
+            heading would just be that twice. The £60.00 hero is the
+            section header on this surface. */}
+        {sourcesError ? (
+          <ErrorLine message={sourcesError} />
+        ) : sourcesLoading && allocations.length === 0 ? (
+          <MutedLine>Loading payments…</MutedLine>
+        ) : allocations.length === 0 ? (
+          <MutedLine>
+            No refundable payments on file for this visit. If they paid online, the
+            refund may already be processing on Stripe.
+          </MutedLine>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+            <AmountHero pence={totalAllocatedPence} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              <SubLabel>Going back to</SubLabel>
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                <SubLabel>Going back to</SubLabel>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                  {allocations.map((a) => (
-                    <AllocationRow
-                      key={a.source.id}
-                      source={a.source}
-                      pence={a.pence}
-                      error={perRowErrors[a.source.id] ?? null}
-                    />
-                  ))}
-                </div>
+                {allocations.map((a) => (
+                  <AllocationRow
+                    key={a.source.id}
+                    source={a.source}
+                    pence={a.pence}
+                    error={perRowErrors[a.source.id] ?? null}
+                  />
+                ))}
               </div>
-              {allocationShortfallPence > 0 ? (
-                <ErrorLine
-                  message={`Only ${formatPence(totalAllocatedPence)} of the ${formatPence(
-                    suggestedPence,
-                  )} owed can be refunded right now. An admin needs to reconcile the rest.`}
-                />
-              ) : null}
             </div>
-          )}
-        </SheetSection>
+            {allocationShortfallPence > 0 ? (
+              <ErrorLine
+                message={`Only ${formatPence(totalAllocatedPence)} of the ${formatPence(
+                  suggestedPence,
+                )} owed can be refunded right now. An admin needs to reconcile the rest.`}
+              />
+            ) : null}
+          </div>
+        )}
 
         {/* Section 2 — reason */}
         <SheetSection
