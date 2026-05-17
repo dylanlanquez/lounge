@@ -201,11 +201,21 @@ export function MeetAttendanceCard({
 // ─────────────────────────────────────────────────────────────────────
 
 type VerdictKind =
+  // Genuinely empty — no rows AND no conferenceStartedAt, both
+  // pre- and post-end_at. Triggers the empty-state render.
   | 'pending'
+  // Final verdicts (meeting ended, evidence on file).
   | 'never_opened'
   | 'only_host'
   | 'only_patient'
-  | 'both';
+  | 'both'
+  // Mid-meeting verdicts (end_at hasn't passed but evidence has
+  // landed). Present-tense copy; participant cards render alongside
+  // these the same way the final verdicts do.
+  | 'in_progress_both'
+  | 'in_progress_host'
+  | 'in_progress_patient'
+  | 'in_progress_idle';
 
 interface Verdict {
   kind: VerdictKind;
@@ -222,24 +232,38 @@ function deriveVerdict(args: {
 }): Verdict {
   const { rows, grouped, conferenceStartedAt, meetingHasEnded } = args;
 
-  // Before the meeting ends Google publishes nothing, so anything we'd
-  // say would be speculative. Be honest: we're waiting on Google. The
-  // longer "how Google publishes attendance" explanation lives in the
-  // card's footer hint — keep the verdict detail to one short line so
-  // the card is scannable.
-  if (!meetingHasEnded) {
-    return {
-      kind: 'pending',
-      title: 'Awaiting Google publication',
-      detail: 'Verdict populates once the Meet room closes.',
-      tone: 'muted',
-    };
-  }
+  // Three-way gate, in priority order:
+  //   1. Genuinely nothing on file (no rows AND no conferenceStartedAt) →
+  //      pending. Render the empty state. Honest "Google hasn't
+  //      published anything yet" copy, whether mid-meeting or just
+  //      before end_at.
+  //   2. Mid-meeting with at least one row (or a started-at) → in_progress.
+  //      Google often publishes early when a conference closes before
+  //      end_at (host hangs up first, both leave at 10:15 on a
+  //      10:00-10:30 booking). Showing the cards while end_at is still
+  //      ticking down was the previous bug — the verdict came back
+  //      'pending' for ~15 minutes after rows landed, leaving the
+  //      operator pressing Refresh against a blank card. Now the
+  //      moment we have anything to show, we show it.
+  //   3. Meeting ended → final verdict (both / only_host / only_patient /
+  //      never_opened) computed from the participant durations.
 
-  // Meeting is over but Google has no conference record AND we have no
-  // session rows — the conference never opened. Hardest possible
-  // evidence that no one connected.
-  if (!conferenceStartedAt && rows.length === 0) {
+  const hostJoined = grouped.some((p) => p.isHost && p.totalSeconds > 0);
+  const patientJoined = grouped.some((p) => !p.isHost && p.totalSeconds > 0);
+  const haveAnyEvidence = rows.length > 0 || !!conferenceStartedAt;
+
+  // 1. Nothing landed yet, in either state.
+  if (!haveAnyEvidence) {
+    if (!meetingHasEnded) {
+      return {
+        kind: 'pending',
+        title: 'Awaiting Google publication',
+        detail: 'Attendance lands here once the Meet room closes.',
+        tone: 'muted',
+      };
+    }
+    // Meeting ended but Google never recorded a conference — nobody opened
+    // the room. Hardest possible negative evidence.
     return {
       kind: 'never_opened',
       title: 'Nobody joined',
@@ -248,9 +272,47 @@ function deriveVerdict(args: {
     };
   }
 
-  const hostJoined = grouped.some((p) => p.isHost && p.totalSeconds > 0);
-  const patientJoined = grouped.some((p) => !p.isHost && p.totalSeconds > 0);
+  // 2. In progress (or scheduled window still open) with at least one
+  //    session recorded. Present-tense copy so the operator can tell
+  //    this is a live snapshot, not a final reading.
+  if (!meetingHasEnded) {
+    if (hostJoined && patientJoined) {
+      return {
+        kind: 'in_progress_both',
+        title: 'Meeting in progress',
+        detail: 'Host and patient have both connected.',
+        tone: 'success',
+      };
+    }
+    if (hostJoined) {
+      return {
+        kind: 'in_progress_host',
+        title: 'Host has joined',
+        detail: 'Waiting on the patient. The card refreshes as Google publishes more.',
+        tone: 'muted',
+      };
+    }
+    if (patientJoined) {
+      return {
+        kind: 'in_progress_patient',
+        title: 'Patient has joined',
+        detail: 'Waiting on the host. The card refreshes as Google publishes more.',
+        tone: 'warn',
+      };
+    }
+    // Evidence exists (a conferenceStartedAt or a row with 0 seconds)
+    // but no one is logged as connected yet. Still clearer to read
+    // than the old pending empty state — at least the operator knows
+    // something happened.
+    return {
+      kind: 'in_progress_idle',
+      title: 'Conference opened',
+      detail: 'Google has registered the room but no participant sessions yet.',
+      tone: 'muted',
+    };
+  }
 
+  // 3. Meeting ended — final verdict.
   if (hostJoined && patientJoined) {
     return {
       kind: 'both',
