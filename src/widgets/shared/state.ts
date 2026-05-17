@@ -266,6 +266,15 @@ export function activeStepsFor(
    *  omitted (older call sites, tests). When false, the Upgrades step
    *  is hidden even if the catalogue has visible upgrades. */
   showUpgrades: boolean = true,
+  /** Live arch_match for the currently-resolved catalogue row.
+   *  Preferred over state.axes.product_arch_match because the
+   *  state-stored value is only captured when the customer picks a
+   *  product through the widget's own step; a Shopify trigger that
+   *  prefills product_key skips that step and never sets it. The
+   *  resolver hits the catalogue directly so it works for both
+   *  paths. Falls back to the state-stored value when the resolver
+   *  hasn't returned yet, then to undefined. */
+  resolvedArchMatch?: 'any' | 'single' | 'both' | null,
 ): StepKey[] {
   const out: StepKey[] = [];
   if (locationCount > 1) out.push('location');
@@ -282,14 +291,18 @@ export function activeStepsFor(
       if (arch === 'lower' || arch === 'both') out.push('repair:bottom');
     } else {
       const axes = axesForService(state.service.serviceType as BookingServiceType);
+      // Conditional skip: if the resolved catalogue row's arch_match
+      // is anything other than 'single', the arch step is
+      // meaningless and we drop it. Live resolver result wins over
+      // the state-captured value so Shopify-prefilled product picks
+      // (which never call setAxisPin and so never capture
+      // product_arch_match) still trigger the skip.
+      const effectiveArchMatch = resolvedArchMatch ?? state.axes.product_arch_match;
       for (const axis of axes) {
-        // Conditional skip: if the patient picked a product whose
-        // arch_match is anything other than 'single', the arch step
-        // is meaningless and we drop it.
         if (
           axis.key === 'arch' &&
-          state.axes.product_arch_match &&
-          state.axes.product_arch_match !== 'single'
+          effectiveArchMatch &&
+          effectiveArchMatch !== 'single'
         ) {
           continue;
         }
@@ -421,9 +434,17 @@ export function useBookingState(
     state.axes.product_key ?? null,
     productConfig,
   ).show_upgrades;
+  const resolvedArchMatch = resolvedResult.data?.archMatch ?? null;
   const activeSteps = useMemo(
-    () => activeStepsFor(state, hasUpgrades, locations.length, showUpgrades),
-    [state, hasUpgrades, locations.length, showUpgrades],
+    () =>
+      activeStepsFor(
+        state,
+        hasUpgrades,
+        locations.length,
+        showUpgrades,
+        resolvedArchMatch,
+      ),
+    [state, hasUpgrades, locations.length, showUpgrades, resolvedArchMatch],
   );
   const priceBreakdown = useMemo(
     () =>
