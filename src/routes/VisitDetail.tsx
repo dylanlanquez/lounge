@@ -1604,6 +1604,7 @@ export function VisitDetail() {
                   shopifyOrderName={shopifyOrder?.name ?? null}
                   tillCollectedPence={tillCollectedPence}
                   total={total}
+                  owedToPatientPence={owedToPatientPence}
                   // Suppress the giant "Outstanding £X.XX" row when the
                   // cart is paid — the PaidHeader above already carries
                   // that amount, and showing it twice was the exact
@@ -3608,6 +3609,7 @@ function Totals({
   shopifyOrderName,
   tillCollectedPence,
   total,
+  owedToPatientPence,
   hideTotalRow = false,
   dim = false,
   activeDiscount,
@@ -3630,6 +3632,12 @@ function Totals({
    *  the new outstanding number. */
   tillCollectedPence: number;
   total: number;
+  /** Amount we owe back to the patient. Positive when amount_paid
+   *  exceeds the cart total. Drives the bottom-row swap from
+   *  "Outstanding £0.00" (which read as "all good") to
+   *  "Owed back £60.00" in red so staff never misses that money
+   *  needs to go out. */
+  owedToPatientPence: number;
   /** When true, suppress the bottom "Outstanding £X.XX" hero row —
    * used when the cart is paid and the PaidHeader already states the
    * amount. */
@@ -3705,7 +3713,44 @@ function Totals({
           accent
         />
       ) : null}
-      {hideTotalRow ? null : (
+      {hideTotalRow ? null : owedToPatientPence > 0 ? (
+        // Overpaid state — flip the bottom row from "Outstanding
+        // £0.00" (which reads as "all balanced, nothing to do") to
+        // "Owed back £X" in alert red so staff can't miss the
+        // direction of the money. The persistent banner above the
+        // cart already calls this out; this row mirrors it so the
+        // Totals card itself stays truthful when read in isolation.
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            paddingTop: theme.space[3],
+            marginTop: theme.space[2],
+            borderTop: `1px solid ${theme.color.border}`,
+          }}
+        >
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              color: theme.color.alert,
+              fontWeight: theme.type.weight.semibold,
+            }}
+          >
+            Owed back
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xxl,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.alert,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {formatPence(owedToPatientPence)}
+          </span>
+        </div>
+      ) : (
         <div
           style={{
             display: 'flex',
