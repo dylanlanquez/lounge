@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import { Footprints, Headset, MapPin, ShieldCheck } from 'lucide-react';
 import { Button, Card, Input, Toast } from '../components/index.ts';
 import { PatientSearch } from '../components/PatientSearch/PatientSearch.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
@@ -11,6 +12,7 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type PatientRow,
 } from '../lib/queries/patients.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
 import { supabase } from '../lib/supabase.ts';
 
@@ -61,6 +63,7 @@ function humanizePatientSaveError(err: { message?: string; code?: string } | nul
 export function NewWalkIn() {
   const { user, loading: authLoading } = useAuth();
   const { data: location } = useCurrentLocation();
+  const { account: currentAccount } = useCurrentAccount();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('find');
   const [newPatient, setNewPatient] = useState({
@@ -76,6 +79,17 @@ export function NewWalkIn() {
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
+
+  // Customer-service staff don't register walk-ins — they answer
+  // calls and tickets remotely. This route is reachable from the
+  // bottom nav (they can't be told not to tap it), so explain in
+  // plain English what walk-in is for, who uses it, and what THEY
+  // should do instead. Reads top-to-bottom even for a brand-new
+  // hire scanning quickly.
+  const isCsOnly = currentAccount?.is_cs_only === true;
+  if (isCsOnly) {
+    return <WalkInCsExplainer isMobile={isMobile} />;
+  }
 
   // Once a patient is picked or just-created, hand off to the arrival
   // wizard. Service / items / JB / customer details / consent / start
@@ -233,6 +247,185 @@ export function NewWalkIn() {
         ) : null}
       </div>
     </main>
+  );
+}
+
+// WalkInCsExplainer — shown when a Customer Service operator opens
+// the /walk-in/new route. CS staff don't register walk-ins; they
+// help patients remotely by phone and ticket. The screen makes
+// three things clear at a glance:
+//
+//   1. What "walk-in" actually means — a person physically walking
+//      into the clinic off the street.
+//   2. Who uses this button — in-clinic reception staff only.
+//   3. What CS should do instead — point the patient at the public
+//      booking page or transfer to the clinic.
+//
+// Designed to read for foreign / first-day-on-the-job staff: short
+// sentences, plain English, one fact per row, three icons that
+// carry meaning without colour.
+function WalkInCsExplainer({ isMobile }: { isMobile: boolean }) {
+  return (
+    <main
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        padding: isMobile ? theme.space[4] : theme.space[6],
+        paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + ${isMobile ? theme.space[4] : theme.space[6]}px + env(safe-area-inset-top, 0px))`,
+        paddingBottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${isMobile ? theme.space[6] : theme.space[8]}px + env(safe-area-inset-bottom, 0px))`,
+      }}
+    >
+      <div style={{ maxWidth: 560, margin: '0 auto' }}>
+        <TopBar variant="subpage" backTo="/schedule" />
+
+        <div
+          style={{
+            background: theme.color.surface,
+            borderRadius: theme.radius.card,
+            padding: isMobile ? theme.space[6] : theme.space[8],
+            boxShadow: theme.shadow.card,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            textAlign: 'center',
+            gap: theme.space[5],
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 72,
+              height: 72,
+              borderRadius: theme.radius.pill,
+              background: theme.color.accentBg,
+              color: theme.color.accent,
+            }}
+          >
+            <Footprints size={32} aria-hidden />
+          </span>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: isMobile ? theme.type.size.xl : theme.type.size.xxl,
+                fontWeight: theme.type.weight.semibold,
+                letterSpacing: theme.type.tracking.tight,
+                color: theme.color.ink,
+                lineHeight: theme.type.leading.tight,
+              }}
+            >
+              Walk-in is for the clinic team
+            </h1>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.base,
+                color: theme.color.inkMuted,
+                lineHeight: theme.type.leading.normal,
+              }}
+            >
+              This is for receptionists registering someone who has just walked into the
+              clinic off the street. Customer Service shouldn't use it.
+            </p>
+          </div>
+
+          <div
+            style={{
+              width: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[3],
+              textAlign: 'left',
+            }}
+          >
+            <ExplainerRow
+              icon={<MapPin size={18} aria-hidden />}
+              title="Used in the clinic"
+              body="Reception taps Walk-in when a patient is standing at the desk and has no appointment yet."
+            />
+            <ExplainerRow
+              icon={<Headset size={18} aria-hidden />}
+              title="You're remote support"
+              body="On the phone or on tickets, you help patients book. You're not the one greeting them in person."
+            />
+            <ExplainerRow
+              icon={<ShieldCheck size={18} aria-hidden />}
+              title="What to do instead"
+              body="Send the patient to venneir.com to book, or transfer the call to the clinic so reception can help."
+            />
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+// One row inside the explainer card. Accent-tinted icon on the
+// left, bold title + muted body on the right. Stays readable for
+// staff who don't speak English as a first language — short
+// sentences, no jargon, one fact per row.
+function ExplainerRow({
+  icon,
+  title,
+  body,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        background: theme.color.bg,
+        borderRadius: theme.radius.input,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          {title}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.normal,
+          }}
+        >
+          {body}
+        </span>
+      </div>
+    </div>
   );
 }
 
