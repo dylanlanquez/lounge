@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Banknote, CreditCard, Globe } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Banknote, CreditCard, Globe, Pencil } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
@@ -418,12 +418,18 @@ function SheetSection({
 }
 
 // AmountInput — the headline figure that owns the top of the sheet,
-// and the field the operator types into for partial refunds. The £
-// prefix and the number share the same display-size weight so the
-// figure still reads as a hero, not a form input. Below it sits a
-// quiet helper line that explains the ceiling + offers a "Set to
-// max" shortcut when the operator hasn't already maxed out the
-// refundable balance.
+// and the field the operator types into for partial refunds.
+//
+// Read like an input first, hero second:
+//   • Visible "Edit" Pencil icon on the right so the editability
+//     is unmistakable. The previous design rendered the same £60.00
+//     hero on every visit and operators thought it was static.
+//   • Hover lifts the border to ink so it scans as interactive.
+//   • Focus snaps to the accent border + selects the whole value so
+//     typing immediately replaces.
+//   • Quick chips below the field: All, Half, Custom. The chip-row
+//     makes the partial-refund path one tap instead of "guess that
+//     this looking-like-a-display thing accepts keystrokes".
 function AmountInput({
   value,
   onChange,
@@ -441,6 +447,9 @@ function AmountInput({
 }) {
   const ceilingFmt = formatPence(ceilingPence);
   const suggestedFmt = suggestedPence > 0 ? formatPence(suggestedPence) : null;
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
   // Only allow digits + one decimal. Anything else gets stripped so
   // a paste of "£60.00" still produces a valid "60.00".
   const sanitise = (raw: string) => {
@@ -451,21 +460,59 @@ function AmountInput({
       cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '')
     );
   };
+
+  // Quick chips. "All" = the suggested owed (or the ceiling when
+  // there's no specific owed amount). "Half" = round down to the
+  // nearest penny of half the owed/ceiling so a £60 owed turns into
+  // a £30 chip. "Custom" focuses the input and selects-all so the
+  // operator can just start typing.
+  const targetPence = suggestedPence > 0 ? suggestedPence : ceilingPence;
+  const targetStr = (targetPence / 100).toFixed(2);
+  const halfPence = Math.floor(targetPence / 2);
+  const halfStr = (halfPence / 100).toFixed(2);
+  const isAll = value === targetStr;
+  const isHalf = value === halfStr && halfPence > 0;
+
+  const borderColor = overCeiling
+    ? theme.color.alert
+    : focused
+      ? theme.color.accent
+      : hovered
+        ? theme.color.ink
+        : theme.color.border;
+  const borderWidth = focused || overCeiling ? 2 : 1;
+
+  const focusAndSelect = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
       <label
         htmlFor="refund-amount-input"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         style={{
           display: 'flex',
-          alignItems: 'baseline',
+          alignItems: 'center',
           gap: theme.space[2],
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          // Compensate the padding so the field doesn't jump 1px when
+          // the focus state thickens the border.
+          padding: focused || overCeiling
+            ? `${theme.space[3] - 1}px ${theme.space[4] - 1}px`
+            : `${theme.space[3]}px ${theme.space[4]}px`,
           borderRadius: theme.radius.input,
-          background: theme.color.bg,
-          border: `1px solid ${overCeiling ? theme.color.alert : theme.color.border}`,
+          background: theme.color.surface,
+          border: `${borderWidth}px solid ${borderColor}`,
+          cursor: disabled ? 'not-allowed' : 'text',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         }}
       >
         <span
+          aria-hidden
           style={{
             fontSize: theme.type.size.display,
             fontWeight: theme.type.weight.bold,
@@ -477,12 +524,21 @@ function AmountInput({
           £
         </span>
         <input
+          ref={inputRef}
           id="refund-amount-input"
           type="text"
           inputMode="decimal"
           autoComplete="off"
           value={value}
           onChange={(e) => onChange(sanitise(e.target.value))}
+          onFocus={(e) => {
+            setFocused(true);
+            // Select-all on focus so the operator can replace the
+            // whole value with a single keystroke. Without this they
+            // have to backspace 5 chars before they can type £30.
+            e.currentTarget.select();
+          }}
+          onBlur={() => setFocused(false)}
           disabled={disabled}
           aria-invalid={overCeiling}
           aria-describedby="refund-amount-helper"
@@ -503,57 +559,118 @@ function AmountInput({
             padding: 0,
           }}
         />
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: theme.radius.pill,
+            background: focused ? theme.color.accentBg : 'rgba(14,20,20,0.06)',
+            color: focused ? theme.color.accent : theme.color.inkMuted,
+            flexShrink: 0,
+            transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          }}
+        >
+          <Pencil size={14} aria-hidden />
+        </span>
       </label>
-      <div
+
+      {/* Quick chips. Make the partial path obvious: one tap = half
+          the owed amount. Custom focuses the input + selects all. */}
+      {targetPence > 0 ? (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: theme.space[2],
+          }}
+        >
+          <AmountChip
+            label={`Refund all ${formatPence(targetPence)}`}
+            active={isAll}
+            disabled={disabled}
+            onClick={() => onChange(targetStr)}
+          />
+          {halfPence > 0 ? (
+            <AmountChip
+              label={`Refund half ${formatPence(halfPence)}`}
+              active={isHalf}
+              disabled={disabled}
+              onClick={() => onChange(halfStr)}
+            />
+          ) : null}
+          <AmountChip
+            label="Refund a custom amount"
+            active={!isAll && !isHalf}
+            disabled={disabled}
+            onClick={focusAndSelect}
+          />
+        </div>
+      ) : null}
+
+      <p
         id="refund-amount-helper"
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: theme.space[3],
+          margin: 0,
           fontSize: theme.type.size.sm,
           color: theme.color.inkMuted,
           lineHeight: theme.type.leading.normal,
         }}
       >
-        <span>
-          {suggestedFmt && suggestedPence > 0 ? (
-            <>
-              We owe the patient {suggestedFmt}. Type any smaller amount to refund part
-              of it.
-            </>
-          ) : (
-            <>You can refund any amount up to {ceilingFmt}.</>
-          )}
-        </span>
-        {(() => {
-          const target = suggestedPence > 0 ? suggestedPence : ceilingPence;
-          const targetStr = (target / 100).toFixed(2);
-          if (value === targetStr || target <= 0) return null;
-          return (
-            <button
-              type="button"
-              onClick={() => onChange(targetStr)}
-              disabled={disabled}
-              style={{
-                appearance: 'none',
-                border: 'none',
-                background: 'transparent',
-                color: theme.color.accent,
-                fontFamily: 'inherit',
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.semibold,
-                cursor: 'pointer',
-                padding: 0,
-                flexShrink: 0,
-              }}
-            >
-              Use {formatPence(target)}
-            </button>
-          );
-        })()}
-      </div>
+        {suggestedFmt && suggestedPence > 0 ? (
+          <>
+            The patient is owed {suggestedFmt}. Tap a quick option above, or tap the
+            amount and type any value up to {ceilingFmt}.
+          </>
+        ) : (
+          <>You can refund any amount up to {ceilingFmt}.</>
+        )}
+      </p>
     </div>
+  );
+}
+
+// AmountChip — tappable chip below the amount input. Active state
+// fills with accent; inactive sits quietly on the surface. Used for
+// "Refund all / Refund half / Refund custom" so the partial-refund
+// path is one tap, not "discover that the £60.00 is editable".
+function AmountChip({
+  label,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      style={{
+        appearance: 'none',
+        fontFamily: 'inherit',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.pill,
+        background: active ? theme.color.accent : theme.color.surface,
+        color: active ? '#fff' : theme.color.ink,
+        border: `1px solid ${active ? theme.color.accent : theme.color.border}`,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        lineHeight: 1.2,
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

@@ -452,39 +452,44 @@ export function Schedule() {
             {!onToday ? (
               <TodayPill onClick={handleJumpToToday} />
             ) : null}
-            <button
-              type="button"
-              onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
-              aria-label="New booking"
-              style={{
-                appearance: 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: theme.space[1],
-                height: 44,
-                padding: `0 ${theme.space[3]}px`,
-                background: 'rgba(14,20,20,0.05)',
-                border: 'none',
-                borderRadius: theme.radius.pill,
-                cursor: 'pointer',
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.medium,
-                color: theme.color.inkMuted,
-                lineHeight: 1,
-                transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
-                (e.currentTarget as HTMLElement).style.color = theme.color.accent;
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
-                (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
-              }}
-            >
-              <Plus size={13} aria-hidden />
-              New booking
-            </button>
+            {/* CS staff don't book on Lounge — bookings flow through
+                Checkpoint. Hide the New booking CTA entirely for them
+                so there's no affordance to misfire on. */}
+            {!isCsOnly ? (
+              <button
+                type="button"
+                onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
+                aria-label="New booking"
+                style={{
+                  appearance: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: theme.space[1],
+                  height: 44,
+                  padding: `0 ${theme.space[3]}px`,
+                  background: 'rgba(14,20,20,0.05)',
+                  border: 'none',
+                  borderRadius: theme.radius.pill,
+                  cursor: 'pointer',
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  color: theme.color.inkMuted,
+                  lineHeight: 1,
+                  transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
+                  (e.currentTarget as HTMLElement).style.color = theme.color.accent;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
+                  (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
+                }}
+              >
+                <Plus size={13} aria-hidden />
+                New booking
+              </button>
+            ) : null}
             <SegmentedControl<Layout>
               ariaLabel="Day view layout"
               value={layout}
@@ -514,12 +519,17 @@ export function Schedule() {
               icon={<CalendarOff size={24} />}
               title={onToday ? 'No appointments today' : 'Nothing on this day'}
               description={
-                onToday
-                  ? 'Book a new appointment, tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
-                  : 'Book a new appointment for this day, or pick another above.'
+                // CS staff get a different empty-state copy — they
+                // can't make bookings here at all, so directing them
+                // at a CTA they don't have would just be confusing.
+                isCsOnly
+                  ? 'No bookings on this day. New bookings are made in Checkpoint.'
+                  : onToday
+                    ? 'Book a new appointment, tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
+                    : 'Book a new appointment for this day, or pick another above.'
               }
               action={
-                currentLocation.data ? (
+                !isCsOnly && currentLocation.data ? (
                   <Button
                     variant="primary"
                     onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
@@ -540,8 +550,12 @@ export function Schedule() {
                 startHour={startHour}
                 endHour={endHour}
                 isoDate={selectedDate}
+                // Tap-an-empty-slot creates a booking. CS staff can't
+                // book here, so disable the tap handler entirely
+                // rather than letting the sheet open and then trip
+                // on permissions.
                 onEmptyTap={
-                  currentLocation.data
+                  !isCsOnly && currentLocation.data
                     ? (iso) => setNewBookingSlot(iso)
                     : undefined
                 }
@@ -1200,7 +1214,7 @@ export function Schedule() {
         />
       ) : null}
 
-      {newBookingSlot && currentLocation.data ? (
+      {newBookingSlot && currentLocation.data && !isCsOnly ? (
         <NewBookingSheet
           open
           initialIso={newBookingSlot}
