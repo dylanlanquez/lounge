@@ -9,12 +9,12 @@ import {
 import type { BookingServiceType } from '../../../lib/queries/bookingTypes.ts';
 import type { BookingStateApi } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
+import { OptionCard, OptionGrid, OptionTitle } from '../OptionCard.tsx';
 import {
-  OptionCard,
-  OptionDescription,
-  OptionGrid,
-  OptionTitle,
-} from '../OptionCard.tsx';
+  ArchTilePicker,
+  type ArchKey,
+  type ArchTileOption,
+} from '../ArchTilePicker.tsx';
 
 // AxisStep — one axis question at a time (arch, product, repair
 // variant). Same option-card visual pattern as Location and Service
@@ -129,31 +129,34 @@ function AxisOptions({
       {error ? (
         <ErrorCard message={error} />
       ) : options === null ? (
-        <SkeletonGrid />
+        axis.key === 'arch' ? <ArchSkeleton /> : <SkeletonGrid />
       ) : options.length === 0 ? (
         <EmptyCard />
+      ) : axis.key === 'arch' ? (
+        // Arch axis renders with the dedicated ArchTilePicker —
+        // centred title + per-product subtitle, no radio indicator,
+        // so every service's arch question reads identically (and
+        // matches the denture-repair flow which has used this tile
+        // shape since launch). The picker enforces a 3-option grid
+        // and the upper/lower/both enum, both of which the arch
+        // axis always satisfies.
+        <ArchTilePicker
+          options={archOptionsForService(
+            options,
+            api.state.service?.serviceType ?? '',
+            api.state.axes.product_key,
+          )}
+          selectedValue={currentValue as ArchKey | null}
+          accent={accent}
+          onSelect={(v) => {
+            const match = options.find((o) => o.key === v);
+            api.setAxisPin(axis.key, v, match?.archMatch);
+          }}
+        />
       ) : (
         <OptionGrid>
           {options.map((opt) => {
             const selected = currentValue === opt.key;
-            const label = axis.key === 'arch'
-              ? labelForArchOption(opt.key, api.state.service?.serviceType ?? '')
-              : opt.label;
-            // Arch step carries a one-line subtitle per option so
-            // patients understand exactly what each choice means
-            // ("I only need an upper retainer" etc). Wording is
-            // tailored to the service + product (a click-in veneer
-            // "Top" reads differently from a retainer "Top"). Other
-            // axes (product, repair_variant) rely on the option's
-            // own DB label and don't get a subtitle.
-            const description =
-              axis.key === 'arch'
-                ? describeArchOption(
-                    opt.key,
-                    api.state.service?.serviceType ?? '',
-                    api.state.axes.product_key,
-                  )
-                : null;
             return (
               <OptionCard
                 key={opt.key}
@@ -163,12 +166,9 @@ function AxisOptions({
                   api.setAxisPin(axis.key, opt.key, opt.archMatch)
                 }
                 accent={accent}
-                ariaLabel={label}
+                ariaLabel={opt.label}
               >
-                <OptionTitle>{label}</OptionTitle>
-                {description ? (
-                  <OptionDescription>{description}</OptionDescription>
-                ) : null}
+                <OptionTitle>{opt.label}</OptionTitle>
               </OptionCard>
             );
           })}
@@ -176,6 +176,28 @@ function AxisOptions({
       )}
     </div>
   );
+}
+
+// Build the per-option title + subtitle map the ArchTilePicker
+// renders. Order mirrors the DB-loaded `options` so a future
+// change to the arch axis enum lands here automatically; titles
+// and subtitles come from service-specific copy below.
+function archOptionsForService(
+  options: ReadonlyArray<AxisValueOption>,
+  serviceType: string,
+  productKey: string | undefined,
+): ArchTileOption[] {
+  return options
+    .map((opt) => {
+      const value = opt.key as ArchKey;
+      if (value !== 'upper' && value !== 'lower' && value !== 'both') return null;
+      return {
+        value,
+        title: labelForArchOption(value, serviceType),
+        subtitle: describeArchOption(value, serviceType, productKey) ?? '',
+      } satisfies ArchTileOption;
+    })
+    .filter((opt): opt is ArchTileOption => opt !== null);
 }
 
 // Arch-option label rewrite, scoped per service so the strings
@@ -193,12 +215,13 @@ function labelForArchOption(optKey: string, serviceType: string): string {
   return optKey;
 }
 
-// Per-option subtitle on the arch step. Click-in veneers reads
-// in terms of cosmetic coverage ("cover my top teeth"); same-day
-// appliances read in terms of the appliance the patient needs
-// ("I only need an upper retainer"). Returns null when the
-// combination doesn't have a tailored line, so the option card
-// falls back to title-only.
+// Per-option subtitle on the arch step. Click-in veneers reads in
+// terms of cosmetic coverage; same-day appliances read in terms of
+// the specific appliance the patient needs. Copy is verbatim from
+// Dylan's spec (retainer-style "I only need an upper retainer" for
+// retainers + missing-tooth retainer; "I need an upper X only" for
+// night guard / day guard / whitening tray). Returns null when no
+// tailored line exists so the tile falls back to title-only.
 function describeArchOption(
   optKey: string,
   serviceType: string,
@@ -211,37 +234,52 @@ function describeArchOption(
     return null;
   }
   if (serviceType === 'same_day_appliance') {
-    const noun = applianceNoun(productKey);
-    if (!noun) return null;
-    if (optKey === 'upper') return `I only need an upper ${noun}`;
-    if (optKey === 'lower') return `I only need a lower ${noun}`;
-    if (optKey === 'both') return `I need both upper & lower ${pluraliseNoun(noun)}`;
-    return null;
+    return applianceArchSubtitle(productKey, optKey);
   }
   return null;
 }
 
-function applianceNoun(productKey: string | undefined): string | null {
+// Verbatim per-product subtitle copy. Inlined per product (rather
+// than a `${noun}` template) because Dylan's spec uses different
+// word orders intentionally — retainer reads "I only need an upper
+// retainer", night guard reads "I need an upper night guard only".
+// A single template would have to pick one phrasing and override
+// the other; keeping each product's copy literal preserves both.
+function applianceArchSubtitle(
+  productKey: string | undefined,
+  optKey: string,
+): string | null {
   switch (productKey) {
     case 'retainer':
-      return 'retainer';
+      if (optKey === 'upper') return 'I only need an upper retainer';
+      if (optKey === 'lower') return 'I only need a lower retainer';
+      if (optKey === 'both') return 'I need both upper & lower retainers';
+      return null;
     case 'night_guard':
-      return 'night guard';
+      if (optKey === 'upper') return 'I need an upper night guard only';
+      if (optKey === 'lower') return 'I need a lower night guard only';
+      if (optKey === 'both') return 'I need both upper & lower night guards';
+      return null;
     case 'day_guard':
-      return 'day guard';
+      if (optKey === 'upper') return 'I need an upper day guard only';
+      if (optKey === 'lower') return 'I need a lower day guard only';
+      if (optKey === 'both') return 'I need both upper & lower day guards';
+      return null;
+    case 'whitening_tray':
+      if (optKey === 'upper') return 'I need an upper whitening tray only';
+      if (optKey === 'lower') return 'I need a lower whitening tray only';
+      if (optKey === 'both') return 'I need both upper & lower whitening trays';
+      return null;
     case 'missing_tooth':
-      return 'missing tooth retainer';
+      // Missing-tooth retainer follows the retainer register
+      // ("I only need …") since it IS a retainer variant.
+      if (optKey === 'upper') return 'I only need an upper missing tooth retainer';
+      if (optKey === 'lower') return 'I only need a lower missing tooth retainer';
+      if (optKey === 'both') return 'I need both upper & lower missing tooth retainers';
+      return null;
     default:
       return null;
   }
-}
-
-function pluraliseNoun(noun: string): string {
-  // Compound nouns ("missing tooth retainer") still pluralise on the
-  // head word, which is the last whitespace-separated token.
-  // "retainer" → "retainers", "night guard" → "night guards",
-  // "missing tooth retainer" → "missing tooth retainers".
-  return noun + 's';
 }
 
 function SkeletonGrid() {
@@ -264,6 +302,40 @@ function SkeletonGrid() {
         />
       ))}
     </OptionGrid>
+  );
+}
+
+// Loading shimmer for the arch axis specifically — same grid shape
+// as ArchTilePicker (220px min cells, 16 gap, 800 max) so the
+// placeholder layout doesn't jump when the live options resolve.
+function ArchSkeleton() {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: 16,
+        margin: '0 auto',
+        maxWidth: 800,
+        width: '100%',
+      }}
+    >
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          aria-hidden
+          style={{
+            width: '100%',
+            minHeight: 86,
+            background: QUIZ.SURFACE,
+            border: `1px solid ${QUIZ.BORDER}`,
+            borderRadius: QUIZ.R_CARD,
+            opacity: 0.6,
+            animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
+          }}
+        />
+      ))}
+    </div>
   );
 }
 

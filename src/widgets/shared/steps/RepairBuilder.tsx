@@ -7,6 +7,7 @@ import {
 import type { BookingStateApi } from '../state.ts';
 import { QUIZ } from '../quizTokens.ts';
 import { useCanHover } from '../useCanHover.ts';
+import { ArchTilePicker, type ArchTileOption } from '../ArchTilePicker.tsx';
 
 // Denture-repair step components, arch-first.
 //
@@ -41,133 +42,25 @@ export function RepairArchStep({
   api: BookingStateApi;
   accent?: string;
 }) {
-  const selected = api.state.axes.arch;
   return (
-    // No extra marginTop — StepTitle's own bottom margin
-    // (STEP_TITLE_BOTTOM_SPACE) provides the gap. Parent flex gap
-    // also tightened from 32 → 16 so the trio of arch tiles sits
-    // close to the title on mobile without dropping below the fold.
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 0 }}>
-      <div
-        className="vlounge-stagger"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: 16,
-          margin: '0 auto',
-          maxWidth: 800,
-          width: '100%',
-        }}
-      >
-        {ARCH_TILES.map((tile) => (
-          <ArchTile
-            key={tile.value}
-            title={tile.title}
-            subtitle={tile.subtitle}
-            selected={selected === tile.value}
-            anySelected={!!selected}
-            accent={accent}
-            onSelect={() => api.setRepairArch(tile.value)}
-          />
-        ))}
-      </div>
-    </div>
+    <ArchTilePicker
+      options={DENTURE_REPAIR_ARCH_OPTIONS}
+      selectedValue={api.state.axes.arch}
+      accent={accent}
+      onSelect={(v) => api.setRepairArch(v)}
+    />
   );
 }
 
-const ARCH_TILES: ReadonlyArray<{
-  value: 'upper' | 'lower' | 'both';
-  title: string;
-  subtitle: string;
-}> = [
+// Denture-repair arch copy. Patient-facing wording is denture-specific
+// ("Just my top denture"); same-day appliances and click-in veneers
+// have their own per-product strings driven by describeArchOption in
+// Axis.tsx. Same tile component, three different copy maps.
+const DENTURE_REPAIR_ARCH_OPTIONS: ReadonlyArray<ArchTileOption> = [
   { value: 'upper', title: 'Top', subtitle: 'Just my top denture' },
   { value: 'lower', title: 'Bottom', subtitle: 'Just my bottom denture' },
   { value: 'both', title: 'Both', subtitle: 'Top and bottom dentures' },
 ];
-
-function ArchTile({
-  title,
-  subtitle,
-  selected,
-  anySelected,
-  accent,
-  onSelect,
-}: {
-  title: string;
-  subtitle: string;
-  selected: boolean;
-  anySelected: boolean;
-  accent: string;
-  onSelect: () => void;
-}) {
-  const canHover = useCanHover();
-  const [hovered, setHovered] = useState(false);
-  const dimmed = anySelected && !selected;
-  // Hover state only engages on devices with a real hovering pointer
-  // (mouse / trackpad). Touch devices skip it entirely — iOS Safari's
-  // sticky hover state was painting tapped-but-not-selected tiles
-  // with the accent border, which read as a false selection.
-  const showLift = canHover && hovered && !selected;
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      aria-label={`${title}, ${subtitle}`}
-      onMouseEnter={canHover ? () => setHovered(true) : undefined}
-      onMouseLeave={canHover ? () => setHovered(false) : undefined}
-      style={{
-        position: 'relative',
-        background: QUIZ.SURFACE,
-        // Border ONLY follows selected (or mouse-hover on desktop).
-        // canHover gates the hover branch so touch devices never
-        // paint an accent border without a real selection.
-        border: `2px solid ${selected ? accent : canHover && hovered ? accent : 'transparent'}`,
-        borderRadius: QUIZ.R_CARD,
-        // Shorter tiles so three of them fit above the fold on phones
-        // alongside the step heading + sticky header. Padding tightens
-        // proportionally so the text still breathes inside.
-        padding: '16px 16px',
-        minHeight: 86,
-        textAlign: 'center',
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        transition: `all 0.2s ${QUIZ.EASE_CARD}, transform 0.15s ${QUIZ.EASE_CARD}`,
-        transform: selected ? 'scale(1.01)' : showLift ? 'translateY(-2px)' : 'none',
-        boxShadow: showLift ? QUIZ.SHADOW_LIFT : 'none',
-        opacity: dimmed ? 0.6 : 1,
-        animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-      }}
-    >
-      <span
-        style={{
-          fontSize: 19,
-          fontWeight: 600,
-          color: QUIZ.INK,
-          letterSpacing: '-0.01em',
-          lineHeight: 1.2,
-        }}
-      >
-        {title}
-      </span>
-      <span
-        style={{
-          fontSize: 13,
-          color: selected ? accent : QUIZ.MUTED,
-          fontWeight: 500,
-          lineHeight: 1.4,
-        }}
-      >
-        {subtitle}
-      </span>
-    </button>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // Step 2 — Multi-select repair tiles for one arch
