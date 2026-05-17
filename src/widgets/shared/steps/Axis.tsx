@@ -277,6 +277,14 @@ function applianceArchSubtitle(
       if (optKey === 'lower') return 'I only need a lower missing tooth retainer';
       if (optKey === 'both') return 'I need both upper & lower missing tooth retainers';
       return null;
+    case 'aligner':
+      // Replacement aligner reads as a retention device, so it
+      // takes the retainer register too. Tell Dylan if you want
+      // the night-guard wording instead.
+      if (optKey === 'upper') return 'I only need an upper replacement aligner';
+      if (optKey === 'lower') return 'I only need a lower replacement aligner';
+      if (optKey === 'both') return 'I need both upper & lower replacement aligners';
+      return null;
     default:
       return null;
   }

@@ -853,11 +853,16 @@ export function stepTitle(
   key: StepKey,
   copy: WidgetCopy = DEFAULT_COPY,
   state?: WidgetState,
+  resolvedCatalogueName?: string | null,
 ): string {
   if (key.startsWith('axis:')) {
     const axisKey = key.slice(5) as AxisKey;
     if (axisKey === 'arch' && state?.service) {
-      return archStepTitleFor(state.service.serviceType, state.axes.product_key);
+      return archStepTitleFor(
+        state.service.serviceType,
+        state.axes.product_key,
+        resolvedCatalogueName,
+      );
     }
     return AXIS_QUESTION[axisKey];
   }
@@ -900,20 +905,36 @@ export const AXIS_QUESTION: Record<AxisKey, string> = {
 // Context-aware title for the arch step. Click-in veneers asks
 // "Which teeth would you like to cover?" because the metaphor is
 // cosmetic coverage; everything else asks "Which <appliance>
-// do you need?" with the appliance interpolated from the product
-// pin where present.
+// do you need?" with the appliance noun sourced from the live
+// catalogue resolver (lwo_catalogue.name). The fallback map below
+// only fires for the first paint before the resolver returns —
+// any new product the admin adds in Service types automatically
+// gets the right question wording the moment the resolver lands,
+// no code change needed.
 function archStepTitleFor(
   serviceType: string,
   productKey: string | undefined,
+  resolvedCatalogueName: string | null | undefined,
 ): string {
   if (serviceType === 'click_in_veneers') {
     return 'Which teeth would you like to cover?';
   }
-  const appliance = productLabelFor(productKey);
+  const appliance = applianceNounForQuestion(productKey, resolvedCatalogueName);
   return appliance ? `Which ${appliance} do you need?` : 'Which teeth?';
 }
 
-function productLabelFor(productKey: string | undefined): string | null {
+// Resolve the appliance noun to interpolate into the arch-step
+// question. Live catalogue name wins (lowercased so it reads as a
+// noun mid-sentence: "Which missing tooth retainer do you need?");
+// the hardcoded fallback handles the brief moment before the
+// resolver returns on first paint, so a stale switch case can never
+// produce "Which teeth?" for a product the catalogue knows about.
+function applianceNounForQuestion(
+  productKey: string | undefined,
+  resolvedCatalogueName: string | null | undefined,
+): string | null {
+  const fromCatalogue = resolvedCatalogueName?.trim().toLowerCase();
+  if (fromCatalogue) return fromCatalogue;
   switch (productKey) {
     case 'retainer':
       return 'retainer';
@@ -925,6 +946,12 @@ function productLabelFor(productKey: string | undefined): string | null {
       return 'click-in veneers';
     case 'missing_tooth':
       return 'missing tooth retainer';
+    case 'whitening_tray':
+      return 'whitening tray';
+    case 'whitening_kit':
+      return 'whitening kit';
+    case 'aligner':
+      return 'replacement aligner';
     default:
       return null;
   }

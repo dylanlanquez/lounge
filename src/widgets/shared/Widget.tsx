@@ -899,7 +899,7 @@ function StepBody({
     >
       {stepOwnsTitle ? null : (
         <StepTitle align={titleAlign}>
-          {stepTitle(api.stepKey, copy, api.state)}
+          {stepTitle(api.stepKey, copy, api.state, api.resolvedRow?.name ?? null)}
         </StepTitle>
       )}
       {submissionError ? (
