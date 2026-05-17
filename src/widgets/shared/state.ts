@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   useResolvedCatalogueRow,
   useWidgetUpgrades,
@@ -266,15 +266,6 @@ export function activeStepsFor(
    *  omitted (older call sites, tests). When false, the Upgrades step
    *  is hidden even if the catalogue has visible upgrades. */
   showUpgrades: boolean = true,
-  /** Live arch_match for the currently-resolved catalogue row.
-   *  Preferred over state.axes.product_arch_match because the
-   *  state-stored value is only captured when the customer picks a
-   *  product through the widget's own step; a Shopify trigger that
-   *  prefills product_key skips that step and never sets it. The
-   *  resolver hits the catalogue directly so it works for both
-   *  paths. Falls back to the state-stored value when the resolver
-   *  hasn't returned yet, then to undefined. */
-  resolvedArchMatch?: 'any' | 'single' | 'both' | null,
 ): StepKey[] {
   const out: StepKey[] = [];
   if (locationCount > 1) out.push('location');
@@ -291,18 +282,19 @@ export function activeStepsFor(
       if (arch === 'lower' || arch === 'both') out.push('repair:bottom');
     } else {
       const axes = axesForService(state.service.serviceType as BookingServiceType);
-      // Conditional skip: if the resolved catalogue row's arch_match
-      // is anything other than 'single', the arch step is
-      // meaningless and we drop it. Live resolver result wins over
-      // the state-captured value so Shopify-prefilled product picks
-      // (which never call setAxisPin and so never capture
-      // product_arch_match) still trigger the skip.
-      const effectiveArchMatch = resolvedArchMatch ?? state.axes.product_arch_match;
       for (const axis of axes) {
+        // Conditional skip: if the patient picked a product whose
+        // arch_match is anything other than 'single', the arch step
+        // is meaningless and we drop it. product_arch_match is set
+        // either by setAxisPin (in-flow product pick) or by
+        // WidgetReady's prefill enrichment (Shopify trigger that
+        // ships product_key) — both paths populate it before
+        // useBookingState's state.useState initialiser runs, so
+        // initialStepFor sees the truth on the very first paint.
         if (
           axis.key === 'arch' &&
-          effectiveArchMatch &&
-          effectiveArchMatch !== 'single'
+          state.axes.product_arch_match &&
+          state.axes.product_arch_match !== 'single'
         ) {
           continue;
         }
@@ -434,17 +426,9 @@ export function useBookingState(
     state.axes.product_key ?? null,
     productConfig,
   ).show_upgrades;
-  const resolvedArchMatch = resolvedResult.data?.archMatch ?? null;
   const activeSteps = useMemo(
-    () =>
-      activeStepsFor(
-        state,
-        hasUpgrades,
-        locations.length,
-        showUpgrades,
-        resolvedArchMatch,
-      ),
-    [state, hasUpgrades, locations.length, showUpgrades, resolvedArchMatch],
+    () => activeStepsFor(state, hasUpgrades, locations.length, showUpgrades),
+    [state, hasUpgrades, locations.length, showUpgrades],
   );
   const priceBreakdown = useMemo(
     () =>
@@ -467,24 +451,6 @@ export function useBookingState(
   );
   const currentIdx = activeSteps.indexOf(stepKey);
   const totalSteps = activeSteps.length;
-
-  // If the active-step list changes such that the current stepKey
-  // disappears, advance to the first unlocked step (where the user
-  // would have started if the recomputed activeSteps had been the
-  // initial set). The trigger case: a Shopify prefill pins
-  // product_key for a product whose arch_match isn't 'single' (e.g.
-  // whitening_kit). At mount the resolver hasn't returned so the
-  // initial activeStepsFor still includes 'axis:arch' and the
-  // patient lands there. Once the resolver settles, arch drops out
-  // of activeSteps — this effect lands them on the next real
-  // question (time / details / etc.) instead of leaving them stuck
-  // on an orphaned step the footer Next button can't advance from.
-  useEffect(() => {
-    if (currentIdx === -1) {
-      const fallback = activeSteps[lockedStepIdx] ?? activeSteps[0];
-      if (fallback) setStepKey(fallback);
-    }
-  }, [activeSteps, currentIdx, lockedStepIdx]);
 
   // The customer-facing progress only counts the steps they're
   // actually asked to answer. When a Shopify trigger pins service +

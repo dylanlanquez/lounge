@@ -21,6 +21,7 @@ import {
   type ProductWidgetConfig,
 } from '../../lib/queries/productWidgetConfig.ts';
 import {
+  useResolvedCatalogueRow,
   useWidgetBookingTypes,
   useWidgetLocations,
   type WidgetBookingType,
@@ -223,6 +224,86 @@ function WidgetReady({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Pre-mount catalogue lookup for the prefilled product. When a
+  // Shopify trigger ships a product_key, useBookingState's
+  // state.useState initialiser needs to know that product's
+  // catalogue arch_match BEFORE it runs — otherwise initialStepFor
+  // would land the patient on the arch step for a product whose
+  // arch_match isn't 'single' (e.g. whitening_kit, which is upper
+  // & lower by default and shouldn't ask the question at all). The
+  // resolver fires once per mount based on prefill values only;
+  // useBookingState owns the in-flow resolver that tracks ongoing
+  // product changes. The two are intentionally separate concerns
+  // — one decides the initial flow shape, the other tracks
+  // mid-flow selection — and both cache through Supabase's row
+  // cache so the duplicate request is essentially free.
+  const prefillResolver = useResolvedCatalogueRow({
+    serviceType: resolvedPrefill.service?.serviceType ?? null,
+    productKey: resolvedPrefill.axes.product_key ?? null,
+    repairVariant: resolvedPrefill.axes.repair_variant ?? null,
+  });
+
+  // Gate the mount of useBookingState (which happens inside
+  // BookingFlow below) until the prefill resolver returns. Only
+  // gates when there's a product_key to resolve — flows without a
+  // prefilled product don't need the resolver to decide the
+  // initial step. Once the patient picks a product through the
+  // widget's own step, setAxisPin captures arch_match synchronously
+  // and no gating is needed there either.
+  if (resolvedPrefill.axes.product_key && prefillResolver.loading) {
+    return <BootScreen error={null} />;
+  }
+
+  // Enrich the prefill with the resolver's arch_match before
+  // mounting BookingFlow. activeStepsFor reads
+  // state.axes.product_arch_match to decide whether to ask the
+  // arch question; threading it through here means the very first
+  // paint of the stepper is correct, with no orphan stepKey
+  // requiring a post-mount re-sync.
+  const enrichedPrefill: ResolvedPrefill = {
+    ...resolvedPrefill,
+    axes: {
+      ...resolvedPrefill.axes,
+      product_arch_match:
+        prefillResolver.data?.archMatch ??
+        resolvedPrefill.axes.product_arch_match,
+    },
+  };
+
+  return (
+    <BookingFlow
+      locations={locations}
+      copy={copy}
+      brand={brand}
+      productConfig={productConfig}
+      onClose={onClose}
+      prefill={enrichedPrefill}
+    />
+  );
+}
+
+// Inner component that owns useBookingState and the entire stepper
+// render. Mounted by WidgetReady once the prefilled product's
+// catalogue arch_match is known, so initialStepFor sees the truth
+// on its very first call instead of needing a post-mount sync.
+function BookingFlow({
+  locations,
+  copy,
+  brand,
+  productConfig,
+  onClose,
+  prefill: resolvedPrefill,
+}: {
+  locations: WidgetLocation[];
+  copy: WidgetCopy;
+  brand?: WidgetBrand;
+  productConfig: Record<string, ProductWidgetConfig>;
+  onClose?: () => void;
+  /** Fully resolved by WidgetReady — includes product_arch_match
+   *  from the pre-mount catalogue lookup so useBookingState's state
+   *  initialiser has everything it needs synchronously. */
+  prefill: ResolvedPrefill;
+}) {
   const hasMeaningfulPrefill = Boolean(
     resolvedPrefill.service ||
       resolvedPrefill.axes.product_key ||
