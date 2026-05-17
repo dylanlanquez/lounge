@@ -578,11 +578,15 @@ Deno.serve(async (req) => {
     .insert({
       patient_id: patientId,
       location_id: resolvedLocationId,
-      // Checkpoint is staff-side (staff acting on the patient's
-      // behalf from an order page), so it maps to 'manual' — same
-      // value the in-app NewBookingSheet writes. 'native' stays for
-      // the customer-self-service widget.
-      source: isCheckpointSource ? 'manual' : 'native',
+      // Both customer-widget AND Checkpoint bookings write source='native'
+      // — they're both real scheduled appointments the patient initiated.
+      // Lounge's Schedule renders source='manual' as "Walk-in · " with
+      // a footprints icon, which was wrong for Checkpoint bookings:
+      // they're scheduled in advance, not walk-ins. The distinction
+      // between widget and Checkpoint is preserved on created_via
+      // ('widget' vs 'checkpoint') for reporting + the timeline
+      // "Booked through Checkpoint by [name]" line.
+      source: 'native',
       start_at: startAt.toISOString(),
       end_at: endAt.toISOString(),
       status: 'booked',
@@ -829,6 +833,7 @@ const SERVICE_LABELS: Record<string, string> = {
   same_day_appliance: 'Same-day appliance',
   denture_repair: 'Denture repair',
   whitening_kit: 'Whitening kit',
+  impression_appointment: 'Impression appointment',
   virtual_impression_appointment: 'Virtual impression appointment',
 };
 function labelForService(service: string): string {
