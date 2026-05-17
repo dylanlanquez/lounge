@@ -38,6 +38,7 @@ import {
   createMeetEvent,
   getGoogleAccessToken,
 } from '../_shared/googleCalendar.ts';
+import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
 import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 import { resolveWidgetFullPricePence } from '../_shared/widgetFullPrice.ts';
 
@@ -658,20 +659,46 @@ Deno.serve(async (req) => {
   });
 
   // ── Google Meet (virtual impression only) ──────────────────────
-  // Create the calendar event inline so the join_url is present before
-  // the confirmation email fires. Failure is best-effort: the booking
-  // succeeds even if Meet creation fails; the failure logs to
-  // lng_system_failures via the shared helper throw path.
+  // Routing:
+  //   1. Pick an active lng_meet_hosts row with a valid refresh token
+  //      and create the Calendar event on the HOST'S primary calendar
+  //      so the Meet room lands in their dashboard, Workspace counts
+  //      it against their account, and conferenceRecord reads later
+  //      work under their OAuth grant.
+  //   2. If no host is configured / no host has a working token, fall
+  //      back to the legacy service-account calendar so the booking
+  //      still has a join link. Surface a warning so admin notices
+  //      and configures a host.
+  //
+  // Failure is best-effort: the booking succeeds even if Meet creation
+  // fails; the failure logs to lng_system_failures.
   if (body.serviceType === 'virtual_impression_appointment') {
-    if (GOOGLE_CALENDAR_SA_EMAIL && GOOGLE_CALENDAR_SA_PRIVATE_KEY && GOOGLE_CALENDAR_ID) {
+    let meetCreated = false;
+    // Step 1 — try the Meet-host path.
+    const { data: hostRows } = await supabase
+      .from('lng_meet_hosts')
+      .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active')
+      .eq('is_active', true)
+      .not('refresh_token', 'is', null)
+      .order('created_at', { ascending: true });
+    const candidateHosts = (hostRows ?? []) as MeetHostRow[];
+    for (const host of candidateHosts) {
       try {
-        const token = await getGoogleAccessToken(
-          GOOGLE_CALENDAR_SA_EMAIL,
-          GOOGLE_CALENDAR_SA_PRIVATE_KEY,
-        );
+        const tokenResult = await getValidAccessToken(supabase, host);
+        if (!tokenResult.ok) {
+          await logFailure(
+            'meet_host_token_refresh_failed',
+            { appointmentId, host_id: host.id, error: tokenResult.error },
+            'warning',
+          );
+          continue;
+        }
         const { hangoutLink, eventId } = await createMeetEvent({
-          accessToken: token,
-          calendarId: GOOGLE_CALENDAR_ID,
+          accessToken: tokenResult.accessToken,
+          // 'primary' targets the host's primary calendar — the Meet
+          // event shows up in their Google Calendar and counts as
+          // their meeting on Workspace's books.
+          calendarId: 'primary',
           appointmentId,
           startAt: startAt.toISOString(),
           endAt: endAt.toISOString(),
@@ -679,16 +706,70 @@ Deno.serve(async (req) => {
         });
         await supabase
           .from('lng_appointments')
-          .update({ join_url: hangoutLink, google_calendar_event_id: eventId })
+          .update({
+            join_url: hangoutLink,
+            google_calendar_event_id: eventId,
+            meet_host_id: host.id,
+            meeting_platform: 'google_meet',
+          })
           .eq('id', appointmentId);
+        meetCreated = true;
+        break;
       } catch (e) {
-        await logFailure('google_meet_create_failed', {
-          appointmentId,
-          error: e instanceof Error ? e.message : String(e),
-        }, 'error');
+        await logFailure(
+          'meet_host_create_failed',
+          {
+            appointmentId,
+            host_id: host.id,
+            host_email: host.google_email,
+            error: e instanceof Error ? e.message : String(e),
+          },
+          'warning',
+        );
+        // Try the next host
       }
-    } else {
-      await logFailure('google_calendar_secrets_missing', { appointmentId }, 'warning');
+    }
+
+    // Step 2 — service-account fallback.
+    if (!meetCreated) {
+      if (candidateHosts.length === 0) {
+        await logFailure(
+          'meet_host_unconfigured_fallback',
+          { appointmentId },
+          'warning',
+        );
+      }
+      if (GOOGLE_CALENDAR_SA_EMAIL && GOOGLE_CALENDAR_SA_PRIVATE_KEY && GOOGLE_CALENDAR_ID) {
+        try {
+          const token = await getGoogleAccessToken(
+            GOOGLE_CALENDAR_SA_EMAIL,
+            GOOGLE_CALENDAR_SA_PRIVATE_KEY,
+          );
+          const { hangoutLink, eventId } = await createMeetEvent({
+            accessToken: token,
+            calendarId: GOOGLE_CALENDAR_ID,
+            appointmentId,
+            startAt: startAt.toISOString(),
+            endAt: endAt.toISOString(),
+            summary: eventLabel,
+          });
+          await supabase
+            .from('lng_appointments')
+            .update({
+              join_url: hangoutLink,
+              google_calendar_event_id: eventId,
+              meeting_platform: 'google_meet',
+            })
+            .eq('id', appointmentId);
+        } catch (e) {
+          await logFailure('google_meet_create_failed', {
+            appointmentId,
+            error: e instanceof Error ? e.message : String(e),
+          }, 'error');
+        }
+      } else {
+        await logFailure('google_calendar_secrets_missing', { appointmentId }, 'warning');
+      }
     }
   }
 

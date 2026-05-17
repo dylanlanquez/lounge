@@ -70,6 +70,12 @@ export interface ManagedBooking {
   /** Add-on upgrade selections captured at booking. Empty for any
    *  booking that didn't pick upgrades. */
   upgrades: ManagedUpgrade[];
+  /** Google Meet join URL for virtual bookings. Null for in-person
+   *  services. When present, the manage page swaps the lab-address
+   *  row for a "Join the meeting" CTA so the patient lands on the
+   *  Meet room with one tap instead of being told to drive to the
+   *  clinic for a video call. */
+  joinUrl: string | null;
 }
 
 interface LookupResult {
@@ -166,6 +172,7 @@ export function useManagedBooking(token: string | null): LookupResult {
         cancellable: Boolean(r.cancellable),
         repairItems,
         upgrades,
+        joinUrl: (r.join_url as string | null) ?? null,
       });
       setLoading(false);
     })();

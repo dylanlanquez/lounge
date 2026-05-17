@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Calendar, Check, MapPin, PoundSterling, X } from 'lucide-react';
+import { ArrowLeft, Calendar, Check, ExternalLink, MapPin, PoundSterling, Video, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import {
   cancelBooking,
@@ -303,11 +303,28 @@ function BookingPanel({
         </div>
 
         <Row icon={<Calendar size={14} />} primary={formatSlotLong(booking.startAt)} />
-        <Row
-          icon={<MapPin size={14} />}
-          primary={booking.locationName}
-          secondary={booking.locationAddress || undefined}
-        />
+        {booking.serviceType === 'virtual_impression_appointment' ? (
+          // Virtual booking — the lab address is meaningless and was
+          // confusing patients ("drive to Glasgow for a video call?").
+          // Replace with a Meet join card. The link goes live as soon
+          // as the booking lands and stays valid until the host ends
+          // the meeting; tapping it opens Google Meet in a new tab.
+          booking.joinUrl ? (
+            <MeetJoinRow joinUrl={booking.joinUrl} />
+          ) : (
+            <Row
+              icon={<Video size={14} />}
+              primary="Joining link still being prepared"
+              secondary="We'll email the meeting link a few minutes before your appointment."
+            />
+          )
+        ) : (
+          <Row
+            icon={<MapPin size={14} />}
+            primary={booking.locationName}
+            secondary={booking.locationAddress || undefined}
+          />
+        )}
         {/* Payment summary row. "Paid in full at booking" wins
             over the deposit copy when the patient picked the
             full-balance option, because the deposit_pence value
@@ -929,6 +946,85 @@ function Row({
           </p>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// MeetJoinRow — replaces the location row on virtual bookings.
+// Two parts: a clear "Google Meet" label so the patient knows what
+// to expect, and an accent-tinted Join button that opens the Meet
+// room in a new tab. Plain anchor so it works without any JS state
+// and the browser handles popup-blocker prompts naturally.
+function MeetJoinRow({ joinUrl }: { joinUrl: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 28,
+          height: 28,
+          borderRadius: theme.radius.pill,
+          background: theme.color.bg,
+          color: theme.color.inkMuted,
+          flexShrink: 0,
+        }}
+      >
+        <Video size={14} />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Google Meet
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Tap to join. The link is also in your confirmation email.
+        </p>
+      </div>
+      <a
+        href={joinUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[1],
+          padding: `${theme.space[2]}px ${theme.space[3]}px`,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accent,
+          color: '#fff',
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          textDecoration: 'none',
+          flexShrink: 0,
+        }}
+      >
+        Join
+        <ExternalLink size={12} aria-hidden />
+      </a>
     </div>
   );
 }

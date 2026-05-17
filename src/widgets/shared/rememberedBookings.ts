@@ -190,6 +190,7 @@ export function useRememberedBookings(): RememberedBookingsResult {
           cancellable: Boolean(r.cancellable),
           repairItems,
           upgrades,
+          joinUrl: (r.join_url as string | null) ?? null,
         });
       }
 
