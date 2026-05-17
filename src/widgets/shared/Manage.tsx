@@ -309,11 +309,24 @@ function BookingPanel({
           primary={booking.locationName}
           secondary={booking.locationAddress || undefined}
         />
-        {booking.depositStatus === 'paid' && booking.depositPence ? (
+        {/* Payment summary row. "Paid in full at booking" wins
+            over the deposit copy when the patient picked the
+            full-balance option, because the deposit_pence value
+            on those rows is set to the full price (it's literally
+            the amount charged) and rendering it as "Deposit
+            paid · £249.00" would mislead the patient into
+            thinking they still owe a balance in clinic. */}
+        {booking.paidInFullAtBooking && booking.depositPence ? (
           <Row
             icon={<PoundSterling size={14} />}
-            primary={`Deposit paid: ${formatPrice(booking.depositPence, booking.depositCurrency)}`}
-            secondary="Refunds are handled by the clinic per their cancellation policy."
+            primary={`Paid in full at booking · ${formatPrice(booking.depositPence, booking.depositCurrency)}`}
+            secondary="No balance to settle in clinic. Refunds handled per the clinic's cancellation policy."
+          />
+        ) : booking.depositStatus === 'paid' && booking.depositPence ? (
+          <Row
+            icon={<PoundSterling size={14} />}
+            primary={`Deposit paid · ${formatPrice(booking.depositPence, booking.depositCurrency)}`}
+            secondary="The remaining balance is settled in clinic. Refunds handled per the clinic's cancellation policy."
           />
         ) : null}
       </div>
@@ -737,7 +750,12 @@ function RescheduledPanel({
           lineHeight: theme.type.leading.snug,
         }}
       >
-        {booking.serviceLabel} at {booking.locationName}
+        {formatCustomerServiceTitleLabel({
+          service_type: booking.serviceType,
+          event_type_label: booking.eventTypeLabel,
+          arch: booking.arch,
+          product_key: booking.productKey,
+        })}{' '}at {booking.locationName}
       </p>
       <p
         style={{
@@ -835,8 +853,21 @@ function Row({
   primary: string;
   secondary?: string;
 }) {
+  // Single-line rows centre the icon vertically against the text
+  // so the calendar / pound / etc. glyph sits exactly on the
+  // text's midline. Two-line rows (location with address)
+  // explicitly align the icon to the FIRST text line so it
+  // doesn't drift down between the two lines — same pattern
+  // Linear / Notion use on multi-line list items.
+  const hasSecondary = !!secondary;
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: hasSecondary ? 'flex-start' : 'center',
+        gap: theme.space[3],
+      }}
+    >
       <span
         aria-hidden
         style={{
@@ -849,7 +880,11 @@ function Row({
           background: theme.color.bg,
           color: theme.color.inkMuted,
           flexShrink: 0,
-          marginTop: 2,
+          // Multi-line rows: the icon needs to anchor to the
+          // first text line, not the visual middle of both lines.
+          // A negative offset pulls it up to line up with the
+          // ~18px line-height of the primary text.
+          marginTop: hasSecondary ? -1 : 0,
         }}
       >
         {icon}

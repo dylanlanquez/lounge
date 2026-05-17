@@ -48,6 +48,11 @@ export interface ManagedBooking {
   depositStatus: string | null;
   depositPence: number | null;
   depositCurrency: string | null;
+  /** TRUE when the patient picked "Pay now in full" at booking so
+   *  there's no balance to settle in clinic. Drives the manage-page
+   *  payment summary line — "Paid in full at booking" vs the
+   *  existing "Deposit paid · £…". */
+  paidInFullAtBooking: boolean;
   repairVariant: string | null;
   productKey: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
@@ -147,6 +152,7 @@ export function useManagedBooking(token: string | null): LookupResult {
         depositStatus: (r.deposit_status as string | null) ?? null,
         depositPence: (r.deposit_pence as number | null) ?? null,
         depositCurrency: (r.deposit_currency as string | null) ?? null,
+        paidInFullAtBooking: Boolean(r.paid_in_full_at_booking),
         repairVariant: (r.repair_variant as string | null) ?? null,
         productKey: (r.product_key as string | null) ?? null,
         arch: (r.arch as 'upper' | 'lower' | 'both' | null) ?? null,

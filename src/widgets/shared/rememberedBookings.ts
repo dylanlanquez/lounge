@@ -182,6 +182,7 @@ export function useRememberedBookings(): RememberedBookingsResult {
           depositStatus: (r.deposit_status as string | null) ?? null,
           depositPence: (r.deposit_pence as number | null) ?? null,
           depositCurrency: (r.deposit_currency as string | null) ?? null,
+          paidInFullAtBooking: Boolean(r.paid_in_full_at_booking),
           repairVariant: (r.repair_variant as string | null) ?? null,
           productKey: (r.product_key as string | null) ?? null,
           arch: (r.arch as 'upper' | 'lower' | 'both' | null) ?? null,
