@@ -102,8 +102,14 @@ Deno.serve(async (req) => {
   }
   // Block cancel on terminal statuses. The manage page wouldn't
   // surface the button in these cases either, but defend in depth.
+  // 'joined' is the virtual-specific analogue of 'arrived' — staff
+  // (or the patient) opened the Meet link. Self-serve cancel should
+  // still work while the slot is in the future; the manage page's
+  // cancellable flag was extended to include 'joined' alongside
+  // 'booked' in migration 20260518000004.
   if (
     appointment.status !== 'booked' &&
+    appointment.status !== 'joined' &&
     appointment.status !== 'arrived' &&
     appointment.status !== 'in_progress'
   ) {
