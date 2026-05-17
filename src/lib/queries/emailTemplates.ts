@@ -438,8 +438,14 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     label: 'Denture repair table',
     description:
       'On-theme HTML table grouped by arch ("Your Upper Denture" / "Your Lower Denture" / "Your Upper and Lower Dentures"), one row per repair line with the price right-aligned. Mirrors the customer-facing widget Review card. Renders empty for non-denture-repair bookings, so the variable can sit on its own line in the template without leaving an empty header behind.',
+    // Sample is the actual HTML the edge function emits at send time
+    // — keeps the live preview in admin a faithful representation of
+    // what the patient receives. parseFormatting's raw-HTML rule
+    // recognises the leading <div> and passes the block through
+    // verbatim, so the admin sees a real rendered table on the
+    // template-preview pane.
     sample:
-      'Your Lower Denture\nSnapped denture · £60.00\nCracked denture · £70.00',
+      '<div><div style="margin:0 0 20px 0;"><h3 style="font-size:16px;font-weight:600;margin:0 0 4px 0;color:#0E1414;letter-spacing:-0.01em;">Your Lower Denture</h3><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border-bottom:1px solid #E5E2DC;"><tr><td style="padding:12px 0;border-top:1px solid #E5E2DC;font-size:14px;color:#0E1414;">Snapped denture</td><td style="padding:12px 0;border-top:1px solid #E5E2DC;font-size:14px;color:#0E1414;text-align:right;font-variant-numeric:tabular-nums;">£60.00</td></tr><tr><td style="padding:12px 0;border-top:1px solid #E5E2DC;font-size:14px;color:#0E1414;">Cracked denture</td><td style="padding:12px 0;border-top:1px solid #E5E2DC;font-size:14px;color:#0E1414;text-align:right;font-variant-numeric:tabular-nums;">£70.00</td></tr></table></div></div>',
   },
   {
     name: 'inPersonImpressionLabel',

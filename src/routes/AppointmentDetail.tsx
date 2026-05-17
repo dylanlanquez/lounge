@@ -1117,7 +1117,12 @@ function buildApptRibbon(
         appt.cancel_reason === 'patient_self_serve_reschedule';
       return {
         icon: <RotateCcw size={16} aria-hidden />,
-        dateLong: `Was on ${formatDateLongOrdinal(appt.start_at)} at ${formatTimeRange(appt.start_at, appt.end_at)}`,
+        // Start-time only — Dylan's convention is to surface the
+        // booked time (when the patient was supposed to arrive),
+        // not the full slot range. Matches the booked-state hero
+        // which leads with the start time too; the end is a
+        // duration concern, not a heading concern.
+        dateLong: `Was on ${formatDateLongOrdinal(appt.start_at)} at ${formatTime(appt.start_at)}`,
         timeLine: isSelfServe
           ? 'Customer rescheduled themselves via their email link'
           : 'This booking has been moved',
