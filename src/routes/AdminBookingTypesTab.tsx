@@ -814,27 +814,48 @@ function ChildRow({
     return m;
   }, [childPhases.data]);
 
-  // Effective ribbon phases — parent shape with child duration
-  // override applied per phase_index. Order matches the parent.
-  const ribbonPhases: PhaseRibbonPhase[] = useMemo(
-    () =>
-      parentPhases.map((parentPhase) => {
-        const override = childOverrideByIndex.get(parentPhase.phase_index);
-        // Per M12, when a child phase row exists every field comes
-        // from it; otherwise the parent's wholesale. Mirrors the
-        // resolver so the ribbon stays in lockstep.
-        const effective = override ?? parentPhase;
-        return {
-          key: String(parentPhase.phase_index),
-          phase_index: parentPhase.phase_index,
-          label: effective.label,
-          patient_required: effective.patient_required,
-          duration_minutes: effective.duration_default ?? 0,
-          pool_ids: effective.pool_ids,
-        };
-      }),
-    [parentPhases, childOverrideByIndex],
-  );
+  // Effective ribbon phases — mirrors the DB resolver
+  // (lng_booking_type_resolve, M12 + M17). Two sources combined and
+  // sorted by phase_index:
+  //
+  //   1. Every parent phase, with the child override applied
+  //      wholesale at matching phase_index.
+  //   2. Every child-only phase (phase_index not present on the
+  //      parent) — variant-only steps the parent doesn't have.
+  //
+  // Without source 2 the override "+ Add" affordance would write a
+  // row to lng_booking_type_phases but the ribbon would never render
+  // it, because the iteration was driven by parentPhases alone.
+  const ribbonPhases: PhaseRibbonPhase[] = useMemo(() => {
+    const parentIndices = new Set(parentPhases.map((pp) => pp.phase_index));
+    const fromParent = parentPhases.map((parentPhase) => {
+      const override = childOverrideByIndex.get(parentPhase.phase_index);
+      // Per M12, when a child phase row exists every field comes
+      // from it; otherwise the parent's wholesale.
+      const effective = override ?? parentPhase;
+      return {
+        key: String(parentPhase.phase_index),
+        phase_index: parentPhase.phase_index,
+        label: effective.label,
+        patient_required: effective.patient_required,
+        duration_minutes: effective.duration_default ?? 0,
+        pool_ids: effective.pool_ids,
+      } satisfies PhaseRibbonPhase;
+    });
+    const fromChildOnly: PhaseRibbonPhase[] = childPhases.data
+      .filter((cp) => !parentIndices.has(cp.phase_index))
+      .map((cp) => ({
+        key: String(cp.phase_index),
+        phase_index: cp.phase_index,
+        label: cp.label,
+        patient_required: cp.patient_required,
+        duration_minutes: cp.duration_default ?? 0,
+        pool_ids: cp.pool_ids,
+      }));
+    return [...fromParent, ...fromChildOnly].sort(
+      (a, b) => a.phase_index - b.phase_index,
+    );
+  }, [parentPhases, childOverrideByIndex, childPhases.data]);
 
   const operationalMinutes = ribbonPhases.reduce(
     (acc, p) => acc + (p.duration_minutes || 0),
@@ -965,14 +986,25 @@ function ChildRow({
             onPhaseClick={(key) => {
               const phaseIndex = Number.parseInt(key, 10);
               const parentPhase = parentPhases.find((pp) => pp.phase_index === phaseIndex);
-              if (!parentPhase) return;
-              setPhaseEditorTarget({
-                kind: 'child-override',
-                childConfigId: row.id,
-                parentPhase,
-                childOverride: childOverrideByIndex.get(phaseIndex) ?? null,
-                parentLabel,
-              });
+              if (parentPhase) {
+                // Phase exists on parent — open the override
+                // editor so the admin sees inherited values + can
+                // edit divergences.
+                setPhaseEditorTarget({
+                  kind: 'child-override',
+                  childConfigId: row.id,
+                  parentPhase,
+                  childOverride: childOverrideByIndex.get(phaseIndex) ?? null,
+                  parentLabel,
+                });
+                return;
+              }
+              // Child-only phase (M17): no parent counterpart. Edit
+              // the child row directly via the regular 'edit' kind.
+              const childPhase = childOverrideByIndex.get(phaseIndex);
+              if (childPhase) {
+                setPhaseEditorTarget({ kind: 'edit', phase: childPhase });
+              }
             }}
             onAddPhase={() =>
               // Append a phase that exists only on this override — at
