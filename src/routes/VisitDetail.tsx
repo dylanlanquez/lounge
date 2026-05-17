@@ -1170,12 +1170,18 @@ export function VisitDetail() {
       setUnsuitOpen(false);
       refresh();
       refreshPaid();
-      // Auto-open the RefundSheet so staff doesn't forget. The
-      // useEffect downstream will reset lastOwedRef + log the event
-      // once the new owed amount lands; opening here gets the sheet
-      // in front of staff with the right default category preset.
+      // Pre-set the category for whenever the sheet does open — the
+      // banner's Refund button reads this state. Don't auto-open
+      // unless there's already an owed balance to refund; ending
+      // early on a balanced visit (paid = cart) has nothing to
+      // refund and the sheet's "Nothing refundable" empty state
+      // would just be noise. The post-refresh effect will surface
+      // the banner if the new state IS owed, and staff can click
+      // Refund there.
       setRefundDefaultCategory('visit_ended_early');
-      setRefundOpen(true);
+      if (owedToPatientPence > 0) {
+        setRefundOpen(true);
+      }
     } catch (e) {
       setUnsuitError(e instanceof Error ? e.message : 'Could not save');
     } finally {

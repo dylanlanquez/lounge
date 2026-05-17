@@ -77,6 +77,7 @@ import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualM
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { recordOwedToPatient } from '../lib/queries/owedToPatient.ts';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
+import { supabase } from '../lib/supabase.ts';
 import { editAppointment } from '../lib/queries/editAppointment.ts';
 import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfirmation.ts';
 import {
@@ -761,6 +762,43 @@ function Hero({
   // Refund sheet for a cancelled appointment with a paid deposit on
   // file. Opened from the CancelledRefundBanner rendered just below.
   const [refundOpen, setRefundOpen] = useState(false);
+  // Sum of succeeded refunds against this appointment's deposit.
+  // Both the banner ("We owe £X" should drop after each refund)
+  // AND the sheet's suggested amount need this — otherwise the
+  // sheet auto-allocates the full original deposit and renders a
+  // misleading "shortfall" alert.
+  const [depositRefundedPence, setDepositRefundedPence] = useState(0);
+  const [depositRefundsLoaded, setDepositRefundsLoaded] = useState(false);
+  const [depositRefundsTick, setDepositRefundsTick] = useState(0);
+  useEffect(() => {
+    if (appt.deposit_status !== 'paid') {
+      setDepositRefundedPence(0);
+      setDepositRefundsLoaded(true);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('lng_payment_refunds')
+        .select('amount_pence')
+        .eq('deposit_appointment_id', appt.id)
+        .eq('status', 'succeeded');
+      if (cancelled) return;
+      const total = ((data ?? []) as { amount_pence: number }[]).reduce(
+        (acc, r) => acc + (r.amount_pence ?? 0),
+        0,
+      );
+      setDepositRefundedPence(total);
+      setDepositRefundsLoaded(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appt.id, appt.deposit_status, depositRefundsTick]);
+  const depositRemainingPence = Math.max(
+    0,
+    (appt.deposit_pence ?? 0) - depositRefundedPence,
+  );
   // Resolve the LIVE booking-type phases for this appointment.
   // Source is the admin's current config (lng_booking_type_resolve),
   // not the materialised snapshot, because the modal is a customer-
@@ -921,6 +959,8 @@ function Hero({
       />
       <CancelledRefundBanner
         appt={appt}
+        depositRefundedPence={depositRefundedPence}
+        depositRefundsLoaded={depositRefundsLoaded}
         onOpenRefund={() => setRefundOpen(true)}
       />
       <RefundSheet
@@ -928,14 +968,9 @@ function Hero({
         onClose={() => setRefundOpen(false)}
         cartId={null}
         appointmentId={appt.id}
-        suggestedPence={
-          appt.deposit_status === 'paid' &&
-          typeof appt.deposit_pence === 'number' &&
-          appt.deposit_pence > 0
-            ? appt.deposit_pence
-            : 0
-        }
+        suggestedPence={depositRemainingPence}
         defaultCategory="visit_cancelled"
+        onCompleted={() => setDepositRefundsTick((t) => t + 1)}
       />
       <BottomSheet
         open={timelineOpen}
@@ -3163,15 +3198,26 @@ function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void
 // see the banner without the action button (they know to escalate).
 function CancelledRefundBanner({
   appt,
+  depositRefundedPence,
+  depositRefundsLoaded,
   onOpenRefund,
 }: {
   appt: AppointmentDetailRow;
+  depositRefundedPence: number;
+  depositRefundsLoaded: boolean;
   onOpenRefund: () => void;
 }) {
   if (appt.status !== 'cancelled') return null;
   if (appt.deposit_status !== 'paid') return null;
   if (!appt.deposit_pence || appt.deposit_pence <= 0) return null;
-  const amount = formatPence(appt.deposit_pence);
+  // Wait for the refund query so we don't render the banner just to
+  // un-render it 200 ms later when the data arrives. Matches the
+  // "no load-time flicker" rule used elsewhere on this page.
+  if (!depositRefundsLoaded) return null;
+  const remaining = Math.max(0, appt.deposit_pence - depositRefundedPence);
+  if (remaining <= 0) return null;
+  const amount = formatPence(remaining);
+  const partiallyRefunded = depositRefundedPence > 0;
   return (
     <div
       role="alert"
@@ -3199,7 +3245,9 @@ function CancelledRefundBanner({
           We owe {appt.patient.first_name ?? 'the patient'} {amount}
         </span>
         <span style={{ fontSize: theme.type.size.xs, color: '#7f1d1d' }}>
-          Appointment cancelled but the deposit has not been refunded yet.
+          {partiallyRefunded
+            ? `Appointment cancelled. ${formatPence(depositRefundedPence)} of the deposit has been refunded so far.`
+            : 'Appointment cancelled but the deposit has not been refunded yet.'}
         </span>
       </div>
       {/* Refund button stays available to Customer Service — they
