@@ -68,11 +68,27 @@ describe('scoreMatch', () => {
       expect(scoreMatch(row, {})).toBe(0);
     });
 
-    it('"single" matches upper or lower; rejects both', () => {
+    it('"single" matches upper, lower, AND both (post-consolidation semantics)', () => {
+      // After the 20260429000004 catalogue consolidation, each
+      // product has ONE row with arch_match='single' + a
+      // both_arches_price set. The widget treats 'single' as
+      // "ask the arch question, support all three answers". The
+      // matcher must match accordingly — otherwise the arrival
+      // pre-fill silently drops every both-arches booking for any
+      // consolidated product (missing_tooth, retainer, night_guard,
+      // day_guard, whitening_tray, aligner).
       const row = baseRow({ arch_match: 'single' });
       expect(scoreMatch(row, { arch: 'upper' })).toBe(1);
       expect(scoreMatch(row, { arch: 'lower' })).toBe(1);
-      expect(scoreMatch(row, { arch: 'both' })).toBeNull();
+      expect(scoreMatch(row, { arch: 'both' })).toBe(1);
+    });
+
+    it('"single" doesn\'t reject or bump when criteria.arch is null', () => {
+      // No arch criterion supplied → don't add specificity, don't
+      // reject. The matcher returns the row and the caller decides
+      // whether the missing arch info matters.
+      const row = baseRow({ arch_match: 'single' });
+      expect(scoreMatch(row, {})).toBe(0);
     });
 
     it('"both" matches both; rejects single', () => {
@@ -120,6 +136,31 @@ describe('findMatches', () => {
   it('drops rows whose constraints disagree', () => {
     const row = baseRow({ service_type: 'denture_repair' });
     expect(findMatches([row], { service_type: 'click_in_veneers' })).toHaveLength(0);
+  });
+
+  it('regression: missing_tooth + arch=both still resolves the single row', () => {
+    // Production catalogue carries ONE row per same-day-appliance
+    // product, all with arch_match='single' and a both_arches_price.
+    // A patient who books "Missing Tooth Retainer, both arches"
+    // lands at the arrival flow expecting the pre-fill to stage
+    // this row. Before the matcher was updated, scoreMatch returned
+    // null for arch_match='single' + arch='both' so findMatches
+    // returned an empty array — pre-fill silently dropped.
+    const mtr = baseRow({
+      id: 'mtr',
+      code: 'mtr',
+      service_type: 'same_day_appliance',
+      product_key: 'missing_tooth',
+      arch_match: 'single',
+      unit_price: 199,
+      both_arches_price: 298,
+    });
+    const matches = findMatches([mtr], {
+      service_type: 'same_day_appliance',
+      product_key: 'missing_tooth',
+      arch: 'both',
+    });
+    expect(matches.map((r) => r.id)).toEqual(['mtr']);
   });
 });
 

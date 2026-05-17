@@ -41,13 +41,39 @@ export function scoreMatch(row: CatalogueRow, criteria: MatchCriteria): number |
     score++;
   }
 
-  // arch_match has its own DSL:
-  //   'any'    → wildcard, doesn't constrain
-  //   'single' → matches arch in (upper, lower)
-  //   'both'   → matches arch === 'both'
+  // arch_match has its own DSL — semantics aligned with the
+  // post-consolidation catalogue (migration 20260429000004):
+  //
+  //   'any'    → wildcard, doesn't constrain any arch input
+  //   'single' → "asks the arch question". Matches upper / lower
+  //              (priced at unit_price) AND both (priced at
+  //              both_arches_price). Before consolidation every
+  //              product had a separate *_both row; now the single
+  //              row covers all three answers, so the matcher must
+  //              accept 'both' here too — otherwise arrival
+  //              pre-fill silently drops every both-arches booking
+  //              for a consolidated product (which is every
+  //              same-day-appliance product today).
+  //   'both'   → "no arch question, both by default". Matches only
+  //              when criteria.arch === 'both'. Legacy holdouts;
+  //              no active product uses this since consolidation.
+  //
+  // criteria.arch == null on a 'single' / 'both' row is treated as
+  // "no arch criterion supplied" → no specificity bump, no
+  // rejection. The matcher is happy to return the row; the caller
+  // decides whether the lack of arch info matters.
   if (row.arch_match === 'single') {
-    if (criteria.arch !== 'upper' && criteria.arch !== 'lower') return null;
-    score++;
+    if (criteria.arch == null) {
+      // Skip — no arch input, no specificity bump, no rejection.
+    } else if (
+      criteria.arch === 'upper' ||
+      criteria.arch === 'lower' ||
+      criteria.arch === 'both'
+    ) {
+      score++;
+    } else {
+      return null;
+    }
   } else if (row.arch_match === 'both') {
     if (criteria.arch !== 'both') return null;
     score++;
