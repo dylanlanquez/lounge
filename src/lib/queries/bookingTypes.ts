@@ -798,3 +798,44 @@ export async function deleteBookingTypePhase(phaseId: string): Promise<void> {
     .eq('id', phaseId);
   if (error) throw new Error(error.message);
 }
+
+// Atomic renumber of all phases on a single booking_type_config.
+// Used by the parent ribbon drag-and-drop reorder. The supplied
+// orderedPhaseIds must include every phase belonging to configId —
+// the RPC raises if any are missing.
+export async function reorderBookingTypePhases(
+  configId: string,
+  orderedPhaseIds: string[],
+): Promise<void> {
+  const { error } = await supabase.rpc('lng_reorder_booking_type_phases', {
+    p_config_id: configId,
+    p_ordered_phase_ids: orderedPhaseIds,
+  });
+  if (error) throw new Error(error.message);
+}
+
+// Wipe-and-rewrite the override's phase rows from a fully-materialised
+// effective shape. The override-ribbon DnD calls this with every
+// phase the user sees, in the new order — phases that were previously
+// parent-inherited get snapshotted as child rows so the new sequence
+// is unambiguous. After this call the override no longer inherits
+// phase fields from the parent at the indices it now owns.
+export interface ReorderChildPhaseEntry {
+  label: string;
+  patient_required: boolean;
+  duration_min: number | null;
+  duration_max: number | null;
+  duration_default: number | null;
+  pool_ids: string[];
+}
+
+export async function reorderChildPhases(
+  childConfigId: string,
+  orderedEntries: ReorderChildPhaseEntry[],
+): Promise<void> {
+  const { error } = await supabase.rpc('lng_reorder_child_phases', {
+    p_child_config_id: childConfigId,
+    p_ordered_entries: orderedEntries,
+  });
+  if (error) throw new Error(error.message);
+}

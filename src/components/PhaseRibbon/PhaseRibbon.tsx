@@ -1,4 +1,5 @@
 import { Hourglass, Pencil, Plus, UserRound } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { theme } from '../../theme/index.ts';
 
 // PhaseRibbon — horizontal proportional ribbon showing the phases
@@ -57,6 +58,13 @@ export interface PhaseRibbonProps {
   // When provided, the chip renders with a pencil affordance and is
   // a button. When omitted the chip stays plain text.
   onEditPatientFacing?: () => void;
+  // Optional drag-and-drop reorder handler. Receives the new order
+  // as an array of phase keys (matching `phases[].key`). Caller is
+  // responsible for persisting the new sequence. When omitted, the
+  // chips are not draggable. Wiring this on enables pointer/touch
+  // reorder of the ribbon — long-ish press + drag a chip onto its
+  // new slot; surrounding chips animate aside.
+  onReorder?: (orderedKeys: string[]) => void;
   // Compact mode shrinks chips and hides the summary line. Used when
   // the ribbon needs to fit inside a tight admin row.
   compact?: boolean;
@@ -71,9 +79,11 @@ export function PhaseRibbon({
   onPhaseClick,
   onAddPhase,
   onEditPatientFacing,
+  onReorder,
   compact = false,
 }: PhaseRibbonProps) {
   const totalMin = phases.reduce((acc, p) => acc + Math.max(p.duration_minutes, 1), 0);
+  const drag = usePhaseDrag(phases, onReorder);
 
   return (
     <div
@@ -94,6 +104,7 @@ export function PhaseRibbon({
       )}
 
       <div
+        ref={drag.containerRef}
         style={{
           display: 'flex',
           alignItems: 'stretch',
@@ -106,8 +117,15 @@ export function PhaseRibbon({
           // container is narrower than the sum of chip min-widths,
           // let the ribbon scroll horizontally instead of forcing
           // every chip to compress past readability.
-          overflowX: 'auto',
+          // While dragging, hide overflow so the lifted chip can
+          // float above the ribbon without being clipped.
+          overflowX: drag.isDragging ? 'visible' : 'auto',
           flexWrap: 'nowrap',
+          position: 'relative',
+          // Prevent the browser from interpreting horizontal touch
+          // drags on the chip as page scroll — the drag handler
+          // owns those gestures.
+          touchAction: onReorder ? 'pan-y' : undefined,
         }}
         role="group"
         aria-label="Booking phase ribbon"
@@ -128,7 +146,7 @@ export function PhaseRibbon({
           </div>
         )}
 
-        {phases.map((p) => (
+        {phases.map((p, i) => (
           <PhaseChip
             key={p.key}
             phase={p}
@@ -136,6 +154,15 @@ export function PhaseRibbon({
             flexBasis={`${(Math.max(p.duration_minutes, 1) / totalMin) * 100}%`}
             compact={compact}
             onClick={onPhaseClick ? () => onPhaseClick(p.key) : undefined}
+            draggable={!!onReorder}
+            isDragging={drag.draggingKey === p.key}
+            translateX={drag.translates[i] ?? 0}
+            floatOffset={drag.draggingKey === p.key ? drag.floatOffset : null}
+            onPointerDown={
+              onReorder
+                ? (e, rect) => drag.start(p.key, i, e, rect)
+                : undefined
+            }
           />
         ))}
 
@@ -169,28 +196,274 @@ export function PhaseRibbon({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Drag-and-drop hook
+// ─────────────────────────────────────────────────────────────────
+//
+// Pointer-based reorder so the same code path covers mouse, touch,
+// and pen on iPad. Lifts the grabbed chip via translate (still in
+// the layout — keeps width stable for proportional sizing), shifts
+// neighbouring chips aside via translateX so the operator can see
+// where the chip will land, and commits via onReorder on pointerup.
+//
+// State is intentionally kept tiny: only the index the chip would
+// CURRENTLY land at is tracked. Width-based math reads chip rects
+// once per drag start so subsequent moves are cheap (no DOM measure
+// on every pointermove).
+//
+// Cancellation: pointercancel + Escape both abort the drag and
+// restore positions without firing onReorder.
+
+interface PhaseDragApi {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  draggingKey: string | null;
+  /** Translate offset for the floating drag clone, relative to its
+   *  resting position inside the flex row. null when not dragging. */
+  floatOffset: { x: number; y: number } | null;
+  /** Per-index translateX values that animate non-dragged chips
+   *  aside to reveal the drop slot. */
+  translates: number[];
+  isDragging: boolean;
+  start: (
+    key: string,
+    index: number,
+    e: React.PointerEvent<HTMLButtonElement>,
+    rect: DOMRect,
+  ) => void;
+}
+
+function usePhaseDrag(
+  phases: PhaseRibbonPhase[],
+  onReorder: ((orderedKeys: string[]) => void) | undefined,
+): PhaseDragApi {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [floatOffset, setFloatOffset] = useState<{ x: number; y: number } | null>(null);
+  const [targetIndex, setTargetIndex] = useState<number | null>(null);
+
+  // Snapshot of chip layout at drag start — left edge + width for
+  // each phase, in container-relative coordinates. Reading these
+  // once avoids getBoundingClientRect() per pointermove (which
+  // forces layout on every move).
+  const layoutRef = useRef<{
+    sourceIndex: number;
+    startX: number;
+    startY: number;
+    sourceLeft: number;
+    sourceWidth: number;
+    centers: number[]; // each chip's centre X, container-relative
+  } | null>(null);
+
+  const cancel = useCallback(() => {
+    setDraggingKey(null);
+    setFloatOffset(null);
+    setTargetIndex(null);
+    layoutRef.current = null;
+  }, []);
+
+  const start = useCallback(
+    (
+      key: string,
+      index: number,
+      e: React.PointerEvent<HTMLButtonElement>,
+      rect: DOMRect,
+    ) => {
+      if (!onReorder) return;
+      // Only left mouse button / primary pointer.
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+      const container = containerRef.current;
+      if (!container) return;
+      const containerRect = container.getBoundingClientRect();
+
+      // Snapshot every chip's centre and the source chip's bounds in
+      // container-relative coords. Read once per drag.
+      const chips = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-phase-chip]'),
+      );
+      const centers = chips.map((c) => {
+        const r = c.getBoundingClientRect();
+        return r.left + r.width / 2 - containerRect.left;
+      });
+
+      layoutRef.current = {
+        sourceIndex: index,
+        startX: e.clientX,
+        startY: e.clientY,
+        sourceLeft: rect.left - containerRect.left,
+        sourceWidth: rect.width,
+        centers,
+      };
+
+      setDraggingKey(key);
+      setFloatOffset({ x: 0, y: 0 });
+      setTargetIndex(index);
+
+      // Don't preventDefault inside React's onPointerDown — that can
+      // swallow click events on neighbouring controls if the user
+      // doesn't actually drag.
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    },
+    [onReorder],
+  );
+
+  // Document-level move / up handlers. Wired only while dragging so
+  // we're not paying for them on every render.
+  useEffect(() => {
+    if (!draggingKey || !layoutRef.current) return;
+
+    const onMove = (e: PointerEvent) => {
+      const lay = layoutRef.current;
+      if (!lay) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const containerRect = container.getBoundingClientRect();
+
+      const dx = e.clientX - lay.startX;
+      const dy = e.clientY - lay.startY;
+      setFloatOffset({ x: dx, y: dy });
+
+      // Find the target slot — the index whose centre is nearest to
+      // the dragged chip's centre (sourceLeft + width/2 + dx).
+      const draggedCentre =
+        lay.sourceLeft + lay.sourceWidth / 2 + (e.clientX - lay.startX);
+      let nearest = 0;
+      let nearestDist = Infinity;
+      for (let i = 0; i < lay.centers.length; i++) {
+        const d = Math.abs(lay.centers[i]! - draggedCentre);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = i;
+        }
+      }
+      // Clamp so the operator can't drop outside the container.
+      if (e.clientX < containerRect.left) nearest = 0;
+      else if (e.clientX > containerRect.right) nearest = lay.centers.length - 1;
+      setTargetIndex(nearest);
+    };
+
+    const onUp = () => {
+      const lay = layoutRef.current;
+      if (!lay) {
+        cancel();
+        return;
+      }
+      const from = lay.sourceIndex;
+      const to = targetIndex ?? from;
+      if (from !== to && onReorder) {
+        const next = [...phases];
+        const [moved] = next.splice(from, 1);
+        if (moved) next.splice(to, 0, moved);
+        onReorder(next.map((p) => p.key));
+      }
+      cancel();
+    };
+
+    const onCancel = () => cancel();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancel();
+    };
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onCancel);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [draggingKey, cancel, onReorder, phases, targetIndex]);
+
+  // Per-index translateX values for the non-dragged chips so the
+  // operator sees the drop slot open up. When a chip would land at
+  // a slot AFTER its origin, every chip between origin+1 and target
+  // shifts LEFT by approximately a chip's width. When the chip
+  // would land BEFORE its origin, every chip between target and
+  // origin-1 shifts RIGHT.
+  const translates = phases.map((_, i) => {
+    const lay = layoutRef.current;
+    if (!lay || targetIndex == null || draggingKey == null) return 0;
+    const from = lay.sourceIndex;
+    const to = targetIndex;
+    if (i === from) return 0; // source chip stays put (its own translate is floatOffset)
+    if (from < to && i > from && i <= to) return -lay.sourceWidth;
+    if (from > to && i < from && i >= to) return lay.sourceWidth;
+    return 0;
+  });
+
+  return {
+    containerRef,
+    draggingKey,
+    floatOffset,
+    translates,
+    isDragging: draggingKey !== null,
+    start,
+  };
+}
+
 // One chip in the ribbon. Solid for active, hatched for passive.
 function PhaseChip({
   phase,
   flexBasis,
   compact,
   onClick,
+  draggable = false,
+  isDragging = false,
+  translateX = 0,
+  floatOffset,
+  onPointerDown,
 }: {
   phase: PhaseRibbonPhase;
   flexBasis: string;
   compact: boolean;
   onClick?: () => void;
+  draggable?: boolean;
+  isDragging?: boolean;
+  translateX?: number;
+  floatOffset?: { x: number; y: number } | null;
+  onPointerDown?: (
+    e: React.PointerEvent<HTMLButtonElement>,
+    rect: DOMRect,
+  ) => void;
 }) {
   const passive = !phase.patient_required;
   const Icon = phase.patient_required ? UserRound : Hourglass;
 
   const interactive = !!onClick;
+  // Track the pointer-down position so we can distinguish a click
+  // (pointer barely moved) from a drag (pointer moved past 4px).
+  // Without this every chip drag would also fire onClick on release.
+  const downPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Resolve final transform — the source chip translates by the
+  // pointer delta (floatOffset); neighbours translate by translateX
+  // to open the drop slot. Slight scale + shadow on the lifted chip
+  // distinguishes it visually from the others.
+  const sourceTransform = isDragging && floatOffset
+    ? `translate(${floatOffset.x}px, ${floatOffset.y}px) scale(1.04)`
+    : translateX !== 0
+      ? `translateX(${translateX}px)`
+      : undefined;
 
   return (
     <button
       type="button"
-      onClick={onClick}
-      disabled={!interactive}
+      data-phase-chip
+      onClick={(e) => {
+        if (!interactive) return;
+        // Suppress the click that would otherwise follow a drag —
+        // a real click moves the pointer < ~4px between down and up.
+        const down = downPosRef.current;
+        if (down) {
+          const dx = e.clientX - down.x;
+          const dy = e.clientY - down.y;
+          if (Math.hypot(dx, dy) > 4) return;
+        }
+        onClick?.();
+      }}
+      disabled={!interactive && !draggable}
       aria-label={`${phase.label}, ${phase.duration_minutes} minutes, ${
         phase.patient_required ? 'patient required' : 'patient may leave'
       }`}
@@ -211,7 +484,13 @@ function PhaseChip({
         padding: compact ? `0 ${theme.space[2]}px` : `${theme.space[1]}px ${theme.space[2]}px`,
         borderRadius: theme.radius.input - 4,
         border: 'none',
-        cursor: interactive ? 'pointer' : 'default',
+        cursor: isDragging
+          ? 'grabbing'
+          : draggable
+            ? 'grab'
+            : interactive
+              ? 'pointer'
+              : 'default',
         // Solid accent for active; pale accent fill for passive.
         // Same colour family signals "still part of this booking";
         // lower saturation signals "patient not here right now".
@@ -222,18 +501,38 @@ function PhaseChip({
         color: passive ? theme.color.accent : '#FFFFFF',
         textAlign: 'center',
         gap: 2,
-        transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+        // Snappier spring while idle, but skip the transition on the
+        // dragged chip so it tracks the pointer 1:1 without latency.
+        transition: isDragging
+          ? 'none'
+          : `transform ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
         outline: 'none',
+        transform: sourceTransform,
+        zIndex: isDragging ? 10 : undefined,
+        boxShadow: isDragging
+          ? '0 8px 24px rgba(14,20,20,0.18), 0 2px 6px rgba(14,20,20,0.12)'
+          : undefined,
+        opacity: isDragging ? 0.96 : undefined,
+        // Stop touch scroll while initiating a drag so the iPad
+        // doesn't try to pan the page mid-grab.
+        touchAction: draggable ? 'none' : undefined,
+        userSelect: 'none',
+      }}
+      onPointerDown={(e) => {
+        downPosRef.current = { x: e.clientX, y: e.clientY };
+        if (draggable && onPointerDown) {
+          onPointerDown(e, e.currentTarget.getBoundingClientRect());
+        }
       }}
       onMouseDown={(e) => {
-        if (!interactive) return;
-        (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.985)';
+        if (!interactive || isDragging) return;
+        (e.currentTarget as HTMLButtonElement).dataset.pressed = '1';
       }}
       onMouseUp={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.transform = '';
+        (e.currentTarget as HTMLButtonElement).dataset.pressed = '';
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.transform = '';
+        (e.currentTarget as HTMLButtonElement).dataset.pressed = '';
       }}
     >
       {!compact && (

@@ -26,6 +26,8 @@ import {
   bookingTypeRowLabel,
   deleteBookingTypeChildOverride,
   deleteBookingTypePhase,
+  reorderBookingTypePhases,
+  reorderChildPhases,
   setPhasePoolIds,
   upsertBookingTypeConfig,
   upsertBookingTypePhase,
@@ -466,6 +468,20 @@ function ServiceNode({
                 next_phase_index: nextPhaseIndex,
               })
             }
+            onReorder={async (orderedKeys) => {
+              // The parent ribbon's chip keys are the phase row ids
+              // (see ribbonPhases above), so the new order is a
+              // direct argument to the renumber RPC.
+              try {
+                await reorderBookingTypePhases(parent.id, orderedKeys);
+                phases.reload();
+                onPhaseSaved();
+              } catch (e) {
+                onPhaseError(
+                  e instanceof Error ? e.message : 'Could not reorder phases',
+                );
+              }
+            }}
             onEditPatientFacing={() => setPatientFacingOpen(true)}
           />
         )}
@@ -1022,6 +1038,52 @@ function ChildRow({
                     : Math.max(...ribbonPhases.map((p) => p.phase_index)) + 1,
               })
             }
+            onReorder={async (orderedKeys) => {
+              // Override-ribbon reorder. The chip key is the
+              // phase_index as a string (see ribbonPhases above —
+              // child and parent phases share that key space). To
+              // materialise the new order we snapshot every effective
+              // phase's full payload (label / patient_required /
+              // durations / pool_ids) from whichever source is current
+              // — child override row when present, otherwise the
+              // parent row — and ship the array to lng_reorder_child
+              // _phases, which wipes the override's existing rows and
+              // inserts fresh ones in array order. After this the
+              // override fully owns its shape; parent edits to label /
+              // duration / pools no longer flow through at these
+              // indices. Operators are free to delete an override
+              // phase later to re-inherit.
+              try {
+                const entries = orderedKeys.map((key) => {
+                  const phaseIndex = Number.parseInt(key, 10);
+                  const override = childOverrideByIndex.get(phaseIndex);
+                  const parent = parentPhases.find(
+                    (pp) => pp.phase_index === phaseIndex,
+                  );
+                  const source = override ?? parent;
+                  if (!source) {
+                    throw new Error(
+                      `reorder: no source row for phase_index ${phaseIndex}`,
+                    );
+                  }
+                  return {
+                    label: source.label,
+                    patient_required: source.patient_required,
+                    duration_min: source.duration_min ?? null,
+                    duration_max: source.duration_max ?? null,
+                    duration_default: source.duration_default ?? null,
+                    pool_ids: source.pool_ids,
+                  };
+                });
+                await reorderChildPhases(row.id, entries);
+                childPhases.reload();
+                onChanged();
+              } catch (e) {
+                onError(
+                  e instanceof Error ? e.message : 'Could not reorder phases',
+                );
+              }
+            }}
             onEditPatientFacing={() => setPatientFacingOpen(true)}
           />
         </div>
