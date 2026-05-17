@@ -603,13 +603,32 @@ function BookedItemsRow({
           flex: 1,
         }}
       >
-        {archOrder.map((arch) => {
-          const rows = repairsByArch.get(arch);
-          if (!rows || rows.length === 0) return null;
-          return (
+        {(() => {
+          // Track which is the first arch section that actually
+          // renders so we know where to skip the top hairline. Without
+          // this, an upper-only booking would still show the separator
+          // when it's the only section.
+          const visibleArches = archOrder.filter((a) => {
+            const r = repairsByArch.get(a);
+            return r && r.length > 0;
+          });
+          return visibleArches.map((arch, i) => {
+            const rows = repairsByArch.get(arch)!;
+            const isFirst = i === 0;
+            return (
             <div
               key={arch}
-              style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                // Hairline + padding between arch sections — visible
+                // but quiet, matches the Dialog footer divider style.
+                paddingTop: isFirst ? 0 : 10,
+                borderTop: isFirst
+                  ? 'none'
+                  : `1px solid ${QUIZ.BORDER_SOFT}`,
+              }}
             >
               <span
                 style={{
@@ -642,7 +661,8 @@ function BookedItemsRow({
               })}
             </div>
           );
-        })}
+        });
+        })()}
         {upgrades.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span
