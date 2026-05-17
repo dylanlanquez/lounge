@@ -140,14 +140,27 @@ function PhaseRow({
         >
           {startStr}
         </span>
-        {/* The "ends HH:MM" sub-line was removed at Dylan's request —
-            it duplicated information the connecting next-phase's start
-            time already carries (this phase's end IS the next phase's
-            start), and the staff-register copy in PresenceNote
-            ("Patient back by …") communicates the same return-time
-            signal for passive phases. The wrapping flex column stays
-            so the start label keeps its right-aligned, tabular-nums
-            layout. */}
+        {/* Mid-timeline phases don't render their end time — the
+            next phase's start IS this phase's end, so the rail
+            already carries the info. The LAST phase has no next
+            row, so its end time is genuinely new info; surface it
+            as a tilde-prefixed sub-label ("~16:30") to signal it's
+            an estimate, not a hard close. */}
+        {isLast ? (
+          <span
+            style={{
+              marginTop: 2,
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.regular,
+              color: theme.color.inkSubtle,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1.2,
+            }}
+            aria-label={`Estimated end ${endStr}`}
+          >
+            ~{endStr}
+          </span>
+        ) : null}
       </div>
 
       {/* Rail — dot at the top, connector segment beneath */}
