@@ -282,7 +282,7 @@ export function useRefundableSources({
         const { data: rows, error: err } = await supabase
           .from('lng_payments')
           .select(
-            'id, method, payment_journey, amount_pence, status, succeeded_at, taken_by, account:accounts!taken_by ( first_name, last_name, name )',
+            'id, method, payment_journey, amount_pence, status, succeeded_at, taken_by, card_brand, card_last4, account:accounts!taken_by ( first_name, last_name, name )',
           )
           .eq('cart_id', cartId)
           .eq('status', 'succeeded')
@@ -299,6 +299,8 @@ export function useRefundableSources({
           payment_journey: PaymentJourney;
           amount_pence: number;
           succeeded_at: string | null;
+          card_brand: string | null;
+          card_last4: string | null;
           account:
             | { first_name: string | null; last_name: string | null; name: string | null }
             | { first_name: string | null; last_name: string | null; name: string | null }[]
@@ -344,8 +346,8 @@ export function useRefundableSources({
             captured_at: r.succeeded_at,
             taken_by_name: display,
             source_label: null,
-            card_brand: null,
-            card_last4: null,
+            card_brand: r.card_brand,
+            card_last4: r.card_last4,
           });
         }
       }
@@ -355,7 +357,7 @@ export function useRefundableSources({
         const { data: appt, error: aErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, deposit_pence, deposit_status, deposit_provider, deposit_paid_at, deposit_external_id',
+            'id, deposit_pence, deposit_status, deposit_provider, deposit_paid_at, deposit_external_id, card_brand, card_last4',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -372,6 +374,8 @@ export function useRefundableSources({
           deposit_provider: string | null;
           deposit_paid_at: string | null;
           deposit_external_id: string | null;
+          card_brand: string | null;
+          card_last4: string | null;
         } | null;
         if (
           a &&
@@ -409,8 +413,8 @@ export function useRefundableSources({
               captured_at: a.deposit_paid_at,
               taken_by_name: null,
               source_label: 'Paid online at booking',
-              card_brand: null,
-              card_last4: null,
+              card_brand: a.card_brand,
+              card_last4: a.card_last4,
             });
           }
         }

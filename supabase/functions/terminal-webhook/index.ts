@@ -14,6 +14,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET') ?? '';
+const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
@@ -45,7 +46,16 @@ Deno.serve(async (req) => {
     switch (event.type) {
       case 'payment_intent.succeeded': {
         const pi = event.data.object as PaymentIntent;
-        await markStatus(supabase, pi.id, 'succeeded', { raw_event: event, succeeded_at: new Date().toISOString() });
+        // Resolve the card brand + last4 before we stamp the row.
+        // Best-effort — a missing key or Stripe blip leaves the
+        // columns NULL and the RefundSheet falls back to the
+        // channel-level label.
+        const card = await fetchCardDetailsForPI(pi);
+        await markStatus(supabase, pi.id, 'succeeded', {
+          raw_event: event,
+          succeeded_at: new Date().toISOString(),
+          card,
+        });
         await emitPatientEvent(supabase, pi, 'payment_succeeded');
         break;
       }
@@ -102,7 +112,13 @@ async function markStatus(
   supabase: ReturnType<typeof createClient>,
   paymentIntentId: string,
   status: 'succeeded' | 'failed' | 'cancelled',
-  extra: { raw_event?: unknown; succeeded_at?: string; cancelled_at?: string; failure_reason?: string }
+  extra: {
+    raw_event?: unknown;
+    succeeded_at?: string;
+    cancelled_at?: string;
+    failure_reason?: string;
+    card?: { brand: string | null; last4: string | null } | null;
+  },
 ) {
   // Update lng_terminal_payments
   const tpUpdate: Record<string, unknown> = {};
@@ -125,6 +141,10 @@ async function markStatus(
   if (extra.succeeded_at) pUpdate.succeeded_at = extra.succeeded_at;
   if (extra.cancelled_at) pUpdate.cancelled_at = extra.cancelled_at;
   if (extra.failure_reason) pUpdate.failure_reason = extra.failure_reason;
+  if (extra.card) {
+    if (extra.card.brand) pUpdate.card_brand = extra.card.brand;
+    if (extra.card.last4) pUpdate.card_last4 = extra.card.last4;
+  }
 
   await supabase.from('lng_payments').update(pUpdate).eq('id', (tp as { payment_id: string }).payment_id);
 
@@ -280,5 +300,46 @@ async function logFailure(
     });
   } catch {
     // best-effort
+  }
+}
+
+// fetchCardDetailsForPI — pulls the source card's brand + last4 from
+// Stripe so we can render "Visa ending in 4242" on the RefundSheet
+// instead of the generic "Card at the till". Best-effort: a missing
+// secret, a Stripe blip, or a non-card payment leaves the columns
+// NULL and the UI falls back to the channel-level label.
+//
+// Path: PaymentIntent → latest_charge → payment_method_details.card
+// We expand `latest_charge` so the response carries the nested card
+// object without us doing a second hop to /charges/:id.
+async function fetchCardDetailsForPI(
+  pi: PaymentIntent,
+): Promise<{ brand: string | null; last4: string | null } | null> {
+  if (!STRIPE_SECRET_KEY || !pi.id) return null;
+  try {
+    const url = `https://api.stripe.com/v1/payment_intents/${encodeURIComponent(pi.id)}?expand[]=latest_charge`;
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
+    });
+    if (!r.ok) return null;
+    const body = (await r.json()) as {
+      latest_charge?: {
+        payment_method_details?: {
+          card?: { brand?: string | null; last4?: string | null };
+          card_present?: { brand?: string | null; last4?: string | null };
+        };
+      };
+    };
+    const card =
+      body.latest_charge?.payment_method_details?.card ??
+      body.latest_charge?.payment_method_details?.card_present ??
+      null;
+    if (!card) return null;
+    const brand = typeof card.brand === 'string' ? card.brand : null;
+    const last4 = typeof card.last4 === 'string' && /^\d{4}$/.test(card.last4) ? card.last4 : null;
+    if (!brand && !last4) return null;
+    return { brand, last4 };
+  } catch {
+    return null;
   }
 }

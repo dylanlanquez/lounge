@@ -40,6 +40,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+// Stripe secret keys, same fallback pattern as widget-create-appointment.
+// Used by fetchCardDetailsForPI to expand latest_charge on backfill.
+const STRIPE_SECRET_KEY_LEGACY = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+const STRIPE_SECRET_KEY_LIVE =
+  Deno.env.get('STRIPE_SECRET_KEY_LIVE') ?? STRIPE_SECRET_KEY_LEGACY;
+const STRIPE_SECRET_KEY_TEST = Deno.env.get('STRIPE_SECRET_KEY_TEST') ?? '';
 // Stripe scopes signing secrets per-endpoint, so the widget webhook
 // gets its own. The widget supports a live/test mode toggle stored
 // in lng_settings, so each mode has its own webhook endpoint with
@@ -66,6 +72,9 @@ interface PaymentIntent {
   receipt_email?: string;
   metadata?: Record<string, string | undefined>;
   last_payment_error?: { message?: string };
+  /** Stripe-supplied flag indicating which mode minted the PI. We use
+   *  it to pick the right secret when backfilling card details. */
+  livemode?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -165,20 +174,40 @@ async function handleSucceeded(
   // with deposit fields populated".
   const { data: existing } = await supabase
     .from('lng_appointments')
-    .select('id, deposit_status, patient_id')
+    .select('id, deposit_status, patient_id, card_brand, card_last4')
     .eq('deposit_external_id', pi.id)
     .maybeSingle();
 
   if (existing) {
-    // Already handled by widget-create-appointment. Log for the
-    // trail and we're done.
+    // Already handled by widget-create-appointment. Backfill card
+    // details if widget-create-appointment couldn't (e.g. it ran
+    // before we started capturing card_brand/card_last4, or the PI
+    // didn't carry them at insert time).
+    const e = existing as {
+      id: string;
+      deposit_status: string;
+      patient_id: string | null;
+      card_brand: string | null;
+      card_last4: string | null;
+    };
+    if (!e.card_brand || !e.card_last4) {
+      const card = await fetchCardDetailsForPI(pi);
+      if (card && (card.brand || card.last4)) {
+        const patch: Record<string, unknown> = {};
+        if (card.brand && !e.card_brand) patch.card_brand = card.brand;
+        if (card.last4 && !e.card_last4) patch.card_last4 = card.last4;
+        if (Object.keys(patch).length > 0) {
+          await supabase.from('lng_appointments').update(patch).eq('id', e.id);
+        }
+      }
+    }
     await supabase.from('lng_event_log').insert({
       source: 'widget-stripe-webhook',
       event_type: 'payment_intent.succeeded',
       payload: {
         payment_intent_id: pi.id,
-        appointment_id: (existing as { id: string }).id,
-        deposit_status: (existing as { deposit_status: string }).deposit_status,
+        appointment_id: e.id,
+        deposit_status: e.deposit_status,
         reconciled: 'matched_existing_appointment',
       },
     });
@@ -272,5 +301,44 @@ async function logFailure(
     });
   } catch {
     // best-effort
+  }
+}
+
+// fetchCardDetailsForPI — pulls the card brand + last4 from Stripe so
+// the appointment's deposit can render "Visa ending in 4242" on the
+// RefundSheet. Best-effort: if both keys are unset, or Stripe errors,
+// returns null and the column stays NULL. Picks the right secret
+// based on the PI's livemode flag (true → LIVE, false → TEST).
+async function fetchCardDetailsForPI(
+  pi: PaymentIntent,
+): Promise<{ brand: string | null; last4: string | null } | null> {
+  const secret =
+    (pi as { livemode?: boolean }).livemode === false
+      ? STRIPE_SECRET_KEY_TEST
+      : STRIPE_SECRET_KEY_LIVE;
+  if (!secret || !pi.id) return null;
+  try {
+    const url = `https://api.stripe.com/v1/payment_intents/${encodeURIComponent(pi.id)}?expand[]=latest_charge`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${secret}` } });
+    if (!r.ok) return null;
+    const body = (await r.json()) as {
+      latest_charge?: {
+        payment_method_details?: {
+          card?: { brand?: string | null; last4?: string | null };
+          card_present?: { brand?: string | null; last4?: string | null };
+        };
+      };
+    };
+    const card =
+      body.latest_charge?.payment_method_details?.card ??
+      body.latest_charge?.payment_method_details?.card_present ??
+      null;
+    if (!card) return null;
+    const brand = typeof card.brand === 'string' ? card.brand : null;
+    const last4 = typeof card.last4 === 'string' && /^\d{4}$/.test(card.last4) ? card.last4 : null;
+    if (!brand && !last4) return null;
+    return { brand, last4 };
+  } catch {
+    return null;
   }
 }

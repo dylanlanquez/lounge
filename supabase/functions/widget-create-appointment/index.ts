@@ -173,6 +173,8 @@ interface DepositFields {
   deposit_provider: 'stripe';
   deposit_external_id: string;
   deposit_paid_at: string;
+  card_brand: string | null;
+  card_last4: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -443,6 +445,8 @@ Deno.serve(async (req) => {
       deposit_provider: 'stripe',
       deposit_external_id: body.paymentIntentId,
       deposit_paid_at: verify.paidAt,
+      card_brand: verify.cardBrand,
+      card_last4: verify.cardLast4,
     };
     paidInFullAtBooking = true;
   } else if (paymentMode === 'deposit') {
@@ -480,6 +484,8 @@ Deno.serve(async (req) => {
         deposit_provider: 'stripe',
         deposit_external_id: body.paymentIntentId,
         deposit_paid_at: verify.paidAt,
+        card_brand: verify.cardBrand,
+        card_last4: verify.cardLast4,
       };
     }
   }
@@ -883,6 +889,8 @@ type VerifyResult =
       amount: number;
       currency: string;
       paidAt: string;
+      cardBrand: string | null;
+      cardLast4: string | null;
     }
   | {
       ok: false;
@@ -910,12 +918,18 @@ async function verifyPaymentIntent(
   paymentIntentId: string,
   expectedAmount: number,
 ): Promise<VerifyResult> {
-  const r = await fetch(`${STRIPE_BASE}/payment_intents/${encodeURIComponent(paymentIntentId)}`, {
-    headers: {
-      Authorization: `Bearer ${stripeSecret}`,
-      'Stripe-Version': '2024-10-28.acacia',
+  // Expand latest_charge so the response carries
+  // payment_method_details.card without a second hop. Lets us write
+  // card_brand + card_last4 onto the appointment in the same flow.
+  const r = await fetch(
+    `${STRIPE_BASE}/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge`,
+    {
+      headers: {
+        Authorization: `Bearer ${stripeSecret}`,
+        'Stripe-Version': '2024-10-28.acacia',
+      },
     },
-  });
+  );
   if (!r.ok) {
     return { ok: false, status: 502, reason: 'payment_intent_fetch_failed' };
   }
@@ -928,6 +942,12 @@ async function verifyPaymentIntent(
         currency?: string;
         created?: number;
         metadata?: Record<string, string | undefined>;
+        latest_charge?: {
+          payment_method_details?: {
+            card?: { brand?: string | null; last4?: string | null };
+            card_present?: { brand?: string | null; last4?: string | null };
+          };
+        };
       }
     | null;
   if (!pi) return { ok: false, status: 502, reason: 'payment_intent_unparseable' };
@@ -950,11 +970,22 @@ async function verifyPaymentIntent(
   const paidAt = pi.created
     ? new Date(pi.created * 1000).toISOString()
     : new Date().toISOString();
+  const cardDetails =
+    pi.latest_charge?.payment_method_details?.card ??
+    pi.latest_charge?.payment_method_details?.card_present ??
+    null;
+  const cardBrand = typeof cardDetails?.brand === 'string' ? cardDetails.brand : null;
+  const cardLast4 =
+    typeof cardDetails?.last4 === 'string' && /^\d{4}$/.test(cardDetails.last4)
+      ? cardDetails.last4
+      : null;
   return {
     ok: true,
     amount,
     currency: (pi.currency ?? 'gbp').toUpperCase(),
     paidAt,
+    cardBrand,
+    cardLast4,
   };
 }
 
