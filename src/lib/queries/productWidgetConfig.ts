@@ -44,17 +44,58 @@ function makeKey(serviceType: string | null | undefined, productKey: string | nu
   return `${serviceType ?? ''}|${productKey ?? ''}`;
 }
 
-/** Defaulted lookup. Returns DEFAULT_PRODUCT_CONFIG for any
- *  (service_type, product_key) combination that has no row, or when
- *  either component is null (e.g. before the patient has picked a
- *  product axis). */
+/** Defaulted lookup. Returns DEFAULT_PRODUCT_CONFIG when no matching
+ *  row exists or the service is unknown.
+ *
+ *  Three lookup shapes:
+ *
+ *    1. (service_type, product_key) — direct hit. Used by every
+ *       multi-product service (same_day_appliance, impression_
+ *       appointment, virtual_impression_appointment) where the
+ *       widget flow always pins product_key as part of the axis
+ *       walk.
+ *
+ *    2. (service_type, productKey=null) — single-product service
+ *       lookup. Click-in veneers declares only the arch axis, so the
+ *       widget never pins state.axes.product_key. The catalogue +
+ *       product-config rows still carry product_key='click_in_veneers'
+ *       (one row per service), so we fall back to the unique row for
+ *       this service when productKey isn't supplied. This is what
+ *       was missing — the admin toggle was correctly writing
+ *       (click_in_veneers, click_in_veneers) but the widget passed
+ *       productKey=null and got the default back.
+ *
+ *    3. Multi-product service called with productKey=null — returns
+ *       DEFAULT. We deliberately don't guess a product when the
+ *       service has >1 configured entries; the right toggle isn't
+ *       knowable without the product axis. The widget flow always
+ *       reaches this point with productKey populated, so this branch
+ *       is only hit during pre-axis transients.
+ */
 export function configFor(
   serviceType: string | null | undefined,
   productKey: string | null | undefined,
   map: Record<string, ProductWidgetConfig> | null,
 ): ProductWidgetConfig {
-  if (!serviceType || !productKey || !map) return DEFAULT_PRODUCT_CONFIG;
-  return map[makeKey(serviceType, productKey)] ?? DEFAULT_PRODUCT_CONFIG;
+  if (!serviceType || !map) return DEFAULT_PRODUCT_CONFIG;
+  if (productKey) {
+    return map[makeKey(serviceType, productKey)] ?? DEFAULT_PRODUCT_CONFIG;
+  }
+  // No productKey supplied. Walk the map for entries matching this
+  // service_type — when exactly one exists, it's the single-product
+  // service and we use it. When zero or more than one match, return
+  // the default rather than guess.
+  const prefix = `${serviceType}|`;
+  let only: ProductWidgetConfig | null = null;
+  let matches = 0;
+  for (const key of Object.keys(map)) {
+    if (key.startsWith(prefix)) {
+      matches++;
+      if (matches > 1) return DEFAULT_PRODUCT_CONFIG;
+      only = map[key] ?? null;
+    }
+  }
+  return matches === 1 && only ? only : DEFAULT_PRODUCT_CONFIG;
 }
 
 // ── Anon-readable widget consumer ───────────────────────────────────────────
