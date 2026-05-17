@@ -14,6 +14,15 @@
 // lng_cart_items + lng_cart_item_upgrades and we render. The print module
 // itself doesn't touch Supabase or any other side effect: pass it data,
 // it opens a window and prints.
+//
+// Multi-label split (M17): heavy carts that would clip on a single label
+// are pre-split into two slips before render — labelled "Part 1 of 2" /
+// "Part 2 of 2" in the header badge so the lab knows there's more in
+// the print queue. Threshold lives in MAX_ROWS_PER_SLIP; when the
+// effective row count (items + per-category subheader when mixed)
+// exceeds it, the printer prints both pages back-to-back with a
+// page-break between them. The progressive-degradation cascade still
+// runs on each page as a final safety net for an unusually fat row.
 
 export interface PrintableLwoItem {
   qty: number;
@@ -40,6 +49,17 @@ export interface PrintableLwoItem {
 // form's Notes textarea import this so the limit stays in lockstep
 // with the label geometry — change the label, change this constant.
 export const MAX_TECH_NOTE_LENGTH = 200;
+
+// Maximum effective rows that fit cleanly on one 4.13" label
+// alongside header / meta / barcode + the cascade fallback. An
+// effective row = an item row PLUS one extra count for each category
+// subheader rendered ("Denture Services" / "Appliances"). Past this
+// the print module splits the cart across two slips labelled
+// "Part 1 of 2" / "Part 2 of 2". 7 is empirically the threshold the
+// Brother QL-820 + 4.13" stock starts clipping the barcode-ref text
+// on the typical row height (a single bold 9px row including the
+// 5px padding above + below).
+const MAX_ROWS_PER_SLIP = 7;
 
 export interface PrintableLwoInput {
   lapRef: string;                           // e.g. "LAP-00130"
@@ -108,6 +128,46 @@ function buildTable(rows: PrintableLwoItem[], subtitle: string | null): string {
   return '<div class="tbl-wrap">' + subheader + '<table><thead>' + header + '</thead><tbody>' + body + '</tbody></table></div>';
 }
 
+// Heuristic row-count for one item set. Counts each item plus a +1
+// for the subheader bar (one per category, only when both are
+// present on the same label). Matches the visual rows the renderer
+// stamps onto the .middle region.
+function effectiveRowCount(items: PrintableLwoItem[]): number {
+  const denture = items.some((i) => i.category === 'denture');
+  const appliance = items.some((i) => i.category === 'appliance');
+  const mixed = denture && appliance;
+  return items.length + (mixed ? 2 : 0);
+}
+
+// Decide whether to split + how. Returns either a single-page plan
+// (just the input items) or a two-page plan with each slip's items
+// already partitioned. Pre-computed so the renderer below stays a
+// pure data → HTML transform — no measurement-loop, no second
+// window, no print-time DOM acrobatics.
+//
+// Strategy when over the threshold:
+//   • Mixed carts (denture + appliance) split by category — page 1
+//     gets all denture rows, page 2 gets all appliance rows. Maps
+//     to lab workflow (different bench for each).
+//   • Single-category carts split in half by index, page 1 gets
+//     the first ceil(N/2) rows. Order is preserved so the lab
+//     reads the same sequence as the cart.
+interface SlipPlan {
+  pages: PrintableLwoItem[][];
+}
+function planSlips(items: PrintableLwoItem[]): SlipPlan {
+  if (effectiveRowCount(items) <= MAX_ROWS_PER_SLIP) {
+    return { pages: [items] };
+  }
+  const denture = items.filter((i) => i.category === 'denture');
+  const appliance = items.filter((i) => i.category === 'appliance');
+  if (denture.length > 0 && appliance.length > 0) {
+    return { pages: [denture, appliance] };
+  }
+  const half = Math.ceil(items.length / 2);
+  return { pages: [items.slice(0, half), items.slice(half)] };
+}
+
 export function printLwo(input: PrintableLwoInput): void {
   const checkin = new Date(input.checkedInAt);
   const today = checkin.toLocaleDateString('en-GB', {
@@ -117,12 +177,8 @@ export function printLwo(input: PrintableLwoInput): void {
   });
   const checkinTime = checkin.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-  const dentureRows = input.items.filter((i) => i.category === 'denture');
-  const applianceRows = input.items.filter((i) => i.category === 'appliance');
-  const hasBoth = dentureRows.length > 0 && applianceRows.length > 0;
-  const tablesHtml = hasBoth
-    ? buildTable(dentureRows, 'Denture Services') + buildTable(applianceRows, 'Appliances')
-    : buildTable(input.items, null);
+  const plan = planSlips(input.items);
+  const totalPages = plan.pages.length;
 
   const escapedNotes = input.notes
     ? escapeHtml(input.notes).replace(/\n/g, '<br>')
@@ -135,16 +191,18 @@ export function printLwo(input: PrintableLwoInput): void {
   const css =
     '*{box-sizing:border-box;margin:0;padding:0}' +
     '@page{size:4.13in 4.13in;margin:0}' +
-    // page-break-inside:avoid + max-height + overflow:hidden together
-    // guarantee the label renders on exactly one sheet. The flex
-    // layout below is what makes overflow rare: the barcode shrinks to
-    // fit before items/notes need clipping. These two are the safety
-    // net for the worst case (huge cart) where the flex squeeze still
-    // hits min-height — the rest is clipped instead of paginated.
-    'body{font-family:Arial,sans-serif;font-size:11px;color:#000;background:#fff;width:4.13in;height:4.13in;max-height:4.13in;padding:10px;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;break-inside:avoid-page;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
+    // Each slip is a separate <section.page>. page-break-after on
+    // every slip except the last is what asks the browser to fire
+    // a fresh sheet on the thermal printer. The slip itself is the
+    // body geometry — same flex shape as the single-label original,
+    // moved one level in.
+    'html,body{background:#fff;font-family:Arial,sans-serif;color:#000;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
+    '.page{font-size:11px;width:4.13in;height:4.13in;max-height:4.13in;padding:10px;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;break-inside:avoid-page}' +
+    '.page+.page{page-break-before:always;break-before:page}' +
     '.hdr{display:flex;justify-content:space-between;align-items:center;border:1px solid #000;padding:8px 10px;margin-bottom:7px;flex-shrink:0}' +
     '.hdr-title{font-size:12px;font-weight:700;margin-top:2px}' +
     '.hdr-badge{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;margin-left:8px;letter-spacing:.04em}' +
+    '.hdr-part{font-size:9px;font-weight:700;border:1px solid #000;padding:1px 6px;margin-left:4px;letter-spacing:.04em;background:#000;color:#fff;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}' +
     '.hdr-order{font-size:14px;font-weight:900;text-align:right}' +
     '.hdr-date{font-size:10px;font-weight:600;text-align:right;margin-top:1px}' +
     '.meta{display:flex;border:1px solid #000;flex-shrink:0}' +
@@ -154,52 +212,24 @@ export function printLwo(input: PrintableLwoInput): void {
     '.meta-val{font-weight:700;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
     '.tbl-wrap{flex-shrink:0;border:1px solid #000;margin:5px 0}' +
     'table{width:100%;border-collapse:collapse}' +
-    // Column header (DEVICE / ARCH / QTY etc) — solid black bar, bold white
-    // text, slightly taller row. Thermal-safe: pure black fill + bold white.
     'th{font-size:8px;text-transform:uppercase;letter-spacing:.1em;padding:5px 8px;font-weight:900;background:#000;color:#fff;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;border-bottom:1px solid #000}' +
     'th.tc{text-align:center}th.tl{text-align:left}th:first-child{text-align:left}' +
     'td{padding:5px 6px;border-bottom:1px solid #000;font-size:9px;font-weight:700}' +
     '.td-l{text-align:left}.td-c{text-align:center}' +
     'tr:last-child td{border-bottom:none}' +
-    // Category subheader ("DENTURE SERVICES" / "APPLIANCES") — only shown for
-    // combo orders. Uses the same black-bar treatment as the column header.
-    // The bottom border is a 2px WHITE strip rather than the usual black:
-    // both rows are filled black, so a black border was invisible. White is
-    // an unburnt strip on thermal stock — visible, clean, no dithering. 2px
-    // (≈0.25mm at 203 DPI) is the print-safe minimum to render reliably.
     '.tbl-subhdr{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.1em;padding:5px 8px;background:#000;color:#fff;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;border-bottom:2px solid #fff}' +
     '.notes-box{border:1px dashed #000;padding:3px 6px;margin-top:2px;flex-shrink:0}' +
     '.notes-lbl{font-size:6px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:1px}' +
     '.notes-val{font-size:8px;line-height:1.3;word-break:break-word}' +
-    // Middle content area — items tables + notes. flex:1 1 0 +
-    // overflow:hidden + min-height:0 are load-bearing. They turn
-    // this region into the only thing that absorbs vertical
-    // pressure when the order is heavy. The header above and the
-    // barcode below stay rigid; if scrollHeight > clientHeight,
-    // the cascade below hides chrome to free room — but the
-    // barcode never changes size.
     '.middle{flex:1 1 0;overflow:hidden;min-height:0;display:flex;flex-direction:column}' +
-    // Barcode block: fixed 85mm wide, never shrinks. flex-shrink:0
-    // is what enforces "barcode width is constant; everything
-    // above flexes around it." Centred horizontally on the label.
     '.bc-bar{flex-shrink:0;padding:6px 0 0;display:flex;flex-direction:column;align-items:center}' +
     '.bc-bar-inner{width:85mm;flex-shrink:0;text-align:center}' +
-    // SVG fills its 85mm container at width:100%; height:auto
-    // preserves the bar:space aspect ratio (CODE128 readers
-    // decode on bar:space ratios, so non-uniform scaling would
-    // break scanning — we explicitly avoid that here).
     '.bc-bar svg{display:block;width:100%;height:auto;margin:0 auto}' +
     '.bc-ref{font-family:Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.05em;text-align:center;margin-top:3px;color:#000}' +
-    // Progressive-degradation cascade. The cascade JS at the end
-    // of the document toggles these body classes when the
-    // .middle region is still overflowing after the previous
-    // step. The barcode is never touched.
-    //
-    //   normal       : everything visible
-    //   compact      : DENTURE SERVICES / APPLIANCES bars hidden
-    //   extra-compact: also LAP-ref text under the barcode hidden
-    'body.compact .tbl-subhdr{display:none}' +
-    'body.extra-compact .bc-ref{display:none}';
+    // Cascade — applied per-page via .page.compact / .page.extra-compact
+    // so a heavy page can degrade independently of a light sibling.
+    '.page.compact .tbl-subhdr{display:none}' +
+    '.page.extra-compact .bc-ref{display:none}';
 
   const logoUrl = window.location.origin + '/black-venneir-logo.png';
   const safeRef = escapeHtml(input.lapRef);
@@ -207,70 +237,110 @@ export function printLwo(input: PrintableLwoInput): void {
   const safeStaff = input.staffName ? escapeHtml(input.staffName) : DASH;
   const safeJob = input.jobBox ? escapeHtml(input.jobBox) : DASH;
 
+  // Render one slip. Notes only land on the LAST slip — the lab
+  // reads the whole job, and notes about the WHOLE work should
+  // close out the print run, not lead it. (If a future need
+  // surfaces for per-page notes we can split there too.)
+  const renderPage = (
+    items: PrintableLwoItem[],
+    pageNumber: number,
+    isLastPage: boolean,
+  ): string => {
+    const dentureRows = items.filter((i) => i.category === 'denture');
+    const applianceRows = items.filter((i) => i.category === 'appliance');
+    const hasBoth = dentureRows.length > 0 && applianceRows.length > 0;
+    const tablesHtml = hasBoth
+      ? buildTable(dentureRows, 'Denture Services') + buildTable(applianceRows, 'Appliances')
+      : buildTable(items, null);
+    const partBadge =
+      totalPages > 1
+        ? '<span class="hdr-part">PART ' + pageNumber + ' OF ' + totalPages + '</span>'
+        : '';
+    const pageId = 'page-' + pageNumber;
+    const pageNotesHtml =
+      isLastPage && escapedNotes
+        ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>'
+        : '';
+    return (
+      '<section class="page" id="' + pageId + '" data-page="' + pageNumber + '">' +
+        // Header
+        '<div class="hdr">' +
+          '<div>' +
+            '<img src="' + logoUrl + '" style="height:14px;display:block;margin-bottom:3px" />' +
+            '<div class="hdr-title">Lab Work Order ' +
+              '<span class="hdr-badge">' + input.arrivalType + '</span>' +
+              partBadge +
+            '</div>' +
+          '</div>' +
+          '<div>' +
+            '<div class="hdr-order">' + safeRef + '</div>' +
+            '<div class="hdr-date">' + today + ' at ' + checkinTime + '</div>' +
+          '</div>' +
+        '</div>' +
+        // Meta row
+        '<div class="meta">' +
+          '<div><div class="sl">Patient</div><div class="meta-val">' + safePatient + '</div></div>' +
+          '<div><div class="sl">Job Box</div><div class="meta-val">' + safeJob + '</div></div>' +
+          '<div><div class="sl">Staff</div><div class="meta-val">' + safeStaff + '</div></div>' +
+          '<div><div class="sl">Checked in</div><div class="meta-val">' + checkinTime + '</div></div>' +
+        '</div>' +
+        // Middle area — items + notes (notes on last slip only).
+        '<div class="middle">' +
+          tablesHtml +
+          pageNotesHtml +
+        '</div>' +
+        // Barcode block — fixed 85mm wide, never shrinks. Same on
+        // every slip so a part-2 label scans the same as a part-1
+        // label and lands at the same appointment in the system.
+        '<div class="bc-bar">' +
+          '<div class="bc-bar-inner">' +
+            '<svg class="order-barcode" data-page="' + pageNumber + '"></svg>' +
+            '<div class="bc-ref">' + safeRef + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</section>'
+    );
+  };
+
+  const pagesHtml = plan.pages
+    .map((items, idx) => renderPage(items, idx + 1, idx === plan.pages.length - 1))
+    .join('');
+
   const html =
     '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Lab Work Order ' + safeRef + '</title>' +
     '<style>' + css + '</style>' +
     '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>' +
     '</head><body>' +
-    // Header
-    '<div class="hdr">' +
-      '<div>' +
-        '<img src="' + logoUrl + '" style="height:14px;display:block;margin-bottom:3px" />' +
-        '<div class="hdr-title">Lab Work Order <span class="hdr-badge">' + input.arrivalType + '</span></div>' +
-      '</div>' +
-      '<div>' +
-        '<div class="hdr-order">' + safeRef + '</div>' +
-        '<div class="hdr-date">' + today + ' at ' + checkinTime + '</div>' +
-      '</div>' +
-    '</div>' +
-    // Meta row
-    '<div class="meta">' +
-      '<div><div class="sl">Patient</div><div class="meta-val">' + safePatient + '</div></div>' +
-      '<div><div class="sl">Job Box</div><div class="meta-val">' + safeJob + '</div></div>' +
-      '<div><div class="sl">Staff</div><div class="meta-val">' + safeStaff + '</div></div>' +
-      '<div><div class="sl">Checked in</div><div class="meta-val">' + checkinTime + '</div></div>' +
-    '</div>' +
-    // Middle area — items + notes. The only region that gets
-    // squeezed when the cart is heavy. The header above and the
-    // barcode below never move.
-    '<div class="middle">' +
-      tablesHtml +
-      (escapedNotes ? '<div class="notes-box"><div class="notes-lbl">Notes</div><div class="notes-val">' + escapedNotes + '</div></div>' : '') +
-    '</div>' +
-    // Barcode block — fixed 85mm wide, never shrinks. The LAP ref
-    // is rendered as separate JSX (not baked into the SVG via
-    // displayValue) so the cascade can hide it independently.
-    '<div class="bc-bar">' +
-      '<div class="bc-bar-inner">' +
-        '<svg id="order-barcode"></svg>' +
-        '<div id="bc-ref" class="bc-ref">' + safeRef + '</div>' +
-      '</div>' +
-    '</div>' +
-    // Cascade JS:
-    //   1. Render the barcode at fixed width:2 / height:70.
+    pagesHtml +
+    // Cascade JS, per-page:
+    //   1. Render one barcode per slip at fixed width:2 / height:70.
     //      displayValue:false keeps the LAP-ref text rendered as
-    //      separate HTML (so step 3 can hide it).
-    //   2. Force a layout reflow (read offsetHeight) and check
-    //      whether .middle is overflowing.
-    //   3. If yes, body.compact (hides DENTURE / APPLIANCES black
-    //      bars). Reflow + re-check.
-    //   4. If still overflowing, body.extra-compact (also hides
-    //      the LAP-ref text under the barcode, freeing ~16px).
-    //   5. window.print().
+    //      separate HTML on each slip so the cascade can hide it
+    //      independently.
+    //   2. For every .page, check whether its .middle is overflowing.
+    //   3. If yes → page.compact (hides DENTURE / APPLIANCES bars).
+    //   4. If still overflowing → page.extra-compact (also hides the
+    //      LAP-ref text under the barcode, freeing ~16px).
+    //   5. window.print() once all pages have been laid out.
     //
-    // The barcode's own width never changes through any of this —
-    // it's locked at 85mm via .bc-bar-inner.
+    // The barcode width never changes through any of this — locked
+    // at 85mm via .bc-bar-inner on every slip.
     '<script>window.onload=function(){' +
       'if(typeof JsBarcode==="undefined"){throw new Error("JsBarcode failed to load — check CDN access and pop-up settings.");}' +
-      'JsBarcode("#order-barcode","' + safeRef + '",{format:"CODE128",width:2,height:70,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});' +
-      'var middle=document.getElementById("middle")||document.querySelector(".middle");' +
-      'function overflowing(){return middle&&middle.scrollHeight>middle.clientHeight+1;}' +
-      // Reading offsetHeight forces a sync layout reflow so the
-      // overflow check sees the post-class-change layout.
+      'var barcodes=document.querySelectorAll(".order-barcode");' +
+      'for(var i=0;i<barcodes.length;i++){' +
+        'JsBarcode(barcodes[i],"' + safeRef + '",{format:"CODE128",width:2,height:70,displayValue:false,margin:0,background:"#fff",lineColor:"#000"});' +
+      '}' +
       'function reflow(){return document.body.offsetHeight;}' +
+      'var pages=document.querySelectorAll(".page");' +
       'reflow();' +
-      'if(overflowing()){document.body.classList.add("compact");reflow();}' +
-      'if(overflowing()){document.body.classList.add("extra-compact");reflow();}' +
+      'for(var j=0;j<pages.length;j++){' +
+        'var p=pages[j];' +
+        'var mid=p.querySelector(".middle");' +
+        'function overflowing(){return mid&&mid.scrollHeight>mid.clientHeight+1;}' +
+        'if(overflowing()){p.classList.add("compact");reflow();}' +
+        'if(overflowing()){p.classList.add("extra-compact");reflow();}' +
+      '}' +
       'window.print();' +
     '}<\/script>' +
     '</body></html>';
