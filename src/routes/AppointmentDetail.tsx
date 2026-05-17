@@ -933,7 +933,7 @@ function Hero({
           typeof appt.deposit_pence === 'number' &&
           appt.deposit_pence > 0
             ? appt.deposit_pence
-            : null
+            : 0
         }
         defaultCategory="visit_cancelled"
       />

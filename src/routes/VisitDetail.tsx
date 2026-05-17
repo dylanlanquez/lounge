@@ -1889,7 +1889,7 @@ export function VisitDetail() {
         onClose={() => setRefundOpen(false)}
         cartId={cart?.id ?? null}
         appointmentId={visit?.appointment_id ?? null}
-        suggestedPence={owedToPatientPence > 0 ? owedToPatientPence : null}
+        suggestedPence={owedToPatientPence}
         defaultCategory={refundDefaultCategory}
         onCompleted={() => {
           // Re-pull paid-status + cart-payment list so the banner

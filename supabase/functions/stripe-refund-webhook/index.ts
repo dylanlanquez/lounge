@@ -1,0 +1,378 @@
+// stripe-refund-webhook
+//
+// Listens for charge.refund.* Stripe events and reconciles
+// lng_payment_refunds rows that landed in 'pending' state.
+//
+// Why we need this: terminal-refund inserts the refund row BEFORE
+// calling Stripe and flips it to 'succeeded' / 'failed' based on
+// the API's IMMEDIATE response. Stripe refunds can settle async
+// — the synchronous response says 'pending' and the actual outcome
+// arrives minutes (sometimes hours) later via webhook. Without this
+// listener the row would sit 'pending' forever and the patient
+// would think they're still owed money.
+//
+// Auth model: PUBLIC. Stripe webhooks don't use Supabase auth. We
+// verify the Stripe-Signature HMAC against STRIPE_*_WEBHOOK_SECRET
+// before reading anything. Filter by metadata.refund_id (set on
+// every refund minted by terminal-refund via the idempotency key)
+// so other Stripe accounts / endpoints can't poison our refund
+// table.
+//
+// Endpoint setup: Stripe Dashboard → Webhooks → Add endpoint
+// pointing at this function's URL. Subscribe to:
+//   charge.refund.created
+//   charge.refund.updated
+//   charge.refund.failed
+// The signing secret Stripe returns goes on this Supabase project
+// as STRIPE_REFUND_WEBHOOK_SECRET (separate from the widget +
+// terminal webhook secrets — Stripe scopes secrets per endpoint).
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const REFUND_WEBHOOK_SECRET_LIVE =
+  Deno.env.get('STRIPE_REFUND_WEBHOOK_SECRET') ??
+  Deno.env.get('STRIPE_REFUND_WEBHOOK_SECRET_LIVE') ??
+  '';
+const REFUND_WEBHOOK_SECRET_TEST =
+  Deno.env.get('STRIPE_REFUND_WEBHOOK_SECRET_TEST') ?? '';
+
+interface StripeEvent {
+  id: string;
+  type: string;
+  data: { object: unknown };
+}
+
+interface StripeRefund {
+  id: string;
+  status?: string;          // succeeded | pending | failed | canceled | requires_action
+  failure_reason?: string;
+  amount?: number;
+  currency?: string;
+  payment_intent?: string;
+  charge?: string;
+  metadata?: Record<string, string | undefined>;
+}
+
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+
+  const rawBody = await req.text();
+  const sigHeader = req.headers.get('stripe-signature') ?? '';
+
+  if (!REFUND_WEBHOOK_SECRET_LIVE && !REFUND_WEBHOOK_SECRET_TEST) {
+    await logFailure('refund_webhook_secret_missing', {}, 'critical');
+    return new Response('Server misconfigured', { status: 500 });
+  }
+
+  let verified = false;
+  if (REFUND_WEBHOOK_SECRET_LIVE) {
+    verified = await verifyStripeSignature(rawBody, sigHeader, REFUND_WEBHOOK_SECRET_LIVE);
+  }
+  if (!verified && REFUND_WEBHOOK_SECRET_TEST) {
+    verified = await verifyStripeSignature(rawBody, sigHeader, REFUND_WEBHOOK_SECRET_TEST);
+  }
+  if (!verified) {
+    await logFailure('stripe_signature_invalid', { sigHeader }, 'critical');
+    return new Response('Bad signature', { status: 401 });
+  }
+
+  let event: StripeEvent;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return new Response('Bad JSON', { status: 400 });
+  }
+
+  // Only act on refund.* events. Other event types ignored — Stripe
+  // sends 200 regardless.
+  if (!event.type.startsWith('charge.refund.')) {
+    return new Response('ok', { status: 200 });
+  }
+
+  const refund = event.data.object as StripeRefund;
+  if (!refund?.id) {
+    return new Response('ok', { status: 200 });
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  try {
+    await reconcileRefund(supabase, event.type, refund);
+  } catch (e) {
+    await logFailure('webhook_handler_failed', {
+      event: event.type,
+      stripe_refund_id: refund.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return new Response('Handler error', { status: 500 });
+  }
+
+  return new Response('ok', { status: 200 });
+});
+
+async function reconcileRefund(
+  supabase: ReturnType<typeof createClient>,
+  eventType: string,
+  refund: StripeRefund,
+): Promise<void> {
+  // Look up the local refund row by Stripe id. terminal-refund
+  // stamps stripe_refund_id when Stripe accepts the call, so any
+  // row this webhook is reconciling already has a match.
+  const { data: row, error: readErr } = await supabase
+    .from('lng_payment_refunds')
+    .select('id, status, payment_id, deposit_appointment_id, amount_pence, visit_id, appointment_id')
+    .eq('stripe_refund_id', refund.id)
+    .maybeSingle();
+  if (readErr) {
+    await logFailure('refund_row_read_failed', {
+      error: readErr.message,
+      stripe_refund_id: refund.id,
+    });
+    return;
+  }
+  if (!row) {
+    // Orphan refund — Stripe says this refund exists but we don't
+    // know about it. Could be a refund issued directly from the
+    // Stripe dashboard (out-of-band). Log it for audit but don't
+    // create a row from the webhook — the audit table requires
+    // performer + approver ids we don't have here.
+    await supabase.from('lng_event_log').insert({
+      source: 'stripe-refund-webhook',
+      event_type: 'orphan_refund',
+      payload: {
+        stripe_refund_id: refund.id,
+        stripe_event_type: eventType,
+        amount: refund.amount,
+        currency: refund.currency,
+        status: refund.status,
+        payment_intent: refund.payment_intent,
+      },
+    });
+    return;
+  }
+
+  const r = row as {
+    id: string;
+    status: string;
+    payment_id: string | null;
+    deposit_appointment_id: string | null;
+    amount_pence: number;
+    visit_id: string | null;
+    appointment_id: string | null;
+  };
+
+  const nextStatus = mapStripeStatus(refund.status);
+
+  // Idempotency: if the local row already settled (succeeded /
+  // failed) and the webhook re-fires (Stripe retries on 5xx, plus
+  // delivery-can-repeat), no-op. Only act when the local row is
+  // still 'pending' OR when Stripe is downgrading us from succeeded
+  // → failed (very rare, but Stripe can claw back authorisation).
+  if (r.status === nextStatus) {
+    return;
+  }
+  if (r.status === 'succeeded' && nextStatus !== 'failed') {
+    return;
+  }
+
+  const updates: Record<string, unknown> = {
+    status: nextStatus,
+    updated_at: new Date().toISOString(),
+  };
+  if (nextStatus === 'failed') {
+    updates.failure_reason = refund.failure_reason ?? `Stripe status: ${refund.status}`;
+  } else {
+    updates.failure_reason = null;
+  }
+  const { error: updErr } = await supabase
+    .from('lng_payment_refunds')
+    .update(updates)
+    .eq('id', r.id);
+  if (updErr) {
+    await logFailure('refund_row_update_failed', {
+      error: updErr.message,
+      refund_id: r.id,
+    });
+    return;
+  }
+
+  // Side-effect cascade — only on succeeded transitions. Mirrors
+  // the synchronous logic in terminal-refund:
+  //   • Payment-source full-refund threshold → flip payment to
+  //     cancelled + re-open cart.
+  //   • Patient timeline 'refund_issued' event so the audit
+  //     captures the moment Stripe actually settled (terminal-
+  //     refund's synchronous insert already wrote an entry when
+  //     the API call returned pending; this one supplements with
+  //     the settlement-confirmed payload).
+  if (nextStatus !== 'succeeded') return;
+
+  if (r.payment_id) {
+    const { data: paymentRow } = await supabase
+      .from('lng_payments')
+      .select('id, amount_pence, cart_id, status')
+      .eq('id', r.payment_id)
+      .maybeSingle();
+    const p = paymentRow as {
+      id: string;
+      amount_pence: number;
+      cart_id: string;
+      status: string;
+    } | null;
+    if (p && p.status === 'succeeded') {
+      const { data: refundedRows } = await supabase
+        .from('lng_payment_refunds')
+        .select('amount_pence')
+        .eq('payment_id', p.id)
+        .eq('status', 'succeeded');
+      const totalRefunded = ((refundedRows ?? []) as { amount_pence: number }[]).reduce(
+        (acc, x) => acc + (x.amount_pence ?? 0),
+        0,
+      );
+      if (totalRefunded >= p.amount_pence) {
+        await supabase
+          .from('lng_payments')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', p.id);
+        await supabase
+          .from('lng_carts')
+          .update({ status: 'open', closed_at: null })
+          .eq('id', p.cart_id);
+      }
+    }
+  }
+
+  // Settlement-confirmed timeline supplement. The original
+  // 'refund_issued' row from terminal-refund captured the moment
+  // the refund was AUTHORISED; this one captures the moment Stripe
+  // actually SETTLED. Two rows on the timeline reads as one
+  // continuous narrative ("Refund issued · pending → succeeded").
+  if (r.appointment_id || r.visit_id) {
+    const patientId = await resolvePatientId(supabase, r);
+    if (patientId) {
+      await supabase.from('patient_events').insert({
+        patient_id: patientId,
+        event_type: 'refund_settled',
+        actor_account_id: null,
+        notes: 'Stripe confirmed the refund has settled.',
+        payload: {
+          refund_id: r.id,
+          stripe_refund_id: refund.id,
+          amount_pence: r.amount_pence,
+          payment_id: r.payment_id,
+          deposit_appointment_id: r.deposit_appointment_id,
+          visit_id: r.visit_id,
+          appointment_id: r.appointment_id,
+          source: 'webhook',
+        },
+      });
+    }
+  }
+}
+
+async function resolvePatientId(
+  supabase: ReturnType<typeof createClient>,
+  row: {
+    visit_id: string | null;
+    appointment_id: string | null;
+    deposit_appointment_id: string | null;
+  },
+): Promise<string | null> {
+  if (row.visit_id) {
+    const { data } = await supabase
+      .from('lng_visits')
+      .select('patient_id')
+      .eq('id', row.visit_id)
+      .maybeSingle();
+    const id = (data as { patient_id: string | null } | null)?.patient_id ?? null;
+    if (id) return id;
+  }
+  const apptId = row.appointment_id ?? row.deposit_appointment_id;
+  if (apptId) {
+    const { data } = await supabase
+      .from('lng_appointments')
+      .select('patient_id')
+      .eq('id', apptId)
+      .maybeSingle();
+    const id = (data as { patient_id: string | null } | null)?.patient_id ?? null;
+    if (id) return id;
+  }
+  return null;
+}
+
+function mapStripeStatus(s: string | undefined): 'pending' | 'succeeded' | 'failed' {
+  switch ((s ?? '').toLowerCase()) {
+    case 'succeeded':
+      return 'succeeded';
+    case 'failed':
+    case 'canceled':
+      return 'failed';
+    case 'pending':
+    case 'requires_action':
+    default:
+      return 'pending';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stripe signature verification — same shape as widget-stripe-webhook
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function verifyStripeSignature(
+  rawBody: string,
+  sigHeader: string,
+  secret: string,
+): Promise<boolean> {
+  if (!sigHeader) return false;
+  const parts = sigHeader.split(',').map((p) => p.split('=') as [string, string]);
+  const t = parts.find((p) => p[0] === 't')?.[1];
+  const v1s = parts.filter((p) => p[0] === 'v1').map((p) => p[1]);
+  if (!t || v1s.length === 0) return false;
+  const tn = Number(t);
+  if (!Number.isFinite(tn)) return false;
+  if (Math.abs(Date.now() / 1000 - tn) > 600) return false;
+  const expected = await hmacSha256Hex(secret, `${t}.${rawBody}`);
+  return v1s.some((v) => constantTimeEqual(v, expected));
+}
+
+async function hmacSha256Hex(key: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let m = 0;
+  for (let i = 0; i < a.length; i++) m |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return m === 0;
+}
+
+async function logFailure(
+  message: string,
+  context: Record<string, unknown>,
+  severity: 'info' | 'warning' | 'error' | 'critical' = 'error',
+): Promise<void> {
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    await supabase.from('lng_system_failures').insert({
+      source: 'stripe-refund-webhook',
+      severity,
+      message,
+      context,
+    });
+  } catch {
+    // best-effort
+  }
+}

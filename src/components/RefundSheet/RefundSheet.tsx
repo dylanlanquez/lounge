@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Banknote, CreditCard, Globe } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
+import { Input } from '../Input/Input.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   REFUND_REASON_CATEGORIES,
@@ -11,48 +13,47 @@ import {
   type RefundReasonCategory,
   type RefundableSourceRow,
 } from '../../lib/queries/payments.ts';
+import { listManagers, type ManagerRow } from '../../lib/queries/staff.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
 
-// RefundSheet — staff-facing partial-refund flow.
+// RefundSheet — staff-facing refund flow.
 //
-// Layout
+// Locked amount, single primary action. The trigger banner already
+// computed what we owe; this sheet just makes the operator confirm
+// the reason + the manager approving. No free-form amount entry,
+// no per-row pickers — those just gave staff a way to type the
+// wrong number.
 //
-//   1. Suggested amount banner (when caller passes suggestedPence).
-//      The owed-back banner on VisitDetail seeds this with the
-//      overpaid figure so staff sees "We owe £X" prominently.
-//   2. Payment list — every refundable lng_payments capture on the
-//      cart, with method, taker, captured amount, already-refunded,
-//      and the remaining refundable. Each row has an input where
-//      staff types the amount to refund against THIS payment. The
-//      sum across rows is the total refund.
-//   3. Reason category dropdown + required free-text note.
-//   4. Manager approval — email + password (approveAsManager flow,
-//      same as the existing void path on Pay.tsx).
+// Allocation logic: the suggestedPence amount is auto-allocated
+// across the patient's captured sources (deposit first, then till
+// payments in capture order) up to the remaining refundable
+// balance on each. Staff sees the breakdown as read-only chips so
+// they know which money is going back through which channel.
 //
-// Submit fires refundPartial once per row with a non-zero amount.
-// Each call writes its own lng_payment_refunds row + patient_events
-// 'refund_issued' entry. If any individual call fails the sheet
-// surfaces the error but keeps the successes — the user can retry
-// just the failed line without re-doing the whole flow.
+// Submit: one refundPartial call per non-zero allocation, all
+// approved with the same manager sign-off. Errors per allocation
+// surface inline so a partial-success state is recoverable.
 
 export interface RefundSheetProps {
   open: boolean;
   onClose: () => void;
   cartId: string | null;
-  /** Required to surface the appointment's widget-paid deposit as a
-   *  refundable source. Pass null only for visits without a linked
-   *  appointment (walk-ins) where deposit refunds are impossible. */
+  /** Required to surface the appointment's widget-paid deposit as
+   *  a refundable source. Pass null only for walk-in visits with
+   *  no linked appointment. */
   appointmentId: string | null;
-  /** Suggested total refund amount. The owed-back banner pre-fills
-   *  this so the staff's typed allocations default to the obvious
-   *  number (the amount the patient overpaid). Pass 0 / null when
-   *  staff is refunding for a non-cart-edit reason. */
-  suggestedPence?: number | null;
-  /** Default category — VisitDetail's cart-edit banner passes
-   *  'item_removed'; the visit-cancelled flow passes
-   *  'visit_cancelled'; etc. Staff can still change it. */
+  /** The amount we owe the patient. Locked. The trigger that
+   *  opened this sheet (owed banner / cancellation banner) already
+   *  did the math; we don't second-guess it. */
+  suggestedPence: number;
+  /** Pre-selected reason category. Staff can change it. */
   defaultCategory?: RefundReasonCategory;
   onCompleted?: () => void;
+}
+
+interface Allocation {
+  source: RefundableSourceRow;
+  pence: number;
 }
 
 export function RefundSheet({
@@ -60,98 +61,102 @@ export function RefundSheet({
   onClose,
   cartId,
   appointmentId,
-  suggestedPence = null,
+  suggestedPence,
   defaultCategory = 'item_removed',
   onCompleted,
 }: RefundSheetProps) {
-  const { data: sources, loading: paymentsLoading, error: paymentsError, refresh } =
-    useRefundableSources({ cartId, appointmentId });
+  const {
+    data: sources,
+    loading: sourcesLoading,
+    error: sourcesError,
+    refresh,
+  } = useRefundableSources({ cartId, appointmentId });
 
-  // Per-source refund amount staff has typed. Keyed by source id
-  // (payment id or appointment id). Stored as text so half-typed
-  // entries like "12." are preserved; parsed to pence on submit.
-  const [amountsBySource, setAmountsBySource] = useState<Record<string, string>>({});
-  const [reasonCategory, setReasonCategory] =
-    useState<RefundReasonCategory>(defaultCategory);
+  const [reasonCategory, setReasonCategory] = useState<RefundReasonCategory>(defaultCategory);
   const [reasonNote, setReasonNote] = useState('');
-  const [approverEmail, setApproverEmail] = useState('');
-  const [approverPassword, setApproverPassword] = useState('');
+  const [managers, setManagers] = useState<ManagerRow[]>([]);
+  const [managerAccountId, setManagerAccountId] = useState('');
+  const [managerPassword, setManagerPassword] = useState('');
+  const [managersError, setManagersError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [perRowErrors, setPerRowErrors] = useState<Record<string, string>>({});
-  const [completedCount, setCompletedCount] = useState(0);
 
-  // Reset state every time the sheet opens — staff shouldn't see a
-  // half-filled allocation from a prior open.
+  // Reset every open so a previous half-filled attempt can't leak in.
   useEffect(() => {
     if (!open) return;
-    setAmountsBySource({});
     setReasonCategory(defaultCategory);
     setReasonNote('');
-    setApproverEmail('');
-    setApproverPassword('');
+    setManagerAccountId('');
+    setManagerPassword('');
     setSubmitError(null);
     setPerRowErrors({});
-    setCompletedCount(0);
   }, [open, defaultCategory]);
 
-  // Seed the suggested amount across the sources in display order
-  // (deposit first, then till payments). Staff can edit any row;
-  // this is just a starting point.
+  // Load managers (active is_manager) once per open. Same query the
+  // discount + void approvers use.
   useEffect(() => {
-    if (!open || paymentsLoading) return;
-    if (!suggestedPence || suggestedPence <= 0) return;
-    if (Object.keys(amountsBySource).length > 0) return;
+    if (!open) return undefined;
+    let cancelled = false;
+    setManagersError(null);
+    listManagers()
+      .then((list) => {
+        if (cancelled) return;
+        setManagers(list);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setManagersError(e instanceof Error ? e.message : 'Could not load managers');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  // Auto-allocate the suggested amount across sources. Greedy, in
+  // display order (deposit first, then till payments oldest-first).
+  // The result is read-only — staff can't tweak per-row, the input
+  // we ask them for is the REASON, not the AMOUNT.
+  const allocations = useMemo<Allocation[]>(() => {
+    if (suggestedPence <= 0) return [];
     let remaining = suggestedPence;
-    const seeded: Record<string, string> = {};
+    const out: Allocation[] = [];
     for (const s of sources) {
       if (remaining <= 0) break;
-      const allocate = Math.min(s.refundable_pence, remaining);
-      if (allocate > 0) {
-        seeded[s.id] = (allocate / 100).toFixed(2);
-        remaining -= allocate;
+      const take = Math.min(s.refundable_pence, remaining);
+      if (take > 0) {
+        out.push({ source: s, pence: take });
+        remaining -= take;
       }
     }
-    if (Object.keys(seeded).length > 0) {
-      setAmountsBySource(seeded);
-    }
-  }, [open, paymentsLoading, sources, suggestedPence, amountsBySource]);
+    return out;
+  }, [sources, suggestedPence]);
 
-  const parsedAllocations = useMemo(() => {
-    return sources.map((s) => {
-      const text = amountsBySource[s.id] ?? '';
-      const parsed = parsePoundsText(text);
-      const pence = parsed == null ? 0 : Math.round(parsed * 100);
-      return {
-        source: s,
-        text,
-        pence,
-        overLimit: pence > s.refundable_pence,
-      };
-    });
-  }, [sources, amountsBySource]);
+  const totalAllocatedPence = allocations.reduce((acc, a) => acc + a.pence, 0);
+  const allocationShortfallPence = Math.max(0, suggestedPence - totalAllocatedPence);
 
-  const totalPence = parsedAllocations.reduce((acc, a) => acc + Math.max(0, a.pence), 0);
-  const anyOverLimit = parsedAllocations.some((a) => a.overLimit);
   const noteOk = reasonNote.trim().length > 0;
+  const managerOk = managerAccountId.length > 0 && managerPassword.length > 0;
   const canSubmit =
     !submitting &&
-    totalPence > 0 &&
-    !anyOverLimit &&
+    allocations.length > 0 &&
+    allocationShortfallPence === 0 &&
     noteOk &&
-    approverEmail.trim().length > 0 &&
-    approverPassword.length > 0;
+    managerOk;
 
   const handleSubmit = async () => {
     setSubmitting(true);
     setSubmitError(null);
     setPerRowErrors({});
     try {
-      const approverId = await approveAsManager(approverEmail.trim(), approverPassword);
+      const manager = managers.find((m) => m.account_id === managerAccountId);
+      if (!manager) {
+        throw new Error('Pick an approving manager.');
+      }
+      const approverId = await approveAsManager(manager.login_email, managerPassword);
       const errors: Record<string, string> = {};
       let succeeded = 0;
-      for (const alloc of parsedAllocations) {
-        if (alloc.pence <= 0) continue;
+      for (const alloc of allocations) {
         try {
           if (alloc.source.kind === 'payment') {
             await refundPartial({
@@ -171,34 +176,24 @@ export function RefundSheet({
             });
           }
           succeeded += 1;
-          setAmountsBySource((prev) => {
-            const next = { ...prev };
-            delete next[alloc.source.id];
-            return next;
-          });
         } catch (e) {
           errors[alloc.source.id] = e instanceof Error ? e.message : String(e);
         }
       }
       refresh();
       setPerRowErrors(errors);
-      setCompletedCount((c) => c + succeeded);
       if (Object.keys(errors).length === 0 && succeeded > 0) {
-        // All allocations refunded cleanly — close the sheet and
-        // let the parent re-pull the cart / paid status.
         if (onCompleted) onCompleted();
         onClose();
-      } else if (succeeded === 0 && Object.keys(errors).length > 0) {
-        // Nothing went through. Surface the first error at the top
-        // alongside the per-row markers.
+        return;
+      }
+      if (succeeded === 0 && Object.keys(errors).length > 0) {
         setSubmitError(Object.values(errors)[0] ?? 'Refund failed');
       } else {
-        // Partial success — keep the sheet open with the remaining
-        // failed rows highlighted, but tell the parent to refresh.
         if (onCompleted) onCompleted();
       }
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : 'Could not authorise the refund');
+      setSubmitError(e instanceof Error ? e.message : 'Could not authorise the refund.');
     } finally {
       setSubmitting(false);
     }
@@ -209,414 +204,280 @@ export function RefundSheet({
       open={open}
       onClose={onClose}
       title="Issue refund"
-      description="Pick which payment(s) to refund against. Each line records its own audit row with the reason, manager sign-off, and the staff member who issued it."
+      description={
+        suggestedPence > 0
+          ? `Refunding ${formatPence(suggestedPence)} to the patient. Locked to what's owed.`
+          : 'Nothing to refund.'
+      }
       footer={
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: theme.space[3],
+            justifyContent: 'flex-end',
+            gap: theme.space[2],
           }}
         >
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {totalPence > 0
-              ? `Refunding ${formatPence(totalPence)}`
-              : 'Allocate an amount to a payment'}
-          </span>
+          <Button variant="tertiary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
           <Button
             variant="primary"
             onClick={handleSubmit}
             disabled={!canSubmit}
             loading={submitting}
           >
-            {submitting ? 'Refunding…' : `Refund ${formatPence(totalPence)}`}
+            {submitting ? 'Refunding…' : `Refund ${formatPence(totalAllocatedPence)}`}
           </Button>
         </div>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-        {suggestedPence && suggestedPence > 0 ? (
-          <div
-            style={{
-              padding: `${theme.space[3]}px ${theme.space[4]}px`,
-              borderRadius: theme.radius.input,
-              background: 'rgba(220, 38, 38, 0.08)',
-              border: '1px solid rgba(220, 38, 38, 0.25)',
-              color: '#991b1b',
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.semibold,
-            }}
-          >
-            Patient is owed {formatPence(suggestedPence)}.{' '}
-            <span style={{ fontWeight: theme.type.weight.medium }}>
-              We&apos;ve pre-filled this amount across the refundable payment(s) below.
-            </span>
-          </div>
-        ) : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+        {/* ── Amount ────────────────────────────────────────────── */}
+        <SheetSection title="Amount">
+          {sourcesError ? (
+            <ErrorLine message={sourcesError} />
+          ) : sourcesLoading && allocations.length === 0 ? (
+            <MutedLine>Loading payments…</MutedLine>
+          ) : allocations.length === 0 ? (
+            <MutedLine>
+              No refundable payments on file. Stripe-handled refunds may already be in
+              progress.
+            </MutedLine>
+          ) : (
+            <>
+              <div
+                style={{
+                  fontSize: theme.type.size.xxl,
+                  fontWeight: theme.type.weight.bold,
+                  letterSpacing: theme.type.tracking.tight,
+                  color: theme.color.ink,
+                  fontVariantNumeric: 'tabular-nums',
+                  lineHeight: 1.1,
+                }}
+              >
+                {formatPence(totalAllocatedPence)}
+              </div>
+              {allocations.length > 1 || allocations[0]?.source.kind === 'deposit' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.xs,
+                      fontWeight: theme.type.weight.semibold,
+                      letterSpacing: theme.type.tracking.wide,
+                      textTransform: 'uppercase',
+                      color: theme.color.inkSubtle,
+                    }}
+                  >
+                    Returning to
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                    {allocations.map((a) => (
+                      <AllocationRow
+                        key={a.source.id}
+                        source={a.source}
+                        pence={a.pence}
+                        error={perRowErrors[a.source.id] ?? null}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {allocationShortfallPence > 0 ? (
+                <ErrorLine
+                  message={`Only ${formatPence(totalAllocatedPence)} of the ${formatPence(
+                    suggestedPence,
+                  )} owed can be refunded right now. The rest needs an admin to reconcile.`}
+                />
+              ) : null}
+            </>
+          )}
+        </SheetSection>
 
-        {paymentsError ? (
-          <p
-            role="alert"
-            style={{
-              margin: 0,
-              padding: theme.space[3],
-              borderRadius: theme.radius.input,
-              background: 'rgba(220, 38, 38, 0.08)',
-              color: '#991b1b',
-              fontSize: theme.type.size.sm,
-            }}
-          >
-            {paymentsError}
-          </p>
-        ) : null}
-
-        {!paymentsError && paymentsLoading ? (
-          <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-            Loading payments…
-          </p>
-        ) : null}
-
-        {!paymentsLoading && sources.length === 0 ? (
-          <p
-            style={{
-              margin: 0,
-              padding: theme.space[4],
-              border: `1px dashed ${theme.color.border}`,
-              borderRadius: theme.radius.input,
-              color: theme.color.inkMuted,
-              fontSize: theme.type.size.sm,
-              textAlign: 'center',
-            }}
-          >
-            No refundable payments yet. The Shopify-order credit (if any) is refunded on
-            Shopify itself.
-          </p>
-        ) : null}
-
-        {sources.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-            {parsedAllocations.map(({ source, text, overLimit }) => (
-              <SourceAllocationRow
-                key={source.id}
-                source={source}
-                amountText={text}
-                overLimit={overLimit}
-                error={perRowErrors[source.id] ?? null}
-                onChange={(value) =>
-                  setAmountsBySource((prev) => ({ ...prev, [source.id]: value }))
-                }
-              />
-            ))}
-          </div>
-        ) : null}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          <label
-            htmlFor="refund-reason-category"
-            style={{
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-            }}
-          >
-            Reason
-          </label>
-          <select
-            id="refund-reason-category"
+        {/* ── Reason ────────────────────────────────────────────── */}
+        <SheetSection title="Reason">
+          <DropdownSelect<RefundReasonCategory>
+            label="What's the reason?"
+            required
             value={reasonCategory}
-            onChange={(e) => setReasonCategory(e.target.value as RefundReasonCategory)}
-            disabled={submitting}
-            style={{
-              padding: `${theme.space[3]}px ${theme.space[3]}px`,
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.surface,
-              color: theme.color.ink,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.base,
-            }}
-          >
-            {REFUND_REASON_CATEGORIES.map((c) => (
-              <option key={c.key} value={c.key}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          <label
-            htmlFor="refund-reason-note"
-            style={{
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-            }}
-          >
-            Specific reason
-          </label>
-          <textarea
-            id="refund-reason-note"
+            options={REFUND_REASON_CATEGORIES.map((c) => ({ value: c.key, label: c.label }))}
+            onChange={(v) => setReasonCategory(v)}
+          />
+          <Input
+            label="Specific reason"
+            required
             value={reasonNote}
             onChange={(e) => setReasonNote(e.target.value)}
+            placeholder="What item, why, what was the patient told"
+            helper="Goes on the patient timeline word for word."
             disabled={submitting}
-            placeholder="What item / why / what was the patient told"
-            rows={3}
-            style={{
-              padding: `${theme.space[3]}px ${theme.space[3]}px`,
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.surface,
-              color: theme.color.ink,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.base,
-              resize: 'vertical',
-              minHeight: 72,
-            }}
           />
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-            Required. Logged verbatim to the patient timeline.
-          </span>
-        </div>
+        </SheetSection>
 
-        <div
-          style={{
-            padding: theme.space[3],
-            borderRadius: theme.radius.input,
-            background: 'rgba(8, 55, 88, 0.04)',
-            border: `1px solid ${theme.color.border}`,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[2],
-          }}
-        >
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-            }}
-          >
-            Manager approval
-          </span>
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-            A different staff member with manager rights signs off. Their credentials are
-            checked but the session stays as yours.
-          </span>
-          <input
-            type="email"
-            value={approverEmail}
-            onChange={(e) => setApproverEmail(e.target.value)}
-            disabled={submitting}
-            placeholder="Manager email"
-            autoComplete="off"
-            style={{
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.surface,
-              color: theme.color.ink,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.base,
-            }}
+        {/* ── Manager approval ──────────────────────────────────── */}
+        <SheetSection title="Manager sign-off">
+          {managersError ? <ErrorLine message={managersError} /> : null}
+          <DropdownSelect<string>
+            label="Approving manager"
+            required
+            value={managerAccountId}
+            options={managers.map((m) => ({ value: m.account_id, label: m.name }))}
+            onChange={(v) => setManagerAccountId(v)}
+            placeholder={
+              managers.length === 0
+                ? 'No managers configured. Add one in Admin, Staff.'
+                : 'Pick a manager'
+            }
+            disabled={managers.length === 0 || submitting}
           />
-          <input
+          <Input
+            label="Manager password"
             type="password"
-            value={approverPassword}
-            onChange={(e) => setApproverPassword(e.target.value)}
+            // Manager re-enters their password live every time. Block
+            // any cached / saved-password autofill so a second person
+            // can't be approved by stale credentials.
+            autoComplete="new-password"
+            name="lng-refund-approver-password"
+            data-lpignore="true"
+            data-1p-ignore
+            value={managerPassword}
+            onChange={(e) => setManagerPassword(e.target.value)}
             disabled={submitting}
-            placeholder="Manager password"
-            autoComplete="off"
-            style={{
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.surface,
-              color: theme.color.ink,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.base,
-            }}
           />
-        </div>
+        </SheetSection>
 
-        {submitError ? (
-          <p
-            role="alert"
-            style={{
-              margin: 0,
-              padding: theme.space[3],
-              borderRadius: theme.radius.input,
-              background: 'rgba(220, 38, 38, 0.08)',
-              border: '1px solid rgba(220, 38, 38, 0.25)',
-              color: '#991b1b',
-              fontSize: theme.type.size.sm,
-            }}
-          >
-            {submitError}
-          </p>
-        ) : null}
-
-        {completedCount > 0 && Object.keys(perRowErrors).length > 0 ? (
-          <p
-            style={{
-              margin: 0,
-              padding: theme.space[3],
-              borderRadius: theme.radius.input,
-              background: 'rgba(217, 119, 6, 0.08)',
-              color: '#92400e',
-              fontSize: theme.type.size.sm,
-            }}
-          >
-            Partial success: {completedCount} refund(s) issued. Fix the highlighted lines and
-            retry.
-          </p>
-        ) : null}
+        {submitError ? <ErrorLine message={submitError} /> : null}
       </div>
     </BottomSheet>
   );
 }
 
-function SourceAllocationRow({
+function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <h3
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          letterSpacing: theme.type.tracking.wide,
+          textTransform: 'uppercase',
+          color: theme.color.inkSubtle,
+        }}
+      >
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function AllocationRow({
   source,
-  amountText,
-  overLimit,
+  pence,
   error,
-  onChange,
 }: {
   source: RefundableSourceRow;
-  amountText: string;
-  overLimit: boolean;
+  pence: number;
   error: string | null;
-  onChange: (value: string) => void;
 }) {
-  const isDeposit = source.kind === 'deposit';
-  const isCash = source.method === 'cash';
-  const Icon = isDeposit ? Globe : isCash ? Banknote : CreditCard;
-  const titleLabel = isDeposit
-    ? source.source_label ?? 'Paid online at booking'
-    : isCash
-      ? 'Cash'
-      : 'Card / contactless';
-  const ariaLabel = isDeposit
-    ? 'Refund amount for deposit'
-    : isCash
-      ? 'Refund amount for cash payment'
-      : 'Refund amount for card payment';
+  const Icon = source.kind === 'deposit' ? Globe : source.method === 'cash' ? Banknote : CreditCard;
+  const label =
+    source.kind === 'deposit'
+      ? source.source_label ?? 'Paid online at booking'
+      : source.method === 'cash'
+        ? 'Cash at the till'
+        : 'Card at the till';
   return (
     <div
       style={{
-        padding: theme.space[3],
-        borderRadius: theme.radius.input,
-        border: `1px solid ${error || overLimit ? theme.color.alert : theme.color.border}`,
-        background: theme.color.surface,
         display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${error ? theme.color.alert : theme.color.border}`,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0 }}>
         <span
+          aria-hidden
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: 32,
-            height: 32,
+            width: 28,
+            height: 28,
             borderRadius: theme.radius.pill,
             background: theme.color.accentBg,
             color: theme.color.accent,
             flexShrink: 0,
           }}
         >
-          <Icon size={16} aria-hidden />
+          <Icon size={14} aria-hidden />
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <span
             style={{
-              margin: 0,
               fontSize: theme.type.size.sm,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
             }}
           >
-            {titleLabel}
-            {source.taken_by_name ? (
-              <span
-                style={{
-                  marginLeft: theme.space[2],
-                  fontSize: theme.type.size.xs,
-                  fontWeight: theme.type.weight.medium,
-                  color: theme.color.inkSubtle,
-                }}
-              >
-                by {source.taken_by_name}
-              </span>
-            ) : null}
-          </p>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkSubtle,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            Captured {formatPence(source.amount_pence)}
-            {source.refunded_pence > 0
-              ? ` · Already refunded ${formatPence(source.refunded_pence)}`
-              : ''}
-            {' · Remaining '}
-            {formatPence(source.refundable_pence)}
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[1] }}>
-          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>£</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            value={amountText}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="0.00"
-            aria-label={ariaLabel}
-            style={{
-              width: 96,
-              padding: `${theme.space[2]}px ${theme.space[3]}px`,
-              borderRadius: theme.radius.input,
-              border: `1px solid ${overLimit ? theme.color.alert : theme.color.border}`,
-              background: theme.color.surface,
-              color: theme.color.ink,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.base,
-              fontVariantNumeric: 'tabular-nums',
-              textAlign: 'right',
-            }}
-          />
+            {label}
+          </span>
+          {error ? (
+            <span style={{ fontSize: theme.type.size.xs, color: theme.color.alert }}>
+              {error}
+            </span>
+          ) : null}
         </div>
       </div>
-      {overLimit ? (
-        <span style={{ fontSize: theme.type.size.xs, color: theme.color.alert }}>
-          Exceeds remaining refundable balance of {formatPence(source.refundable_pence)}.
-        </span>
-      ) : null}
-      {error ? (
-        <span style={{ fontSize: theme.type.size.xs, color: theme.color.alert }}>{error}</span>
-      ) : null}
+      <span
+        style={{
+          fontSize: theme.type.size.base,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+          flexShrink: 0,
+        }}
+      >
+        {formatPence(pence)}
+      </span>
     </div>
   );
 }
 
-function parsePoundsText(text: string): number | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  if (!/^\d*(\.\d{0,2})?$/.test(trimmed)) return null;
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return parsed;
+function MutedLine({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      style={{
+        margin: 0,
+        fontSize: theme.type.size.sm,
+        color: theme.color.inkMuted,
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function ErrorLine({ message }: { message: string }) {
+  return (
+    <p
+      role="alert"
+      style={{
+        margin: 0,
+        fontSize: theme.type.size.sm,
+        color: theme.color.alert,
+        fontWeight: theme.type.weight.medium,
+      }}
+    >
+      {message}
+    </p>
+  );
 }
