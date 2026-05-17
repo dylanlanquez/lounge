@@ -36,7 +36,7 @@ import {
   useEmailTemplateHistory,
   useEmailTemplates,
 } from '../lib/queries/emailTemplates.ts';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { renderEmail } from '../lib/emailRenderer.ts';
 import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 

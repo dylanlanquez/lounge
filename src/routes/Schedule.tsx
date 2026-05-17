@@ -50,7 +50,7 @@ import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import { useNow } from '../lib/useNow.ts';
 import {

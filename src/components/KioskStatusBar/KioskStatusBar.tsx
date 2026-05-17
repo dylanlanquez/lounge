@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { BarChart3, Settings, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
-import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';

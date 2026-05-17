@@ -137,7 +137,7 @@ import {
   type UpgradeRow,
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';

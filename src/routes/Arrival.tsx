@@ -34,7 +34,7 @@ import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.t
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useKeyboardOpen } from '../lib/useKeyboardOpen.ts';
 import { type ParsedAddress } from '../lib/useAddressAutocomplete.ts';

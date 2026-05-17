@@ -6,7 +6,7 @@ import { Button } from '../Button/Button.tsx';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { useAuth } from '../../lib/auth.tsx';
-import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
 
 export interface TopBarProps {
   // 'home' shows logo + avatar + admin + sign-out menu.

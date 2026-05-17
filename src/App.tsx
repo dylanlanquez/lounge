@@ -1,7 +1,10 @@
 import { lazy, Suspense, useLayoutEffect, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth.tsx';
-import { useCurrentAccount } from './lib/queries/currentAccount.ts';
+import {
+  CurrentAccountProvider,
+  useCurrentAccount,
+} from './lib/queries/currentAccount.tsx';
 import { useMfaStatus } from './lib/mfa.ts';
 import { theme } from './theme/index.ts';
 import { Button } from './components/Button/Button.tsx';
@@ -53,10 +56,19 @@ function RouteFallback() {
 export function App() {
   return (
     <AuthProvider>
-      <KioskStatusBar />
-      <ScrollToTop />
-      <RoutedErrorBoundary />
-      <BottomNav />
+      {/* CurrentAccountProvider sits inside AuthProvider (it reads
+          useAuth) and outside every consumer (KioskStatusBar, all
+          routes, RequireStaff, BottomNav). One fetch per session —
+          every useCurrentAccount() call below reads from this shared
+          context, eliminating the 40-way fetch fan-out + the
+          first-paint race against permission gates that produced the
+          flicker on CS-only surfaces. */}
+      <CurrentAccountProvider>
+        <KioskStatusBar />
+        <ScrollToTop />
+        <RoutedErrorBoundary />
+        <BottomNav />
+      </CurrentAccountProvider>
     </AuthProvider>
   );
 }

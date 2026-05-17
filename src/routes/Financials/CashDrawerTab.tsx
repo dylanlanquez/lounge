@@ -21,7 +21,7 @@ import {
 import { theme } from '../../theme/index.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../../lib/dateRange.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
-import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
 import { useLocations } from '../../lib/queries/locations.ts';
 import { useCashCountStatement } from '../../lib/queries/cashCounts.ts';
 import {

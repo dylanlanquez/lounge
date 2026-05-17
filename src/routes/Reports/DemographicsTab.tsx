@@ -19,7 +19,7 @@ import {
 } from '../../lib/queries/reports.ts';
 import { usePostcodeGeocodes } from '../../lib/queries/postcodeGeocodes.ts';
 import { useAddressGeocodes } from '../../lib/queries/addressGeocodes.ts';
-import { useCurrentAccount } from '../../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 
 interface Props {

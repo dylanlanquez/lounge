@@ -12,7 +12,7 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type PatientRow,
 } from '../lib/queries/patients.ts';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
 import { supabase } from '../lib/supabase.ts';
 
@@ -350,12 +350,12 @@ function WalkInCsExplainer({ isMobile }: { isMobile: boolean }) {
             <ExplainerRow
               icon={<Headset size={18} aria-hidden />}
               title="You're remote support"
-              body="On the phone or on tickets, you help patients book. You're not the one greeting them in person."
+              body="Customer Service helps patients remotely. You're not the one greeting them at the desk."
             />
             <ExplainerRow
               icon={<ShieldCheck size={18} aria-hidden />}
               title="What to do instead"
-              body="Send the patient to venneir.com to book, or transfer the call to the clinic so reception can help."
+              body="Point the patient to venneir.com to book, or pass it on to the clinic team if they need in-person help."
             />
           </div>
         </div>

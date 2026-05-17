@@ -1,4 +1,11 @@
-import { useEffect, useState } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { supabase } from '../supabase.ts';
 import { useAuth } from '../auth.tsx';
 import { fetchCurrentStaffMembership } from './staff.ts';
@@ -85,7 +92,26 @@ interface Result {
   error: string | null;
 }
 
-export function useCurrentAccount(): Result {
+// CurrentAccountContext — single source of truth for the signed-in
+// staff member's identity row + Lounge-staff permission flags.
+//
+// Why a context (not a hand-rolled hook per consumer): the previous
+// shape had `useCurrentAccount()` mint its own state + fetch on every
+// call site (~40 across the app). RequireStaff resolved its copy
+// first, the route mounted, then inner components rendered with
+// account=null + loading=true and re-rendered a tick later when their
+// own fetch landed — that race produced visible flicker on every
+// permission-gated affordance (CS-only button hides, walk-in
+// explainer swap, etc).
+//
+// Now the provider mounts once near the top of the tree (next to
+// AuthProvider), fires exactly one fetch when auth resolves, and
+// every consumer reads the same resolved value. By the time any
+// route inside RequireStaff renders, the account is settled — gates
+// evaluate correctly on first paint. No flicker by construction.
+const CurrentAccountContext = createContext<Result | null>(null);
+
+export function CurrentAccountProvider({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
   const [account, setAccount] = useState<CurrentAccount | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,10 +121,13 @@ export function useCurrentAccount(): Result {
     if (authLoading) return;
     if (!user) {
       setAccount(null);
+      setError(null);
       setLoading(false);
       return;
     }
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     (async () => {
       const { data: idRaw, error: idErr } = await supabase.rpc('auth_account_id');
       if (cancelled) return;
@@ -201,5 +230,31 @@ export function useCurrentAccount(): Result {
     };
   }, [authLoading, user]);
 
-  return { account, loading, error };
+  // Stable identity for the context value so consumers don't re-render
+  // on every parent re-render — only when one of the three fields
+  // genuinely changes.
+  const value = useMemo<Result>(
+    () => ({ account, loading, error }),
+    [account, loading, error],
+  );
+
+  return (
+    <CurrentAccountContext.Provider value={value}>
+      {children}
+    </CurrentAccountContext.Provider>
+  );
+}
+
+export function useCurrentAccount(): Result {
+  const ctx = useContext(CurrentAccountContext);
+  if (ctx === null) {
+    // Loud failure: a consumer is being rendered outside the
+    // provider tree. Far better than the previous silent shape
+    // where every consumer did its own fetch.
+    throw new Error(
+      'useCurrentAccount must be used inside <CurrentAccountProvider>. ' +
+        'Check the component tree in App.tsx.',
+    );
+  }
+  return ctx;
 }

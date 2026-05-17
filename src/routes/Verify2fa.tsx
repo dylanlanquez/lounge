@@ -4,7 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Toast } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useMfaStatus, verifyTotp } from '../lib/mfa.ts';
 
 // AAL upgrade surface for staff who are already enrolled (have a

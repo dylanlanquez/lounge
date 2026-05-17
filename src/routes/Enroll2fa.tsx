@@ -3,7 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Toast } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { startTotpEnrolment, useMfaStatus, verifyTotp } from '../lib/mfa.ts';
 
 // Two-factor enrolment surface for staff who have require_2fa = true
