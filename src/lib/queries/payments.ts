@@ -242,6 +242,16 @@ export interface RefundableSourceRow {
    *  rather than the generic "Card / contactless". Null for payments
    *  (the method drives the label). */
   source_label: string | null;
+  /** Stripe card brand for this source (e.g. "visa", "mastercard"),
+   *  when known. Null for cash, deposits that pre-date card-detail
+   *  capture, or any payment we never saw a Stripe response for. The
+   *  RefundSheet upgrades the "Going back to" row to "Visa ending in
+   *  4242" when both brand + last4 are present, and falls back to a
+   *  channel-level label otherwise. */
+  card_brand: string | null;
+  /** Last 4 digits of the card used, when known. Same rules as
+   *  card_brand. */
+  card_last4: string | null;
 }
 
 export function useRefundableSources({
@@ -334,6 +344,8 @@ export function useRefundableSources({
             captured_at: r.succeeded_at,
             taken_by_name: display,
             source_label: null,
+            card_brand: null,
+            card_last4: null,
           });
         }
       }
@@ -397,6 +409,8 @@ export function useRefundableSources({
               captured_at: a.deposit_paid_at,
               taken_by_name: null,
               source_label: 'Paid online at booking',
+              card_brand: null,
+              card_last4: null,
             });
           }
         }

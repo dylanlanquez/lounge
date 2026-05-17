@@ -204,11 +204,11 @@ export function RefundSheet({
     <BottomSheet
       open={open}
       onClose={onClose}
-      title="Issue refund"
+      title="Issue a refund"
       description={
         suggestedPence > 0
-          ? `Refunding ${formatPence(suggestedPence)} to the patient. Locked to what's owed.`
-          : 'Nothing to refund.'
+          ? `Returning ${formatPence(suggestedPence)} to the patient on the same cards or cash that paid for the visit.`
+          : 'Nothing to refund right now.'
       }
       footer={
         <div
@@ -232,90 +232,75 @@ export function RefundSheet({
         </div>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
-        {/* ── Amount ────────────────────────────────────────────── */}
-        <SheetSection title="Amount">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[8] }}>
+        {/* Section 1 — amount + where it's going */}
+        <SheetSection
+          title="Refund amount"
+          subtitle="The amount and the cards or cash it's going back to. Locked, so the figures match what they paid."
+        >
           {sourcesError ? (
             <ErrorLine message={sourcesError} />
           ) : sourcesLoading && allocations.length === 0 ? (
             <MutedLine>Loading payments…</MutedLine>
           ) : allocations.length === 0 ? (
             <MutedLine>
-              No refundable payments on file. Stripe-handled refunds may already be in
-              progress.
+              No refundable payments on file for this visit. If they paid online, the
+              refund may already be processing on Stripe.
             </MutedLine>
           ) : (
-            <>
-              <div
-                style={{
-                  fontSize: theme.type.size.xxl,
-                  fontWeight: theme.type.weight.bold,
-                  letterSpacing: theme.type.tracking.tight,
-                  color: theme.color.ink,
-                  fontVariantNumeric: 'tabular-nums',
-                  lineHeight: 1.1,
-                }}
-              >
-                {formatPence(totalAllocatedPence)}
-              </div>
-              {allocations.length > 1 || allocations[0]?.source.kind === 'deposit' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+              <AmountHero pence={totalAllocatedPence} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                <SubLabel>Going back to</SubLabel>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                  <span
-                    style={{
-                      fontSize: theme.type.size.xs,
-                      fontWeight: theme.type.weight.semibold,
-                      letterSpacing: theme.type.tracking.wide,
-                      textTransform: 'uppercase',
-                      color: theme.color.inkSubtle,
-                    }}
-                  >
-                    Returning to
-                  </span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                    {allocations.map((a) => (
-                      <AllocationRow
-                        key={a.source.id}
-                        source={a.source}
-                        pence={a.pence}
-                        error={perRowErrors[a.source.id] ?? null}
-                      />
-                    ))}
-                  </div>
+                  {allocations.map((a) => (
+                    <AllocationRow
+                      key={a.source.id}
+                      source={a.source}
+                      pence={a.pence}
+                      error={perRowErrors[a.source.id] ?? null}
+                    />
+                  ))}
                 </div>
-              ) : null}
+              </div>
               {allocationShortfallPence > 0 ? (
                 <ErrorLine
                   message={`Only ${formatPence(totalAllocatedPence)} of the ${formatPence(
                     suggestedPence,
-                  )} owed can be refunded right now. The rest needs an admin to reconcile.`}
+                  )} owed can be refunded right now. An admin needs to reconcile the rest.`}
                 />
               ) : null}
-            </>
+            </div>
           )}
         </SheetSection>
 
-        {/* ── Reason ────────────────────────────────────────────── */}
-        <SheetSection title="Reason">
+        {/* Section 2 — reason */}
+        <SheetSection
+          title="Why are we refunding?"
+          subtitle="Pick the closest match, then add a short note. The note goes on the patient timeline word for word."
+        >
           <DropdownSelect<RefundReasonCategory>
-            label="What's the reason?"
+            label="Reason"
             required
             value={reasonCategory}
             options={REFUND_REASON_CATEGORIES.map((c) => ({ value: c.key, label: c.label }))}
             onChange={(v) => setReasonCategory(v)}
           />
           <Input
-            label="Specific reason"
+            label="Note for the timeline"
             required
             value={reasonNote}
             onChange={(e) => setReasonNote(e.target.value)}
             placeholder="What item, why, what was the patient told"
-            helper="Goes on the patient timeline word for word."
             disabled={submitting}
           />
         </SheetSection>
 
-        {/* ── Manager approval ──────────────────────────────────── */}
-        <SheetSection title="Manager sign-off">
+        {/* Section 3 — manager approval */}
+        <SheetSection
+          title="Manager approval"
+          subtitle="Refunds always need a manager. Pick the one who said yes."
+        >
           {managersError ? <ErrorLine message={managersError} /> : null}
           <DropdownSelect<string>
             label="Approving manager"
@@ -329,7 +314,7 @@ export function RefundSheet({
             placeholder={
               managers.length === 0
                 ? 'No managers configured. Add one in Admin, Staff.'
-                : 'Pick the manager who approved this'
+                : 'Pick the manager who approved this refund'
             }
             disabled={managers.length === 0 || submitting}
           />
@@ -341,23 +326,95 @@ export function RefundSheet({
   );
 }
 
-function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
+// SheetSection — the May 2026 sheet section pattern. Black, bold,
+// sentence-case title (size.md / weight.bold) over a smaller muted
+// subtitle that explains the section in plain English. No uppercase
+// eyebrows. The pattern reads like a short doc heading, not a form
+// label, so a first-time user can scan top-to-bottom and know what
+// each section is for without prior context.
+function SheetSection({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <h3
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+      <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.bold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          {title}
+        </h3>
+        {subtitle ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.normal,
+            }}
+          >
+            {subtitle}
+          </p>
+        ) : null}
+      </header>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>{children}</div>
+    </section>
+  );
+}
+
+// AmountHero — the headline figure that owns the top of the sheet.
+// Big tabular-num display so it reads as the source-of-truth amount
+// at a glance, regardless of how many rows the breakdown has below.
+function AmountHero({ pence }: { pence: number }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: theme.space[3],
+      }}
+    >
+      <span
         style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.wide,
-          textTransform: 'uppercase',
-          color: theme.color.inkSubtle,
+          fontSize: theme.type.size.display,
+          fontWeight: theme.type.weight.bold,
+          letterSpacing: theme.type.tracking.tight,
+          color: theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+          lineHeight: 1,
         }}
       >
-        {title}
-      </h3>
+        {formatPence(pence)}
+      </span>
+    </div>
+  );
+}
+
+// SubLabel — quiet, sentence-case subtitle used inside a section
+// (e.g. "Going back to"). Replaces the old uppercase eyebrow.
+function SubLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.ink,
+      }}
+    >
       {children}
-    </section>
+    </span>
   );
 }
 
@@ -371,12 +428,7 @@ function AllocationRow({
   error: string | null;
 }) {
   const Icon = source.kind === 'deposit' ? Globe : source.method === 'cash' ? Banknote : CreditCard;
-  const label =
-    source.kind === 'deposit'
-      ? source.source_label ?? 'Paid online at booking'
-      : source.method === 'cash'
-        ? 'Cash at the till'
-        : 'Card at the till';
+  const { title, sub } = describeSource(source);
   return (
     <div
       style={{
@@ -384,7 +436,7 @@ function AllocationRow({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: theme.space[3],
-        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
         borderRadius: theme.radius.input,
         background: theme.color.surface,
         border: `1px solid ${error ? theme.color.alert : theme.color.border}`,
@@ -397,17 +449,17 @@ function AllocationRow({
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: 28,
-            height: 28,
+            width: 32,
+            height: 32,
             borderRadius: theme.radius.pill,
             background: theme.color.accentBg,
             color: theme.color.accent,
             flexShrink: 0,
           }}
         >
-          <Icon size={14} aria-hidden />
+          <Icon size={16} aria-hidden />
         </span>
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
           <span
             style={{
               fontSize: theme.type.size.sm,
@@ -418,13 +470,19 @@ function AllocationRow({
               textOverflow: 'ellipsis',
             }}
           >
-            {label}
+            {title}
           </span>
-          {error ? (
-            <span style={{ fontSize: theme.type.size.xs, color: theme.color.alert }}>
-              {error}
-            </span>
-          ) : null}
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: error ? theme.color.alert : theme.color.inkMuted,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {error ?? sub}
+          </span>
         </div>
       </div>
       <span
@@ -440,6 +498,59 @@ function AllocationRow({
       </span>
     </div>
   );
+}
+
+// describeSource — single source of truth for the "Going back to" row
+// copy. Renders a specific card title when card_brand + card_last4 are
+// available (e.g. "Visa ending in 4242"), otherwise a plain-English
+// fallback that still tells staff WHICH till channel the money's
+// returning through.
+function describeSource(source: RefundableSourceRow): { title: string; sub: string } {
+  const brand = formatCardBrand(source.card_brand);
+  const last4 = source.card_last4;
+  if (source.kind === 'deposit') {
+    if (brand && last4) {
+      return {
+        title: `${brand} ending in ${last4}`,
+        sub: 'The card they paid the deposit with online.',
+      };
+    }
+    return {
+      title: 'Card used at booking',
+      sub: 'The card they paid the deposit with online.',
+    };
+  }
+  if (source.method === 'cash') {
+    return { title: 'Cash drawer', sub: 'Hand the cash back at the till.' };
+  }
+  if (brand && last4) {
+    return {
+      title: `${brand} ending in ${last4}`,
+      sub: 'The card they tapped at the till.',
+    };
+  }
+  return {
+    title: 'Card used at the till',
+    sub: 'Goes back to the same card automatically.',
+  };
+}
+
+// Pretty-printed Stripe card brand. Stripe returns "visa", "amex" etc;
+// we display them with the casing customers recognise.
+function formatCardBrand(brand: string | null): string | null {
+  if (!brand) return null;
+  const map: Record<string, string> = {
+    visa: 'Visa',
+    mastercard: 'Mastercard',
+    amex: 'American Express',
+    discover: 'Discover',
+    diners: 'Diners Club',
+    jcb: 'JCB',
+    unionpay: 'UnionPay',
+    eftpos_au: 'eftpos',
+    interac: 'Interac',
+  };
+  return map[brand.toLowerCase()] ?? brand;
 }
 
 function MutedLine({ children }: { children: React.ReactNode }) {
