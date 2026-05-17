@@ -650,6 +650,7 @@ function ChromeShell({
             copy={copy}
             locations={locations}
             accent={accent}
+            brand={brand}
             submissionError={submissionError}
             onDismissError={onDismissError}
             onSubmit={onSubmit}
@@ -794,12 +795,23 @@ function ProgressBar({
 export function StepTitle({
   children,
   align = 'center',
+  brandId,
 }: {
   children: React.ReactNode;
   align?: 'center' | 'left';
+  /** Drives the denture-only top-margin bump on screens ≥ 768px.
+   *  The denture storefront's modal sits noticeably tighter to the
+   *  progress bar than the venneir one because of the host page's
+   *  body-font baseline — Dylan flagged the desktop view as too
+   *  cramped. The class below + the matching @media rule in
+   *  quizTokens.ts lift the title clear of the progress bar on
+   *  tablet+, while mobile stays at the existing 16px so the wide
+   *  blank band the comment below describes doesn't reappear. */
+  brandId?: 'venneir' | 'denture';
 }) {
   return (
     <h2
+      className={brandId === 'denture' ? 'vlounge-step-title-denture' : undefined}
       style={{
         // Top + bottom both sourced through QUIZ tokens so every
         // step's title-to-progress and title-to-body rhythm stays
@@ -840,6 +852,7 @@ function StepBody({
   copy,
   locations,
   accent,
+  brand,
   submissionError,
   onDismissError,
   onSubmit,
@@ -852,6 +865,7 @@ function StepBody({
   copy: WidgetCopy;
   locations: WidgetLocation[];
   accent: string;
+  brand?: WidgetBrand;
   submissionError: string | null;
   onDismissError: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
@@ -879,7 +893,9 @@ function StepBody({
   return (
     <>
       {stepOwnsTitle ? null : (
-        <StepTitle align={titleAlign}>{stepTitle(api.stepKey, copy, api.state)}</StepTitle>
+        <StepTitle align={titleAlign} brandId={brand?.id}>
+          {stepTitle(api.stepKey, copy, api.state)}
+        </StepTitle>
       )}
       {submissionError ? (
         <ErrorBanner message={submissionError} onDismiss={onDismissError} />

@@ -352,6 +352,20 @@ export function ensureQuizKeyframes(): void {
       }
     }
 
+    /* Denture-only step-title top-margin bump on tablet+.
+       The denture storefront's modal sits tighter to the progress
+       bar than venneir's at mobile-default 16px — on desktop the
+       title reads as crammed. Lift it to 48px on ≥768px viewports
+       only; mobile stays at the original 16px so the wide blank
+       band the inline comment in Widget.tsx describes doesn't
+       reappear on phones. brandId='denture' applies the class
+       via StepTitle so the venneir bundle is unaffected. */
+    @media (min-width: 768px) {
+      .vlounge-step-title-denture {
+        margin-top: 48px !important;
+      }
+    }
+
     /* Success-screen smile-photo grid:
        • Desktop: 3 columns, square tiles side-by-side.
        • Mobile (≤520px): horizontal-snap row so three large
