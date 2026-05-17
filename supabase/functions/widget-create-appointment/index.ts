@@ -659,22 +659,26 @@ Deno.serve(async (req) => {
   });
 
   // ── Google Meet (virtual impression only) ──────────────────────
-  // Routing:
-  //   1. Pick an active lng_meet_hosts row with a valid refresh token
-  //      and create the Calendar event on the HOST'S primary calendar
-  //      so the Meet room lands in their dashboard, Workspace counts
-  //      it against their account, and conferenceRecord reads later
-  //      work under their OAuth grant.
-  //   2. If no host is configured / no host has a working token, fall
-  //      back to the legacy service-account calendar so the booking
-  //      still has a join link. Surface a warning so admin notices
-  //      and configures a host.
+  // Two-step flow mirroring meet-create-space:
+  //   1. POST https://meet.googleapis.com/v2/spaces — creates a Meet
+  //      space owned by the host (so meet_space_id + meet_meeting_code
+  //      land on the row, which is what unlocks the attendance card
+  //      and meet-fetch-attendance later).
+  //   2. POST Calendar event attached to that existing space (no
+  //      createRequest) — the patient gets the standard Google invite
+  //      with sendUpdates=all, the host's calendar shows the booking.
+  //
+  // The legacy createMeetEvent path only minted a Calendar-level Meet
+  // room with no Meet-side space record, so attendance + transcripts
+  // were invisible for Checkpoint bookings. We now mirror the staff
+  // pipeline exactly so a Checkpoint-booked virtual impression is
+  // indistinguishable from one Lounge staff booked via the in-app
+  // NewBookingSheet flow.
   //
   // Failure is best-effort: the booking succeeds even if Meet creation
   // fails; the failure logs to lng_system_failures.
   if (body.serviceType === 'virtual_impression_appointment') {
     let meetCreated = false;
-    // Step 1 — try the Meet-host path.
     const { data: hostRows } = await supabase
       .from('lng_meet_hosts')
       .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active')
@@ -682,6 +686,26 @@ Deno.serve(async (req) => {
       .not('refresh_token', 'is', null)
       .order('created_at', { ascending: true });
     const candidateHosts = (hostRows ?? []) as MeetHostRow[];
+
+    // Patient name + email for the calendar invite. The Meet space
+    // alone doesn't carry attendee info; the Calendar event is what
+    // sends the invite + populates the patient's google_calendar_event
+    // (and what conferenceRecords later attribute to the meeting).
+    const patientFirstName = body.details.firstName?.trim() || null;
+    const patientLastName = body.details.lastName?.trim() || null;
+    const patientFullName = [patientFirstName, patientLastName].filter(Boolean).join(' ').trim();
+    const patientEmailLower = body.details.email?.trim().toLowerCase() || null;
+    const summary = patientFullName ? `${eventLabel} with ${patientFullName}` : eventLabel;
+    const description = [
+      eventLabel ? `Service: ${eventLabel}` : null,
+      patientFullName ? `Patient: ${patientFullName}` : null,
+      patientEmailLower ? `Patient email: ${patientEmailLower}` : null,
+      '',
+      'This event was created by Venneir Lounge. Reply to lounge@venneir.com for any changes.',
+    ]
+      .filter((line) => line !== null)
+      .join('\n');
+
     for (const host of candidateHosts) {
       try {
         const tokenResult = await getValidAccessToken(supabase, host);
@@ -693,23 +717,129 @@ Deno.serve(async (req) => {
           );
           continue;
         }
-        const { hangoutLink, eventId } = await createMeetEvent({
-          accessToken: tokenResult.accessToken,
-          // 'primary' targets the host's primary calendar — the Meet
-          // event shows up in their Google Calendar and counts as
-          // their meeting on Workspace's books.
-          calendarId: 'primary',
-          appointmentId,
-          startAt: startAt.toISOString(),
-          endAt: endAt.toISOString(),
-          summary: eventLabel,
+        const accessToken = tokenResult.accessToken;
+
+        // Step 1 — mint the Meet space. accessType=OPEN +
+        // entryPointAccess=ALL means anyone with the link joins
+        // without sign-in or a lobby knock, which is what we want
+        // for patients on personal devices.
+        const spaceRes = await fetch('https://meet.googleapis.com/v2/spaces', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            config: { accessType: 'OPEN', entryPointAccess: 'ALL' },
+          }),
         });
+        if (!spaceRes.ok) {
+          const errBody = await spaceRes.text().catch(() => '');
+          await logFailure(
+            'meet_space_create_failed',
+            {
+              appointmentId,
+              host_id: host.id,
+              host_email: host.google_email,
+              response_status: spaceRes.status,
+              response_body_preview: errBody.slice(0, 500),
+            },
+            'warning',
+          );
+          continue;
+        }
+        const meetSpace = (await spaceRes.json()) as {
+          name?: string;
+          meetingUri?: string;
+          meetingCode?: string;
+        };
+        if (!meetSpace.name || !meetSpace.meetingUri || !meetSpace.meetingCode) {
+          await logFailure(
+            'meet_space_incomplete_payload',
+            { appointmentId, host_id: host.id, space_payload: meetSpace },
+            'warning',
+          );
+          continue;
+        }
+
+        // Step 2 — attach the existing Meet space to a new Calendar
+        // event on the host's primary calendar. conferenceData.entry
+        // Points (no createRequest) tells Calendar to use the supplied
+        // Meet rather than minting a new one.
+        const calendarBody: Record<string, unknown> = {
+          summary,
+          description,
+          start: { dateTime: startAt.toISOString(), timeZone: 'Europe/London' },
+          end: { dateTime: endAt.toISOString(), timeZone: 'Europe/London' },
+          conferenceData: {
+            conferenceSolution: {
+              key: { type: 'hangoutsMeet' },
+              name: 'Google Meet',
+            },
+            conferenceId: meetSpace.meetingCode,
+            entryPoints: [
+              {
+                entryPointType: 'video',
+                uri: meetSpace.meetingUri,
+                label: meetSpace.meetingCode,
+              },
+            ],
+          },
+          guestsCanModify: false,
+          guestsCanInviteOthers: false,
+        };
+        if (patientEmailLower) {
+          calendarBody.attendees = [
+            { email: patientEmailLower, responseStatus: 'needsAction' },
+          ];
+        }
+        const calRes = await fetch(
+          'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(calendarBody),
+          },
+        );
+        if (!calRes.ok) {
+          const errBody = await calRes.text().catch(() => '');
+          await logFailure(
+            'meet_calendar_attach_failed',
+            {
+              appointmentId,
+              host_id: host.id,
+              meeting_code: meetSpace.meetingCode,
+              response_status: calRes.status,
+              response_body_preview: errBody.slice(0, 500),
+            },
+            'warning',
+          );
+          continue;
+        }
+        const calEvent = (await calRes.json()) as { id?: string };
+        if (!calEvent.id) {
+          await logFailure(
+            'meet_calendar_no_event_id',
+            { appointmentId, host_id: host.id, meeting_code: meetSpace.meetingCode },
+            'warning',
+          );
+          continue;
+        }
+
+        // Step 3 — persist every Meet field so the attendance card
+        // renders and meet-fetch-attendance can find the
+        // conferenceRecord later.
         await supabase
           .from('lng_appointments')
           .update({
-            join_url: hangoutLink,
-            google_calendar_event_id: eventId,
             meet_host_id: host.id,
+            meet_space_id: meetSpace.name,
+            meet_meeting_code: meetSpace.meetingCode,
+            google_calendar_event_id: calEvent.id,
+            join_url: meetSpace.meetingUri,
             meeting_platform: 'google_meet',
           })
           .eq('id', appointmentId);
@@ -730,7 +860,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Step 2 — service-account fallback.
+    // Fallback — service-account Calendar Meet. Last resort when no
+    // host is configured / every host's token is broken. Means no
+    // meet_space_id / meet_meeting_code → no attendance tracking,
+    // but the patient still has a join link.
     if (!meetCreated) {
       if (candidateHosts.length === 0) {
         await logFailure(
