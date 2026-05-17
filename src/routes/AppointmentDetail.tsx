@@ -797,15 +797,41 @@ function Hero({
   // signal the schedule cards use; mirroring it on the detail page
   // keeps the cue consistent across every surface an appointment
   // appears on.
-  const refTextParts = [sourceLabel, appt.appointment_ref ?? null].filter(
-    Boolean,
-  ) as string[];
+  // Checkpoint bookings come in as source='manual' (since a staff
+  // member created them on the patient's behalf) but they're not
+  // the same as an in-app NewBookingSheet booking — the staff
+  // member never opened Lounge. Detect via created_via and swap
+  // the source label so reception can tell at a glance.
+  const isCheckpointBooking = appt.created_via === 'checkpoint';
+  const refTextParts = [
+    isCheckpointBooking ? 'Checkpoint' : sourceLabel,
+    appt.appointment_ref ?? null,
+  ].filter(Boolean) as string[];
   const refLine = (
     <span
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      style={{
+        display: 'inline-flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
+      }}
     >
-      <SourceGlyph source={appt.source} size={12} />
-      <span>{refTextParts.join(' · ')}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <SourceGlyph source={appt.source} size={12} />
+        <span>{refTextParts.join(' · ')}</span>
+      </span>
+      {isCheckpointBooking ? (
+        <span
+          style={{
+            fontSize: 12,
+            color: theme.color.inkMuted,
+            lineHeight: 1.4,
+          }}
+        >
+          Booked through Checkpoint
+          {appt.created_via_actor ? ` by ${appt.created_via_actor}` : ''}
+        </span>
+      ) : null}
     </span>
   );
   // Native widget bookings AND staff-created manual bookings both

@@ -136,6 +136,15 @@ interface SubmitBody {
    *  lng_appointments.source='manual' since a staff member is
    *  acting on the patient's behalf. */
   source?: 'widget' | 'checkpoint' | null;
+  /** Display name of the staff member who initiated the booking
+   *  from an external surface. Only meaningful when source is set
+   *  to a non-widget origin; persisted to
+   *  lng_appointments.created_via_actor so the Lounge appointment
+   *  surfaces can render "Booked through Checkpoint by [name]".
+   *  Free text — Checkpoint users don't have Lounge accounts so a
+   *  cross-project FK is not available. Null for customer-self-
+   *  service widget bookings. */
+  actorName?: string | null;
   /** Shopify order name (e.g. "VEN73520") to attach as a credit
    *  against the appointment. Mirrors NewBookingSheet's order-attach
    *  step: the endpoint re-resolves the order via lng_lookup_shopify_order
@@ -596,6 +605,16 @@ Deno.serve(async (req) => {
       shopify_order_currency: shopifyOrderRow?.currency ?? null,
       shopify_order_linked_at: shopifyOrderRow ? new Date().toISOString() : null,
       shopify_order_linked_by: null,
+      // Origin attribution for non-Lounge surfaces. Customer-widget
+      // bookings tag created_via='widget' so reports can split them
+      // from staff in-app bookings (which leave the column null).
+      // Checkpoint bookings additionally carry the staff member's
+      // display name so the appointment detail view can render the
+      // "Booked through Checkpoint by [name]" line.
+      created_via: isCheckpointSource ? 'checkpoint' : 'widget',
+      created_via_actor: isCheckpointSource
+        ? (body.actorName?.trim() || null)
+        : null,
       ...(depositFields ?? {}),
     })
     .select('id, appointment_ref, manage_token')

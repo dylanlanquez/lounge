@@ -119,6 +119,14 @@ export interface AppointmentDetailRow {
   // sees at a glance what the customer's already paid for online.
   shopify_order_name: string | null;
   shopify_order_total_pence: number | null;
+  // Origin attribution for bookings that didn't come from the
+  // Lounge app itself. created_via='checkpoint' bookings are made
+  // by staff in Checkpoint's ScanView booker on behalf of the
+  // patient; the actor field holds the staff member's display name
+  // so AppointmentDetail can render the "Booked through Checkpoint
+  // by [name]" line. Both null for in-app NewBookingSheet rows.
+  created_via: string | null;
+  created_via_actor: string | null;
   patient: {
     id: string;
     first_name: string | null;
@@ -242,6 +250,8 @@ interface RawAppointment {
   paid_in_full_at_booking: boolean;
   shopify_order_name: string | null;
   shopify_order_total_pence: number | null;
+  created_via: string | null;
+  created_via_actor: string | null;
   // Walk-in marker rows store the underlying lng_walk_ins id here.
   // The marker exists only so walk-ins show on Schedule alongside
   // booked appointments; the real entity is the visit. Used here to
@@ -270,7 +280,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_name, shopify_order_total_pence, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -462,6 +472,8 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
               .paid_in_full_at_booking ?? false,
           shopify_order_name: appt.shopify_order_name,
           shopify_order_total_pence: appt.shopify_order_total_pence,
+          created_via: appt.created_via,
+          created_via_actor: appt.created_via_actor,
           patient: patientRow,
           location:
             (locationRes.data as { id: string; name: string | null; address: string | null; city: string | null; postcode: string | null } | null) ?? null,
