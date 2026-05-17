@@ -277,7 +277,7 @@ async function processOne(
       .maybeSingle(),
     admin
       .from('locations')
-      .select('id, name, city, address')
+      .select('id, name, city, address, postcode')
       .eq('id', apt.location_id)
       .maybeSingle(),
   ]);
@@ -645,9 +645,14 @@ function labelForService(apt: AppointmentRow): string {
 
 function locationFreeform(location: LocationRow | null): string {
   if (!location) return 'Venneir Lounge';
-  const pieces = [location.name, location.address, location.city].filter(
-    (p): p is string => !!p && p.trim().length > 0,
-  );
+  // Order matches a UK postal address: name → street → city →
+  // postcode. Each part is included only when non-empty.
+  const pieces = [
+    location.name,
+    location.address,
+    location.city,
+    location.postcode,
+  ].filter((p): p is string => !!p && p.trim().length > 0);
   return pieces.length ? pieces.join(', ') : 'Venneir Lounge';
 }
 
@@ -1328,6 +1333,7 @@ interface LocationRow {
   name: string | null;
   city: string | null;
   address: string | null;
+  postcode: string | null;
 }
 
 // Decode a JWT's payload without verifying the signature (the

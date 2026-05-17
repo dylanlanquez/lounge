@@ -167,7 +167,7 @@ async function handle(req: Request): Promise<Response> {
   // app as "Edge Function returned a non-2xx status code".
   const { data: locationRow } = await admin
     .from('locations')
-    .select('id, name, city, address, phone')
+    .select('id, name, city, address, postcode, phone')
     .eq('id', apt.location_id)
     .maybeSingle();
   const location = locationRow as LocationRow | null;
@@ -521,6 +521,7 @@ interface LocationRow {
   name: string | null;
   city: string | null;
   address: string | null;
+  postcode: string | null;
   phone: string | null;
 }
 
@@ -1690,9 +1691,14 @@ function icsDescription(apt: AppointmentRow, location: LocationRow | null): stri
 
 function locationFreeform(location: LocationRow | null): string {
   if (!location) return 'Venneir Lounge';
-  const pieces = [location.name, location.address, location.city].filter(
-    (p): p is string => !!p && p.trim().length > 0,
-  );
+  // Order matches a UK postal address: name → street → city →
+  // postcode. Each part is included only when non-empty.
+  const pieces = [
+    location.name,
+    location.address,
+    location.city,
+    location.postcode,
+  ].filter((p): p is string => !!p && p.trim().length > 0);
   return pieces.length ? pieces.join(', ') : 'Venneir Lounge';
 }
 

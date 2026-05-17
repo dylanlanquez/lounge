@@ -156,6 +156,7 @@ export function useRememberedBookings(): RememberedBookingsResult {
             unitLabel: (it.unit_label as string | null) ?? null,
             quantity: Number(it.quantity ?? 1),
             linePricePence: Number(it.line_total_pence ?? 0),
+            repairVariant: (it.repair_variant as string | null) ?? null,
           }))
           .filter((it) => it.name.length > 0);
         const upgrades: ManagedUpgrade[] = upgradesRaw

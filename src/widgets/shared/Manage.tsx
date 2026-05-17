@@ -607,6 +607,22 @@ function ReschedulePanel({
         serviceType={booking.serviceType}
         durationMinutes={durationMinutes}
         repairVariant={booking.repairVariant}
+        // Cart-aware: ship every distinct repair_variant in the
+        // existing booking so the reschedule slot grid honours the
+        // most restrictive variant (e.g. Relining when the cart
+        // mixed Cracked + Relining), not just the row's effective
+        // variant. Empty for non-denture_repair appointments. M17.
+        repairVariants={
+          booking.serviceType === 'denture_repair' && booking.repairItems.length > 0
+            ? Array.from(
+                new Set(
+                  booking.repairItems
+                    .map((r) => r.repairVariant)
+                    .filter((v): v is string => !!v),
+                ),
+              )
+            : null
+        }
         productKey={booking.productKey}
         arch={booking.arch}
         selectedIso={pickedIso}

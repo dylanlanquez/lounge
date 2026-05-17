@@ -17,6 +17,12 @@ export interface ManagedRepairItem {
   unitLabel: string | null;
   quantity: number;
   linePricePence: number;
+  /** lwo_catalogue.repair_variant — needed so the reschedule slot
+   *  picker can ship the full distinct-variants array to the
+   *  cart-aware slot RPC. Without this the manage-page reschedule
+   *  flow would fall back to the appointment row's single
+   *  repair_variant, missing other variants' pool claims. */
+  repairVariant: string | null;
 }
 
 /** Upgrade selection captured at booking. Renders inside the
@@ -127,6 +133,7 @@ export function useManagedBooking(token: string | null): LookupResult {
           unitLabel: (it.unit_label as string | null) ?? null,
           quantity: Number(it.quantity ?? 1),
           linePricePence: Number(it.line_total_pence ?? 0),
+          repairVariant: (it.repair_variant as string | null) ?? null,
         }))
         .filter((it) => it.name.length > 0);
       const upgrades: ManagedUpgrade[] = upgradesRaw
