@@ -103,6 +103,21 @@ export const PaymentStep = forwardRef<
   // is fresh but the contents haven't actually changed.
   const upgradeIds = api.state.upgradeIds;
   const upgradeIdsKey = upgradeIds.slice().sort().join('|');
+  // Denture-repair cart. The PI endpoint sums every line's
+  // server-resolved catalogue price for the full-pay path. Empty
+  // for every other service (whose price is one catalogue row).
+  // Stable cache key built the same way as upgradeIdsKey so the
+  // effect refires when the cart changes mid-flow.
+  const repairItems = api.state.repairItems;
+  const repairItemsForApi = repairItems.map((r) => ({
+    catalogueId: r.catalogueId,
+    arch: r.arch,
+    quantity: r.quantity,
+  }));
+  const repairItemsKey = repairItemsForApi
+    .map((r) => `${r.catalogueId}:${r.arch}:${r.quantity}`)
+    .sort()
+    .join('|');
   // Which amount the PI is created for. 'pay_deposit' tells the
   // server to read widget_deposit_pence (legacy "£25 deposit, balance
   // on the day" path); 'pay_full' tells it to charge the resolved
@@ -136,6 +151,13 @@ export const PaymentStep = forwardRef<
           // into the idempotency key so a different selection makes
           // a new PI. Empty array for services without upgrades.
           upgradeIds,
+          // Denture-repair cart. Server re-prices every line against
+          // lwo_catalogue and sums; client-side line totals are
+          // ignored to defend against tampering. Empty for every
+          // other service. Required for the denture-repair full-pay
+          // path — without it the PI is created at £0 / the wrong
+          // amount.
+          repairItems: repairItemsForApi,
           // 'full' charges the resolved catalogue price PLUS any
           // applicable upgrade pence; 'deposit' charges
           // widget_deposit_pence (legacy "deposit only" path) and
@@ -160,7 +182,7 @@ export const PaymentStep = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch, upgradeIdsKey, requestedMode, onError]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [locationId, serviceType, slotIso, email, repairVariant, productKey, arch, upgradeIdsKey, repairItemsKey, requestedMode, onError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While the Stripe form isn't ready yet, the parent shouldn't
   // enable the footer's Pay button.

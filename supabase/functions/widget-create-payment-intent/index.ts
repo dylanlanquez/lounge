@@ -33,6 +33,10 @@
 // reconcile manually via the Stripe dashboard if needed.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import {
+  resolveWidgetFullPricePence,
+  serialiseRepairItemsForHash,
+} from '../_shared/widgetFullPrice.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -80,6 +84,17 @@ interface Body {
    *  widget-create-appointment at commit time so the verification
    *  step recomputes an identical amount. */
   upgradeIds?: string[];
+  /** Denture-repair cart. Required for service_type='denture_repair'
+   *  on paymentMode='full' — the full price is the sum of every
+   *  cart line's catalogue price, not a single resolved row. Empty
+   *  / absent for every other service. Re-priced server-side
+   *  against lwo_catalogue; client-supplied unit_price values are
+   *  ignored. */
+  repairItems?: Array<{
+    catalogueId: string;
+    arch: 'upper' | 'lower' | 'both';
+    quantity: number;
+  }>;
   /** 'full' charges the resolved catalogue price (unit_price or
    *  both_arches_price) PLUS the applicable upgrade pence.
    *  'deposit' is the legacy path — charges the widget_deposit_pence
@@ -132,7 +147,14 @@ Deno.serve(async (req) => {
   const paymentMode: 'full' | 'deposit' = body.paymentMode === 'full' ? 'full' : 'deposit';
   let amountPence = 0;
   if (paymentMode === 'full') {
-    const fullPrice = await resolveFullPricePence(supabase, body);
+    const fullPrice = await resolveWidgetFullPricePence(supabase, {
+      serviceType: body.serviceType,
+      productKey: body.productKey ?? null,
+      repairVariant: body.repairVariant ?? null,
+      arch: body.arch ?? null,
+      upgradeIds: body.upgradeIds ?? [],
+      repairItems: body.repairItems ?? [],
+    });
     if (!fullPrice.ok) {
       return jsonResponse(400, { error: fullPrice.code });
     }
@@ -154,15 +176,15 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Idempotency: same (patient, slot, service, axes, upgrades, mode)
-  // within Stripe's 24h window returns the same PaymentIntent. A
-  // different upgrade selection must produce a different PI, so the
-  // sorted upgradeIds list is in the hash — otherwise re-entering
-  // the flow with new upgrades would reuse the old PI at the old
-  // (wrong) amount. paymentMode is also in the hash so a customer
-  // who clicks Pay-now, backs out, and switches to Pay-deposit
-  // correctly produces a fresh PI.
+  // Idempotency: same (patient, slot, service, axes, upgrades, cart,
+  // mode) within Stripe's 24h window returns the same PaymentIntent.
+  // A different upgrade selection OR a different denture-repair cart
+  // must produce a different PI; otherwise re-entering the flow with
+  // a new shape would reuse a stale PI at the old amount. paymentMode
+  // is also in the hash so a customer who clicks Pay-now, backs out,
+  // and switches to Pay-deposit correctly gets a fresh PI.
   const upgradeIdsForHash = (body.upgradeIds ?? []).slice().sort().join(',');
+  const repairItemsForHash = serialiseRepairItemsForHash(body.repairItems ?? []);
   const idemKey = await sha256Hex(
     [
       body.email.toLowerCase().trim(),
@@ -172,6 +194,7 @@ Deno.serve(async (req) => {
       body.productKey ?? '',
       body.arch ?? '',
       upgradeIdsForHash,
+      repairItemsForHash,
       paymentMode,
     ].join('|'),
   );
@@ -239,112 +262,15 @@ Deno.serve(async (req) => {
   });
 });
 
-// Compute the resolved full price the same way the widget client
-// does in computePriceBreakdown(): catalogue base + every applicable
-// upgrade, with arch-aware pricing on both layers.
-//
-// Why server-side: the PI amount must be authoritative. The client
-// composes a display price for the customer; the server resolves
+// Full-price resolution lives in _shared/widgetFullPrice.ts so this
+// endpoint and widget-create-appointment compute the amount the
+// same way. Two paths inside the helper:
+//   • denture_repair  — sum the cart's per-line catalogue prices.
+//   • everything else — resolve one catalogue row by axis pins.
+// The PI amount must be authoritative — the client composes a
+// display price for the customer, but the server resolves
 // independently and creates the PI for the server's number so a
 // tampered client body can never claim £0 on a £179 booking.
-//
-// Output: pounds × 100 (catalogue stores decimals).
-//
-// IMPORTANT: This logic must stay byte-for-byte identical to
-// widget-create-appointment's resolveFullPricePence — that endpoint
-// re-runs the same computation on submit and verifies the PI matches.
-// Any divergence between the two would either reject valid bookings
-// or accept under-charged ones.
-async function resolveFullPricePence(
-  supabase: SupabaseClient,
-  body: Body,
-): Promise<{ ok: true; pence: number } | { ok: false; code: string }> {
-  // Step 1 — resolve the catalogue row + its base price.
-  let q = supabase
-    .from('lwo_catalogue')
-    .select('id, unit_price, both_arches_price, arch_match')
-    .eq('service_type', body.serviceType)
-    .eq('active', true);
-  if (body.productKey) q = q.eq('product_key', body.productKey);
-  if (body.repairVariant) q = q.eq('repair_variant', body.repairVariant);
-  const { data, error } = await q.limit(1);
-  if (error) {
-    await logFailure('catalogue_resolve_failed', { error: error.message, body });
-    return { ok: false, code: 'catalogue_lookup_failed' };
-  }
-  const row = (data && data.length > 0 ? data[0] : null) as
-    | {
-        id: string;
-        unit_price: number | string | null;
-        both_arches_price: number | string | null;
-        arch_match: 'any' | 'single' | 'both' | null;
-      }
-    | null;
-  if (!row) return { ok: false, code: 'no_catalogue_row' };
-  const archMatch = row.arch_match ?? 'any';
-  const useBoth =
-    archMatch === 'single' &&
-    body.arch === 'both' &&
-    row.both_arches_price !== null;
-  const baseDecimal = useBoth ? row.both_arches_price : row.unit_price;
-  if (baseDecimal === null || baseDecimal === undefined) {
-    return { ok: false, code: 'no_price_resolved' };
-  }
-  const basePence = Math.round(Number(baseDecimal) * 100);
-  if (!Number.isFinite(basePence) || basePence <= 0) {
-    return { ok: false, code: 'no_price_resolved' };
-  }
-
-  // Step 2 — add applicable upgrade pence. Every id must (a) live in
-  // lng_widget_upgrades (the anon-readable filtered view of
-  // lng_catalogue_upgrades — only active + widget_visible rows
-  // surface) and (b) belong to the catalogue row we just resolved.
-  // Defence against a tampered body that includes upgrade ids from
-  // a different product / hidden upgrades / inactive rows — they're
-  // silently dropped from the total so the customer is never
-  // overcharged by a manipulated request, and the system is never
-  // undercharged because the legitimate widget client only ever
-  // sends upgrade ids that pass both checks.
-  const upgradeIds = Array.from(new Set(body.upgradeIds ?? [])).filter(
-    (id) => typeof id === 'string' && id.length > 0,
-  );
-  let upgradePence = 0;
-  if (upgradeIds.length > 0) {
-    const { data: upgradeRows, error: upgradeErr } = await supabase
-      .from('lng_widget_upgrades')
-      .select('id, catalogue_id, unit_price, both_arches_price')
-      .in('id', upgradeIds)
-      .eq('catalogue_id', row.id);
-    if (upgradeErr) {
-      await logFailure('upgrade_price_resolve_failed', {
-        error: upgradeErr.message,
-        body,
-      });
-      return { ok: false, code: 'upgrade_resolve_failed' };
-    }
-    for (const u of (upgradeRows ?? []) as Array<{
-      id: string;
-      catalogue_id: string;
-      unit_price: number | string | null;
-      both_arches_price: number | string | null;
-    }>) {
-      // Upgrades inherit the parent row's arch_match: a single-arch
-      // product's upgrade also uses its both_arches_price when the
-      // customer picked arch='both'. Anything else uses unit_price.
-      const useUpgradeBoth =
-        archMatch === 'single' &&
-        body.arch === 'both' &&
-        u.both_arches_price !== null;
-      const upgradeDecimal = useUpgradeBoth ? u.both_arches_price : u.unit_price;
-      if (upgradeDecimal === null || upgradeDecimal === undefined) continue;
-      const pence = Math.round(Number(upgradeDecimal) * 100);
-      if (!Number.isFinite(pence) || pence <= 0) continue;
-      upgradePence += pence;
-    }
-  }
-
-  return { ok: true, pence: basePence + upgradePence };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
