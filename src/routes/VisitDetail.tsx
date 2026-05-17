@@ -3691,41 +3691,53 @@ function Totals({
           <Row label="Discount" value={`-${formatPence(discount)}`} />
         )
       ) : null}
-      {depositPence > 0 ? (
-        <Row
-          label={`${deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} (${formatDepositSourceSuffix(deposit)})`}
-          value={`-${formatPence(depositPence)}`}
-          accent
-        />
-      ) : null}
-      {shopifyCreditPence > 0 ? (
-        <Row
-          label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
-          value={`-${formatPence(shopifyCreditPence)}`}
-          accent
-        />
-      ) : null}
-      {tillCollectedPence > 0 ? (
-        <Row
-          label="Collected at till"
-          value={`-${formatPence(tillCollectedPence)}`}
-          accent
-        />
-      ) : null}
-      {refundedToDatePence > 0 ? (
-        // Refund line. Renders as a positive value (the gross
-        // captures above came down by this amount) so the math
-        // reconciles when read top-to-bottom: -£760 + £5 = -£755
-        // net, which matches the amount_paid view. The timeline
-        // carries the full audit (which card, who refunded, who
-        // approved, why), so this line just needs to balance the
-        // books visually.
-        <Row
-          label="Refunded to patient"
-          value={`+${formatPence(refundedToDatePence)}`}
-          accent
-        />
-      ) : null}
+      {/* Apply refunds against the gross captures so the breakdown
+          reads as the NET money on file with no "+£5" cognitive
+          load. Greedy waterfall: deposit absorbs first (the most
+          common refund source), then till, then Shopify credit.
+          Each row shows its net value; a small sub-line under the
+          row spells out the gross + refund history in plain English
+          ("£760.00 paid · £5.00 refunded back to James") so the
+          audit is still visible at a glance. */}
+      {(() => {
+        let remainingRefund = refundedToDatePence;
+        const depositRefund = Math.min(depositPence, remainingRefund);
+        remainingRefund -= depositRefund;
+        const tillRefund = Math.min(tillCollectedPence, remainingRefund);
+        remainingRefund -= tillRefund;
+        const shopifyRefund = Math.min(shopifyCreditPence, remainingRefund);
+        const refundedAwayCopy = patientFirstName
+          ? `refunded back to ${patientFirstName}`
+          : 'refunded back to patient';
+        return (
+          <>
+            {depositPence > 0 ? (
+              <CreditRow
+                label={`${deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} (${formatDepositSourceSuffix(deposit)})`}
+                grossPence={depositPence}
+                refundedPence={depositRefund}
+                refundedAwayCopy={refundedAwayCopy}
+              />
+            ) : null}
+            {shopifyCreditPence > 0 ? (
+              <CreditRow
+                label={shopifyOrderName ? `Online order ${shopifyOrderName} (venneir.com)` : 'Online order (venneir.com)'}
+                grossPence={shopifyCreditPence}
+                refundedPence={shopifyRefund}
+                refundedAwayCopy={refundedAwayCopy}
+              />
+            ) : null}
+            {tillCollectedPence > 0 ? (
+              <CreditRow
+                label="Collected at till"
+                grossPence={tillCollectedPence}
+                refundedPence={tillRefund}
+                refundedAwayCopy={refundedAwayCopy}
+              />
+            ) : null}
+          </>
+        );
+      })()}
       {hideTotalRow ? null : owedToPatientPence > 0 ? (
         // Overpaid state. The bottom row now folds the standalone
         // "We owe X" banner into itself so the explanation + Refund
@@ -4153,6 +4165,59 @@ function Row({ label, value, accent = false }: { label: string; value: string; a
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+// CreditRow — a Totals row for a payment-credit line (deposit /
+// Shopify / till) that already knows about refunds against it.
+// Renders the value as NET (gross - refunds) on the right so the
+// reader doesn't have to do "+£5 means…" math. When a refund has
+// chipped away at the gross, a muted sub-line under the row spells
+// out the history in plain English ("£760.00 paid · £5.00 refunded
+// back to James"). When refundedPence is zero the row reads
+// identically to the old plain Row.
+function CreditRow({
+  label,
+  grossPence,
+  refundedPence,
+  refundedAwayCopy,
+}: {
+  label: string;
+  grossPence: number;
+  refundedPence: number;
+  refundedAwayCopy: string;
+}) {
+  const netPence = Math.max(0, grossPence - refundedPence);
+  const hasRefund = refundedPence > 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>{label}</span>
+        <span
+          style={{
+            color: theme.color.accent,
+            fontVariantNumeric: 'tabular-nums',
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+          }}
+        >
+          {`-${formatPence(netPence)}`}
+        </span>
+      </div>
+      {hasRefund ? (
+        <span
+          style={{
+            display: 'block',
+            textAlign: 'right',
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: 1.4,
+          }}
+        >
+          {`${formatPence(grossPence)} paid · ${formatPence(refundedPence)} ${refundedAwayCopy}`}
+        </span>
+      ) : null}
     </div>
   );
 }
