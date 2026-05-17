@@ -58,126 +58,6 @@ export async function recordCashPayment(
   return data as PaymentRow;
 }
 
-// Voids a previously-succeeded cash payment. Used when staff
-// records cash, customer then changes their mind to card (or
-// vice-versa), or staff hits the wrong amount. NOT a hard delete:
-// the lng_payments row stays as audit, just flipped to 'cancelled'
-// with the reason on failure_reason. Re-opens the cart if this was
-// the payment that flipped it to paid, so the next attempt can take
-// the bill again.
-//
-// Anti-theft rail: voids require a second staff sign-off
-// (approverAccountId). The approver must be a different account
-// from the voider — a lone cashier can't pocket cash, void the
-// row, and re-ring it. Both ids land on the patient_events row
-// alongside the reason.
-export async function voidCashPayment(
-  paymentId: string,
-  reason: string,
-  approverAccountId: string
-): Promise<void> {
-  const trimmedReason = reason.trim();
-  if (trimmedReason.length === 0) throw new Error('A reason is required to void a payment');
-
-  const { data: accountId } = await supabase.rpc('auth_account_id');
-  const voidedBy = (accountId as string | null) ?? null;
-  if (!approverAccountId) throw new Error('Manager approval is required to void a payment.');
-  if (voidedBy && approverAccountId === voidedBy) {
-    throw new Error('Approver must be a different staff member from the one voiding.');
-  }
-
-  // Read the payment to validate state + grab cart_id, amount, method.
-  const { data: payment, error: pErr } = await supabase
-    .from('lng_payments')
-    .select('id, cart_id, method, payment_journey, amount_pence, status')
-    .eq('id', paymentId)
-    .maybeSingle();
-  if (pErr) throw new Error(pErr.message);
-  if (!payment) throw new Error('Payment not found');
-  const p = payment as {
-    id: string;
-    cart_id: string;
-    method: string;
-    payment_journey: string;
-    amount_pence: number;
-    status: string;
-  };
-  if (p.method !== 'cash') {
-    throw new Error('voidCashPayment is for cash only. Use the card refund flow for card payments.');
-  }
-  if (p.status !== 'succeeded') {
-    throw new Error(`Cannot void payment in status ${p.status}`);
-  }
-
-  // Block voiding once the visit is complete — at that point the
-  // box has been freed and the appointment is closed, so unwinding
-  // would be a multi-table reversal best handled by an admin.
-  const { data: cartRow, error: cartErr } = await supabase
-    .from('lng_carts')
-    .select('visit_id')
-    .eq('id', p.cart_id)
-    .maybeSingle();
-  if (cartErr) throw new Error(cartErr.message);
-  const visitId = (cartRow as { visit_id: string } | null)?.visit_id ?? null;
-  let patientId: string | null = null;
-  if (visitId) {
-    const { data: visit } = await supabase
-      .from('lng_visits')
-      .select('status, patient_id')
-      .eq('id', visitId)
-      .maybeSingle();
-    const v = visit as { status: string; patient_id: string } | null;
-    if (v?.status === 'complete') {
-      throw new Error('Visit is already complete. Voiding payments needs an admin reversal.');
-    }
-    patientId = v?.patient_id ?? null;
-  }
-
-  // Mark the payment cancelled. failure_reason carries the staff
-  // text; cancelled_at marks the moment.
-  const { error: updErr } = await supabase
-    .from('lng_payments')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      failure_reason: trimmedReason,
-    })
-    .eq('id', p.id);
-  if (updErr) throw new Error(updErr.message);
-
-  // Re-open the cart so the next method can take the bill. The
-  // cart's status only flips to 'paid' when the sum of succeeded
-  // covers the total; voiding a row drops the sum below that, so
-  // re-opening is the right state.
-  await supabase
-    .from('lng_carts')
-    .update({ status: 'open', closed_at: null })
-    .eq('id', p.cart_id);
-
-  // Audit row. event_type 'refund_issued' is the existing rail —
-  // the payload carries method='cash' so a downstream consumer can
-  // tell it apart from a card refund. Both staff ids (voider +
-  // approver) land here so the timeline shows the 2-person
-  // sign-off chain.
-  if (patientId) {
-    await supabase.from('patient_events').insert({
-      patient_id: patientId,
-      event_type: 'refund_issued',
-      actor_account_id: voidedBy,
-      notes: trimmedReason,
-      payload: {
-        payment_id: p.id,
-        amount_pence: p.amount_pence,
-        method: p.method,
-        payment_journey: p.payment_journey,
-        reason: trimmedReason,
-        staff_account_id: voidedBy,
-        approver_account_id: approverAccountId,
-      },
-    });
-  }
-}
-
 // Sum payments toward a cart and flip its status to 'paid' once they
 // meet or exceed the total. "Payments toward" means succeeded
 // lng_payments PLUS the appointment's paid Calendly deposit when one
@@ -337,37 +217,301 @@ export function useCartPayments(cartId: string | null | undefined) {
   return { data, loading, error, refresh };
 }
 
-// Voids a captured payment regardless of method. Cash routes to
-// voidCashPayment (client-side, since cash needs no third-party
-// reversal); card routes to the terminal-refund edge function
-// (which calls Stripe's refund API). Both paths require a 2nd
-// staff sign-off via approverAccountId (resolved by approveAsManager
-// against email + password).
-//
-// Both end up with:
-//   - lng_payments.status = 'cancelled'
-//   - cart re-opened so the next method can charge again
-//   - patient_events 'refund_issued' row with voider + approver + reason
-export async function voidPayment(
-  paymentId: string,
-  method: PaymentMethod,
-  reason: string,
-  approverAccountId: string
-): Promise<void> {
-  const trimmed = reason.trim();
-  if (trimmed.length === 0) throw new Error('A reason is required to void a payment');
-  if (!approverAccountId) throw new Error('Manager approval is required.');
+// Reason categories surfaced on the RefundSheet dropdown. Stored on
+// lng_payment_refunds.reason_category (text + check constraint).
+// Keep in sync with the migration's check list.
+export type RefundReasonCategory =
+  | 'item_removed'
+  | 'visit_cancelled'
+  | 'visit_ended_early'
+  | 'service_not_delivered'
+  | 'patient_request'
+  | 'cart_correction'
+  | 'other';
 
-  if (method === 'cash') {
-    await voidCashPayment(paymentId, trimmed, approverAccountId);
-    return;
+export const REFUND_REASON_CATEGORIES: Array<{ key: RefundReasonCategory; label: string }> = [
+  { key: 'item_removed', label: 'Item removed from cart' },
+  { key: 'visit_cancelled', label: 'Visit cancelled' },
+  { key: 'visit_ended_early', label: 'Visit ended early' },
+  { key: 'service_not_delivered', label: 'Service not delivered' },
+  { key: 'patient_request', label: 'Patient request' },
+  { key: 'cart_correction', label: 'Cart correction' },
+  { key: 'other', label: 'Other' },
+];
+
+// A refundable money source on the visit. Two shapes feed this list:
+//
+//   • lng_payments rows captured at the till (kind='payment'). Each
+//     row's refundable balance = amount_pence − sum of succeeded
+//     refunds against it.
+//   • The appointment's widget-paid deposit (kind='deposit'). Lives
+//     on lng_appointments.deposit_external_id; refundable balance =
+//     deposit_pence − sum of succeeded refunds against the
+//     appointment.
+//
+// Both surfaces in RefundSheet treat these uniformly: pick a row,
+// type an amount, submit. The edge function routes by kind.
+export interface RefundableSourceRow {
+  kind: 'payment' | 'deposit';
+  /** lng_payments.id when kind='payment', lng_appointments.id when
+   *  kind='deposit'. The edge function reads this + kind to decide
+   *  which Stripe PI (if any) to refund against. */
+  id: string;
+  method: PaymentMethod;
+  payment_journey: PaymentJourney;
+  amount_pence: number;
+  refunded_pence: number;
+  refundable_pence: number;
+  /** When the source was originally captured. For payments this is
+   *  succeeded_at; for deposits it's lng_appointments.deposit_paid_at. */
+  captured_at: string | null;
+  taken_by_name: string | null;
+  /** Display label override — deposits read as "Paid online at booking"
+   *  rather than the generic "Card / contactless". Null for payments
+   *  (the method drives the label). */
+  source_label: string | null;
+}
+
+export function useRefundableSources({
+  cartId,
+  appointmentId,
+}: {
+  cartId: string | null | undefined;
+  appointmentId: string | null | undefined;
+}) {
+  const [data, setData] = useState<RefundableSourceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = () => setTick((t) => t + 1);
+
+  useEffect(() => {
+    if (!cartId && !appointmentId) {
+      setData([]);
+      setLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const sources: RefundableSourceRow[] = [];
+
+      // ── lng_payments on the cart ─────────────────────────────
+      if (cartId) {
+        const { data: rows, error: err } = await supabase
+          .from('lng_payments')
+          .select(
+            'id, method, payment_journey, amount_pence, status, succeeded_at, taken_by, account:accounts!taken_by ( first_name, last_name, name )',
+          )
+          .eq('cart_id', cartId)
+          .eq('status', 'succeeded')
+          .order('created_at', { ascending: true });
+        if (cancelled) return;
+        if (err) {
+          setError(err.message);
+          setLoading(false);
+          return;
+        }
+        const paymentRows = (rows ?? []) as Array<{
+          id: string;
+          method: PaymentMethod;
+          payment_journey: PaymentJourney;
+          amount_pence: number;
+          succeeded_at: string | null;
+          account:
+            | { first_name: string | null; last_name: string | null; name: string | null }
+            | { first_name: string | null; last_name: string | null; name: string | null }[]
+            | null;
+        }>;
+        const paymentIds = paymentRows.map((r) => r.id);
+        let refundedByPayment = new Map<string, number>();
+        if (paymentIds.length > 0) {
+          const { data: refundRows, error: refundErr } = await supabase
+            .from('lng_payment_refunds')
+            .select('payment_id, amount_pence')
+            .in('payment_id', paymentIds)
+            .eq('status', 'succeeded');
+          if (cancelled) return;
+          if (refundErr) {
+            setError(refundErr.message);
+            setLoading(false);
+            return;
+          }
+          refundedByPayment = new Map(
+            paymentIds.map((id) => [
+              id,
+              ((refundRows ?? []) as Array<{ payment_id: string; amount_pence: number }>)
+                .filter((r) => r.payment_id === id)
+                .reduce((acc, r) => acc + (r.amount_pence ?? 0), 0),
+            ]),
+          );
+        }
+        for (const r of paymentRows) {
+          const a = Array.isArray(r.account) ? r.account[0] ?? null : r.account ?? null;
+          const fn = a?.first_name?.trim();
+          const ln = a?.last_name?.trim();
+          const display = fn && ln ? `${fn} ${ln}` : fn ?? ln ?? a?.name?.trim() ?? null;
+          const refunded = refundedByPayment.get(r.id) ?? 0;
+          sources.push({
+            kind: 'payment',
+            id: r.id,
+            method: r.method,
+            payment_journey: r.payment_journey,
+            amount_pence: r.amount_pence,
+            refunded_pence: refunded,
+            refundable_pence: Math.max(0, r.amount_pence - refunded),
+            captured_at: r.succeeded_at,
+            taken_by_name: display,
+            source_label: null,
+          });
+        }
+      }
+
+      // ── Widget deposit on the appointment ────────────────────
+      if (appointmentId) {
+        const { data: appt, error: aErr } = await supabase
+          .from('lng_appointments')
+          .select(
+            'id, deposit_pence, deposit_status, deposit_provider, deposit_paid_at, deposit_external_id',
+          )
+          .eq('id', appointmentId)
+          .maybeSingle();
+        if (cancelled) return;
+        if (aErr) {
+          setError(aErr.message);
+          setLoading(false);
+          return;
+        }
+        const a = appt as {
+          id: string;
+          deposit_pence: number | null;
+          deposit_status: string | null;
+          deposit_provider: string | null;
+          deposit_paid_at: string | null;
+          deposit_external_id: string | null;
+        } | null;
+        if (
+          a &&
+          a.deposit_status === 'paid' &&
+          a.deposit_provider === 'stripe' &&
+          a.deposit_pence &&
+          a.deposit_pence > 0 &&
+          a.deposit_external_id
+        ) {
+          // Sum existing refunds against this appointment's deposit.
+          const { data: depositRefundRows, error: depErr } = await supabase
+            .from('lng_payment_refunds')
+            .select('amount_pence')
+            .eq('deposit_appointment_id', a.id)
+            .eq('status', 'succeeded');
+          if (cancelled) return;
+          if (depErr) {
+            setError(depErr.message);
+            setLoading(false);
+            return;
+          }
+          const depositRefunded = ((depositRefundRows ?? []) as Array<{
+            amount_pence: number;
+          }>).reduce((acc, r) => acc + (r.amount_pence ?? 0), 0);
+          const refundable = Math.max(0, a.deposit_pence - depositRefunded);
+          if (refundable > 0) {
+            sources.push({
+              kind: 'deposit',
+              id: a.id,
+              method: 'card_terminal',
+              payment_journey: 'standard',
+              amount_pence: a.deposit_pence,
+              refunded_pence: depositRefunded,
+              refundable_pence: refundable,
+              captured_at: a.deposit_paid_at,
+              taken_by_name: null,
+              source_label: 'Paid online at booking',
+            });
+          }
+        }
+      }
+
+      // Order: deposit first (chronologically earliest), then till
+      // payments in capture order. The customer paid the deposit
+      // first, so refunding it last reads naturally for the
+      // accounting trail.
+      sources.sort((x, y) => {
+        if (x.kind === 'deposit' && y.kind !== 'deposit') return -1;
+        if (y.kind === 'deposit' && x.kind !== 'deposit') return 1;
+        const xt = x.captured_at ? Date.parse(x.captured_at) : 0;
+        const yt = y.captured_at ? Date.parse(y.captured_at) : 0;
+        return xt - yt;
+      });
+      setData(sources);
+      setError(null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cartId, appointmentId, tick]);
+
+  return { data, loading, error, refresh };
+}
+
+// Refund input — exactly one of paymentId or depositAppointmentId
+// must be set, mirroring the edge function's contract. The
+// RefundSheet UI maps a RefundableSourceRow.kind directly to which
+// id field gets populated.
+export type RefundPartialInput =
+  | {
+      paymentId: string;
+      depositAppointmentId?: never;
+      amountPence: number;
+      reasonCategory: RefundReasonCategory;
+      reasonNote: string;
+      approverAccountId: string;
+    }
+  | {
+      paymentId?: never;
+      depositAppointmentId: string;
+      amountPence: number;
+      reasonCategory: RefundReasonCategory;
+      reasonNote: string;
+      approverAccountId: string;
+    };
+
+export interface RefundPartialResult {
+  refundId: string;
+  refundSource: 'payment' | 'deposit';
+  cumulativeRefundedPence: number;
+  isFullRefund: boolean;
+}
+
+// Refunds an arbitrary amount against a captured payment OR the
+// appointment's widget-paid deposit. Routes through the
+// terminal-refund edge function so:
+//   • Stripe refunds (card_terminal payments + every deposit) call
+//     /v1/refunds server-side with the service-role key + an
+//     idempotency key derived from the freshly-inserted refund row.
+//   • Cash refunds also write an lng_payment_refunds row — one
+//     audit table for every refund regardless of source.
+//
+// Manager approval (approverAccountId) is required and must differ
+// from the caller; the edge function double-checks.
+export async function refundPartial(input: RefundPartialInput): Promise<RefundPartialResult> {
+  const note = input.reasonNote.trim();
+  if (note.length === 0) throw new Error('A reason note is required to issue a refund');
+  if (!input.approverAccountId) throw new Error('Manager approval is required.');
+  if (!Number.isFinite(input.amountPence) || input.amountPence <= 0) {
+    throw new Error('Refund amount must be greater than zero');
+  }
+  const payload: Record<string, unknown> = {
+    amount_pence: Math.round(input.amountPence),
+    reason_category: input.reasonCategory,
+    reason_note: note,
+    approver_account_id: input.approverAccountId,
+  };
+  if (input.paymentId) {
+    payload.payment_id = input.paymentId;
+  } else {
+    payload.deposit_appointment_id = input.depositAppointmentId;
   }
 
-  // Card / BNPL go through the terminal-refund edge function so
-  // the Stripe refund fires server-side (and the function carries
-  // the bearer to resolve the voider). approver_account_id rides
-  // on the body — the function verifies it differs from the bearer
-  // before recording it on the patient_events row.
   const url = new URL(import.meta.env.VITE_SUPABASE_URL);
   const projectRef = url.hostname.split('.')[0];
   const { data: sessionData } = await supabase.auth.getSession();
@@ -378,16 +522,79 @@ export async function voidPayment(
       Authorization: `Bearer ${token ?? ''}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      payment_id: paymentId,
-      reason: trimmed,
-      approver_account_id: approverAccountId,
-    }),
+    body: JSON.stringify(payload),
   });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok || !body?.ok) {
+  const body = (await r.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    detail?: unknown;
+    refund_id?: string;
+    refund_source?: 'payment' | 'deposit';
+    cumulative_refunded_pence?: number;
+    is_full_refund?: boolean;
+  };
+  if (!r.ok || !body?.ok || !body.refund_id) {
     throw new Error(body?.error ?? `Refund failed (HTTP ${r.status})`);
   }
+  return {
+    refundId: body.refund_id,
+    refundSource: body.refund_source ?? (input.paymentId ? 'payment' : 'deposit'),
+    cumulativeRefundedPence: body.cumulative_refunded_pence ?? 0,
+    isFullRefund: body.is_full_refund === true,
+  };
+}
+
+// Voids the entire captured amount on a payment. Backward-compatible
+// shim over refundPartial — every existing voidPayment caller
+// (Pay.tsx) gets the same UX while the underlying audit row lands
+// in lng_payment_refunds like every other refund.
+export async function voidPayment(
+  paymentId: string,
+  _method: PaymentMethod,
+  reason: string,
+  approverAccountId: string,
+): Promise<void> {
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) throw new Error('A reason is required to void a payment');
+  if (!approverAccountId) throw new Error('Manager approval is required.');
+
+  // Re-read the payment so we know the full amount to refund. The
+  // void-this-whole-payment UX in Pay.tsx doesn't ask staff for an
+  // amount; it implicitly means "all of it remaining".
+  const { data: payment, error: pErr } = await supabase
+    .from('lng_payments')
+    .select('amount_pence, status')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (pErr) throw new Error(pErr.message);
+  if (!payment) throw new Error('Payment not found');
+  const p = payment as { amount_pence: number; status: string };
+  if (p.status !== 'succeeded') {
+    throw new Error(`Cannot void payment in status ${p.status}`);
+  }
+
+  // Sum existing refunds so the void only asks for what's left.
+  const { data: refundedRows } = await supabase
+    .from('lng_payment_refunds')
+    .select('amount_pence')
+    .eq('payment_id', paymentId)
+    .eq('status', 'succeeded');
+  const alreadyRefunded = ((refundedRows ?? []) as { amount_pence: number }[]).reduce(
+    (acc, r) => acc + (r.amount_pence ?? 0),
+    0,
+  );
+  const remaining = p.amount_pence - alreadyRefunded;
+  if (remaining <= 0) {
+    throw new Error('This payment has already been refunded in full.');
+  }
+
+  await refundPartial({
+    paymentId,
+    amountPence: remaining,
+    reasonCategory: 'cart_correction',
+    reasonNote: trimmed,
+    approverAccountId,
+  });
 }
 
 // Verifies an approving manager's credentials WITHOUT changing the

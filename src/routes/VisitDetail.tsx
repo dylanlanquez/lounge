@@ -75,6 +75,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
+import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
 import {
   configFor,
   useAdminProductConfig,
@@ -193,7 +194,7 @@ export function VisitDetail() {
   // succeeded lng_payments row, and any linked Shopify pre-paid order.
   // Used for the Cart card's outstanding balance so this page agrees
   // with the Take Payment screen.
-  const { data: paidStatus } = useVisitPaidStatus(id);
+  const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
   const paidPayments = useMemo(
     () => succeededPayments.filter((p) => p.status === 'succeeded'),
     [succeededPayments],
@@ -296,6 +297,14 @@ export function VisitDetail() {
   // fulfilment_method='shipping'. Also surfaces via "Process shipping"
   // button if the visit was completed earlier but dispatch wasn't done.
   const [shipOpen, setShipOpen] = useState(false);
+  // Refund sheet: opens from the owed-back banner (cart edit dropped
+  // the cart below what was already paid) and from the cancelled /
+  // ended-early flow. Same component for every entry point so the
+  // audit shape is identical no matter how the refund was triggered.
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundDefaultCategory, setRefundDefaultCategory] = useState<
+    'item_removed' | 'visit_cancelled' | 'visit_ended_early' | 'cart_correction'
+  >('item_removed');
   const [shipToast, setShipToast] = useState<{ dispatch_ref: string; tracking_number: string | null } | null>(null);
 
   // Change-fulfilment sheet — opens post-completion when staff need
@@ -612,6 +621,17 @@ export function VisitDetail() {
   const subtotalAfterDiscount = Math.max(0, subtotal - discount);
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
   const total = Math.max(0, subtotalAfterDiscount - amountPaidPence);
+  // Inverse of the outstanding balance: when the patient has paid
+  // more than the cart owes (cart item removed after a full pre-pay,
+  // discount applied retroactively, etc) we owe THEM. The red banner
+  // above the cart surfaces this so staff can issue a refund before
+  // wrapping up the visit. Capped at amountPaidPence so a malformed
+  // negative subtotal can't ask for a refund larger than was ever
+  // collected.
+  const owedToPatientPence = Math.min(
+    amountPaidPence,
+    Math.max(0, amountPaidPence - subtotalAfterDiscount),
+  );
   // Pence collected at the till today, separate from the deposit and
   // any Shopify pre-paid credit. Used in the Totals card breakdown
   // so we can show "Deposit -£X · Collected -£Y" without overlap.
@@ -1310,6 +1330,67 @@ export function VisitDetail() {
               />
             </div>
 
+            {/* Owed-back banner. Appears whenever the patient has
+                paid more than the current cart owes — the canonical
+                case: customer paid in full via the widget, arrived,
+                staff removed an item from the cart so the cart total
+                dropped. Persists until either the cart math goes
+                back to balanced (item re-added) or a refund is
+                issued. CS-only staff don't see the Refund button
+                (they can't act on the till) but DO see the banner so
+                they know to alert someone. */}
+            {owedToPatientPence > 0 ? (
+              <div
+                role="alert"
+                style={{
+                  marginBottom: theme.space[3],
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                  borderRadius: theme.radius.input,
+                  background: 'rgba(220, 38, 38, 0.08)',
+                  border: '1px solid rgba(220, 38, 38, 0.30)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: theme.space[3],
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.sm,
+                      fontWeight: theme.type.weight.semibold,
+                      color: '#991b1b',
+                    }}
+                  >
+                    We owe {patient?.first_name ?? 'the patient'}{' '}
+                    {formatPence(owedToPatientPence)}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.xs,
+                      color: '#7f1d1d',
+                    }}
+                  >
+                    Cart dropped below what they paid. Issue a refund before completing the
+                    visit.
+                  </span>
+                </div>
+                {isCsOnly ? null : (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setRefundDefaultCategory('item_removed');
+                      setRefundOpen(true);
+                    }}
+                  >
+                    Refund {formatPence(owedToPatientPence)}
+                  </Button>
+                )}
+              </div>
+            ) : null}
+
             {/* Whole Cart card dims when the visit is unsuitable —
                 title, items, subtotal, totals all go quiet. The
                 action row below stays at full opacity so the
@@ -1674,6 +1755,22 @@ export function VisitDetail() {
         patientEmail={patient?.email ?? null}
       />
 
+
+      <RefundSheet
+        open={refundOpen}
+        onClose={() => setRefundOpen(false)}
+        cartId={cart?.id ?? null}
+        appointmentId={visit?.appointment_id ?? null}
+        suggestedPence={owedToPatientPence > 0 ? owedToPatientPence : null}
+        defaultCategory={refundDefaultCategory}
+        onCompleted={() => {
+          // Re-pull paid-status + cart-payment list so the banner
+          // disappears immediately on a clean refund and the
+          // captured-payments list reflects the new remaining
+          // balances.
+          refreshPaid();
+        }}
+      />
 
       {visit && patient ? (
         <ShipVisitSheet
