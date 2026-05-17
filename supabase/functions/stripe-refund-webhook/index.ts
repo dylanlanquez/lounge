@@ -270,6 +270,116 @@ async function reconcileRefund(
       });
     }
   }
+
+  // Auto-resolve owed timeline narrative when the async settlement
+  // brings the patient back to balanced.
+  const patientId = await resolvePatientId(supabase, r);
+  if (patientId) {
+    await maybeResolveOwedEvent(supabase, {
+      patientId,
+      visitId: r.visit_id,
+      appointmentId: r.appointment_id ?? r.deposit_appointment_id,
+      refundId: r.id,
+      refundedPence: r.amount_pence,
+    });
+  }
+
+  // Refund receipt — fire only on async settlement (the synchronous
+  // path in terminal-refund fires its own). Best-effort.
+  try {
+    await fetch(
+      `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/send-refund-receipt`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refundId: r.id }),
+      },
+    );
+  } catch (e) {
+    await logFailure('refund_receipt_invoke_failed', {
+      refund_id: r.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+async function maybeResolveOwedEvent(
+  supabase: ReturnType<typeof createClient>,
+  args: {
+    patientId: string;
+    visitId: string | null;
+    appointmentId: string | null;
+    refundId: string;
+    refundedPence: number;
+  },
+): Promise<void> {
+  try {
+    let balanced = false;
+    if (args.visitId) {
+      const { data: paidRow } = await supabase
+        .from('lng_visit_paid_status')
+        .select('amount_due_pence, amount_paid_pence')
+        .eq('visit_id', args.visitId)
+        .maybeSingle();
+      const p = paidRow as {
+        amount_due_pence: number | null;
+        amount_paid_pence: number;
+      } | null;
+      if (p) {
+        balanced = p.amount_paid_pence <= (p.amount_due_pence ?? 0);
+      }
+    } else if (args.appointmentId) {
+      const { data: apptRow } = await supabase
+        .from('lng_appointments')
+        .select('deposit_pence, deposit_status')
+        .eq('id', args.appointmentId)
+        .maybeSingle();
+      const a = apptRow as {
+        deposit_pence: number | null;
+        deposit_status: string | null;
+      } | null;
+      if (a?.deposit_status === 'paid' && a.deposit_pence) {
+        const { data: refundsRows } = await supabase
+          .from('lng_payment_refunds')
+          .select('amount_pence')
+          .eq('deposit_appointment_id', args.appointmentId)
+          .eq('status', 'succeeded');
+        const totalRefunded = ((refundsRows ?? []) as { amount_pence: number }[]).reduce(
+          (acc, x) => acc + (x.amount_pence ?? 0),
+          0,
+        );
+        balanced = totalRefunded >= a.deposit_pence;
+      } else {
+        balanced = true;
+      }
+    }
+    if (!balanced) return;
+    const { data: recent } = await supabase
+      .from('patient_events')
+      .select('id')
+      .eq('patient_id', args.patientId)
+      .eq('event_type', 'owed_to_patient')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const owed = (recent ?? [])[0] as { id: string } | undefined;
+    await supabase.from('patient_events').insert({
+      patient_id: args.patientId,
+      event_type: 'owed_to_patient_resolved',
+      payload: {
+        resolved_by_refund_id: args.refundId,
+        refunded_pence: args.refundedPence,
+        resolved_owed_event_id: owed?.id ?? null,
+        visit_id: args.visitId,
+        appointment_id: args.appointmentId,
+        source: 'webhook',
+      },
+    });
+  } catch {
+    // best-effort
+  }
 }
 
 async function resolvePatientId(

@@ -643,6 +643,122 @@ export function useFinancialsVoids(
   return { data, loading, error };
 }
 
+// ── Refunds ───────────────────────────────────────────────────────────────
+//
+// Distinct from voids: voids flip a whole lng_payments row to
+// 'cancelled'; refunds (introduced with the partial-refund + widget-
+// deposit support) are per-event rows in lng_payment_refunds, can
+// be partial, and span both payment sources (cart-side) and deposit
+// sources (widget-paid appointments). This is the canonical money-
+// out feed for the period.
+
+export interface RefundRow {
+  id: string;
+  amount_pence: number;
+  method: string;
+  source_kind: 'payment' | 'deposit';
+  reason_category: string;
+  reason_note: string;
+  refunded_at: string;
+}
+
+export interface RefundsData {
+  rows: RefundRow[];
+  total_amount_pence: number;
+  count: number;
+  amount_by_method: Record<string, number>;
+}
+
+interface RawRefund {
+  id: string;
+  amount_pence: number;
+  method: string;
+  payment_id: string | null;
+  deposit_appointment_id: string | null;
+  reason_category: string;
+  reason_note: string;
+  refunded_at: string;
+}
+
+export function shapeRefunds(raw: RawRefund[]): RefundsData {
+  const rows: RefundRow[] = [];
+  let total = 0;
+  const byMethod: Record<string, number> = {};
+  for (const r of raw) {
+    rows.push({
+      id: r.id,
+      amount_pence: r.amount_pence,
+      method: r.method,
+      source_kind: r.deposit_appointment_id ? 'deposit' : 'payment',
+      reason_category: r.reason_category,
+      reason_note: r.reason_note,
+      refunded_at: r.refunded_at,
+    });
+    total += r.amount_pence;
+    byMethod[r.method] = (byMethod[r.method] ?? 0) + r.amount_pence;
+  }
+  rows.sort((a, b) => b.refunded_at.localeCompare(a.refunded_at));
+  return {
+    rows,
+    total_amount_pence: total,
+    count: rows.length,
+    amount_by_method: byMethod,
+  };
+}
+
+interface RefundsResult {
+  data: RefundsData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useFinancialsRefunds(range: DateRange): RefundsResult {
+  const [data, setData] = useState<RefundsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const res = await supabase
+          .from('lng_payment_refunds')
+          .select(
+            'id, amount_pence, method, payment_id, deposit_appointment_id, reason_category, reason_note, refunded_at',
+          )
+          .eq('status', 'succeeded')
+          .gte('refunded_at', fromIso)
+          .lte('refunded_at', toIso);
+        if (cancelled) return;
+        if (res.error) throw new Error(`refunds: ${res.error.message}`);
+        const out = shapeRefunds((res.data ?? []) as RawRefund[]);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load refunds';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'financials.refunds',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
+
 function composePersonName(
   p: { first_name: string | null; last_name: string | null; name: string | null } | null,
 ): string {

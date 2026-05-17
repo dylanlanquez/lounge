@@ -436,6 +436,48 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Auto-resolve the "we owe them" narrative on the timeline when
+  // the refund brings the patient back to balanced. Best-effort.
+  const { data: finalStatusRow } = await supabase
+    .from('lng_payment_refunds')
+    .select('status')
+    .eq('id', refundId)
+    .maybeSingle();
+  if ((finalStatusRow as { status?: string } | null)?.status === 'succeeded') {
+    await maybeResolveOwedEvent(supabase, {
+      patientId,
+      visitId,
+      appointmentId,
+      refundId,
+      refundedPence: amountPence,
+    });
+  }
+
+  // Fire-and-forget the refund receipt email. Only when the row is
+  // already 'succeeded' — async (Stripe-pending) settlements are
+  // handled by stripe-refund-webhook's own invocation. The refund
+  // status was set above before this block.
+  if ((finalStatusRow as { status?: string } | null)?.status === 'succeeded') {
+    try {
+      await fetch(
+        `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/send-refund-receipt`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ refundId }),
+        },
+      );
+    } catch (e) {
+      await logFailure('refund_receipt_invoke_failed', {
+        refund_id: refundId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   return j(200, {
     ok: true,
     refund_id: refundId,
@@ -450,4 +492,103 @@ function j(status: number, payload: unknown) {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+}
+
+// Writes a patient_events 'owed_to_patient_resolved' row when the
+// refund just settled brings the patient back to balanced. Two
+// rules:
+//
+//   1. Visit context — check lng_visit_paid_status. If amount_paid
+//      now <= cart total, the visit is balanced; write the resolved
+//      event referencing the most recent open 'owed_to_patient' row
+//      on this patient (if any).
+//   2. Appointment-only context (no visit) — the deposit is the
+//      whole owed amount. Check if the deposit's remaining
+//      refundable is zero; if so, resolve.
+//
+// Best-effort: failures here don't unwind the refund.
+async function maybeResolveOwedEvent(
+  supabase: ReturnType<typeof createClient>,
+  args: {
+    patientId: string | null;
+    visitId: string | null;
+    appointmentId: string | null;
+    refundId: string;
+    refundedPence: number;
+  },
+): Promise<void> {
+  if (!args.patientId) return;
+  try {
+    let balanced = false;
+    if (args.visitId) {
+      const { data: paidRow } = await supabase
+        .from('lng_visit_paid_status')
+        .select('amount_due_pence, amount_paid_pence')
+        .eq('visit_id', args.visitId)
+        .maybeSingle();
+      const p = paidRow as {
+        amount_due_pence: number | null;
+        amount_paid_pence: number;
+      } | null;
+      if (p) {
+        const due = p.amount_due_pence ?? 0;
+        balanced = p.amount_paid_pence <= due;
+      }
+    } else if (args.appointmentId) {
+      // Pre-arrival appointment cancellation: balanced when the
+      // deposit's remaining refundable is zero.
+      const { data: apptRow } = await supabase
+        .from('lng_appointments')
+        .select('deposit_pence, deposit_status')
+        .eq('id', args.appointmentId)
+        .maybeSingle();
+      const a = apptRow as {
+        deposit_pence: number | null;
+        deposit_status: string | null;
+      } | null;
+      if (a?.deposit_status === 'paid' && a.deposit_pence) {
+        const { data: refundsRows } = await supabase
+          .from('lng_payment_refunds')
+          .select('amount_pence')
+          .eq('deposit_appointment_id', args.appointmentId)
+          .eq('status', 'succeeded');
+        const totalRefunded = ((refundsRows ?? []) as { amount_pence: number }[]).reduce(
+          (acc, r) => acc + (r.amount_pence ?? 0),
+          0,
+        );
+        balanced = totalRefunded >= a.deposit_pence;
+      } else {
+        balanced = true;
+      }
+    }
+    if (!balanced) return;
+    // Find the most recent open 'owed_to_patient' row so the
+    // resolved event can reference it. "Open" = no later
+    // resolution row tied to it. Cheapest approach: look at the
+    // most recent owed event on this patient/visit/appointment.
+    const recentQuery = supabase
+      .from('patient_events')
+      .select('id, payload, created_at')
+      .eq('patient_id', args.patientId)
+      .eq('event_type', 'owed_to_patient')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const { data: recent } = await recentQuery;
+    const owed = (recent ?? [])[0] as
+      | { id: string; payload: Record<string, unknown> | null; created_at: string }
+      | undefined;
+    await supabase.from('patient_events').insert({
+      patient_id: args.patientId,
+      event_type: 'owed_to_patient_resolved',
+      payload: {
+        resolved_by_refund_id: args.refundId,
+        refunded_pence: args.refundedPence,
+        resolved_owed_event_id: owed?.id ?? null,
+        visit_id: args.visitId,
+        appointment_id: args.appointmentId,
+      },
+    });
+  } catch {
+    // best-effort — refund already succeeded.
+  }
 }

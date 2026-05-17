@@ -231,6 +231,12 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Cart line removed';
     case 'owed_to_patient':
       return 'We owe the patient money';
+    case 'owed_to_patient_resolved':
+      return 'Patient balance restored';
+    case 'refund_settled':
+      return 'Refund settled with Stripe';
+    case 'refund_receipt_sent':
+      return 'Refund receipt sent';
     case 'visit_ended_early':
       return 'Visit ended early';
     case 'visit_shipped':
@@ -934,15 +940,18 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       const resendInfo = appointmentResendInfoFor(r);
       // Refund-shaped events get their own icon hints so they read
       // as money movement rather than the generic flag we use for
-      // everything else. owed_to_patient is the "we noticed" moment;
-      // refund_issued is the "money went back". The tone override
-      // tints the owed_to_patient dot alert-red so it stands out as
-      // a thing-to-fix in the timeline.
+      // everything else. owed_to_patient = "we noticed" (alert dot);
+      // refund_issued / refund_settled / owed_to_patient_resolved =
+      // "money returned" (the rotate icon).
       const isOwedEvent = r.event_type === 'owed_to_patient';
+      const isResolvedEvent =
+        r.event_type === 'owed_to_patient_resolved' ||
+        r.event_type === 'refund_settled' ||
+        r.event_type === 'refund_receipt_sent';
       const isRefundIssuedEvent = r.event_type === 'refund_issued';
       const refundHint = isOwedEvent
         ? ('refund_owed' as const)
-        : isRefundIssuedEvent
+        : isRefundIssuedEvent || isResolvedEvent
           ? ('refund_issued' as const)
           : null;
       return {
