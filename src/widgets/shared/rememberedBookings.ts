@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase.ts';
-import type { ManagedBooking } from './manage.ts';
+import type { ManagedBooking, ManagedRepairItem, ManagedUpgrade } from './manage.ts';
 
 // Patient-side recall of booking-management tokens.
 //
@@ -146,6 +146,25 @@ export function useRememberedBookings(): RememberedBookingsResult {
           deadTokens.push(token);
           continue;
         }
+        const repairItemsRaw = Array.isArray(r.repair_items) ? r.repair_items : [];
+        const upgradesRaw = Array.isArray(r.upgrades) ? r.upgrades : [];
+        const repairItems: ManagedRepairItem[] = repairItemsRaw
+          .map((it) => it as Record<string, unknown>)
+          .map((it) => ({
+            name: (it.name as string) ?? '',
+            arch: (it.arch as 'upper' | 'lower' | 'both') ?? 'both',
+            unitLabel: (it.unit_label as string | null) ?? null,
+            quantity: Number(it.quantity ?? 1),
+            linePricePence: Number(it.line_total_pence ?? 0),
+          }))
+          .filter((it) => it.name.length > 0);
+        const upgrades: ManagedUpgrade[] = upgradesRaw
+          .map((u) => u as Record<string, unknown>)
+          .map((u) => ({
+            name: (u.name as string) ?? '',
+            pricePence: Number(u.resolved_price_pence ?? 0),
+          }))
+          .filter((u) => u.name.length > 0);
         active.push({
           token,
           id: (r.id as string) ?? '',
@@ -153,6 +172,7 @@ export function useRememberedBookings(): RememberedBookingsResult {
           status,
           serviceType: (r.service_type as string | null) ?? null,
           serviceLabel: (r.service_label as string) ?? '',
+          eventTypeLabel: (r.service_label as string | null) ?? null,
           startAt,
           endAt: (r.end_at as string) ?? '',
           locationId: (r.location_id as string | null) ?? null,
@@ -166,6 +186,8 @@ export function useRememberedBookings(): RememberedBookingsResult {
           productKey: (r.product_key as string | null) ?? null,
           arch: (r.arch as 'upper' | 'lower' | 'both' | null) ?? null,
           cancellable: Boolean(r.cancellable),
+          repairItems,
+          upgrades,
         });
       }
 

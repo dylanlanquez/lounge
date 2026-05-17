@@ -9,6 +9,23 @@ import { supabase } from '../../lib/supabase.ts';
 // returns only the patient-visible shape — no email, phone, notes,
 // internal status, or any other patient's row.
 
+/** Per-arch repair line captured at booking. Renders inside the
+ *  manage-page denture-repair table. */
+export interface ManagedRepairItem {
+  name: string;
+  arch: 'upper' | 'lower' | 'both';
+  unitLabel: string | null;
+  quantity: number;
+  linePricePence: number;
+}
+
+/** Upgrade selection captured at booking. Renders inside the
+ *  manage-page upgrades table. */
+export interface ManagedUpgrade {
+  name: string;
+  pricePence: number;
+}
+
 export interface ManagedBooking {
   /** UUID — used as the exclude target for the reschedule slot
    *  picker so the patient's own current slot stays bookable. */
@@ -17,6 +34,11 @@ export interface ManagedBooking {
   status: string;
   serviceType: string | null;
   serviceLabel: string;
+  /** Persisted event_type_label exactly as it sits on the row.
+   *  Needed by the customer-facing Title-Case label helper so it
+   *  can fall back gracefully for service types it doesn't have a
+   *  bespoke phrase for. */
+  eventTypeLabel: string | null;
   startAt: string;
   endAt: string;
   locationId: string | null;
@@ -30,6 +52,13 @@ export interface ManagedBooking {
   productKey: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
   cancellable: boolean;
+  /** Per-arch denture-repair lines captured at booking. Empty for
+   *  any booking that isn't denture repair or that didn't tick any
+   *  repair tiles in the widget. */
+  repairItems: ManagedRepairItem[];
+  /** Add-on upgrade selections captured at booking. Empty for any
+   *  booking that didn't pick upgrades. */
+  upgrades: ManagedUpgrade[];
 }
 
 interface LookupResult {
@@ -83,12 +112,32 @@ export function useManagedBooking(token: string | null): LookupResult {
         return;
       }
       const r = row as Record<string, unknown>;
+      const repairItemsRaw = Array.isArray(r.repair_items) ? r.repair_items : [];
+      const upgradesRaw = Array.isArray(r.upgrades) ? r.upgrades : [];
+      const repairItems: ManagedRepairItem[] = repairItemsRaw
+        .map((it) => it as Record<string, unknown>)
+        .map((it) => ({
+          name: (it.name as string) ?? '',
+          arch: (it.arch as 'upper' | 'lower' | 'both') ?? 'both',
+          unitLabel: (it.unit_label as string | null) ?? null,
+          quantity: Number(it.quantity ?? 1),
+          linePricePence: Number(it.line_total_pence ?? 0),
+        }))
+        .filter((it) => it.name.length > 0);
+      const upgrades: ManagedUpgrade[] = upgradesRaw
+        .map((u) => u as Record<string, unknown>)
+        .map((u) => ({
+          name: (u.name as string) ?? '',
+          pricePence: Number(u.resolved_price_pence ?? 0),
+        }))
+        .filter((u) => u.name.length > 0);
       setData({
         id: (r.id as string) ?? '',
         appointmentRef: (r.appointment_ref as string | null) ?? null,
         status: (r.status as string) ?? '',
         serviceType: (r.service_type as string | null) ?? null,
         serviceLabel: (r.service_label as string) ?? '',
+        eventTypeLabel: (r.service_label as string | null) ?? null,
         startAt: (r.start_at as string) ?? '',
         endAt: (r.end_at as string) ?? '',
         locationId: (r.location_id as string | null) ?? null,
@@ -102,6 +151,8 @@ export function useManagedBooking(token: string | null): LookupResult {
         productKey: (r.product_key as string | null) ?? null,
         arch: (r.arch as 'upper' | 'lower' | 'both' | null) ?? null,
         cancellable: Boolean(r.cancellable),
+        repairItems,
+        upgrades,
       });
       setLoading(false);
     })();

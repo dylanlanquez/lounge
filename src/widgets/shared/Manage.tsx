@@ -8,6 +8,7 @@ import {
   useManagedBooking,
   type ManagedBooking,
 } from './manage.ts';
+import { formatCustomerServiceTitleLabel } from '../../lib/queries/appointments.ts';
 import {
   forgetBookingToken,
   replaceBookingToken,
@@ -278,7 +279,12 @@ function BookingPanel({
               letterSpacing: theme.type.tracking.tight,
             }}
           >
-            {booking.serviceLabel}
+            {formatCustomerServiceTitleLabel({
+              service_type: booking.serviceType,
+              event_type_label: booking.eventTypeLabel,
+              arch: booking.arch,
+              product_key: booking.productKey,
+            })}
           </p>
           {booking.appointmentRef ? (
             <p
@@ -311,6 +317,22 @@ function BookingPanel({
           />
         ) : null}
       </div>
+
+      {/* Denture-repair table — per-arch summary of the lines the
+          patient ticked at booking time, with prices right-aligned.
+          Renders only when there ARE repair items (a same-day
+          appliance booking with no repairs won't have any). */}
+      {booking.repairItems.length > 0 ? (
+        <RepairItemsCard items={booking.repairItems} />
+      ) : null}
+
+      {/* Upgrades table — selected add-ons captured at booking.
+          Renders independently of the repair table so a same-day
+          appliance booking with upgrades (e.g. scalloped retainers)
+          shows them too. */}
+      {booking.upgrades.length > 0 ? (
+        <UpgradesCard upgrades={booking.upgrades} />
+      ) : null}
 
       {booking.cancellable && !justCancelled ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
@@ -859,6 +881,198 @@ function Row({
       </div>
     </div>
   );
+}
+
+// Per-arch denture-repair table. Same visual register as the booking
+// card above — white surface, soft border, soft shadow — with a
+// section heading per arch ("Your Upper Denture" / "Your Lower
+// Denture" / "Your Upper and Lower Dentures") and one row per repair
+// line with the price right-aligned. Mirrors the table the patient
+// sees in the customer-facing widget Review card so the manage page
+// reads as a faithful continuation of the booking flow.
+function RepairItemsCard({ items }: { items: ManagedBooking['repairItems'] }) {
+  const byArch = new Map<'upper' | 'lower' | 'both', ManagedBooking['repairItems']>();
+  for (const r of items) {
+    const list = byArch.get(r.arch) ?? [];
+    list.push(r);
+    byArch.set(r.arch, list);
+  }
+  const archOrder: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+  const archHeading: Record<'upper' | 'lower' | 'both', string> = {
+    upper: 'Your Upper Denture',
+    lower: 'Your Lower Denture',
+    both: 'Your Upper and Lower Dentures',
+  };
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[5],
+        boxShadow: theme.shadow.card,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[4],
+      }}
+    >
+      {archOrder.map((arch) => {
+        const rows = byArch.get(arch);
+        if (!rows || rows.length === 0) return null;
+        return (
+          <div key={arch}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.md,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+                marginBottom: theme.space[2],
+              }}
+            >
+              {archHeading[arch]}
+            </p>
+            <table
+              role="presentation"
+              cellSpacing={0}
+              cellPadding={0}
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                borderBottom: `1px solid ${theme.color.border}`,
+              }}
+            >
+              <tbody>
+                {rows.map((r, idx) => {
+                  const qtySuffix =
+                    r.unitLabel === 'per tooth' && r.quantity > 1
+                      ? ` × ${r.quantity} teeth`
+                      : '';
+                  return (
+                    <tr key={`${arch}-${idx}`}>
+                      <td
+                        style={{
+                          padding: '12px 0',
+                          borderTop: `1px solid ${theme.color.border}`,
+                          fontSize: theme.type.size.sm,
+                          color: theme.color.ink,
+                        }}
+                      >
+                        {customerRepairLabel(r.name)}
+                        {qtySuffix}
+                      </td>
+                      <td
+                        style={{
+                          padding: '12px 0',
+                          borderTop: `1px solid ${theme.color.border}`,
+                          fontSize: theme.type.size.sm,
+                          color: theme.color.ink,
+                          textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {formatPrice(r.linePricePence, 'GBP')}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Add-on upgrades table. Same chrome as the repair-items card so the
+// two read as a coordinated pair under the booking summary. Renders
+// independently — a same-day appliance booking with upgrades (e.g.
+// scalloped retainers) shows this card even when there are no
+// repair items.
+function UpgradesCard({ upgrades }: { upgrades: ManagedBooking['upgrades'] }) {
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        padding: theme.space[5],
+        boxShadow: theme.shadow.card,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.md,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          letterSpacing: theme.type.tracking.tight,
+          marginBottom: theme.space[2],
+        }}
+      >
+        Upgrades
+      </p>
+      <table
+        role="presentation"
+        cellSpacing={0}
+        cellPadding={0}
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          borderBottom: `1px solid ${theme.color.border}`,
+        }}
+      >
+        <tbody>
+          {upgrades.map((u, idx) => (
+            <tr key={`${u.name}-${idx}`}>
+              <td
+                style={{
+                  padding: '12px 0',
+                  borderTop: `1px solid ${theme.color.border}`,
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.ink,
+                }}
+              >
+                {u.name}
+              </td>
+              <td
+                style={{
+                  padding: '12px 0',
+                  borderTop: `1px solid ${theme.color.border}`,
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.ink,
+                  textAlign: 'right',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {formatPrice(u.pricePence, 'GBP')}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Strip the redundant "denture" word from a Calendly repair-line
+// answer so the customer-facing column reads cleanly under the
+// "Your Lower Denture" heading. "Snapped Denture" → "Snapped",
+// "Broken Tooth" → "Broken tooth" (first-letter cap only).
+// Mirrors the helper in src/widgets/shared/state.ts —
+// duplicated locally so Manage.tsx doesn't need to import state.ts
+// (which would pull the entire booking-state machine into the
+// manage bundle for one tiny string transform).
+function customerRepairLabel(name: string): string {
+  let out = name.trim();
+  out = out.replace(/\s+(?:to\s+)?denture\b\.?$/i, '').trim();
+  out = out.replace(/\bdenture\s+/i, '').trim();
+  if (out.length > 0) out = out.charAt(0).toUpperCase() + out.slice(1);
+  return out.length > 0 ? out : name;
 }
 
 function BodyMessage({

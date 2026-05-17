@@ -691,6 +691,120 @@ export function formatBookingSummary(row: {
 }
 
 /**
+ * Customer-facing Title Case service phrasing. Used by surfaces the
+ * patient sees directly (the self-serve manage page, the widget
+ * Success card, the email subject for the canonical placeholders).
+ * Mirrors the four service-scoped phrases the email edge function
+ * composes — exposes them as a single client-side function so the
+ * browser surfaces stay aligned without re-implementing the rules.
+ *
+ *   same_day_appliance + retainer + upper  → "Same-day Upper Retainer"
+ *   same_day_appliance + retainer + both   → "Same-day Upper & Lower Retainers"
+ *   same_day_appliance + whitening_kit     → "Same-day Whitening Kit"
+ *   click_in_veneers + upper               → "Same-day Upper Click-in Veneers"
+ *   click_in_veneers + both                → "Same-day Upper & Lower Click-in Veneers"
+ *   in_person_impression + retainer + both → "In-person Impression Appointment for Upper & Lower Retainers"
+ *   virtual_impression + retainer + upper  → "Virtual Impression Appointment for Upper Retainer"
+ *   denture_repair                         → "Denture Repair"
+ *
+ * Whitening kit is a deliberate special case — always reads
+ * "Same-day Whitening Kit" with no arch, because the kit covers
+ * both arches by default and naming an arch would be misleading.
+ *
+ * Falls back to the persisted event_type_label (or a humanised
+ * service-type label) when the service isn't one of the recognised
+ * shapes, so legacy / Calendly rows still show something readable.
+ */
+const TITLE_PRODUCT_NOUN: Record<string, string> = {
+  retainer: 'Retainer',
+  night_guard: 'Night Guard',
+  day_guard: 'Day Guard',
+  click_in_veneers: 'Click-in Veneers',
+  missing_tooth: 'Missing Tooth Retainer',
+  whitening_tray: 'Whitening Tray',
+  whitening_kit: 'Whitening Kit',
+  aligner: 'Replacement Aligner',
+};
+
+function pluraliseTitleNoun(noun: string): string {
+  const t = noun.trim();
+  if (!t) return t;
+  if (/s$/i.test(t)) return t;
+  return `${t}s`;
+}
+
+function titleArchToken(
+  arch: ArchKey | null,
+): 'Upper' | 'Lower' | 'Upper & Lower' | null {
+  if (arch === 'upper') return 'Upper';
+  if (arch === 'lower') return 'Lower';
+  if (arch === 'both') return 'Upper & Lower';
+  return null;
+}
+
+export function formatCustomerServiceTitleLabel(row: {
+  service_type: string | null;
+  event_type_label: string | null;
+  arch: string | null;
+  product_key: string | null;
+}): string {
+  const arch = normaliseArchKey(row.arch);
+  const service = row.service_type;
+  const eventLabel = row.event_type_label?.trim() || null;
+
+  // Same-day appliance OR click-in veneers — both carry the
+  // "Same-day " prefix on customer-facing surfaces, even though
+  // click-in veneers's product name already implies same-day,
+  // because Dylan asked for consistency on the manage page +
+  // emails.
+  if (service === 'same_day_appliance' || service === 'click_in_veneers') {
+    if (row.product_key === 'whitening_kit') return 'Same-day Whitening Kit';
+    const productNoun = row.product_key
+      ? TITLE_PRODUCT_NOUN[row.product_key]
+      : undefined;
+    const serviceNoun =
+      service === 'click_in_veneers' ? 'Click-in Veneers' : undefined;
+    const noun = productNoun ?? serviceNoun;
+    if (!noun) return eventLabel ?? 'Appointment';
+    const archToken = titleArchToken(arch);
+    const finalNoun = arch === 'both' ? pluraliseTitleNoun(noun) : noun;
+    return archToken
+      ? `Same-day ${archToken} ${finalNoun}`
+      : `Same-day ${finalNoun}`;
+  }
+
+  // Impression appointments — "for {arch} {product}" suffix.
+  if (
+    service === 'in_person_impression_appointment' ||
+    service === 'virtual_impression_appointment'
+  ) {
+    const base =
+      service === 'in_person_impression_appointment'
+        ? 'In-person Impression Appointment'
+        : 'Virtual Impression Appointment';
+    const productNoun = row.product_key
+      ? TITLE_PRODUCT_NOUN[row.product_key] ?? null
+      : null;
+    const archToken = titleArchToken(arch);
+    if (archToken && productNoun) {
+      const finalNoun =
+        arch === 'both' ? pluraliseTitleNoun(productNoun) : productNoun;
+      return `${base} for ${archToken} ${finalNoun}`;
+    }
+    if (archToken) return `${base} for ${archToken}`;
+    if (productNoun) return `${base} for ${productNoun}`;
+    return base;
+  }
+
+  // Denture repair — no axis prefix; per-arch detail belongs in the
+  // repair-table block below the service label.
+  if (service === 'denture_repair') return 'Denture Repair';
+
+  // Anything else: fall back to the persisted event_type_label.
+  return eventLabel ?? 'Appointment';
+}
+
+/**
  * One-stop summary for any appointment row, regardless of source.
  * Single source of truth for "what should this booking read as on
  * the schedule / hero / popup / list / clinic board." Routes
