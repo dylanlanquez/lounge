@@ -1,17 +1,20 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, Check, ChevronUp, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
   Checkbox,
+  DatePicker,
   DropdownSelect,
   EmptyState,
+  FieldTrigger,
   Input,
   SegmentedControl,
   Skeleton,
   StatCard,
   StatusPill,
+  TimePicker,
   Toast,
 } from '../components/index.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -71,6 +74,12 @@ import {
   resetTestAppointment,
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
+import {
+  previewPreLaunchBackfillCount,
+  runPreLaunchBackfill,
+  setLaunchDate,
+  useLaunchDate,
+} from '../lib/queries/launchDate.ts';
 import { humaniseStatus } from '../lib/queries/appointments.ts';
 import {
   useCalendlyDiagnostic,
@@ -901,6 +910,14 @@ function TestingTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      {/* Launch — set the launch date, then flip every still-booked
+          row whose slot ended before launch to no_show with a clear
+          backfill tag. Sits above the legacy cash count card because
+          the launch date is the most foundational piece of go-live
+          state; everything else (cash baseline, dirty-appointment
+          cleanup) follows from it. */}
+      <LaunchCard onToast={setToast} />
+
       {/* Legacy cash count — admin entry point for resetting the cash
           chain at launch / re-launch. Card sits at the top of the
           Testing tab because it's a launch-prep tool (everything below
@@ -1045,6 +1062,365 @@ function TestingTab() {
       </BottomSheet>
     </div>
   );
+}
+
+// Launch-date card on the Testing tab. Two phases:
+//
+//   1. Date + time pickers + Save — writes lng_settings.lounge.launch_date.
+//   2. Backfill button — calls lng_pre_launch_no_show_backfill(),
+//      which flips every status='booked' AND end_at < launch_date row
+//      to status='no_show' with a clearly-tagged cancel_reason.
+//
+// Confirmation gate sits in front of the backfill so the operator
+// sees how many rows are about to flip BEFORE committing. The RPC is
+// idempotent so the worst case of a fast-double-tap is a no-op
+// second run, but the confirmation is still useful because the
+// cancel_reason on every flipped row reads "Pre-Lounge launch
+// backfill, not a real no-show" — once persisted it shows on the
+// timeline forever.
+function LaunchCard({
+  onToast,
+}: {
+  onToast: (toast: { tone: 'success' | 'error'; title: string; description?: string }) => void;
+}) {
+  const launch = useLaunchDate();
+
+  // Local form state — separate from the persisted value so the
+  // operator can edit and discard without dirtying the DB.
+  const initialDate = launch.data ? splitLaunchIso(launch.data).date : '';
+  const initialTime = launch.data ? splitLaunchIso(launch.data).time : '';
+  const [date, setDate] = useState<string>(initialDate);
+  const [time, setTime] = useState<string>(initialTime);
+  const [dateOpen, setDateOpen] = useState(false);
+  const [timeOpen, setTimeOpen] = useState(false);
+  const dateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const timeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Backfill state — preview count + confirm sheet.
+  const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  // Resync local form state when the persisted launch_date changes —
+  // matters after a Save → refresh round-trip so the form reflects
+  // exactly what's in the DB.
+  useEffect(() => {
+    if (launch.data) {
+      const split = splitLaunchIso(launch.data);
+      setDate(split.date);
+      setTime(split.time);
+    } else {
+      setDate('');
+      setTime('');
+    }
+  }, [launch.data]);
+
+  // Refresh the "X rows will be flipped" preview whenever the
+  // persisted launch_date changes. The preview reads from end_at
+  // against the SAVED launch date (not the unsaved form state) so it
+  // matches what the RPC would do if pressed right now.
+  useEffect(() => {
+    if (!launch.data) {
+      setPreviewCount(null);
+      setPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    (async () => {
+      try {
+        const count = await previewPreLaunchBackfillCount(launch.data!);
+        if (cancelled) return;
+        setPreviewCount(count);
+        setPreviewError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setPreviewError(e instanceof Error ? e.message : 'Could not preview backfill count');
+        setPreviewCount(null);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [launch.data]);
+
+  const composed = composeLaunchIso(date, time);
+  const dirty = composed !== launch.data && (composed !== null || launch.data !== null);
+  const canSave = !!composed && dirty && !saving;
+
+  const onSave = async () => {
+    if (!composed || saving) return;
+    setSaving(true);
+    try {
+      await setLaunchDate(composed);
+      onToast({ tone: 'success', title: 'Launch date saved' });
+      launch.refresh();
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not save launch date',
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onClear = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await setLaunchDate(null);
+      onToast({ tone: 'success', title: 'Launch date cleared' });
+      launch.refresh();
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not clear launch date',
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onRunBackfill = async () => {
+    if (running) return;
+    setRunning(true);
+    try {
+      const flipped = await runPreLaunchBackfill();
+      onToast({
+        tone: 'success',
+        title: flipped === 0 ? 'Nothing to backfill' : `Backfilled ${flipped} booking${flipped === 1 ? '' : 's'}`,
+        description: flipped === 0
+          ? 'No still-booked rows older than the launch date.'
+          : 'Marked as no-show with the pre-launch tag on each.',
+      });
+      setConfirmOpen(false);
+      // Refresh preview so the count drops to 0 after the flip.
+      if (launch.data) {
+        const next = await previewPreLaunchBackfillCount(launch.data);
+        setPreviewCount(next);
+      }
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Backfill failed',
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card padding="lg">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Rocket size={20} /> Launch
+            </span>
+          </h2>
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+              lineHeight: theme.type.leading.normal,
+            }}
+          >
+            Set the moment Lounge went live. The backfill below flips every still-booked appointment whose slot ended before this instant to no-show, with a clear "pre-launch backfill" tag on each so the timeline reads the right story. Anything already touched (arrived, complete, cancelled, rescheduled) and any booking after the launch instant is left alone.
+          </p>
+        </div>
+      </div>
+
+      <div style={{ marginTop: theme.space[5], display: 'grid', gridTemplateColumns: '2fr 1fr', gap: theme.space[3], maxWidth: 560 }}>
+        <FieldTrigger
+          ref={dateTriggerRef}
+          icon={<CalendarClock size={16} aria-hidden />}
+          value={date ? formatLaunchDateLong(date) : ''}
+          placeholder="Pick launch date"
+          open={dateOpen}
+          onClick={() => {
+            setTimeOpen(false);
+            setDateOpen((v) => !v);
+          }}
+        />
+        <FieldTrigger
+          ref={timeTriggerRef}
+          icon={<Clock size={16} aria-hidden />}
+          value={time}
+          placeholder="HH:MM"
+          open={timeOpen}
+          onClick={() => {
+            setDateOpen(false);
+            setTimeOpen((v) => !v);
+          }}
+        />
+      </div>
+      <DatePicker
+        open={dateOpen}
+        onClose={() => setDateOpen(false)}
+        value={date}
+        onChange={(iso) => setDate(iso)}
+        anchorRef={dateTriggerRef}
+        title="Launch date"
+      />
+      <TimePicker
+        open={timeOpen}
+        onClose={() => setTimeOpen(false)}
+        value={time}
+        onChange={(t) => setTime(t)}
+        anchorRef={timeTriggerRef}
+        title="Launch time"
+      />
+
+      <div style={{ marginTop: theme.space[4], display: 'flex', gap: theme.space[2], alignItems: 'center', flexWrap: 'wrap' }}>
+        <Button variant="primary" onClick={onSave} loading={saving} disabled={!canSave}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Check size={14} /> Save launch date
+          </span>
+        </Button>
+        {launch.data ? (
+          <Button variant="tertiary" onClick={onClear} disabled={saving}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <X size={14} /> Clear
+            </span>
+          </Button>
+        ) : null}
+        {launch.data ? (
+          <span style={{ marginLeft: 'auto', fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontVariantNumeric: 'tabular-nums' }}>
+            Saved: {formatLaunchInstantLong(launch.data)}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Backfill section — only useful once a launch date is saved. */}
+      <div
+        style={{
+          marginTop: theme.space[5],
+          paddingTop: theme.space[5],
+          borderTop: `1px solid ${theme.color.border}`,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: theme.space[3],
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+            Pre-launch backfill
+          </p>
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
+            {launch.data
+              ? previewLoading
+                ? 'Counting how many bookings would flip…'
+                : previewError
+                  ? previewError
+                  : previewCount === null
+                    ? 'Run when ready to flip every untouched, pre-launch booking to no-show.'
+                    : previewCount === 0
+                      ? 'Nothing to backfill — every pre-launch booking has already been handled.'
+                      : `${previewCount.toLocaleString('en-GB')} booking${previewCount === 1 ? '' : 's'} would flip to no-show with the pre-launch tag.`
+              : 'Set a launch date above first. The backfill reads from the saved value.'}
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => setConfirmOpen(true)}
+          disabled={!launch.data || previewLoading || previewCount === 0}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <RotateCcw size={14} /> Run backfill
+          </span>
+        </Button>
+      </div>
+
+      <BottomSheet
+        open={confirmOpen}
+        onClose={running ? () => undefined : () => setConfirmOpen(false)}
+        title="Run the pre-launch backfill?"
+        description={
+          launch.data
+            ? `Flips every still-booked appointment whose slot ended before ${formatLaunchInstantLong(launch.data)} to no-show. Each flipped row gets the cancel reason "Pre-Lounge launch backfill, not a real no-show" so the timeline reads correctly.`
+            : 'Set a launch date first.'
+        }
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={running}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <X size={16} aria-hidden /> Not yet
+              </span>
+            </Button>
+            <Button variant="primary" onClick={onRunBackfill} loading={running}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Rocket size={16} aria-hidden /> {previewCount !== null && previewCount > 0 ? `Flip ${previewCount.toLocaleString('en-GB')}` : 'Run'}
+              </span>
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
+            Idempotent. Running it again later updates zero extra rows.
+          </p>
+        </div>
+      </BottomSheet>
+    </Card>
+  );
+}
+
+// Local YYYY-MM-DD + HH:MM ↔ ISO timestamptz helpers. Mirrors the
+// pair NewBookingSheet uses; kept inline rather than extracted because
+// the launch card is the only other surface that needs them, and the
+// helpers are small.
+function splitLaunchIso(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { date: '', time: '' };
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}` };
+}
+
+function composeLaunchIso(date: string, time: string): string | null {
+  if (!date || !time) return null;
+  const d = new Date(`${date}T${time}:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function formatLaunchDateLong(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatLaunchInstantLong(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function DevicesTab() {
