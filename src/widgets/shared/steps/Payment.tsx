@@ -771,10 +771,9 @@ function Shell({
         display: 'flex',
         flexDirection: 'column',
         gap: 20,
-        // StepTitle's own bottom margin (STEP_TITLE_BOTTOM_SPACE)
-        // provides the gap. Previous marginTop:32 stacked with that
-        // to ~64px of dead space, pushing the card form below the
-        // fold on phones.
+        // No marginTop — StepBody's flex `gap` (sourced from
+        // STEP_TITLE_BOTTOM_SPACE) is the single source of truth
+        // for the title-to-content rhythm across every step.
         marginTop: 0,
       }}
     >

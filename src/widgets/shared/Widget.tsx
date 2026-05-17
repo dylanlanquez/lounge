@@ -650,7 +650,6 @@ function ChromeShell({
             copy={copy}
             locations={locations}
             accent={accent}
-            brand={brand}
             submissionError={submissionError}
             onDismissError={onDismissError}
             onSubmit={onSubmit}
@@ -795,35 +794,27 @@ function ProgressBar({
 export function StepTitle({
   children,
   align = 'center',
-  brandId,
 }: {
   children: React.ReactNode;
   align?: 'center' | 'left';
-  /** Drives the denture-only top-margin bump on screens ≥ 768px.
-   *  The denture storefront's modal sits noticeably tighter to the
-   *  progress bar than the venneir one because of the host page's
-   *  body-font baseline — Dylan flagged the desktop view as too
-   *  cramped. The class below + the matching @media rule in
-   *  quizTokens.ts lift the title clear of the progress bar on
-   *  tablet+, while mobile stays at the existing 16px so the wide
-   *  blank band the comment below describes doesn't reappear. */
-  brandId?: 'venneir' | 'denture';
 }) {
   return (
     <h2
-      className={brandId === 'denture' ? 'vlounge-step-title-denture' : undefined}
       style={{
-        // Top + bottom both sourced through QUIZ tokens so every
-        // step's title-to-progress and title-to-body rhythm stays
-        // consistent. Top was 32px historically; reduced to 16px so
-        // the step title sits closer to the progress bar instead of
-        // floating in a wide blank band on phones. Bottom uses
-        // STEP_TITLE_BOTTOM_SPACE.
+        // Top margin only — the bottom-of-title-to-top-of-content
+        // gap is owned by StepBody's flex `gap` (STEP_TITLE_BOTTOM_SPACE)
+        // so every step shares the same rhythm. Doubling up via a
+        // bottom margin here would stack on top of the gap and
+        // produce per-step drift, which is the bug Dylan flagged
+        // ("moving heights and margins between steps looks very
+        // amateur"). Top stays at 16 — reduced from a historical
+        // 32 so the title sits close to the progress bar on phones
+        // instead of floating in a wide blank band.
         // `align='left'` keeps the same 720px centred column the
         // form below uses but flushes the text to the left so the
         // h2 sits over the first input — used on Details + Payment
         // where the body is form/card-like rather than option-grid.
-        margin: `16px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
+        margin: '16px auto 0',
         maxWidth: 720,
         textAlign: align,
         fontSize: 24,
@@ -852,7 +843,6 @@ function StepBody({
   copy,
   locations,
   accent,
-  brand,
   submissionError,
   onDismissError,
   onSubmit,
@@ -865,7 +855,6 @@ function StepBody({
   copy: WidgetCopy;
   locations: WidgetLocation[];
   accent: string;
-  brand?: WidgetBrand;
   submissionError: string | null;
   onDismissError: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
@@ -890,10 +879,25 @@ function StepBody({
   // standard StepTitle like every other step.
   const stepOwnsTitle =
     api.stepKey === 'repair:top' || api.stepKey === 'repair:bottom';
+  // Single layout shell for every step: flex column with a fixed
+  // gap between the title and the step content. Owning the gap
+  // here means each step component renders with `marginTop: 0` and
+  // doesn't get to invent its own title-to-content spacing — the
+  // arch / repair / details / payment / review / service /
+  // location steps all share the same rhythm. The previous
+  // architecture had each step adding its own marginTop (or relying
+  // on the title's bottom margin, which others doubled up on) and
+  // drifted into the visible inconsistency Dylan flagged.
   return (
-    <>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: QUIZ.STEP_TITLE_BOTTOM_SPACE,
+      }}
+    >
       {stepOwnsTitle ? null : (
-        <StepTitle align={titleAlign} brandId={brand?.id}>
+        <StepTitle align={titleAlign}>
           {stepTitle(api.stepKey, copy, api.state)}
         </StepTitle>
       )}
@@ -911,7 +915,7 @@ function StepBody({
         onPaymentReadyChange={onPaymentReadyChange}
         onPaymentPayingChange={onPaymentPayingChange}
       />
-    </>
+    </div>
   );
 }
 

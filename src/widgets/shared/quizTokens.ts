@@ -77,15 +77,17 @@ export const QUIZ = {
   STEP_TOP_OFFSET_MOBILE: 80,
   STEP_BOTTOM_OFFSET_MOBILE: 88,
   // Breathing room beneath every step's H2 title before the option
-  // grid / form below. Tuned so the title reads as a section heading
-  // with its own visual weight rather than crowding the first card.
-  // Threaded through one token so the shell-rendered StepTitle and
-  // each step that renders its own inline h2 stay in sync. Tightened
-  // from 32 → 16 because the previous value ate ~70px of vertical
-  // chrome on mobile (32 top + 32 bottom + an extra 32 from each
-  // step's body marginTop) and pushed the actual answer choices
-  // below the fold.
-  STEP_TITLE_BOTTOM_SPACE: 16,
+  // grid / form below. Single source of truth — drives the flex
+  // `gap` in StepBody (shell-rendered title path) and the flex `gap`
+  // in any step that renders its own inline h2 (currently only
+  // RepairBuilder, which needs the chip-above-title affordance).
+  // 24 matches the repair step's existing rhythm that Dylan called
+  // out as the visual target; bumping from 16 closes the
+  // step-to-step inconsistency where the arch step felt crammed
+  // (~16px gap) next to the repair step (~24px). No per-step
+  // marginTop overrides remain — every step composes from this one
+  // value.
+  STEP_TITLE_BOTTOM_SPACE: 24,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────
@@ -349,21 +351,6 @@ export function ensureQuizKeyframes(): void {
         padding: 20px !important;
         padding-right: 52px !important;
         min-height: 130px !important;
-      }
-    }
-
-    /* Denture-only step-title top-margin bump on tablet+. Matches
-       the visual rhythm of the per-arch repair step that Dylan
-       called out as the reference: 32px is the historical value
-       the inline comment in Widget.tsx mentions (later halved to
-       16px for phones). Restoring 32px on ≥768px gives the title
-       breathing room from the progress bar while keeping the
-       mobile-tight 16px untouched. Class is only applied when
-       brandId='denture' via StepTitle, so the venneir bundle is
-       unaffected. */
-    @media (min-width: 768px) {
-      .vlounge-step-title-denture {
-        margin-top: 32px !important;
       }
     }
 

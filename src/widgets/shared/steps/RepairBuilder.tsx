@@ -186,7 +186,13 @@ export function RepairLinesStep({
   const selectedHere = api.state.repairItems.filter((r) => r.arch === arch);
   const archWord = arch === 'upper' ? 'top denture' : 'bottom denture';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    // Flex `gap` sourced from STEP_TITLE_BOTTOM_SPACE so the
+    // chip→title and title→grid rhythm here matches the shared
+    // StepBody flex gap used by every other step. Single source of
+    // truth means a future tweak to the token re-rhythms the whole
+    // widget; previously this number was a local 24 and drifted
+    // independently from the rest.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: QUIZ.STEP_TITLE_BOTTOM_SPACE }}>
       <StickyArchHeader arch={arch} accent={accent} />
       {/* Inline step title — StepBody skips its own title render for
           these steps so the sticky chip above can be first in the
@@ -196,13 +202,15 @@ export function RepairLinesStep({
           can see at a glance which arch they're answering for. */}
       <h2
         style={{
-          // Top margin = clearance from the StickyArchHeader chip
-          // pinned above. Bottom margin sourced from the global
-          // STEP_TITLE_BOTTOM_SPACE token so this inline title and
-          // the shell-rendered StepTitle stay in sync. Both halved
-          // from the previous 32px so the tiles surface above the
-          // fold on phones.
-          margin: `16px auto ${QUIZ.STEP_TITLE_BOTTOM_SPACE}px`,
+          // Top margin only — clearance from the StickyArchHeader
+          // chip pinned above (or from the scroll-inner padding on
+          // desktop where the chip is display:none). Bottom-of-title
+          // to top-of-grid spacing is owned by this flex container's
+          // `gap` (set to STEP_TITLE_BOTTOM_SPACE below), so the
+          // h2 itself emits no bottom margin — adding one here
+          // would double up with the gap and break the unified
+          // step-to-step rhythm.
+          margin: '16px auto 0',
           maxWidth: 720,
           textAlign: 'center',
           fontSize: 24,

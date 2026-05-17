@@ -93,11 +93,13 @@ function AxisOptions({
           : undefined;
 
   // Helper paragraph only when the axis has one (arch axis skips
-  // it; product / repair-variant keep theirs). When there's no
-  // helper we add a `marginTop` to the wrapper so the option grid
-  // sits the same distance under the title as on steps with a
-  // helper (32px gap == helper-bottom-to-grid-top), matching the
-  // Time / Details / Payment / Service screens.
+  // it; product / repair-variant keep theirs). When present, the
+  // helper sits as a first flex child with a 32px gap to the
+  // option grid below — that internal rhythm is independent of
+  // the title-to-content gap, which StepBody owns (single source
+  // of truth via STEP_TITLE_BOTTOM_SPACE). No marginTop hack: the
+  // arch step (no helper) now relies on StepBody's flex gap for
+  // its title-to-grid spacing, matching every other step.
   const helper = AXIS_HELPER[axis.key];
   return (
     <div
@@ -105,7 +107,6 @@ function AxisOptions({
         display: 'flex',
         flexDirection: 'column',
         gap: helper ? 32 : 0,
-        marginTop: helper ? 0 : 32,
       }}
     >
       {helper ? (

@@ -89,10 +89,11 @@ export function DetailsStep({
         maxWidth: 720,
         margin: '0 auto',
         width: '100%',
-        // No extra marginTop — StepTitle's own bottom margin
-        // (STEP_TITLE_BOTTOM_SPACE) provides the gap. The
-        // historical marginTop:32 was doubling that gap on every
-        // step that set it, eating vertical real estate on phones.
+        // No marginTop — StepBody's flex `gap` (sourced from
+        // STEP_TITLE_BOTTOM_SPACE) is the single source of truth
+        // for the title-to-content rhythm across every step. Adding
+        // a local marginTop here would stack on top of the gap and
+        // re-introduce the per-step drift Dylan flagged.
         marginTop: 0,
         animation: `vlounge-fadeInUp 0.3s ${QUIZ.EASE_BOUNCE} backwards`,
       }}
