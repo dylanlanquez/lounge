@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Download, FileSignature, Plus, Wallet } from 'lucide-react';
+import { ChevronRight, Download, FileSignature, Plus, Wallet } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -163,6 +163,9 @@ export function CashCounts() {
                 setSheetOpen(true);
               }}
             />
+            {position.data.lines.length > 0 ? (
+              <ContributingPaymentsCard lines={position.data.lines} />
+            ) : null}
             <HistoryCard
               counts={counts.data}
               onOpen={(id) => setStatementCountId(id)}
@@ -327,6 +330,210 @@ function RightNowCard({
           </Button>
         </div>
       ) : null}
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contributing payments — table of every cash line since the last
+// signed count, clickable through to the visit page. Renders only
+// when at least one cash payment has landed since the anchor;
+// otherwise the RightNowCard's empty-state copy carries the room
+// alone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ContributingPaymentsCard({
+  lines,
+}: {
+  lines: CashPosition['lines'];
+}) {
+  const navigate = useNavigate();
+  const total = useMemo(
+    () => lines.reduce((sum, l) => sum + l.amount_pence, 0),
+    [lines],
+  );
+  const handleOpen = (line: CashPosition['lines'][number]) => {
+    if (!line.visit_id) return;
+    navigate(`/visit/${line.visit_id}`);
+  };
+  return (
+    <Card padding="lg">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          marginBottom: theme.space[4],
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Cash payments since last count
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {formatNumber(lines.length)} payment{lines.length === 1 ? '' : 's'} adding up to {formatPence(total)}. Includes partials — tap a row to open the visit.
+          </span>
+        </div>
+      </div>
+
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          overflow: 'hidden',
+        }}
+      >
+        {lines.map((line, idx) => {
+          const interactive = !!line.visit_id;
+          return (
+            <li
+              key={line.payment_id}
+              style={{
+                borderTop: idx === 0 ? 'none' : `1px solid ${theme.color.border}`,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => handleOpen(line)}
+                disabled={!interactive}
+                style={{
+                  appearance: 'none',
+                  fontFamily: 'inherit',
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                  display: 'grid',
+                  // 4-column grid: time + patient + ref + amount,
+                  // amount column right-aligned with tabular-nums so
+                  // the eye reconciles the column down to the total.
+                  gridTemplateColumns: 'minmax(120px, 1fr) minmax(140px, 2fr) minmax(120px, 1fr) auto auto',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                  textAlign: 'left',
+                  cursor: interactive ? 'pointer' : 'default',
+                  transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                }}
+                onMouseEnter={(e) => {
+                  if (interactive) e.currentTarget.style.background = theme.color.bg;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: theme.type.size.sm,
+                    color: theme.color.inkMuted,
+                    fontVariantNumeric: 'tabular-nums',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {formatDateTime(line.taken_at)}
+                </span>
+                <span
+                  style={{
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.ink,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {line.patient_name || 'Unknown patient'}
+                </span>
+                <span
+                  style={{
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkMuted,
+                    fontVariantNumeric: 'tabular-nums',
+                    letterSpacing: theme.type.tracking.tight,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {line.appointment_ref ?? '—'}
+                </span>
+                <span
+                  style={{
+                    fontSize: theme.type.size.base,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.ink,
+                    fontVariantNumeric: 'tabular-nums',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {formatPence(line.amount_pence)}
+                </span>
+                <ChevronRight
+                  size={14}
+                  aria-hidden
+                  style={{
+                    color: interactive ? theme.color.inkSubtle : 'transparent',
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      {/* Footer total — reconciles to the RightNowCard's
+          expected_in_safe_pence so staff can double-check the
+          table's sum equals the headline. */}
+      <div
+        style={{
+          marginTop: theme.space[3],
+          paddingTop: theme.space[3],
+          borderTop: `1px solid ${theme.color.border}`,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: theme.space[3],
+        }}
+      >
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            fontWeight: theme.type.weight.semibold,
+          }}
+        >
+          Total
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatPence(total)}
+        </span>
+      </div>
     </Card>
   );
 }
