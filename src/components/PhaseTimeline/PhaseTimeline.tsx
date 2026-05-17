@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from 'react';
-import { Hourglass, UserRound } from 'lucide-react';
+import { Flag, Hourglass, UserRound } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { formatTime } from '../../lib/dateFormat.ts';
 import type { AppointmentPhaseSummary } from '../../lib/queries/appointments.ts';
@@ -57,6 +57,13 @@ export function PhaseTimeline({ phases }: PhaseTimelineProps) {
     );
   }
 
+  // The estimated finish is rendered as a separate trailing event
+  // below the last phase rather than as a tilde-prefix on the last
+  // phase's time column. Reads as "the visit ends here" with its
+  // own dot + label, which staff said was easier to scan than a
+  // small sub-label under the time.
+  const finishAt = phases[phases.length - 1]?.end_at ?? null;
+
   return (
     <ol
       style={{
@@ -68,15 +75,145 @@ export function PhaseTimeline({ phases }: PhaseTimelineProps) {
       }}
       aria-label="Estimated appointment timeline"
     >
-      {phases.map((phase, idx) => {
-        const isLast = idx === phases.length - 1;
-        return (
-          <Fragment key={phase.phase_index}>
-            <PhaseRow phase={phase} isLast={isLast} />
-          </Fragment>
-        );
-      })}
+      {phases.map((phase) => (
+        // The last phase is no longer "the end of the timeline" — the
+        // EstimatedFinishRow below is. Render a connector under every
+        // phase row, including the last one, so the rail flows
+        // continuously down to the finish dot.
+        <Fragment key={phase.phase_index}>
+          <PhaseRow phase={phase} isLast={false} />
+        </Fragment>
+      ))}
+      {finishAt ? <EstimatedFinishRow finishAt={finishAt} /> : null}
     </ol>
+  );
+}
+
+// Trailing event marking the appointment's estimated end. Same grid
+// shape as PhaseRow so it lines up with the rail above, but with a
+// hollow dot, no connector below, and a muted label so it doesn't
+// compete with the actual phases.
+function EstimatedFinishRow({ finishAt }: { finishAt: string }) {
+  const finishStr = formatTime(finishAt);
+  return (
+    <li
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '64px 14px 1fr',
+        gap: theme.space[4],
+        minHeight: 0,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          paddingTop: 1,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1.2,
+          }}
+          aria-label={`Estimated finish ${finishStr}`}
+        >
+          {/* Tilde stays so it still reads as an estimate, not a
+              hard close — same convention the inline sub-label used. */}
+          ~{finishStr}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 4,
+        }}
+        aria-hidden
+      >
+        <FinishDot />
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 26,
+              height: 26,
+              borderRadius: theme.radius.pill,
+              background: theme.color.accentBg,
+              color: theme.color.accent,
+              flexShrink: 0,
+            }}
+          >
+            <Flag size={14} strokeWidth={2.25} />
+          </span>
+          <h4
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1.25,
+            }}
+          >
+            Estimated finish
+          </h4>
+        </div>
+        <div
+          style={{
+            paddingLeft: 34,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: 1.4,
+          }}
+        >
+          Patient leaves
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// Hollow dot used only by the EstimatedFinishRow. Same diameter as
+// PhaseDot so it sits on the rail at the right size, but unfilled
+// so it reads as the closing tick of the timeline, not another
+// phase.
+function FinishDot() {
+  return (
+    <span
+      style={{
+        width: 12,
+        height: 12,
+        borderRadius: '50%',
+        background: theme.color.surface,
+        border: `2px solid ${theme.color.accent}`,
+        flexShrink: 0,
+        marginTop: 4,
+      }}
+    />
   );
 }
 
@@ -140,27 +277,8 @@ function PhaseRow({
         >
           {startStr}
         </span>
-        {/* Mid-timeline phases don't render their end time — the
-            next phase's start IS this phase's end, so the rail
-            already carries the info. The LAST phase has no next
-            row, so its end time is genuinely new info; surface it
-            as a tilde-prefixed sub-label ("~16:30") to signal it's
-            an estimate, not a hard close. */}
-        {isLast ? (
-          <span
-            style={{
-              marginTop: 2,
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.regular,
-              color: theme.color.inkSubtle,
-              letterSpacing: theme.type.tracking.tight,
-              lineHeight: 1.2,
-            }}
-            aria-label={`Estimated end ${endStr}`}
-          >
-            ~{endStr}
-          </span>
-        ) : null}
+        {/* No end-time sub-label here — the EstimatedFinishRow at
+            the bottom of the timeline owns that information now. */}
       </div>
 
       {/* Rail — dot at the top, connector segment beneath */}
