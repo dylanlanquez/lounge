@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react';
+import { AlertTriangle, ChevronRight } from 'lucide-react';
 import googleMeetIcon from '../../assets/google-meet.png';
 import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
@@ -176,6 +176,15 @@ export function ScheduleListRow({
           >
             <SourceGlyph source={row.source} size={13} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{patientDisplayName(row)}</span>
+            {isLate ? (
+              <AlertTriangle
+                size={14}
+                color={theme.color.alert}
+                strokeWidth={2.25}
+                aria-label={`${formatLateDuration(lateMin)} late — likely no-show`}
+                style={{ flexShrink: 0 }}
+              />
+            ) : null}
           </p>
           <p
             style={{

@@ -1,5 +1,5 @@
 import { type CSSProperties } from 'react';
-import { Ban, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Ban, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
 import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
@@ -199,6 +199,15 @@ export function AppointmentCard({
         >
           <SourceGlyph source={source} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{patientName}</span>
+          {showLate ? (
+            <AlertTriangle
+              size={12}
+              color={theme.color.alert}
+              strokeWidth={2.25}
+              aria-label={`${formatLateDuration(lateMinutes!)} late — likely no-show`}
+              style={{ flexShrink: 0 }}
+            />
+          ) : null}
         </p>
         {status === 'cancelled' || status === 'rescheduled' ? (
           <p
