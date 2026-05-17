@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
+import { formatAppointmentSummary, type IntakeAnswer } from './appointments.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Patient profile queries — the read-side surface for /patient/:id.
@@ -492,9 +493,20 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
         apptIds.length > 0
           ? supabase
               .from('lng_appointments')
-              .select('id, appointment_ref, event_type_label')
+              .select('id, appointment_ref, event_type_label, service_type, product_key, arch, intake')
               .in('id', apptIds)
-          : Promise.resolve({ data: [] as Array<{ id: string; appointment_ref: string | null; event_type_label: string | null }>, error: null }),
+          : Promise.resolve({
+              data: [] as Array<{
+                id: string;
+                appointment_ref: string | null;
+                event_type_label: string | null;
+                service_type: string | null;
+                product_key: string | null;
+                arch: string | null;
+                intake: unknown;
+              }>,
+              error: null,
+            }),
       ]);
       if (cancelled) return;
 
@@ -535,9 +547,32 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
       for (const w of (walkInsRes.data ?? []) as Array<{ id: string; appointment_ref: string | null; service_type: string | null }>) {
         walkInById.set(w.id, { appointment_ref: w.appointment_ref, service_type: w.service_type });
       }
-      const apptById = new Map<string, { appointment_ref: string | null; event_type_label: string | null }>();
-      for (const a of (apptsRes.data ?? []) as Array<{ id: string; appointment_ref: string | null; event_type_label: string | null }>) {
-        apptById.set(a.id, { appointment_ref: a.appointment_ref, event_type_label: a.event_type_label });
+      interface ApptForVisit {
+        appointment_ref: string | null;
+        event_type_label: string | null;
+        service_type: string | null;
+        product_key: string | null;
+        arch: string | null;
+        intake: ReadonlyArray<IntakeAnswer> | null;
+      }
+      const apptById = new Map<string, ApptForVisit>();
+      for (const a of (apptsRes.data ?? []) as Array<{
+        id: string;
+        appointment_ref: string | null;
+        event_type_label: string | null;
+        service_type: string | null;
+        product_key: string | null;
+        arch: string | null;
+        intake: unknown;
+      }>) {
+        apptById.set(a.id, {
+          appointment_ref: a.appointment_ref,
+          event_type_label: a.event_type_label,
+          service_type: a.service_type,
+          product_key: a.product_key,
+          arch: a.arch,
+          intake: Array.isArray(a.intake) ? (a.intake as IntakeAnswer[]) : null,
+        });
       }
 
       const mapped: PatientVisitRow[] = ((visits ?? []) as Array<{
@@ -569,9 +604,23 @@ export function usePatientVisits(patientId: string | null | undefined): VisitsRe
               ? [...cartNames][0]!
               : 'Multiple'
             : null;
+        // Fallback to the canonical appointment summary (same
+        // helper the schedule / hero / emails use) so a visit
+        // without a cart yet reads "Same-day upper retainer"
+        // rather than the raw "Same-day appliance" service-type
+        // label that humaniseEventTypeLabel would echo.
+        const canonicalApptLabel = appt
+          ? formatAppointmentSummary({
+              service_type: appt.service_type,
+              event_type_label: appt.event_type_label,
+              arch: appt.arch,
+              product_key: appt.product_key,
+              intake: appt.intake,
+            })
+          : null;
         const serviceLabel =
           cartLabel ??
-          humaniseEventTypeLabel(appt?.event_type_label ?? null) ??
+          (canonicalApptLabel || humaniseEventTypeLabel(appt?.event_type_label ?? null)) ??
           humaniseServiceType(wi?.service_type ?? null);
         return {
           id: v.id,
@@ -656,6 +705,13 @@ export interface PatientScheduledAppointmentRow {
   status: ScheduledApptStatus;
   source: 'calendly' | 'manual' | 'native' | null;
   event_type_label: string | null;
+  // Axis pins — present on every axis-driven booking (native widget
+  // + staff-created manual). Fed straight into formatAppointmentSummary
+  // so the profile row reads as the canonical "Same-day upper retainer"
+  // etc., not the raw service-type label.
+  service_type: string | null;
+  product_key: string | null;
+  arch: string | null;
   appointment_ref: string | null;
   jb_ref: string | null;
   // Set on rows that are calendar markers for a walk-in arrival —
@@ -694,7 +750,7 @@ export function usePatientScheduledAppointments(
       // visit, so the duplicate is a known degraded state on
       // pre-migration deploys.
       const fullSel =
-        'id, start_at, end_at, status, source, event_type_label, appointment_ref, jb_ref, walk_in_id';
+        'id, start_at, end_at, status, source, event_type_label, service_type, product_key, arch, appointment_ref, jb_ref, walk_in_id';
       const slimSel = 'id, start_at, end_at, status, source, event_type_label';
       const first = await supabase
         .from('lng_appointments')
@@ -731,6 +787,9 @@ export function usePatientScheduledAppointments(
         status: r.status as ScheduledApptStatus,
         source: (r.source as PatientScheduledAppointmentRow['source']) ?? null,
         event_type_label: (r.event_type_label as string | null) ?? null,
+        service_type: (r.service_type as string | null) ?? null,
+        product_key: (r.product_key as string | null) ?? null,
+        arch: (r.arch as string | null) ?? null,
         appointment_ref: (r.appointment_ref as string | null) ?? null,
         jb_ref: (r.jb_ref as string | null) ?? null,
         walk_in_id: (r.walk_in_id as string | null) ?? null,

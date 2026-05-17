@@ -24,7 +24,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.ts';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { properCase } from '../lib/queries/appointments.ts';
+import { formatAppointmentSummary, properCase } from '../lib/queries/appointments.ts';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   bucketCase,
@@ -1670,9 +1670,24 @@ function ApptCardRow({
         ? () => onOpenAppointment(row.appointment!.id)
         : undefined;
   const clickable = !!handleClick;
+  // Service label: visits keep their pre-computed label (cart
+  // contents → canonical appointment summary fallback, computed
+  // upstream in patientProfile.ts). Scheduled appointments route
+  // through formatAppointmentSummary directly — same helper the
+  // schedule / hero / popup / emails use, so the profile row
+  // reads "Same-day upper retainer" instead of the bare
+  // "Same-day appliance" service-type label.
   const service = isVisit
     ? row.visit?.service_label ?? 'Appointment'
-    : humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ?? 'Appointment';
+    : (row.appointment && formatAppointmentSummary({
+        service_type: row.appointment.service_type,
+        event_type_label: row.appointment.event_type_label,
+        arch: row.appointment.arch,
+        product_key: row.appointment.product_key,
+        intake: null,
+      })) ||
+      humaniseEventTypeLabel(row.appointment?.event_type_label ?? null) ||
+      'Appointment';
   const ref = isVisit
     ? row.visit?.lap_ref ?? null
     : row.appointment?.appointment_ref ?? null;
