@@ -63,6 +63,11 @@ export interface TimelineEvent {
   // the source row records one. The renderer surfaces this as a
   // subtle "by Dylan Lane" suffix beneath the title.
   actor?: string;
+  // Display name of the manager who signed off on the event (refunds
+  // + discounts + voids today). Rendered alongside the actor as
+  // "by X, approved by Y". Omitted when the approver is the same
+  // person as the actor (self-approval already reads as "by X").
+  approver?: string;
   // Visual hint the timeline renderer maps to an icon. 'deposit'
   // renders the dashed DepositGlyph (partial-settlement mark);
   // 'paid_in_full' renders a solid BadgeCheck so a glance at the
@@ -105,9 +110,10 @@ export interface TimelineEvent {
 
 // Internal shape used by the fetchers — same as TimelineEvent but
 // carries the actor's raw account id so the resolver can swap it for
-// a display name in one batch query.
-type RawTimelineEvent = Omit<TimelineEvent, 'actor'> & {
+// a display name in one batch query. Same for the approver.
+type RawTimelineEvent = Omit<TimelineEvent, 'actor' | 'approver'> & {
   actorAccountId?: string | null;
+  approverAccountId?: string | null;
 };
 
 interface VisitRow {
@@ -459,20 +465,30 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           ...patientEvents,
         ];
 
-        // Step 4: resolve actor names in one batched query, then attach.
-        const actorIds = Array.from(
+        // Step 4: resolve actor + approver names in one batched
+        // query, then attach. Approver is suppressed when it's the
+        // same account as the actor — self-approval already reads
+        // as "by X" without the redundant "approved by X".
+        const lookupIds = Array.from(
           new Set(
             allRaw
-              .map((e) => e.actorAccountId)
-              .filter((id): id is string => !!id)
-          )
+              .flatMap((e) => [e.actorAccountId, e.approverAccountId])
+              .filter((id): id is string => !!id),
+          ),
         );
-        const nameById = await fetchAccountNames(actorIds);
+        const nameById = await fetchAccountNames(lookupIds);
 
         const resolved: TimelineEvent[] = allRaw.map((raw) => {
-          const { actorAccountId, ...rest } = raw;
+          const { actorAccountId, approverAccountId, ...rest } = raw;
           const actor = actorAccountId ? nameById.get(actorAccountId) : undefined;
-          return actor ? { ...rest, actor } : rest;
+          const approver =
+            approverAccountId && approverAccountId !== actorAccountId
+              ? nameById.get(approverAccountId)
+              : undefined;
+          const out: TimelineEvent = { ...rest };
+          if (actor) out.actor = actor;
+          if (approver) out.approver = approver;
+          return out;
         });
 
         // Newest first — receptionists scan from the top expecting
@@ -954,6 +970,13 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         : isRefundIssuedEvent || isResolvedEvent
           ? ('refund_issued' as const)
           : null;
+      // Refund (and any other approver-stamped) rows carry the manager
+      // who signed off in their payload. Surface that as the timeline
+      // event's approver so the renderer can append "approved by X".
+      const approverAccountId =
+        isRefundIssuedEvent && typeof r.payload?.approver_account_id === 'string'
+          ? r.payload.approver_account_id
+          : null;
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,
@@ -961,6 +984,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         title: composePatientEventTitle(r),
         detail: composePatientEventDetail(r),
         actorAccountId: r.actor_account_id,
+        approverAccountId,
         hint:
           refundHint ??
           (isEmailEvent || skipped ? ('mail' as const) : ('flag' as const)),

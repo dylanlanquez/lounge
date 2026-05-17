@@ -327,7 +327,10 @@ function Row({
               <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
             ) : null}
             {event.actor ? (
-              <span style={{ color: theme.color.inkSubtle }}>by {event.actor}</span>
+              <span style={{ color: theme.color.inkSubtle }}>
+                by {event.actor}
+                {event.approver ? `, approved by ${event.approver}` : ''}
+              </span>
             ) : null}
           </p>
         ) : null}
