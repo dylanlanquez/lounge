@@ -1101,12 +1101,13 @@ function buildApptRibbon(
     case 'rescheduled': {
       // The big bold date on a rescheduled row is the OLD slot
       // (appt.start_at hasn't moved — the new booking is a separate
-      // row reachable via reschedule_to_id). Prefix the date with
-      // "Was on" so the heading itself reads past-tense in plain
-      // English, no jargon. The relative slot is replaced in Hero()
-      // with a clickable "Open new booking →" link that navigates
-      // straight to the replacement, so the staff don't have to
-      // hunt below to find it.
+      // row reachable via reschedule_to_id). Heading reads "Was on
+      // <day> at <time>" so the receptionist sees both the day AND
+      // the original slot time the patient was supposed to arrive
+      // at, without having to navigate into the new booking just
+      // to know what got moved. The relative slot is replaced in
+      // Hero() with a clickable "Open new booking →" link that
+      // navigates straight to the replacement.
       //
       // Self-serve reschedules carry cancel_reason=
       // 'patient_self_serve_reschedule' on the OLD row; surface
@@ -1116,7 +1117,7 @@ function buildApptRibbon(
         appt.cancel_reason === 'patient_self_serve_reschedule';
       return {
         icon: <RotateCcw size={16} aria-hidden />,
-        dateLong: `Was on ${formatDateLongOrdinal(appt.start_at)}`,
+        dateLong: `Was on ${formatDateLongOrdinal(appt.start_at)} at ${formatTimeRange(appt.start_at, appt.end_at)}`,
         timeLine: isSelfServe
           ? 'Customer rescheduled themselves via their email link'
           : 'This booking has been moved',
