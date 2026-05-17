@@ -291,14 +291,13 @@ function BookingPanel({
               style={{
                 margin: `${theme.space[1]}px 0 0`,
                 fontSize: theme.type.size.xs,
-                color: theme.color.inkMuted,
-                fontWeight: theme.type.weight.semibold,
-                textTransform: 'uppercase',
-                letterSpacing: theme.type.tracking.wide,
+                color: theme.color.inkSubtle,
+                fontWeight: theme.type.weight.regular,
                 fontVariantNumeric: 'tabular-nums',
+                lineHeight: theme.type.leading.snug,
               }}
             >
-              Booking reference {booking.appointmentRef}
+              Ref · {booking.appointmentRef}
             </p>
           ) : null}
         </div>
