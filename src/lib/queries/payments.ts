@@ -252,6 +252,12 @@ export interface RefundableSourceRow {
   /** Last 4 digits of the card used, when known. Same rules as
    *  card_brand. */
   card_last4: string | null;
+  /** Stripe PaymentIntent id for this source, when one exists. Used
+   *  by useRefundableSources to lazily backfill card_brand /
+   *  card_last4 via the lng-card-details-backfill edge function for
+   *  rows captured before the webhook started writing those columns.
+   *  Null for cash payments and any source without a PI on file. */
+  stripe_payment_intent_id: string | null;
 }
 
 export function useRefundableSources({
@@ -329,6 +335,30 @@ export function useRefundableSources({
             ]),
           );
         }
+        // Resolve the Stripe PI for each card_terminal payment in one
+        // batched query against lng_terminal_payments. Carried on the
+        // RefundableSourceRow so the lazy card-detail backfill can fire
+        // a single edge function call covering every PI in one round-
+        // trip (instead of N round-trips, one per source).
+        const piByPaymentId = new Map<string, string>();
+        const cardPaymentIds = paymentRows
+          .filter((r) => r.method === 'card_terminal')
+          .map((r) => r.id);
+        if (cardPaymentIds.length > 0) {
+          const { data: tpRows } = await supabase
+            .from('lng_terminal_payments')
+            .select('payment_id, stripe_payment_intent_id')
+            .in('payment_id', cardPaymentIds);
+          if (cancelled) return;
+          for (const tp of (tpRows ?? []) as Array<{
+            payment_id: string;
+            stripe_payment_intent_id: string | null;
+          }>) {
+            if (tp.stripe_payment_intent_id) {
+              piByPaymentId.set(tp.payment_id, tp.stripe_payment_intent_id);
+            }
+          }
+        }
         for (const r of paymentRows) {
           const a = Array.isArray(r.account) ? r.account[0] ?? null : r.account ?? null;
           const fn = a?.first_name?.trim();
@@ -348,6 +378,7 @@ export function useRefundableSources({
             source_label: null,
             card_brand: r.card_brand,
             card_last4: r.card_last4,
+            stripe_payment_intent_id: piByPaymentId.get(r.id) ?? null,
           });
         }
       }
@@ -415,6 +446,7 @@ export function useRefundableSources({
               source_label: 'Paid online at booking',
               card_brand: a.card_brand,
               card_last4: a.card_last4,
+              stripe_payment_intent_id: a.deposit_external_id,
             });
           }
         }
@@ -434,6 +466,58 @@ export function useRefundableSources({
       setData(sources);
       setError(null);
       setLoading(false);
+
+      // Lazy backfill of card_brand + card_last4 for sources that
+      // pre-date the webhook-side capture. Fires a single edge-
+      // function call covering every source with a Stripe PI but a
+      // missing column. The function resolves the details from
+      // Stripe, persists them on the row, and returns them so we
+      // can patch the local state without a refetch. Best-effort:
+      // if the edge function fails or returns null, the UI keeps
+      // showing the channel-level label.
+      const needBackfill = sources.filter(
+        (s) =>
+          s.stripe_payment_intent_id &&
+          (!s.card_brand || !s.card_last4),
+      );
+      if (needBackfill.length > 0) {
+        try {
+          const payload = {
+            sources: needBackfill.map((s) => ({
+              kind: s.kind,
+              id: s.id,
+              payment_intent_id: s.stripe_payment_intent_id,
+            })),
+          };
+          const { data: resp, error: invokeErr } = await supabase.functions.invoke(
+            'lng-card-details-backfill',
+            { body: payload },
+          );
+          if (cancelled) return;
+          if (invokeErr || !resp || !Array.isArray((resp as { results?: unknown }).results)) {
+            return;
+          }
+          const results = (resp as {
+            results: Array<{ brand: string | null; last4: string | null } | null>;
+          }).results;
+          // Splice each result back into the corresponding source by
+          // matching order with needBackfill.
+          const updated = sources.map((s) => {
+            const idx = needBackfill.findIndex((n) => n.id === s.id && n.kind === s.kind);
+            if (idx === -1) return s;
+            const r = results[idx];
+            if (!r) return s;
+            return {
+              ...s,
+              card_brand: r.brand ?? s.card_brand,
+              card_last4: r.last4 ?? s.card_last4,
+            };
+          });
+          setData(updated);
+        } catch {
+          // best-effort
+        }
+      }
     })();
     return () => {
       cancelled = true;

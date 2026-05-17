@@ -541,6 +541,34 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Read whatever card details we have on file for this source so
+  // the timeline event can carry brand + last4. Populated by the
+  // webhooks at capture time + the lng-card-details-backfill on
+  // RefundSheet open, so by the time a refund fires this is
+  // usually filled in. Falls back to nulls when unknown — the
+  // timeline composer renders a channel-level label in that case.
+  let cardBrand: string | null = null;
+  let cardLast4: string | null = null;
+  if (src.kind === 'payment') {
+    const { data: cardRow } = await supabase
+      .from('lng_payments')
+      .select('card_brand, card_last4')
+      .eq('id', src.sourceId)
+      .maybeSingle();
+    const c = cardRow as { card_brand: string | null; card_last4: string | null } | null;
+    cardBrand = c?.card_brand ?? null;
+    cardLast4 = c?.card_last4 ?? null;
+  } else {
+    const { data: cardRow } = await supabase
+      .from('lng_appointments')
+      .select('card_brand, card_last4')
+      .eq('id', src.sourceId)
+      .maybeSingle();
+    const c = cardRow as { card_brand: string | null; card_last4: string | null } | null;
+    cardBrand = c?.card_brand ?? null;
+    cardLast4 = c?.card_last4 ?? null;
+  }
+
   // patient_events — heavy logging so the timeline can reconstruct
   // who, when, how much, why, against which source, on which visit.
   // Source is one of: payment (cart-side) or deposit (widget-paid
@@ -563,6 +591,8 @@ Deno.serve(async (req) => {
         method: src.method,
         payment_journey: src.paymentJourney,
         stripe_payment_intent_id: src.stripePaymentIntentId,
+        card_brand: cardBrand,
+        card_last4: cardLast4,
         reason_category: body.reason_category,
         reason_note: reasonNote,
         visit_id: visitId,

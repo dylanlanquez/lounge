@@ -297,6 +297,14 @@ export function VisitDetail() {
   // fulfilment_method='shipping'. Also surfaces via "Process shipping"
   // button if the visit was completed earlier but dispatch wasn't done.
   const [shipOpen, setShipOpen] = useState(false);
+  // Sum of every succeeded refund on this visit (deposit-side + cart-
+  // payment-side combined). Surfaces as the "Refunded" line in the
+  // Totals card so the breakdown explains the gap between the gross
+  // captures shown above and the net amount_paid the view returns.
+  // Without this row, "Paid -£760 + Refunded £0 + Owed back £55"
+  // doesn't reconcile against the £700 subtotal after a £5 refund.
+  const [refundedToDatePence, setRefundedToDatePence] = useState(0);
+  const [refundsTick, setRefundsTick] = useState(0);
   // Refund sheet: opens from the owed-back banner (cart edit dropped
   // the cart below what was already paid) and from the cancelled /
   // ended-early flow. Same component for every entry point so the
@@ -611,6 +619,49 @@ export function VisitDetail() {
   // Only successful deposits credit the till. A failed deposit is shown
   // visually elsewhere; the bill still sums to the full subtotal.
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
+  // Load every succeeded refund tied to this visit (cart payments) or
+  // the associated appointment's deposit. One query per axis so we
+  // can sum both without joining server-side. Re-runs when refundsTick
+  // flips after a fresh refund completes (RefundSheet.onCompleted).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let total = 0;
+      if (cart?.id) {
+        const { data: paymentRefunds } = await supabase
+          .from('lng_payment_refunds')
+          .select('amount_pence, payment:lng_payments!payment_id ( cart_id )')
+          .eq('status', 'succeeded')
+          .not('payment_id', 'is', null);
+        if (cancelled) return;
+        for (const r of (paymentRefunds ?? []) as Array<{
+          amount_pence: number;
+          payment:
+            | { cart_id: string | null }
+            | { cart_id: string | null }[]
+            | null;
+        }>) {
+          const p = Array.isArray(r.payment) ? r.payment[0] ?? null : r.payment ?? null;
+          if (p?.cart_id === cart.id) total += r.amount_pence ?? 0;
+        }
+      }
+      if (visit?.appointment_id) {
+        const { data: depositRefunds } = await supabase
+          .from('lng_payment_refunds')
+          .select('amount_pence')
+          .eq('deposit_appointment_id', visit.appointment_id)
+          .eq('status', 'succeeded');
+        if (cancelled) return;
+        for (const r of (depositRefunds ?? []) as Array<{ amount_pence: number }>) {
+          total += r.amount_pence ?? 0;
+        }
+      }
+      if (!cancelled) setRefundedToDatePence(total);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cart?.id, visit?.appointment_id, refundsTick]);
   // Shopify-paid order linked to the appointment. Already-paid online,
   // so it nets against the bill the same way the deposit does — the
   // till only collects whatever's left over.
@@ -1541,6 +1592,7 @@ export function VisitDetail() {
                   tillCollectedPence={tillCollectedPence}
                   total={total}
                   owedToPatientPence={owedToPatientPence}
+                  refundedToDatePence={refundedToDatePence}
                   patientFirstName={patient?.first_name ?? null}
                   onOpenRefund={() => {
                     setRefundDefaultCategory('item_removed');
@@ -1843,8 +1895,10 @@ export function VisitDetail() {
           // Re-pull paid-status + cart-payment list so the banner
           // disappears immediately on a clean refund and the
           // captured-payments list reflects the new remaining
-          // balances.
+          // balances. Also tick the refunds counter so the Totals
+          // "Refunded" line picks up the new total.
           refreshPaid();
+          setRefundsTick((t) => t + 1);
         }}
       />
 
@@ -3544,6 +3598,7 @@ function Totals({
   tillCollectedPence,
   total,
   owedToPatientPence,
+  refundedToDatePence,
   patientFirstName,
   onOpenRefund,
   hideTotalRow = false,
@@ -3575,6 +3630,11 @@ function Totals({
    *  Issue refund before completing" copy + Refund button live in
    *  this same row now — no separate banner above the cart. */
   owedToPatientPence: number;
+  /** Sum of every succeeded refund tied to this visit (cart-payment
+   *  refunds + deposit refunds combined). Surfaces as a "Refunded"
+   *  line so the breakdown reconciles after a refund has clawed
+   *  money back from the gross captures above. */
+  refundedToDatePence: number;
   patientFirstName: string | null;
   onOpenRefund: () => void;
   /** When true, suppress the bottom "Outstanding £X.XX" hero row —
@@ -3649,6 +3709,20 @@ function Totals({
         <Row
           label="Collected at till"
           value={`-${formatPence(tillCollectedPence)}`}
+          accent
+        />
+      ) : null}
+      {refundedToDatePence > 0 ? (
+        // Refund line. Renders as a positive value (the gross
+        // captures above came down by this amount) so the math
+        // reconciles when read top-to-bottom: -£760 + £5 = -£755
+        // net, which matches the amount_paid view. The timeline
+        // carries the full audit (which card, who refunded, who
+        // approved, why), so this line just needs to balance the
+        // books visually.
+        <Row
+          label="Refunded to patient"
+          value={`+${formatPence(refundedToDatePence)}`}
           accent
         />
       ) : null}

@@ -1052,6 +1052,17 @@ function composePatientEventTitle(row: PatientEventRow): string {
       return `We owe the patient ${formatPence(owedPence)}`;
     }
   }
+  if (row.event_type === 'refund_issued') {
+    // Lead with the amount so the timeline scans "Refunded £5.00"
+    // without forcing the reader into the detail line for the
+    // headline fact. Falls back to the generic "Refund issued"
+    // string only when amount_pence is missing.
+    const amountPence =
+      typeof row.payload?.amount_pence === 'number' ? row.payload.amount_pence : null;
+    if (amountPence != null) {
+      return `Refunded ${formatPence(amountPence)}`;
+    }
+  }
   if (row.event_type === 'visit_shipped') {
     const payload = row.payload ?? {};
     const items = Array.isArray(payload.items) ? (payload.items as string[]).join(', ') : null;
@@ -1206,6 +1217,36 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
     if (label && note) return `${label}. ${note}`;
     return label ?? note ?? undefined;
   }
+  if (row.event_type === 'refund_issued') {
+    // Detail line builds the full audit story:
+    //   "to Visa ending in 4242 (card used at booking) · Item
+    //    removed from cart · "test note""
+    // Renders even when partial fields are missing — drop any
+    // segment that resolves to null and join the rest with ·.
+    const method = typeof payload.method === 'string' ? payload.method : null;
+    const source = typeof payload.refund_source === 'string' ? payload.refund_source : null;
+    const journey = typeof payload.payment_journey === 'string' ? payload.payment_journey : null;
+    const brand = typeof payload.card_brand === 'string' ? payload.card_brand : null;
+    const last4 = typeof payload.card_last4 === 'string' ? payload.card_last4 : null;
+    const back = describeRefundChannel({ method, source, journey, brand, last4 });
+    const reasonCategory =
+      typeof payload.reason_category === 'string' ? payload.reason_category : null;
+    const reasonLabel = humaniseRefundCategory(reasonCategory);
+    const note =
+      typeof payload.reason_note === 'string' && payload.reason_note.trim().length > 0
+        ? payload.reason_note.trim()
+        : typeof row.notes === 'string' && row.notes.trim().length > 0
+          ? row.notes.trim()
+          : null;
+    const isFull = payload.is_full_refund === true;
+    const parts = [
+      back ? `back to ${back}` : null,
+      isFull ? 'full refund' : null,
+      reasonLabel,
+      note ? `"${note}"` : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+  }
   if (row.event_type === 'cart_line_removed') {
     // Title now carries "Removed [name]" so the detail focuses on
     // WHY: reason category + free-text note. Categories: mistake,
@@ -1226,4 +1267,71 @@ function composePatientEventDetail(row: PatientEventRow): string | undefined {
   }
   // Fall back to the row's free-text notes for unrecognised events.
   return row.notes ?? undefined;
+}
+
+// Describe the refund's destination channel in human terms. When we
+// have card_brand + card_last4 (captured at refund time via Stripe)
+// we get the gold-standard "Visa ending in 4242" line. Otherwise we
+// fall back to a channel-level label that still tells staff WHICH
+// money path took the refund — cash drawer vs till card vs deposit
+// card — without leaking that we don't know the specific card.
+function describeRefundChannel(args: {
+  method: string | null;
+  source: string | null;
+  journey: string | null;
+  brand: string | null;
+  last4: string | null;
+}): string | null {
+  const { method, source, journey, brand, last4 } = args;
+  if (method === 'cash') return 'the cash drawer';
+  if (journey === 'klarna' || journey === 'klarna_legacy_shopify') return 'Klarna';
+  if (journey === 'clearpay' || journey === 'clearpay_legacy_shopify') return 'Clearpay';
+  if (brand && last4) {
+    const pretty = prettyCardBrand(brand);
+    return source === 'deposit'
+      ? `${pretty} ending in ${last4} (card used at booking)`
+      : `${pretty} ending in ${last4}`;
+  }
+  if (source === 'deposit') return 'the card used at booking';
+  if (method === 'card_terminal') return 'the card used at the till';
+  return null;
+}
+
+function prettyCardBrand(brand: string): string {
+  const map: Record<string, string> = {
+    visa: 'Visa',
+    mastercard: 'Mastercard',
+    amex: 'American Express',
+    discover: 'Discover',
+    diners: 'Diners Club',
+    jcb: 'JCB',
+    unionpay: 'UnionPay',
+    eftpos_au: 'eftpos',
+    interac: 'Interac',
+  };
+  return map[brand.toLowerCase()] ?? brand;
+}
+
+// Human label for the lng_payment_refunds.reason_category enum.
+// Mirrors the dropdown labels the operator picked in RefundSheet so
+// the timeline reads back exactly what they selected.
+function humaniseRefundCategory(c: string | null): string | null {
+  switch (c) {
+    case 'item_removed':
+      return 'Item removed from cart';
+    case 'visit_cancelled':
+      return 'Visit cancelled';
+    case 'visit_ended_early':
+      return 'Visit ended early';
+    case 'service_not_delivered':
+      return 'Service not delivered';
+    case 'patient_request':
+      return 'Patient request';
+    case 'cart_correction':
+      return 'Cart correction';
+    case 'other':
+      return 'Other';
+    default:
+      return null;
+  }
 }
