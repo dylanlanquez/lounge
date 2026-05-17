@@ -57,7 +57,7 @@ import { useSignedWaivers } from '../lib/queries/waiver.ts';
 import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from '../lib/waiverDocument.ts';
 import { humaniseEventTypeLabel, usePatientProfileFiles } from '../lib/queries/patientProfile.ts';
 import {
-  formatNativeBookingSummary,
+  formatAppointmentSummary,
   type AppointmentSource,
 } from '../lib/queries/appointments.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
@@ -2942,23 +2942,17 @@ function buildVisitHeroProps(
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
   const dateLong = formatDateLongOrdinal(headlineIso);
-  // Service title for the hero ribbon. Axis-pinned bookings (native
-  // widget + staff-created manual) store arch + product_key +
-  // service_type on the row directly, so compose the title from those
-  // columns the same way AppointmentDetail's hero does — result reads
-  // "Upper Click-in veneers" / "Lower retainer" / "Upper & lower
-  // retainers". Calendly-imported and walk-in rows fall back to the
-  // legacy event_type_label heuristic (no axis pins available).
-  const hasAxisPins = !!appointment && !!appointment.service_type;
-  const service = hasAxisPins
-    ? formatNativeBookingSummary({
-        service_type: appointment.service_type,
-        event_type_label: appointment.event_type_label,
-        arch: appointment.arch,
-        product_key: appointment.product_key,
-      })
-    : humaniseEventTypeLabel(appointment?.event_type_label ?? null) ??
-      (isWalkIn ? 'Walk-in' : 'Appointment');
+  // Service title for the hero ribbon. Routes through the shared
+  // formatAppointmentSummary helper so visitDetail reads identically
+  // to the schedule list, the popup preview, and the appointment
+  // detail hero. Walk-in rows fall back to a generic label.
+  const service = appointment
+    ? formatAppointmentSummary(appointment) ||
+      humaniseEventTypeLabel(appointment.event_type_label ?? null) ||
+      (isWalkIn ? 'Walk-in' : 'Appointment')
+    : isWalkIn
+      ? 'Walk-in'
+      : 'Appointment';
 
   // State-driven ribbon — every (visit status × cart status × walk-in
   // vs scheduled) combination resolves to a single triple of icon +

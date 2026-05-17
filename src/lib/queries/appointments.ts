@@ -689,3 +689,36 @@ export function formatBookingSummary(row: {
   }
   return event || rawLabel;
 }
+
+/**
+ * One-stop summary for any appointment row, regardless of source.
+ * Single source of truth for "what should this booking read as on
+ * the schedule / hero / popup / list / clinic board." Routes
+ * axis-pinned rows (native widget + staff-created manual) through
+ * formatNativeBookingSummary; pre-axis Calendly rows fall back to
+ * the intake-parsing formatBookingSummary. Centralising this means
+ * adding a new service type or product enum surfaces everywhere in
+ * one edit — no chance of one card showing "Same-day appliance"
+ * while another shows "Same-day whitening kit" because a call site
+ * forgot the conditional.
+ */
+export function formatAppointmentSummary(row: {
+  service_type: string | null;
+  event_type_label: string | null;
+  arch: string | null;
+  product_key: string | null;
+  intake: ReadonlyArray<IntakeAnswer> | null;
+}): string {
+  if (row.service_type) {
+    return formatNativeBookingSummary({
+      service_type: row.service_type,
+      event_type_label: row.event_type_label,
+      arch: row.arch,
+      product_key: row.product_key,
+    });
+  }
+  return formatBookingSummary({
+    event_type_label: row.event_type_label,
+    intake: row.intake,
+  });
+}

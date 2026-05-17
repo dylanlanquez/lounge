@@ -60,8 +60,7 @@ import {
 import {
   type AppointmentRow,
   eventTypeCategory,
-  formatBookingSummary,
-  formatNativeBookingSummary,
+  formatAppointmentSummary,
   formatLateDuration,
   humaniseStatus,
   isAppointmentDimmed,
@@ -549,16 +548,7 @@ export function Schedule() {
                       endAt={item.data.end_at}
                       status={item.data.status}
                       staffName={staffDisplayName(item.data)}
-                      serviceLabel={
-                        (item.data.service_type
-                          ? formatNativeBookingSummary({
-                              service_type: item.data.service_type,
-                              event_type_label: item.data.event_type_label,
-                              arch: item.data.arch,
-                              product_key: item.data.product_key,
-                            })
-                          : formatBookingSummary(item.data)) || undefined
-                      }
+                      serviceLabel={formatAppointmentSummary(item.data) || undefined}
                       isVirtual={!!item.data.join_url}
                       top={offsetForTime(item.data.start_at, startHour, 80)}
                       height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
@@ -921,15 +911,7 @@ export function Schedule() {
                 // + service_type so the popup matches the appointment-
                 // detail hero. Calendly rows still use intake parsing
                 // — they pre-date the axis columns.
-                const summaryRaw = selected.service_type
-                  ? formatNativeBookingSummary({
-                      service_type: selected.service_type,
-                      event_type_label: selected.event_type_label,
-                      arch: selected.arch,
-                      product_key: selected.product_key,
-                    })
-                  : formatBookingSummary(selected);
-                return summaryRaw;
+                return formatAppointmentSummary(selected);
               })() ? (
                 (() => {
                   // When the virtual-appointment notice above is also
@@ -942,14 +924,7 @@ export function Schedule() {
                     !!selected.join_url && !isDesktop;
                   // Split "Virtual impression appointment for lower whitening tray"
                   // into a large service-name heading + a smaller detail line.
-                  const summary = selected.service_type
-                    ? formatNativeBookingSummary({
-                        service_type: selected.service_type,
-                        event_type_label: selected.event_type_label,
-                        arch: selected.arch,
-                        product_key: selected.product_key,
-                      })
-                    : formatBookingSummary(selected);
+                  const summary = formatAppointmentSummary(selected);
                   const forIdx = summary.indexOf(' for ');
                   const headingText = forIdx !== -1 ? summary.slice(0, forIdx) : summary;
                   const detailText = forIdx !== -1 ? summary.slice(forIdx + 1) : null; // keeps "for …"

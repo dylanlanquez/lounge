@@ -6,7 +6,7 @@ import { theme } from '../../theme/index.ts';
 import {
   type AppointmentRow,
   eventTypeCategory,
-  formatBookingSummary,
+  formatAppointmentSummary,
   formatLateDuration,
   humaniseStatus,
   isAppointmentDimmed,
@@ -203,7 +203,7 @@ export function ScheduleListRow({
               <img src={googleMeetIcon} height={13} aria-label="Virtual meeting" style={{ flexShrink: 0, display: 'block', width: 'auto' }} />
             )}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {[formatBookingSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
+              {[formatAppointmentSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
             </span>
           </p>
         </div>

@@ -58,8 +58,7 @@ import {
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { logFailure } from '../lib/failureLog.ts';
 import {
-  formatBookingSummary,
-  formatNativeBookingSummary,
+  formatAppointmentSummary,
   patientFullDisplayName,
   properCase,
 } from '../lib/queries/appointments.ts';
@@ -818,16 +817,10 @@ function Hero({
   //   same-day appliance + retainer + both  → "Upper & lower retainers"
   // Calendly-imported rows fall back to the legacy parsing path —
   // they pre-date the axis columns and only carry intake answers.
-  const service = appt.service_type
-    ? formatNativeBookingSummary({
-        service_type: appt.service_type,
-        event_type_label: appt.event_type_label,
-        arch: appt.arch,
-        product_key: appt.product_key,
-      })
-    : formatBookingSummary({ event_type_label: appt.event_type_label, intake: appt.intake }) ||
-      humaniseEventTypeLabel(appt.event_type_label) ||
-      'Appointment';
+  const service =
+    formatAppointmentSummary(appt) ||
+    humaniseEventTypeLabel(appt.event_type_label) ||
+    'Appointment';
 
   // State-driven ribbon — icon + dateLong + anchor + relative + tone
   // all picked together so a glance answers "what is this booking
