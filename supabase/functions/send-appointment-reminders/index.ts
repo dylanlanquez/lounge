@@ -310,11 +310,13 @@ async function processOne(
   const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
   // Phase data + threshold drive {{patientFacingSchedule}}. Empty
-  // phases degrade to the duration label.
-  const [phases, segmentedThresholdMinutes, brandingAndContact] = await Promise.all([
+  // phases degrade to the duration label. Booking items snapshot
+  // feeds the denture-repair-table placeholder.
+  const [phases, segmentedThresholdMinutes, brandingAndContact, bookingItems] = await Promise.all([
     fetchAppointmentPhases(admin, apt.id),
     resolveSegmentedThresholdMinutes(admin),
     loadBrandingAndContact(admin),
+    fetchAppointmentBookingItems(admin, apt.id),
   ]);
 
   // Build variables. Keep names matching what the admin UI exposes
@@ -328,6 +330,7 @@ async function processOne(
     phases,
     segmentedThresholdMinutes,
     brandingAndContact.contact,
+    bookingItems,
   );
 
   // Render via the inline parser (same pipeline as src/lib/emailRenderer.ts).
@@ -414,6 +417,7 @@ function buildVariables(
   phases: AppointmentPhase[],
   segmentedThresholdMinutes: number,
   contact: ContactSettings,
+  bookingItems: BookingItemsSnapshot,
 ): Record<string, string> {
   const start = new Date(apt.start_at);
   const fmt = (opts: Intl.DateTimeFormatOptions) =>
@@ -469,6 +473,15 @@ function buildVariables(
     manageUrl: apt.manage_token
       ? `${WIDGET_PUBLIC_URL}/manage?token=${apt.manage_token}`
       : '',
+    // Service-scoped placeholders — each renders empty for any
+    // service that isn't its target so a single reminder template
+    // can include all four and only the relevant block appears
+    // per booking. Keep names + behaviour in sync with the
+    // confirmation edge function helpers of the same name.
+    sameDayServiceLabel: composeSameDayServiceLabel(apt),
+    dentureRepairTable: composeDentureRepairTable(apt, bookingItems),
+    inPersonImpressionLabel: composeImpressionLabel(apt, 'in-person'),
+    virtualImpressionLabel: composeImpressionLabel(apt, 'virtual'),
   };
 }
 
@@ -699,6 +712,199 @@ function locationFreeform(location: LocationRow | null): string {
   return pieces.length ? pieces.join(', ') : 'Venneir Lounge';
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Service-scoped placeholder helpers + dependencies
+// ─────────────────────────────────────────────────────────────────
+//
+// Keep BYTE-FOR-BYTE in sync with the same-named helpers in
+// supabase/functions/send-appointment-confirmation/index.ts. Deno
+// can't import from src/ so the duplication is forced; a future
+// refactor could move these to supabase/functions/_shared/ but for
+// now the inline copy matches the existing precedent (the renderer
+// + many other helpers already live in both functions).
+
+interface AppointmentRepairItemSnapshot {
+  name: string;
+  arch: 'upper' | 'lower' | 'both';
+  unit_label: string | null;
+  quantity: number;
+  line_total_pence: number;
+}
+interface AppointmentUpgradeSnapshot {
+  name: string;
+  resolved_price_pence: number;
+}
+interface BookingItemsSnapshot {
+  repairItems: AppointmentRepairItemSnapshot[];
+  upgrades: AppointmentUpgradeSnapshot[];
+}
+
+async function fetchAppointmentBookingItems(
+  admin: SupabaseClient,
+  appointmentId: string,
+): Promise<BookingItemsSnapshot> {
+  const [repairsRes, upgradesRes] = await Promise.all([
+    admin
+      .from('lng_appointment_repair_items')
+      .select('name, arch, unit_label, quantity, line_total_pence')
+      .eq('appointment_id', appointmentId)
+      .order('created_at', { ascending: true }),
+    admin
+      .from('lng_appointment_upgrade_selections')
+      .select('name, resolved_price_pence')
+      .eq('appointment_id', appointmentId)
+      .order('created_at', { ascending: true }),
+  ]);
+  const repairItems = Array.isArray(repairsRes.data)
+    ? (repairsRes.data as AppointmentRepairItemSnapshot[])
+    : [];
+  const upgrades = Array.isArray(upgradesRes.data)
+    ? (upgradesRes.data as AppointmentUpgradeSnapshot[])
+    : [];
+  return { repairItems, upgrades };
+}
+
+const GBP_FORMATTER_REMINDER = new Intl.NumberFormat('en-GB', {
+  style: 'currency',
+  currency: 'GBP',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+function formatGbpPence(pence: number): string {
+  return GBP_FORMATTER_REMINDER.format(pence / 100);
+}
+
+// Mirror of customerRepairLabel in src/widgets/shared/state.ts.
+function customerRepairLabel(name: string): string {
+  let out = name.trim();
+  out = out.replace(/\s+(?:to\s+)?denture\b\.?$/i, '').trim();
+  out = out.replace(/\bdenture\s+/i, '').trim();
+  if (out.length > 0) out = out.charAt(0).toUpperCase() + out.slice(1);
+  return out.length > 0 ? out : name;
+}
+
+const TITLE_PRODUCT_NOUN: Record<string, string> = {
+  retainer: 'Retainer',
+  night_guard: 'Night Guard',
+  day_guard: 'Day Guard',
+  click_in_veneers: 'Click-in Veneers',
+  missing_tooth: 'Missing Tooth Retainer',
+  whitening_tray: 'Whitening Tray',
+  whitening_kit: 'Whitening Kit',
+  aligner: 'Replacement Aligner',
+};
+
+function pluraliseTitleNoun(noun: string): string {
+  const t = noun.trim();
+  if (!t) return t;
+  if (/s$/i.test(t)) return t;
+  return `${t}s`;
+}
+
+function titleArchToken(
+  arch: 'upper' | 'lower' | 'both' | null,
+): 'Upper' | 'Lower' | 'Upper & Lower' | null {
+  if (arch === 'upper') return 'Upper';
+  if (arch === 'lower') return 'Lower';
+  if (arch === 'both') return 'Upper & Lower';
+  return null;
+}
+
+function composeSameDayServiceLabel(apt: AppointmentRow): string {
+  const service = apt.service_type;
+  if (service !== 'same_day_appliance' && service !== 'click_in_veneers') {
+    return '';
+  }
+  if (apt.product_key === 'whitening_kit') return 'Same-day Whitening Kit';
+  const productNoun = apt.product_key
+    ? TITLE_PRODUCT_NOUN[apt.product_key]
+    : undefined;
+  const serviceNoun =
+    service === 'click_in_veneers' ? 'Click-in Veneers' : undefined;
+  const noun = productNoun ?? serviceNoun;
+  if (!noun) return '';
+  const archToken = titleArchToken(apt.arch);
+  const finalNoun = apt.arch === 'both' ? pluraliseTitleNoun(noun) : noun;
+  return archToken
+    ? `Same-day ${archToken} ${finalNoun}`
+    : `Same-day ${finalNoun}`;
+}
+
+function composeImpressionLabel(
+  apt: AppointmentRow,
+  kind: 'in-person' | 'virtual',
+): string {
+  const expectedService =
+    kind === 'in-person'
+      ? 'in_person_impression_appointment'
+      : 'virtual_impression_appointment';
+  if (apt.service_type !== expectedService) return '';
+  const base =
+    kind === 'in-person'
+      ? 'In-person Impression Appointment'
+      : 'Virtual Impression Appointment';
+  const productNoun = apt.product_key
+    ? TITLE_PRODUCT_NOUN[apt.product_key] ?? null
+    : null;
+  const archToken = titleArchToken(apt.arch);
+  if (archToken && productNoun) {
+    const finalNoun =
+      apt.arch === 'both' ? pluraliseTitleNoun(productNoun) : productNoun;
+    return `${base} for ${archToken} ${finalNoun}`;
+  }
+  if (archToken) return `${base} for ${archToken}`;
+  if (productNoun) return `${base} for ${productNoun}`;
+  return base;
+}
+
+function composeDentureRepairTable(
+  apt: AppointmentRow,
+  items: BookingItemsSnapshot,
+): string {
+  if (apt.service_type !== 'denture_repair') return '';
+  if (items.repairItems.length === 0) return '';
+  const byArch = new Map<'upper' | 'lower' | 'both', AppointmentRepairItemSnapshot[]>();
+  for (const r of items.repairItems) {
+    const list = byArch.get(r.arch) ?? [];
+    list.push(r);
+    byArch.set(r.arch, list);
+  }
+  const archHeading: Record<'upper' | 'lower' | 'both', string> = {
+    upper: 'Your Upper Denture',
+    lower: 'Your Lower Denture',
+    both: 'Your Upper and Lower Dentures',
+  };
+  const order: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+  const sectionsHtml: string[] = [];
+  for (const arch of order) {
+    const rows = byArch.get(arch);
+    if (!rows || rows.length === 0) continue;
+    const rowsHtml = rows
+      .map((r) => {
+        const qtySuffix =
+          r.unit_label === 'per tooth' && r.quantity > 1
+            ? ` × ${r.quantity} teeth`
+            : '';
+        const cellBase =
+          'padding:12px 0;border-top:1px solid #E5E2DC;font-size:14px;color:#0E1414;';
+        return (
+          `<tr>` +
+          `<td style="${cellBase}">${customerRepairLabel(r.name)}${qtySuffix}</td>` +
+          `<td style="${cellBase}text-align:right;font-variant-numeric:tabular-nums;">${formatGbpPence(r.line_total_pence)}</td>` +
+          `</tr>`
+        );
+      })
+      .join('');
+    sectionsHtml.push(
+      `<div style="margin:0 0 20px 0;">` +
+        `<h3 style="font-size:16px;font-weight:600;margin:0 0 4px 0;color:#0E1414;letter-spacing:-0.01em;">${archHeading[arch]}</h3>` +
+        `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border-bottom:1px solid #E5E2DC;">${rowsHtml}</table>` +
+        `</div>`,
+    );
+  }
+  return `<div>${sectionsHtml.join('')}</div>`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Email parser — Deno copy of src/lib/emailRenderer.ts. Kept in sync
 // by hand because Deno can't import from src/ directly. If you change
@@ -808,6 +1014,15 @@ function parseFormatting(syntax: string): string {
       flushBuffer();
       flushList();
       blocks.push(`<hr style="${_STYLE_HR}">`);
+      continue;
+    }
+    // Raw-HTML passthrough — see src/lib/emailRenderer.ts for the
+    // browser-side equivalent. Used by service-scoped placeholders
+    // that ship pre-rendered HTML (e.g. {{dentureRepairTable}}).
+    if (/^\s*<(table|div|section|article|aside|figure)[\s>]/i.test(line)) {
+      flushBuffer();
+      flushList();
+      blocks.push(line);
       continue;
     }
     const h4 = line.match(/^#### (.+)$/);

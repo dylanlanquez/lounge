@@ -708,6 +708,172 @@ function customerRepairLabel(name: string): string {
   return out.length > 0 ? out : name;
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Service-scoped placeholder helpers
+// ─────────────────────────────────────────────────────────────────
+//
+// Each helper renders one of the four service-specific email
+// placeholders Dylan asked for ({{sameDayServiceLabel}},
+// {{dentureRepairTable}}, {{inPersonImpressionLabel}},
+// {{virtualImpressionLabel}}). Returns "" for any booking that
+// isn't of the helper's target service type, so a template can
+// embed all four on their own lines and only the relevant block
+// shows per booking. Casing here is intentionally Title Case
+// across the board — these are the customer-facing email versions
+// of the canonical phrasing, and the email subject + body register
+// reads more formally than the prose-case used on the in-app
+// schedule.
+
+// Per-product noun map in Title Case. Mirrors lwo_catalogue.name
+// (admin > Service types) so each product appears in the email as
+// the same string the admin labelled. Keep this in sync with
+// APPLIANCE_TITLE_FALLBACK in src/widgets/shared/state.ts and the
+// catalogue rows themselves.
+const TITLE_PRODUCT_NOUN: Record<string, string> = {
+  retainer: 'Retainer',
+  night_guard: 'Night Guard',
+  day_guard: 'Day Guard',
+  click_in_veneers: 'Click-in Veneers',
+  missing_tooth: 'Missing Tooth Retainer',
+  whitening_tray: 'Whitening Tray',
+  whitening_kit: 'Whitening Kit',
+  aligner: 'Replacement Aligner',
+};
+
+function pluraliseTitleNoun(noun: string): string {
+  const t = noun.trim();
+  if (!t) return t;
+  if (/s$/i.test(t)) return t;
+  return `${t}s`;
+}
+
+function titleArchToken(
+  arch: 'upper' | 'lower' | 'both' | null,
+): 'Upper' | 'Lower' | 'Upper & Lower' | null {
+  if (arch === 'upper') return 'Upper';
+  if (arch === 'lower') return 'Lower';
+  if (arch === 'both') return 'Upper & Lower';
+  return null;
+}
+
+// {{sameDayServiceLabel}} — Title Case for same-day appliance AND
+// click-in veneers. Whitening kit is a deliberate special case:
+// always "Same-day Whitening Kit" (no arch, no plural) regardless
+// of arch column, because the kit covers both arches by default.
+function composeSameDayServiceLabel(apt: AppointmentRow): string {
+  const service = apt.service_type;
+  if (service !== 'same_day_appliance' && service !== 'click_in_veneers') {
+    return '';
+  }
+  if (apt.product_key === 'whitening_kit') return 'Same-day Whitening Kit';
+
+  const productNoun = apt.product_key
+    ? TITLE_PRODUCT_NOUN[apt.product_key]
+    : undefined;
+  const serviceNoun =
+    service === 'click_in_veneers' ? 'Click-in Veneers' : undefined;
+  const noun = productNoun ?? serviceNoun;
+  if (!noun) return '';
+
+  const archToken = titleArchToken(apt.arch);
+  const finalNoun = apt.arch === 'both' ? pluraliseTitleNoun(noun) : noun;
+  return archToken
+    ? `Same-day ${archToken} ${finalNoun}`
+    : `Same-day ${finalNoun}`;
+}
+
+// {{inPersonImpressionLabel}} / {{virtualImpressionLabel}} —
+// Title Case impression phrase with the "for {arch} {product}"
+// clause. Only renders for the matching service_type.
+function composeImpressionLabel(
+  apt: AppointmentRow,
+  kind: 'in-person' | 'virtual',
+): string {
+  const expectedService =
+    kind === 'in-person'
+      ? 'in_person_impression_appointment'
+      : 'virtual_impression_appointment';
+  if (apt.service_type !== expectedService) return '';
+
+  const base =
+    kind === 'in-person'
+      ? 'In-person Impression Appointment'
+      : 'Virtual Impression Appointment';
+  const productNoun = apt.product_key
+    ? TITLE_PRODUCT_NOUN[apt.product_key] ?? null
+    : null;
+  const archToken = titleArchToken(apt.arch);
+
+  if (archToken && productNoun) {
+    const finalNoun =
+      apt.arch === 'both' ? pluraliseTitleNoun(productNoun) : productNoun;
+    return `${base} for ${archToken} ${finalNoun}`;
+  }
+  if (archToken) return `${base} for ${archToken}`;
+  if (productNoun) return `${base} for ${productNoun}`;
+  return base;
+}
+
+// {{dentureRepairTable}} — pre-rendered HTML table grouped by
+// arch, one section per arch the patient has repairs on. Mirrors
+// the customer-facing widget Review card visually. Returns the
+// entire HTML payload on ONE line so parseFormatting's raw-HTML
+// passthrough rule recognises it as a single block. Empty for any
+// service that isn't denture_repair OR when no repair items were
+// captured (defensive — a denture-repair booking with no lines
+// would be an oddity, but the empty output is harmless either way).
+function composeDentureRepairTable(
+  apt: AppointmentRow,
+  items: BookingItemsSnapshot,
+): string {
+  if (apt.service_type !== 'denture_repair') return '';
+  if (items.repairItems.length === 0) return '';
+
+  const byArch = new Map<'upper' | 'lower' | 'both', AppointmentRepairItemSnapshot[]>();
+  for (const r of items.repairItems) {
+    const list = byArch.get(r.arch) ?? [];
+    list.push(r);
+    byArch.set(r.arch, list);
+  }
+  const archHeading: Record<'upper' | 'lower' | 'both', string> = {
+    upper: 'Your Upper Denture',
+    lower: 'Your Lower Denture',
+    both: 'Your Upper and Lower Dentures',
+  };
+  const order: Array<'upper' | 'lower' | 'both'> = ['upper', 'lower', 'both'];
+
+  const sectionsHtml: string[] = [];
+  for (const arch of order) {
+    const rows = byArch.get(arch);
+    if (!rows || rows.length === 0) continue;
+    const rowsHtml = rows
+      .map((r) => {
+        const qtySuffix =
+          r.unit_label === 'per tooth' && r.quantity > 1
+            ? ` × ${r.quantity} teeth`
+            : '';
+        const cellBase =
+          'padding:12px 0;border-top:1px solid #E5E2DC;font-size:14px;color:#0E1414;';
+        return (
+          `<tr>` +
+          `<td style="${cellBase}">${customerRepairLabel(r.name)}${qtySuffix}</td>` +
+          `<td style="${cellBase}text-align:right;font-variant-numeric:tabular-nums;">${formatGbpPence(r.line_total_pence)}</td>` +
+          `</tr>`
+        );
+      })
+      .join('');
+    const sectionHtml =
+      `<div style="margin:0 0 20px 0;">` +
+      `<h3 style="font-size:16px;font-weight:600;margin:0 0 4px 0;color:#0E1414;letter-spacing:-0.01em;">${archHeading[arch]}</h3>` +
+      `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border-bottom:1px solid #E5E2DC;">${rowsHtml}</table>` +
+      `</div>`;
+    sectionsHtml.push(sectionHtml);
+  }
+  // Wrap in a single <div> so parseFormatting's raw-HTML rule sees
+  // one block (the line starts with `<div`).
+  return `<div>${sectionsHtml.join('')}</div>`;
+}
+
 // Threshold in minutes — if any passive phase runs at least this
 // long, the segmented variable renders as a multi-segment schedule
 // rather than a single duration line. Sourced from lng_settings so
@@ -1073,6 +1239,13 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     ),
     joinMeetingUrl: apt.join_url ?? '',
     bookingItemsBlock: formatBookingItemsBlock(ctx.bookingItems),
+    // Service-scoped placeholders — each renders empty for any
+    // service that isn't its target, so a template can embed all
+    // four and only the relevant block shows per booking.
+    sameDayServiceLabel: composeSameDayServiceLabel(apt),
+    dentureRepairTable: composeDentureRepairTable(apt, ctx.bookingItems),
+    inPersonImpressionLabel: composeImpressionLabel(apt, 'in-person'),
+    virtualImpressionLabel: composeImpressionLabel(apt, 'virtual'),
   };
 
   if (oldApt) {
@@ -1193,6 +1366,19 @@ function parseFormatting(syntax: string): string {
       flushBuffer();
       flushList();
       blocks.push(`<hr style="${_STYLE_HR}">`);
+      continue;
+    }
+    // Raw-HTML passthrough — see src/lib/emailRenderer.ts for the
+    // browser-side equivalent. Restricted to a hand-picked tag list
+    // so a stray "<3" never trips it. Used by service-scoped
+    // placeholders that ship pre-rendered HTML (e.g.
+    // {{dentureRepairTable}}); the placeholder is responsible for
+    // emitting the entire HTML payload on a single line so this
+    // rule sees one block.
+    if (/^\s*<(table|div|section|article|aside|figure)[\s>]/i.test(line)) {
+      flushBuffer();
+      flushList();
+      blocks.push(line);
       continue;
     }
     const h4 = line.match(/^#### (.+)$/);

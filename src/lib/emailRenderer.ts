@@ -205,6 +205,19 @@ export function parseFormatting(syntax: string): string {
       blocks.push(`<hr style="${STYLE_HR}">`);
       continue;
     }
+    // Raw-HTML passthrough — lines that start with a recognised
+    // block-level tag are emitted verbatim so a placeholder can ship
+    // pre-rendered HTML (e.g. the {{dentureRepairTable}} variable).
+    // Restricted to a hand-picked tag list so a paragraph that
+    // happens to start with "<3" or an inline link doesn't trigger
+    // it. The placeholder is responsible for keeping the whole HTML
+    // on ONE line so this rule sees a single block.
+    if (/^\s*<(table|div|section|article|aside|figure)[\s>]/i.test(line)) {
+      flushBuffer();
+      flushList();
+      blocks.push(line);
+      continue;
+    }
     const h4 = line.match(/^#### (.+)$/);
     if (h4 && h4[1]) {
       flushBuffer();

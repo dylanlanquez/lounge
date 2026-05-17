@@ -426,6 +426,35 @@ const APPOINTMENT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     sample:
       '**Your upper denture**\n- Reline · £120.00\n- Broken tooth × 2 teeth · £80.00\n\n**Your lower denture**\n- Snapped denture · £150.00\n\n**Upgrades**\n- Scalloped · £45.00',
   },
+  {
+    name: 'sameDayServiceLabel',
+    label: 'Same-day service (appliance / click-in veneers)',
+    description:
+      'Title-case service name for same-day bookings ONLY: "Same-day Upper & Lower Night Guards", "Same-day Upper Whitening Tray", "Same-day Whitening Kit" (no arch because the kit covers both by default), "Same-day Upper & Lower Click-in Veneers". Renders as empty for every other service type, so drop it on its own line and only same-day bookings show this label.',
+    sample: 'Same-day Upper & Lower Missing Tooth Retainers',
+  },
+  {
+    name: 'dentureRepairTable',
+    label: 'Denture repair table',
+    description:
+      'On-theme HTML table grouped by arch ("Your Upper Denture" / "Your Lower Denture" / "Your Upper and Lower Dentures"), one row per repair line with the price right-aligned. Mirrors the customer-facing widget Review card. Renders empty for non-denture-repair bookings, so the variable can sit on its own line in the template without leaving an empty header behind.',
+    sample:
+      'Your Lower Denture\nSnapped denture · £60.00\nCracked denture · £70.00',
+  },
+  {
+    name: 'inPersonImpressionLabel',
+    label: 'In-person impression appointment label',
+    description:
+      'Title-case service phrase for in-person impression bookings ONLY: "In-person Impression Appointment for Upper & Lower Retainers", "In-person Impression Appointment for Upper Click-in Veneers". Renders empty for every other service type.',
+    sample: 'In-person Impression Appointment for Upper & Lower Retainers',
+  },
+  {
+    name: 'virtualImpressionLabel',
+    label: 'Virtual impression appointment label',
+    description:
+      'Title-case service phrase for virtual impression bookings ONLY: "Virtual Impression Appointment for Upper & Lower Retainers", "Virtual Impression Appointment for Upper Click-in Veneers". Renders empty for every other service type.',
+    sample: 'Virtual Impression Appointment for Upper & Lower Retainers',
+  },
 ];
 
 // Virtual-appointment-specific variables — layered on APPOINTMENT_VARIABLES

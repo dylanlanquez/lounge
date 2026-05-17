@@ -178,6 +178,45 @@ describe('parseFormatting', () => {
     expect(out).toContain('<img');
     expect(out).toContain('margin:0 0 8px 0');
   });
+
+  // Raw-HTML passthrough used by service-scoped placeholders that
+  // ship pre-rendered HTML (e.g. {{dentureRepairTable}}). The
+  // placeholder substitutes its HTML payload BEFORE parseFormatting
+  // runs; the rule below recognises lines that start with a
+  // block-level tag and emits them verbatim, instead of wrapping
+  // them in <p>.
+  describe('raw-HTML passthrough', () => {
+    it('emits a <table> line verbatim, no <p> wrap', () => {
+      const out = parseFormatting('<table style="width:100%"><tr><td>cell</td></tr></table>');
+      expect(out).toBe('<table style="width:100%"><tr><td>cell</td></tr></table>');
+    });
+
+    it('emits a <div> line verbatim and keeps surrounding paragraphs intact', () => {
+      const out = parseFormatting('Hi Sarah,\n\n<div><p>raw</p></div>\n\nThanks.');
+      expect(out).toContain('<p style="margin:0 0 8px 0">Hi Sarah,</p>');
+      expect(out).toContain('<div><p>raw</p></div>');
+      expect(out).toContain('<p style="margin:0 0 8px 0">Thanks.</p>');
+      // The raw block sits between the two paragraphs, NOT inside a <p>.
+      expect(out).not.toContain('<p style="margin:0 0 8px 0"><div>');
+    });
+
+    it('does NOT treat a paragraph starting with "<3" as raw HTML', () => {
+      const out = parseFormatting('<3 my retainers');
+      // "<3" is not a recognised block-level tag, so the line is
+      // wrapped in <p> just like any other paragraph. The renderer
+      // doesn't HTML-escape `<` in paragraph text (existing
+      // behaviour), but the important thing here is that the line
+      // didn't bypass the <p> wrap.
+      expect(out).toContain('<p style="margin:0 0 8px 0"><3 my retainers</p>');
+    });
+
+    it('does NOT treat an inline <a> link line as raw HTML', () => {
+      // <a> isn't in the allow-list — inline links stay inside their
+      // paragraph wrapper as before.
+      const out = parseFormatting('<a href="x">link</a> in the middle');
+      expect(out).toContain('<p style="margin:0 0 8px 0">');
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
