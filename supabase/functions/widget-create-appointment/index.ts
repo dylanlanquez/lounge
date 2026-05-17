@@ -128,6 +128,23 @@ interface SubmitBody {
    *  the legacy free-booking / pre-mode-flag path which falls back
    *  to the deposit pathway when widget_deposit_pence > 0. */
   paymentMode?: 'full' | 'deposit' | 'on_the_day' | null;
+  /** Origin of this booking call. 'widget' (default) is the public
+   *  embed used on venneir.com / denture-services.co.uk. 'checkpoint'
+   *  is the staff-side booker built into Checkpoint's ScanView: it
+   *  pre-populates patient identity from the Shopify order in scope,
+   *  always books as paymentMode='on_the_day', and writes
+   *  lng_appointments.source='manual' since a staff member is
+   *  acting on the patient's behalf. */
+  source?: 'widget' | 'checkpoint' | null;
+  /** Shopify order name (e.g. "VEN73520") to attach as a credit
+   *  against the appointment. Mirrors NewBookingSheet's order-attach
+   *  step: the endpoint re-resolves the order via lng_lookup_shopify_order
+   *  with the service-role key and writes the six shopify_order_*
+   *  columns. Required when source='checkpoint' and serviceType is
+   *  same_day_appliance or click_in_veneers (same-day services are
+   *  only bookable against a paid online order). Null/omitted for
+   *  the customer widget. */
+  shopifyOrderName?: string | null;
   details: {
     firstName: string;
     lastName: string;
@@ -271,6 +288,75 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable', conflicts: conflictRows });
   }
 
+  // ── Shopify order lookup (Checkpoint path) ─────────────────────
+  // Checkpoint pre-fills the Shopify order from the ScanView page.
+  // We re-resolve it server-side with the service-role key so a
+  // tampered client body can't claim "this order is paid" — same
+  // validation NewBookingSheet runs client-side. Same-day services
+  // (same_day_appliance, click_in_veneers) require a redeemable
+  // order; everything else is optional credit.
+  const isSameDayService =
+    body.serviceType === 'same_day_appliance' ||
+    body.serviceType === 'click_in_veneers';
+  const isCheckpointSource = body.source === 'checkpoint';
+  let shopifyOrderRow: {
+    id: string;
+    name: string;
+    total_price_pence: number;
+    currency: string | null;
+  } | null = null;
+  const shopifyOrderName = body.shopifyOrderName?.trim() || null;
+  if (shopifyOrderName) {
+    const { data: lookupRows, error: lookupErr } = await supabase.rpc(
+      'lng_lookup_shopify_order',
+      { p_order_name: shopifyOrderName },
+    );
+    if (lookupErr) {
+      await logFailure('shopify_lookup_failed', {
+        error: lookupErr.message,
+        shopifyOrderName,
+      });
+      return jsonResponse(500, { error: 'shopify_lookup_failed' });
+    }
+    const rows = (lookupRows ?? []) as Array<{
+      id: string;
+      name: string;
+      total_price_pence: number;
+      currency: string | null;
+      financial_status: string | null;
+      cancelled_at: string | null;
+    }>;
+    const order = rows[0];
+    if (!order) {
+      return jsonResponse(404, {
+        error: 'shopify_order_not_found',
+        detail: shopifyOrderName,
+      });
+    }
+    if (order.cancelled_at) {
+      return jsonResponse(400, { error: 'shopify_order_cancelled' });
+    }
+    const fin = (order.financial_status ?? '').toLowerCase();
+    if (fin === 'refunded') {
+      return jsonResponse(400, { error: 'shopify_order_refunded' });
+    }
+    if (fin !== 'paid' && fin !== 'partially_refunded') {
+      return jsonResponse(400, {
+        error: 'shopify_order_not_paid',
+        detail: order.financial_status,
+      });
+    }
+    shopifyOrderRow = {
+      id: order.id,
+      name: order.name,
+      total_price_pence: order.total_price_pence,
+      currency: order.currency,
+    };
+  }
+  if (isCheckpointSource && isSameDayService && !shopifyOrderRow) {
+    return jsonResponse(400, { error: 'same_day_requires_shopify_order' });
+  }
+
   // ── Payment verification ────────────────────────────────────────
   // Four modes the client can send. All flows resolve the expected
   // amount server-side first so a tampered client body can't claim
@@ -288,8 +374,12 @@ Deno.serve(async (req) => {
   //     widget that pre-dated the explicit mode flag — same
   //     behaviour as 'deposit'. Kept for back-compat with any
   //     un-redeployed embed in the wild.
-  const paymentMode: 'full' | 'on_the_day' | 'deposit' =
-    body.paymentMode === 'full'
+  // Checkpoint always settles at the till — staff book on behalf of
+  // a patient who's already paid online (via the attached Shopify
+  // order) or who will pay in clinic. No Stripe PI in the loop.
+  const paymentMode: 'full' | 'on_the_day' | 'deposit' = isCheckpointSource
+    ? 'on_the_day'
+    : body.paymentMode === 'full'
       ? 'full'
       : body.paymentMode === 'on_the_day'
         ? 'on_the_day'
@@ -473,7 +563,11 @@ Deno.serve(async (req) => {
     .insert({
       patient_id: patientId,
       location_id: resolvedLocationId,
-      source: 'native',
+      // Checkpoint is staff-side (staff acting on the patient's
+      // behalf from an order page), so it maps to 'manual' — same
+      // value the in-app NewBookingSheet writes. 'native' stays for
+      // the customer-self-service widget.
+      source: isCheckpointSource ? 'manual' : 'native',
       start_at: startAt.toISOString(),
       end_at: endAt.toISOString(),
       status: 'booked',
@@ -491,6 +585,17 @@ Deno.serve(async (req) => {
       // 500-ing the booking write.
       brand_id: body.brandId === 'denture' ? 'denture' : 'venneir',
       paid_in_full_at_booking: paidInFullAtBooking,
+      // Shopify order credit. Mirrors NewBookingSheet's createAppointment
+      // write so the cart at checkout already reflects the online
+      // payment. shopify_order_linked_by is null because the caller
+      // is anon-keyed (no auth_account_id available) — for Checkpoint
+      // we may revisit this once Checkpoint mints its own staff token.
+      shopify_order_id: shopifyOrderRow?.id ?? null,
+      shopify_order_name: shopifyOrderRow?.name ?? null,
+      shopify_order_total_pence: shopifyOrderRow?.total_price_pence ?? null,
+      shopify_order_currency: shopifyOrderRow?.currency ?? null,
+      shopify_order_linked_at: shopifyOrderRow ? new Date().toISOString() : null,
+      shopify_order_linked_by: null,
       ...(depositFields ?? {}),
     })
     .select('id, appointment_ref, manage_token')
@@ -562,7 +667,7 @@ Deno.serve(async (req) => {
     patient_id: patientId,
     event_type: 'appointment_booked',
     payload: {
-      source: 'widget',
+      source: isCheckpointSource ? 'checkpoint' : 'widget',
       appointment_id: appointmentId,
       appointment_ref: appointmentRef,
       service_type: body.serviceType,
@@ -576,6 +681,7 @@ Deno.serve(async (req) => {
       end_at: endAt.toISOString(),
       duration_minutes: durationMin,
       upgrade_ids: body.upgradeIds ?? [],
+      shopify_order_name: shopifyOrderRow?.name ?? null,
     },
   });
 
