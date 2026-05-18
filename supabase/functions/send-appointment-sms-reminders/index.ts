@@ -17,8 +17,10 @@
 // NULL.
 //
 // Sender: routed through TWILIO_MESSAGING_SERVICE_SID so the
-// Messaging Service picks alphanumeric (VENNEIR) or long code per
-// destination. No `From` configured here.
+// Messaging Service picks the right sender (alphanumeric `Venneir`
+// or UK long code) per destination. No `From` configured here, so
+// renaming the sender on the Twilio dashboard doesn't require a
+// code change.
 //
 // Per-row body: hardcoded inline template for v1. Switch to a
 // row in lng_sms_templates when we have more than one shape; that
