@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef } from 'react';
 import { theme } from '../../theme/index.ts';
 import { addDaysIso } from '../../lib/calendarMonth.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 export interface WeekStripProps {
   // The selected day. Drives both the highlighted pill and the
@@ -29,8 +30,10 @@ const WINDOW_RADIUS_DAYS = WEEK_STRIP_WINDOW_RADIUS_DAYS;
 // Each pill is a fixed-width flex item. 88 is large enough for the
 // number + weekday + dot to read on a kiosk and small enough that
 // 7-9 days are visible at once on the typical 720-1024px schedule
-// width.
-const PILL_WIDTH = 88;
+// width. On mobile (< 640px) we drop to 64 so 4-5 days fit on a
+// 360px viewport instead of just 3.
+const PILL_WIDTH_DESKTOP = 88;
+const PILL_WIDTH_MOBILE = 64;
 
 // Debounce window for the scroll-end → onSelect hand-off. Long
 // enough to ride out a single rubber-band frame, short enough that
@@ -57,6 +60,8 @@ export function WeekStrip({
   onSelect,
   loading = false,
 }: WeekStripProps) {
+  const isMobile = useIsMobile(640);
+  const PILL_WIDTH = isMobile ? PILL_WIDTH_MOBILE : PILL_WIDTH_DESKTOP;
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Track whether we've done the initial scroll-into-view yet, so
   // the very first paint lands without animation but every
@@ -240,6 +245,7 @@ export function WeekStrip({
               isToday={dateIso === todayIso}
               isPast={dateIso < todayIso}
               count={counts.get(dateIso) ?? 0}
+              pillWidth={PILL_WIDTH}
               // Pick-in-place: prime lastEmittedRef so the
               // selectedIso effect skips its scroll-to-centre.
               // The user clicked the date they were already
@@ -269,6 +275,7 @@ interface DayPillProps {
   isToday: boolean;
   isPast: boolean;
   count: number;
+  pillWidth: number;
   // onPickInPlace fires for click and Enter/Space — the user is
   // selecting the day they're already pointing at, so the strip
   // should NOT scroll it to centre afterwards. onNavigate fires
@@ -286,6 +293,7 @@ function DayPill({
   isToday,
   isPast,
   count,
+  pillWidth,
   onPickInPlace,
   onNavigate,
 }: DayPillProps) {
@@ -342,7 +350,7 @@ function DayPill({
         color: theme.color.ink,
         fontFamily: 'inherit',
         padding: `${theme.space[2]}px ${theme.space[1]}px`,
-        width: PILL_WIDTH,
+        width: pillWidth,
         flexShrink: 0,
         scrollSnapAlign: 'center',
         // Default scrollSnapStop ('normal') is exactly the desired

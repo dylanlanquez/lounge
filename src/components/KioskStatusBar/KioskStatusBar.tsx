@@ -7,6 +7,7 @@ import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.
 import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';
 import { theme } from '../../theme/index.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -35,6 +36,7 @@ export function KioskStatusBar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
+  const isMobile = useIsMobile(640);
 
   // Customer-facing widget routes never see the staff status bar,
   // even when the staff happen to be signed in to Lounge in this
@@ -72,7 +74,7 @@ export function KioskStatusBar() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: `0 ${theme.space[5]}px`,
+        padding: `0 ${isMobile ? theme.space[3] : theme.space[5]}px`,
         paddingTop: 'env(safe-area-inset-top, 0px)',
         fontSize: theme.type.size.xs,
         fontVariantNumeric: 'tabular-nums',
@@ -102,7 +104,13 @@ export function KioskStatusBar() {
           defense-in-depth. Cash counts is a top-level destination
           because it's the only money-side surface staff use every
           shift; financial reports stay tucked inside Reports. */}
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: isMobile ? theme.space[2] : theme.space[3],
+        }}
+      >
         {showCashCountsButton ? (
           <KioskIconButton label="Cash counts" onClick={() => navigate('/cash-counts')}>
             <Wallet size={15} />
@@ -118,7 +126,7 @@ export function KioskStatusBar() {
             <Settings size={15} />
           </KioskIconButton>
         ) : null}
-        {showReportsButton || showAdminButton || showCashCountsButton ? <Divider /> : null}
+        {!isMobile && (showReportsButton || showAdminButton || showCashCountsButton) ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}
@@ -127,24 +135,32 @@ export function KioskStatusBar() {
         />
         {batterySupported && percent !== null ? (
           <>
-            <Divider />
+            {!isMobile ? <Divider /> : null}
             <BatteryIndicator percent={percent} charging={!!charging} tone={tone} />
           </>
         ) : null}
-        <Divider />
+        {!isMobile ? <Divider /> : null}
         <span
           style={{
             display: 'inline-flex',
             alignItems: 'baseline',
             gap: theme.space[2],
+            whiteSpace: 'nowrap',
           }}
         >
-          <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-            {date}
-          </span>
+          {/* Mobile drops the date — there's a full date heading on
+              every page and the bar's only 32px tall, so a wrapped
+              "Mon 18 / May" reads worse than no date at all. Time
+              alone stays so the kiosk still functions as a clock at
+              a glance. */}
+          {!isMobile ? (
+            <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+              {date}
+            </span>
+          ) : null}
           <span style={{ fontWeight: theme.type.weight.semibold }}>{time}</span>
         </span>
-        <Divider />
+        {!isMobile ? <Divider /> : null}
         <ProfileButton
           name={account?.display_name ?? user.email ?? 'You'}
           onClick={() => setProfileOpen(true)}
