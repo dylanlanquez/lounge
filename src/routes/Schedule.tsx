@@ -428,13 +428,18 @@ export function Schedule() {
           </IconNavButton>
         </div>
 
-        {/* Selected-day section heading. View toggle on the right. */}
+        {/* Selected-day section heading. View toggle on the right.
+            On mobile the title + count and the action buttons each get
+            their own row — keeping them on one line forced the date
+            heading to wrap ("Monday 18 / May") and crammed the New
+            booking pill against it. */}
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
+            flexDirection: isMobile ? 'column' : 'row',
+            alignItems: isMobile ? 'stretch' : 'center',
             justifyContent: 'space-between',
-            gap: theme.space[4],
+            gap: isMobile ? theme.space[3] : theme.space[4],
             marginBottom: theme.space[3],
             minWidth: 0,
           }}
@@ -454,6 +459,7 @@ export function Schedule() {
                 fontSize: theme.type.size.lg,
                 fontWeight: theme.type.weight.semibold,
                 color: theme.color.ink,
+                whiteSpace: 'nowrap',
               }}
             >
               {dayHeading}
@@ -485,10 +491,12 @@ export function Schedule() {
           </div>
           <div
             style={{
-              display: 'inline-flex',
+              display: 'flex',
               alignItems: 'center',
               gap: theme.space[2],
               flexShrink: 0,
+              flexWrap: 'wrap',
+              justifyContent: isMobile ? 'space-between' : 'flex-end',
             }}
           >
             {!onToday ? (
