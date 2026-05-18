@@ -410,45 +410,86 @@ export async function rescheduleAppointment(input: {
   await endVisitIfOpen(existing.id, newAppointmentId, input.reason ?? null);
 
   // ── 7. Google Meet (virtual impression only) ────────────────────
-  // Two-path routing: per-host bookings (meet_host_id set) go through
-  // meet-create-space + meet-delete-event so the new event lands on
-  // the original host's calendar and the old event is removed from
-  // their calendar. Legacy / Calendly bookings (no host) keep using
-  // the service-account google-meet-create + google-meet-delete pair.
+  // Always route through meet-create-space so the new row gets
+  // meet_meeting_code + meet_space_id written — the two fields the
+  // appointment-detail attendance section gates on. The legacy
+  // google-meet-create path only wrote join_url + google_calendar_
+  // event_id, which left rescheduled virtual bookings without an
+  // attendance section even when one was working on the original
+  // booking. Per-host bookings carry their host forward; bookings
+  // that originated WITHOUT a host (Calendly, legacy) fall back to
+  // the first active host with an OAuth refresh token so the new
+  // event still lands on a real calendar that meet-fetch-attendance
+  // can later authenticate against.
   //
   // Creation is awaited so join_url is persisted on the new row
   // BEFORE step 9's confirmation email reads it — otherwise the
   // email function sees join_url=null and picks the in-person
   // template instead of the virtual one. Deletion of the old event
-  // stays fire-and-forget: it's audit cleanup, doesn't affect the
-  // template chosen for the new slot, and shouldn't block the UI.
+  // stays fire-and-forget.
   if (serviceType === 'virtual_impression_appointment') {
-    if (existing.meet_host_id) {
+    let hostId = existing.meet_host_id;
+    if (!hostId) {
+      // Fallback host lookup. Prefer is_active=true rows that have
+      // refresh_token set (the host's OAuth grant is the only way the
+      // server can later mint a token to read attendance). Stable
+      // order by created_at so the same host is picked across
+      // reschedules.
+      const { data: fallbackRaw } = await supabase
+        .from('lng_meet_hosts')
+        .select('id')
+        .eq('is_active', true)
+        .not('refresh_token', 'is', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      const fallback = fallbackRaw as { id: string } | null;
+      hostId = fallback?.id ?? null;
+      if (hostId) {
+        // Stamp the host onto the new row so meet-fetch-attendance
+        // (which reads meet_host_id off the row, not from a request
+        // arg) can later use this host's OAuth token to pull
+        // attendance.
+        await supabase
+          .from('lng_appointments')
+          .update({ meet_host_id: hostId })
+          .eq('id', newAppointmentId);
+      }
+    }
+    if (hostId) {
       try {
         await supabase.functions.invoke('meet-create-space', {
-          body: { appointment_id: newAppointmentId, host_id: existing.meet_host_id },
+          body: { appointment_id: newAppointmentId, host_id: hostId },
         });
       } catch (e: unknown) {
         console.warn('[rescheduleAppointment] meet-create-space failed:', e);
       }
+      // Old event cleanup: delete whichever flavour the original
+      // booking used. Both calls are no-ops when the matching ids
+      // aren't present on the row, so it's safe to fire both.
       void supabase.functions
         .invoke('meet-delete-event', { body: { appointment_id: existing.id } })
         .catch((e: unknown) =>
           console.warn('[rescheduleAppointment] meet-delete-event failed:', e),
         );
-    } else {
-      try {
-        await supabase.functions.invoke('google-meet-create', {
-          body: { appointmentId: newAppointmentId },
-        });
-      } catch (e: unknown) {
-        console.warn('[rescheduleAppointment] google-meet-create failed:', e);
-      }
       void supabase.functions
         .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
         .catch((e: unknown) =>
           console.warn('[rescheduleAppointment] google-meet-delete failed:', e),
         );
+    } else {
+      // No host available at all — log loud and skip Meet creation.
+      // The booking row still saves; an admin can connect a host
+      // and re-run meet-create-space manually from Admin → Meet.
+      await supabase.from('lng_system_failures').insert({
+        severity: 'error',
+        source: 'rescheduleAppointment',
+        message: 'No active Meet host available to attach to rescheduled virtual appointment',
+        context: {
+          old_appointment_id: existing.id,
+          new_appointment_id: newAppointmentId,
+        },
+      });
     }
   }
 

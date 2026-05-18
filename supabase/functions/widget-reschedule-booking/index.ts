@@ -22,18 +22,10 @@
 // Auth model: anon-callable. The 122-bit manage_token IS the auth.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
-import {
-  createMeetEvent,
-  deleteMeetEvent,
-  getGoogleAccessToken,
-} from '../_shared/googleCalendar.ts';
 import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const GOOGLE_CALENDAR_SA_EMAIL = Deno.env.get('GOOGLE_CALENDAR_SA_EMAIL') ?? '';
-const GOOGLE_CALENDAR_SA_PRIVATE_KEY = Deno.env.get('GOOGLE_CALENDAR_SA_PRIVATE_KEY') ?? '';
-const GOOGLE_CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? '';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -70,6 +62,14 @@ interface ExistingAppointment {
   deposit_external_id: string | null;
   deposit_paid_at: string | null;
   google_calendar_event_id: string | null;
+  // Carried forward so the rescheduled virtual_impression appointment
+  // can route through meet-create-space (which needs a host's OAuth
+  // grant to attach the Calendar event to). Without this, the legacy
+  // service-account inline flow ran and never wrote meet_meeting_code
+  // — which is the gate the appointment-detail attendance section
+  // checks. Result: rescheduled virtual bookings had no attendance
+  // section even when the original did.
+  meet_host_id: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
   const { data: existingRaw, error: lookupErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, google_calendar_event_id',
+      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, google_calendar_event_id, meet_host_id',
     )
     .eq('manage_token', token)
     .maybeSingle();
@@ -172,6 +172,27 @@ Deno.serve(async (req) => {
   }
   const newRef = typeof refRaw === 'string' ? refRaw : null;
 
+  // ── Pick the Meet host for the new row (virtual_impression only) ─
+  // Carry the original booking's host forward so meet-fetch-attendance
+  // (which authenticates as the host) can later read attendance from
+  // the new event. When the original booking had no host attached
+  // (Calendly source, or legacy bookings created before per-host
+  // routing), fall back to the first active host with a refresh
+  // token. Order is stable so the same default is picked every time.
+  let rescheduledMeetHostId: string | null = existing.meet_host_id ?? null;
+  if (existing.service_type === 'virtual_impression_appointment' && !rescheduledMeetHostId) {
+    const { data: fallbackRaw } = await supabase
+      .from('lng_meet_hosts')
+      .select('id')
+      .eq('is_active', true)
+      .not('refresh_token', 'is', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const fallback = fallbackRaw as { id: string } | null;
+    rescheduledMeetHostId = fallback?.id ?? null;
+  }
+
   // ── Insert new appointment ──────────────────────────────────
   const { data: insertedRaw, error: insertErr } = await supabase
     .from('lng_appointments')
@@ -190,6 +211,7 @@ Deno.serve(async (req) => {
       arch: existing.arch,
       notes: existing.notes,
       appointment_ref: newRef,
+      meet_host_id: rescheduledMeetHostId,
       // Carry the deposit forward — patient already paid; the
       // Stripe PI is associated with the same booking, just a new
       // row. Reports filtering by status='booked' will see exactly
@@ -251,52 +273,62 @@ Deno.serve(async (req) => {
   }
 
   // ── Google Meet (virtual impression only) ───────────────────
-  // Create a fresh Meet for the new slot and remove the old one.
-  // Both are best-effort — failures log to lng_system_failures but
-  // don't unwind the reschedule.
-  if (
-    existing.service_type === 'virtual_impression_appointment' &&
-    GOOGLE_CALENDAR_SA_EMAIL &&
-    GOOGLE_CALENDAR_SA_PRIVATE_KEY &&
-    GOOGLE_CALENDAR_ID
-  ) {
+  // Route through meet-create-space so the new row gets
+  // meet_meeting_code + meet_space_id written. The previous inline
+  // service-account flow only wrote join_url + google_calendar_event
+  // _id, which left the appointment-detail attendance section gated
+  // out (it needs meet_meeting_code AND meet_host_id) on every
+  // patient-self-serve reschedule. Both create + delete are
+  // best-effort — failures log to lng_system_failures but don't
+  // unwind the reschedule.
+  if (existing.service_type === 'virtual_impression_appointment' && rescheduledMeetHostId) {
     try {
-      const token = await getGoogleAccessToken(
-        GOOGLE_CALENDAR_SA_EMAIL,
-        GOOGLE_CALENDAR_SA_PRIVATE_KEY,
-      );
-      // Create event for the new appointment
-      const { hangoutLink, eventId } = await createMeetEvent({
-        accessToken: token,
-        calendarId: GOOGLE_CALENDAR_ID,
-        appointmentId: newRow.id,
-        startAt: newStart.toISOString(),
-        endAt: newEnd.toISOString(),
-        summary: existing.event_type_label ?? 'Virtual impression appointment',
+      const createRes = await supabase.functions.invoke('meet-create-space', {
+        body: { appointment_id: newRow.id, host_id: rescheduledMeetHostId },
       });
-      await supabase
-        .from('lng_appointments')
-        .update({ join_url: hangoutLink, google_calendar_event_id: eventId })
-        .eq('id', newRow.id);
-      // Delete the old event if one exists
-      if (existing.google_calendar_event_id) {
-        await deleteMeetEvent({
-          accessToken: token,
-          calendarId: GOOGLE_CALENDAR_ID,
-          eventId: existing.google_calendar_event_id,
+      if (createRes.error) {
+        await logFailure('meet_create_space_failed', {
+          oldAppointmentId: existing.id,
+          newAppointmentId: newRow.id,
+          hostId: rescheduledMeetHostId,
+          error: createRes.error.message,
         });
-        await supabase
-          .from('lng_appointments')
-          .update({ join_url: null, google_calendar_event_id: null })
-          .eq('id', existing.id);
       }
     } catch (e) {
-      await logFailure('google_meet_reschedule_failed', {
+      await logFailure('meet_create_space_threw', {
         oldAppointmentId: existing.id,
         newAppointmentId: newRow.id,
         error: e instanceof Error ? e.message : String(e),
       });
     }
+    // Old event cleanup — fire-and-forget. Try both delete flavours
+    // so old bookings still on the legacy service-account path are
+    // cleaned up too. Each function is a no-op when its matching id
+    // isn't on the row, so calling both is safe.
+    void supabase.functions
+      .invoke('meet-delete-event', { body: { appointment_id: existing.id } })
+      .catch((e) =>
+        logFailure('meet_delete_event_threw', {
+          oldAppointmentId: existing.id,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    void supabase.functions
+      .invoke('google-meet-delete', { body: { appointmentId: existing.id } })
+      .catch((e) =>
+        logFailure('google_meet_delete_threw', {
+          oldAppointmentId: existing.id,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
+  } else if (existing.service_type === 'virtual_impression_appointment') {
+    // Defensive log — service is virtual but no host available at
+    // all. The booking row still saves; an admin can wire a host
+    // and re-run meet-create-space from Admin → Meet.
+    await logFailure('virtual_reschedule_no_host_available', {
+      oldAppointmentId: existing.id,
+      newAppointmentId: newRow.id,
+    });
   }
 
   // ── patient_events for both sides of the chain ──────────────
