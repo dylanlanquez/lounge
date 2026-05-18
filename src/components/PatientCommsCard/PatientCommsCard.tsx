@@ -56,14 +56,7 @@ export function PatientCommsCard({
   return (
     <>
       <Card padding="lg" style={{ marginBottom: theme.space[6] }}>
-        <header
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: theme.space[2],
-            marginBottom: theme.space[3],
-          }}
-        >
+        <header style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: theme.space[3] }}>
           <h3
             style={{
               margin: 0,
@@ -73,14 +66,14 @@ export function PatientCommsCard({
               letterSpacing: theme.type.tracking.tight,
             }}
           >
-            Patient comms
+            Notify the patient
           </h3>
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            Texts and emails to{' '}
+            Send{' '}
             <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
               {patientFirstName ?? 'the patient'}
-            </strong>
-            .
+            </strong>{' '}
+            a text when their order is ready to collect.
           </p>
         </header>
 
@@ -237,14 +230,18 @@ function NotifyReadyRow({
           ) : null}
         </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button variant="primary" onClick={onOpen} disabled={!phoneOk} title={!phoneOk ? 'No phone number on file' : undefined}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-            <RefreshCw size={14} aria-hidden />
-            Preview & try again
-          </span>
-        </Button>
-      </div>
+      <Button
+        variant="primary"
+        onClick={onOpen}
+        disabled={!phoneOk}
+        title={!phoneOk ? 'No phone number on file' : undefined}
+        fullWidth
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+          <RefreshCw size={14} aria-hidden />
+          Preview & try again
+        </span>
+      </Button>
     </div>
   );
 }
@@ -275,46 +272,64 @@ function ActionRow({
     pending: { bg: '#FEF3C7', fg: '#92400E' },
     success: { bg: '#E8F5EC', fg: '#13502B' },
   }[tone];
+  // Layout: icon + headline + subtitle stacked at the top, CTA on
+  // its own row beneath. The earlier inline shape (button on the
+  // right) was squeezing the headline column to a few characters
+  // on narrow phones — words wrapped one-per-line ("Text / message:
+  // / ready / to / collect"). Stacking guarantees the headline
+  // gets the full card width every time, and the CTA below reads
+  // as the next step the receptionist should take.
   return (
     <div
       style={{
         display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[4],
+        flexDirection: 'column',
+        gap: theme.space[3],
         padding: `${theme.space[3]}px ${theme.space[4]}px`,
         borderRadius: theme.radius.card,
         background: theme.color.bg,
         border: `1px solid ${theme.color.border}`,
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 36,
-          height: 36,
-          borderRadius: theme.radius.pill,
-          background: pillColors.bg,
-          color: pillColors.fg,
-          flexShrink: 0,
-        }}
-      >
-        {icon}
-      </span>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
         <span
+          aria-hidden
           style={{
-            fontSize: theme.type.size.base,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 36,
+            height: 36,
+            borderRadius: theme.radius.pill,
+            background: pillColors.bg,
+            color: pillColors.fg,
+            flexShrink: 0,
           }}
         >
-          {title}
+          {icon}
         </span>
-        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{subtitle}</span>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {title}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {subtitle}
+          </span>
+        </div>
       </div>
       {ctaLabel && onClick ? (
         <Button
@@ -322,6 +337,7 @@ function ActionRow({
           onClick={onClick}
           disabled={ctaDisabled}
           title={ctaDisabledHint}
+          fullWidth
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
             {ctaIcon}
