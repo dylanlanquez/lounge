@@ -941,13 +941,14 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
     // carries the PI ref. Both are richer than a generic
     // patient_events fall-through.
     'deposit_paid',
-    // sms_queued is the "we handed it to Twilio" moment. We dedupe
-    // it AGAINST the matching sms_delivered / sms_failed row when
-    // a terminal-state event exists for the same twilio_sid (see
-    // the dedupe pass below). The bare 'queued' row stays on
-    // its own when the message is still in flight, so the
-    // receptionist sees "Sending..." in the timeline until the
-    // webhook confirms.
+    // sms_queued is the "we handed it to Twilio" moment. The
+    // receptionist already sees the in-flight state on the Notify
+    // the patient card on the visit page; reflecting it on the
+    // timeline AS WELL doubled every send into two rows that
+    // collapse into a single delivered/failed row a few seconds
+    // later. Drop it unconditionally and let the timeline carry
+    // only the terminal outcomes.
+    'sms_queued',
   ]);
 
   // Resolve smsMessageId by joining sms_* events to lng_sms_messages
@@ -958,10 +959,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
   // without an extra fetch per row.
   const smsTwilioSids = rows
     .filter(
-      (r) =>
-        r.event_type === 'sms_queued' ||
-        r.event_type === 'sms_delivered' ||
-        r.event_type === 'sms_failed',
+      (r) => r.event_type === 'sms_delivered' || r.event_type === 'sms_failed',
     )
     .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null))
     .filter((sid): sid is string => !!sid);
@@ -986,27 +984,8 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       }
     }
   }
-  // Dedupe: once a terminal-state sms event (sms_delivered /
-  // sms_failed) exists for a SID, hide the earlier sms_queued. The
-  // user only wants to see the final state, not the intermediate
-  // "we handed it off" row.
-  const terminalSidSet = new Set(
-    rows
-      .filter((r) => r.event_type === 'sms_delivered' || r.event_type === 'sms_failed')
-      .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null))
-      .filter((sid): sid is string => !!sid),
-  );
   const events: RawTimelineEvent[] = rows
     .filter((r) => !skip.has(r.event_type))
-    .filter((r) => {
-      // Hide sms_queued rows whose SID already has a terminal-state
-      // sibling — the receptionist sees one "Text message
-      // delivered" / "didn't reach" row, not the intermediate
-      // sending step.
-      if (r.event_type !== 'sms_queued') return true;
-      const sid = typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null;
-      return !sid || !terminalSidSet.has(sid);
-    })
     .map((r) => {
       const emailMessageId =
         typeof r.payload?.email_message_id === 'string' && r.payload.email_message_id.length > 0
@@ -1017,9 +996,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // SMS button; smsToPhone feeds the detail line so the row
       // reads "Sent to +44…" without an extra fetch in the renderer.
       const smsTwilioSid =
-        (r.event_type === 'sms_queued' ||
-          r.event_type === 'sms_delivered' ||
-          r.event_type === 'sms_failed') &&
+        (r.event_type === 'sms_delivered' || r.event_type === 'sms_failed') &&
         typeof r.payload?.twilio_sid === 'string'
           ? r.payload.twilio_sid
           : null;
@@ -1066,9 +1043,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // the badge-with-exclamation variant + alert tone so the row
       // shouts on a quiet day.
       const isSmsEvent =
-        r.event_type === 'sms_queued' ||
-        r.event_type === 'sms_delivered' ||
-        r.event_type === 'sms_failed';
+        r.event_type === 'sms_delivered' || r.event_type === 'sms_failed';
       const isSmsFailed = r.event_type === 'sms_failed';
       const smsHint = isSmsFailed
         ? ('sms_failed' as const)
