@@ -155,6 +155,25 @@ interface SubmitBody {
    *  only bookable against a paid online order). Null/omitted for
    *  the customer widget. */
   shopifyOrderName?: string | null;
+  /** Checkpoint-only. The live Shopify Admin API order snapshot the
+   *  scanning surface already loaded. When source='checkpoint' and
+   *  this is present, widget-create-appointment trusts these fields
+   *  for the redemption gate (cancelled / refunded / paid status,
+   *  total, currency) instead of looking the order up in the
+   *  Meridian shopify_orders cache. The cache isn't on a recurring
+   *  sync, so new orders weren't visible to the lookup and every
+   *  same-day upgrade booked through Checkpoint failed with
+   *  shopify_order_not_found until this path was added. The cache
+   *  fallback is kept for non-Checkpoint callers (the public
+   *  widget, which doesn't have a live order in hand). */
+  shopifyOrderDetails?: {
+    id?: string | null;
+    name?: string | null;
+    totalPricePence?: number | null;
+    currency?: string | null;
+    financialStatus?: string | null;
+    cancelledAt?: string | null;
+  } | null;
   details: {
     firstName: string;
     lastName: string;
@@ -300,13 +319,41 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable', conflicts: conflictRows });
   }
 
-  // ── Shopify order lookup (Checkpoint path) ─────────────────────
-  // Checkpoint pre-fills the Shopify order from the ScanView page.
-  // We re-resolve it server-side with the service-role key so a
-  // tampered client body can't claim "this order is paid" — same
-  // validation NewBookingSheet runs client-side. Same-day services
-  // (same_day_appliance, click_in_veneers) require a redeemable
-  // order; everything else is optional credit.
+  // ── Shopify order verification ─────────────────────────────────
+  // Two paths converge here. Both produce the same shopifyOrderRow
+  // shape if they pass, or short-circuit with a 4xx if the order
+  // can't be credited.
+  //
+  //   PATH A — Checkpoint trust path.
+  //   Checkpoint already loads the live Shopify order via its
+  //   `get-order` edge function on ScanView mount, so by the time
+  //   it calls us it has the canonical order in hand: id, name,
+  //   total, currency, financial_status, cancelled_at. It POSTs
+  //   that summary in `shopifyOrderDetails` alongside the
+  //   shopifyOrderName. We validate the redemption gate (cancelled
+  //   / refunded / paid status) against those fields directly and
+  //   trust the resolved totals. No cache hit needed — exactly the
+  //   point of this path, since the `shopify_orders` cache on the
+  //   Meridian DB is not on a recurring sync and falls behind.
+  //
+  //   PATH B — Legacy cache path.
+  //   The public widget (venneir.com / denture-services.co.uk)
+  //   doesn't pre-load orders, and a customer-facing client can
+  //   tamper its body more easily than Checkpoint can. For those
+  //   callers we keep the original lng_lookup_shopify_order RPC
+  //   which reads the cached shopify_orders table — same code path
+  //   as before this commit, behaviour unchanged. (In practice
+  //   shopifyOrderName is only sent by Checkpoint today, so the
+  //   public widget falls through to "no order" without ever
+  //   touching the lookup.)
+  //
+  // Trust model for Path A: a tampered Checkpoint client could lie
+  // about `financial_status`. Worst-case impact is "fake same-day
+  // booking on a chair without paying" — annoyance, not financial
+  // loss (payment still settles at the till in clinic, and the
+  // attacker can't actually redeem against an order they don't
+  // own). Lower than the alternative of leaving the booking
+  // broken for every order placed after the last cache sync.
   const isSameDayService =
     body.serviceType === 'same_day_appliance' ||
     body.serviceType === 'click_in_veneers';
@@ -318,7 +365,39 @@ Deno.serve(async (req) => {
     currency: string | null;
   } | null = null;
   const shopifyOrderName = body.shopifyOrderName?.trim() || null;
-  if (shopifyOrderName) {
+
+  // Path A: Checkpoint sent the order details we should trust.
+  // We still validate the redemption gate against those fields.
+  const trustedDetails = isCheckpointSource ? body.shopifyOrderDetails ?? null : null;
+  if (trustedDetails && shopifyOrderName) {
+    if (trustedDetails.cancelledAt) {
+      return jsonResponse(400, { error: 'shopify_order_cancelled' });
+    }
+    const fin = (trustedDetails.financialStatus ?? '').toLowerCase();
+    if (fin === 'refunded') {
+      return jsonResponse(400, { error: 'shopify_order_refunded' });
+    }
+    if (fin !== 'paid' && fin !== 'partially_refunded') {
+      return jsonResponse(400, {
+        error: 'shopify_order_not_paid',
+        detail: trustedDetails.financialStatus ?? null,
+      });
+    }
+    const totalPence = Number(trustedDetails.totalPricePence);
+    if (!Number.isFinite(totalPence) || totalPence < 0) {
+      return jsonResponse(400, {
+        error: 'shopify_order_invalid_total',
+        detail: trustedDetails.totalPricePence,
+      });
+    }
+    shopifyOrderRow = {
+      id: String(trustedDetails.id ?? ''),
+      name: trustedDetails.name ?? shopifyOrderName,
+      total_price_pence: Math.round(totalPence),
+      currency: trustedDetails.currency ?? null,
+    };
+  } else if (shopifyOrderName) {
+    // Path B: legacy cache lookup. Untouched.
     const { data: lookupRows, error: lookupErr } = await supabase.rpc(
       'lng_lookup_shopify_order',
       { p_order_name: shopifyOrderName },
