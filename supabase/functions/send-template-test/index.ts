@@ -22,6 +22,7 @@
 // Returns { ok: true, messageId } on success or { ok: false, error }.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { parseFormatting, wrapInLoungeShell, EMPTY_BRAND } from '../_shared/emailRenderer.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -102,10 +103,18 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
-  // Render via the inline parser (parallel to src/lib/emailRenderer.ts).
+  // Render via the SHARED renderer so the test send matches a real
+  // send byte-for-byte. The previous inline parser was a parallel
+  // copy that lagged behind every fix to _shared (most recently the
+  // raw-HTML passthrough that lets {{appointmentTimeline}} /
+  // {{paymentStatusBlock}} / {{dentureRepairTable}} render without
+  // <p> auto-close artifacts), so the in-app preview AND the
+  // production confirmation/reminder emails would be tight but the
+  // test send still showed huge gaps. Sharing the renderer kills the
+  // divergence in one move.
   const subjectFinal = `[TEST] ${substituteVariables(subject, variables ?? {})}`;
   const bodyAfterVars = substituteVariables(bodySyntax, variables ?? {});
-  const html = wrapInLoungeShell(parseFormatting(toBr(bodyAfterVars)));
+  const html = wrapInLoungeShell(parseFormatting(bodyAfterVars), EMPTY_BRAND);
   const text = bodyToText(bodyAfterVars);
 
   const sendResult = await sendEmail({ to, subject: subjectFinal, html, text });
@@ -148,46 +157,10 @@ function substituteVariables(template: string, variables: Record<string, string>
   });
 }
 
-function toBr(text: string): string {
-  if (!text) return '';
-  return text.trim().replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
-}
-
-function parseFormatting(html: string): string {
-  if (!html) return '';
-  let out = html;
-  out = out.replace(/---/g, '<hr style="border:none;border-top:1px solid #E5E2DC;margin:20px 0">');
-  out = out.replace(/### (.+?)(<br>|$)/g, '<h3 style="font-size:16px;font-weight:600;margin:14px 0 6px;color:#0E1414;letter-spacing:-0.01em">$1</h3>');
-  out = out.replace(/## (.+?)(<br>|$)/g, '<h2 style="font-size:20px;font-weight:600;margin:18px 0 8px;color:#0E1414;letter-spacing:-0.01em">$1</h2>');
-  out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
-  out = out.replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>');
-  out = out.replace(/!\[([^\]]*)\]\((.+?)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:10px 0;display:block">');
-  out = out.replace(
-    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
-    (_: string, label: string, bg: string | undefined, tc: string | undefined, rad: string | undefined, mt: string | undefined, mb: string | undefined, url: string) => {
-      const bgC = bg || '#0E1414';
-      const tcC = tc || '#FFFFFF';
-      const radC = rad || '999';
-      const mtC = mt || '12';
-      const mbC = mb || '12';
-      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em">${label}</a>`;
-    },
-  );
-  out = out.replace(
-    /\[button:(.+?)(?:\|([^|]*)\|([^|]*)\|([^\]]*))?\]\((.+?)\)/g,
-    (_: string, label: string, bg: string | undefined, tc: string | undefined, rad: string | undefined, url: string) => {
-      const bgC = bg || '#0E1414';
-      const tcC = tc || '#FFFFFF';
-      const radC = rad || '999';
-      return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:12px 0;letter-spacing:-0.005em">${label}</a>`;
-    },
-  );
-  out = out.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" style="color:#0E1414;text-decoration:underline">$1</a>');
-  out = out.replace(/^- (.+?)(<br>)/gm, '<span style="display:block;padding-left:16px;position:relative;margin:4px 0"><span style="position:absolute;left:0;top:0;color:#0E1414">•</span>$1</span>');
-  return out;
-}
-
+// Plain-text equivalent for the multipart alternative. The shared
+// renderer exports a `parseFormatting` for HTML but not a parallel
+// text downgrade, so keep this small helper here. Mirrors the prior
+// inline behaviour byte-for-byte; the format hasn't changed.
 function bodyToText(syntax: string): string {
   if (!syntax) return '';
   return syntax
@@ -201,29 +174,6 @@ function bodyToText(syntax: string): string {
     .replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)')
     .replace(/^---$/gm, '────────────')
     .trim();
-}
-
-function wrapInLoungeShell(bodyHtml: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <meta name="color-scheme" content="light only">
-  <meta name="supported-color-schemes" content="light only">
-  <style>
-    :root { color-scheme: light only; supported-color-schemes: light only; }
-    body  { color-scheme: light only; supported-color-schemes: light only; }
-  </style>
-</head>
-<body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased;color-scheme:light only">
-  <div style="max-width:600px;margin:0 auto;padding:32px 24px">
-    <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
-      ${bodyHtml}
-    </div>
-    <p style="margin:24px 0 0;color:#7B8285;font-size:12px;text-align:center;line-height:1.55">Venneir Limited</p>
-  </div>
-</body></html>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
