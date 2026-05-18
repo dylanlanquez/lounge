@@ -185,7 +185,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: oneRaw, error: oneErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token',
       )
       .eq('id', singleId)
       .maybeSingle();
@@ -214,7 +214,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: rowsRaw, error: sweepErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token',
       )
       .eq('status', 'booked')
       .neq('source', 'calendly')
@@ -860,6 +860,10 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   const pence = apt.deposit_pence ?? 0;
   const paidInFull = apt.paid_in_full_at_booking === true;
   const depositPaid = apt.deposit_status === 'paid' && pence > 0;
+  const shopifyName = (apt.shopify_order_name ?? '').trim();
+  const shopifyPence = apt.shopify_order_total_pence ?? 0;
+  const shopifyApplied =
+    !!apt.shopify_order_id && shopifyName.length > 0 && shopifyPence > 0;
 
   type State = {
     title: string;
@@ -871,7 +875,18 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   };
 
   let state: State;
-  if (paidInFull && pence > 0) {
+  if (shopifyApplied) {
+    const orderCur = apt.shopify_order_currency ?? cur;
+    state = {
+      title: `Paid via order ${shopifyName} · ${formatCurrencyForEmailReminder(shopifyPence, orderCur)}`,
+      detail:
+        "Your existing order covers this appointment. Nothing extra to settle in clinic.",
+      bg: '#E8F5EC',
+      border: '#B8DCC1',
+      titleColor: '#13502B',
+      detailColor: '#3D5C48',
+    };
+  } else if (paidInFull && pence > 0) {
     state = {
       title: `Paid in full · ${formatCurrencyForEmailReminder(pence, cur)}`,
       detail:
@@ -1389,6 +1404,15 @@ interface AppointmentRow {
   deposit_pence: number | null;
   deposit_currency: string | null;
   paid_in_full_at_booking: boolean | null;
+  /** Same-day-upgrade-from-Checkpoint case: a paid Shopify order is
+   *  linked and covers the appointment. Surfaced in the reminder so
+   *  the patient doesn't read the bare "Paying on the day" copy on
+   *  a booking they've already paid for via Shopify. See
+   *  send-appointment-confirmation for the full state machine. */
+  shopify_order_id: string | null;
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
+  shopify_order_currency: string | null;
   appointment_ref: string | null;
   join_url: string | null;
   manage_token: string | null;

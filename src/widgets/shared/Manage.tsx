@@ -325,14 +325,33 @@ function BookingPanel({
             secondary={booking.locationAddress || undefined}
           />
         )}
-        {/* Payment summary row. "Paid in full at booking" wins
-            over the deposit copy when the patient picked the
-            full-balance option, because the deposit_pence value
-            on those rows is set to the full price (it's literally
-            the amount charged) and rendering it as "Deposit
-            paid · £249.00" would mislead the patient into
-            thinking they still owe a balance in clinic. */}
-        {booking.paidInFullAtBooking && booking.depositPence ? (
+        {/* Payment summary row, three exclusive branches in priority
+            order:
+              1. Linked Shopify order (same-day upgrade from Checkpoint)
+                 — the order's already paid, so it covers the
+                 appointment regardless of what deposit_* says. Has to
+                 win over the deposit branch, because those rows have
+                 deposit_status null / deposit_pence null and would
+                 otherwise render no payment row at all.
+              2. Paid in full at booking — wins over the deposit copy
+                 when the patient picked "Pay now in full", because
+                 deposit_pence on those rows is set to the FULL price
+                 (it's literally the amount charged); calling that a
+                 "Deposit paid" would mislead the patient into thinking
+                 there's still a balance owed in clinic.
+              3. Deposit paid — partial payment captured at booking. */}
+        {booking.shopifyOrderId &&
+        booking.shopifyOrderName &&
+        booking.shopifyOrderTotalPence ? (
+          <Row
+            icon={<PoundSterling size={14} />}
+            primary={`Paid via order ${booking.shopifyOrderName} · ${formatPrice(
+              booking.shopifyOrderTotalPence,
+              booking.shopifyOrderCurrency,
+            )}`}
+            secondary="Your existing order covers this appointment. Nothing extra to settle in clinic."
+          />
+        ) : booking.paidInFullAtBooking && booking.depositPence ? (
           <Row
             icon={<PoundSterling size={14} />}
             primary={`Paid in full at booking · ${formatPrice(booking.depositPence, booking.depositCurrency)}`}

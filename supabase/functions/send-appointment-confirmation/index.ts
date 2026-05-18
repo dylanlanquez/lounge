@@ -500,6 +500,16 @@ interface AppointmentRow {
   deposit_pence: number | null;
   deposit_currency: string | null;
   paid_in_full_at_booking: boolean | null;
+  /** Linked Shopify order snapshot for same-day upgrades booked from
+   *  Checkpoint. The order has already been paid (the widget-create
+   *  endpoint refuses to attach an unpaid one), so its existence on
+   *  the row IS the "appointment is settled" signal — wins over the
+   *  deposit/full-pay states so the {{paymentStatusBlock}} reads
+   *  "Paid via order #1234 · £149.00" instead of "Paying on the day". */
+  shopify_order_id: string | null;
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
+  shopify_order_currency: string | null;
   appointment_ref: string | null;
   join_url: string | null;
   manage_token: string | null;
@@ -852,6 +862,17 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   const pence = apt.deposit_pence ?? 0;
   const paidInFull = apt.paid_in_full_at_booking === true;
   const depositPaid = apt.deposit_status === 'paid' && pence > 0;
+  // Same-day upgrade booked from Checkpoint: a paid Shopify order is
+  // attached and covers the appointment. The order's presence is the
+  // canonical "settled" signal — wins over the deposit / full-pay
+  // states because the operator suppressed the Stripe deposit
+  // (paymentMode='on_the_day') trusting the order to act as proof of
+  // payment. Without this branch, the patient would see "Paying on
+  // the day" on an appointment they've already paid for.
+  const shopifyName = (apt.shopify_order_name ?? '').trim();
+  const shopifyPence = apt.shopify_order_total_pence ?? 0;
+  const shopifyApplied =
+    !!apt.shopify_order_id && shopifyName.length > 0 && shopifyPence > 0;
 
   type State = {
     title: string;
@@ -863,7 +884,18 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   };
 
   let state: State;
-  if (paidInFull && pence > 0) {
+  if (shopifyApplied) {
+    const orderCur = apt.shopify_order_currency ?? cur;
+    state = {
+      title: `Paid via order ${shopifyName} · ${formatCurrencyForEmail(shopifyPence, orderCur)}`,
+      detail:
+        "Your existing order covers this appointment. Nothing extra to settle in clinic.",
+      bg: '#E8F5EC',
+      border: '#B8DCC1',
+      titleColor: '#13502B',
+      detailColor: '#3D5C48',
+    };
+  } else if (paidInFull && pence > 0) {
     state = {
       title: `Paid in full · ${formatCurrencyForEmail(pence, cur)}`,
       detail:
@@ -997,7 +1029,7 @@ async function readAppointment(
   const { data } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, appointment_ref, join_url, manage_token, brand_id',
+      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token, brand_id',
     )
     .eq('id', id)
     .maybeSingle();

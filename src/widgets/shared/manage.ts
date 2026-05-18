@@ -59,6 +59,16 @@ export interface ManagedBooking {
    *  payment summary line — "Paid in full at booking" vs the
    *  existing "Deposit paid · £…". */
   paidInFullAtBooking: boolean;
+  /** Same-day upgrades booked from Checkpoint attach a paid Shopify
+   *  order to the appointment; the order's existence IS the proof of
+   *  payment (the booking endpoint refuses to attach an unpaid one).
+   *  Surfaced so the manage page can render "Paid via order #1234 ·
+   *  £149.00" instead of falling through every payment branch and
+   *  showing no row at all. */
+  shopifyOrderId: string | null;
+  shopifyOrderName: string | null;
+  shopifyOrderTotalPence: number | null;
+  shopifyOrderCurrency: string | null;
   repairVariant: string | null;
   productKey: string | null;
   arch: 'upper' | 'lower' | 'both' | null;
@@ -166,6 +176,10 @@ export function useManagedBooking(token: string | null): LookupResult {
         depositPence: (r.deposit_pence as number | null) ?? null,
         depositCurrency: (r.deposit_currency as string | null) ?? null,
         paidInFullAtBooking: Boolean(r.paid_in_full_at_booking),
+        shopifyOrderId: (r.shopify_order_id as string | null) ?? null,
+        shopifyOrderName: (r.shopify_order_name as string | null) ?? null,
+        shopifyOrderTotalPence: (r.shopify_order_total_pence as number | null) ?? null,
+        shopifyOrderCurrency: (r.shopify_order_currency as string | null) ?? null,
         repairVariant: (r.repair_variant as string | null) ?? null,
         productKey: (r.product_key as string | null) ?? null,
         arch: (r.arch as 'upper' | 'lower' | 'both' | null) ?? null,
