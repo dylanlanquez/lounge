@@ -320,55 +320,50 @@ Deno.serve(async (req) => {
   }
 
   // ── Shopify order verification ─────────────────────────────────
-  // Two paths converge here. Both produce the same shopifyOrderRow
-  // shape if they pass, or short-circuit with a 4xx if the order
-  // can't be credited.
+  // Single path: when the caller wants to attach a Shopify order to
+  // the booking, it POSTs the live order snapshot in
+  // `shopifyOrderDetails` (id, name, total, currency,
+  // financialStatus, cancelledAt). We validate the redemption gate
+  // here and trust the resolved values.
   //
-  //   PATH A — Checkpoint trust path.
-  //   Checkpoint already loads the live Shopify order via its
-  //   `get-order` edge function on ScanView mount, so by the time
-  //   it calls us it has the canonical order in hand: id, name,
-  //   total, currency, financial_status, cancelled_at. It POSTs
-  //   that summary in `shopifyOrderDetails` alongside the
-  //   shopifyOrderName. We validate the redemption gate (cancelled
-  //   / refunded / paid status) against those fields directly and
-  //   trust the resolved totals. No cache hit needed — exactly the
-  //   point of this path, since the `shopify_orders` cache on the
-  //   Meridian DB is not on a recurring sync and falls behind.
+  // Checkpoint pre-loads the order on ScanView via its `get-order`
+  // edge function (live Shopify Admin API), so by the time it calls
+  // us it already has the canonical snapshot. The public widget
+  // (venneir.com / denture-services.co.uk) doesn't attach Shopify
+  // orders to its bookings at all — its same-day services gate on a
+  // Stripe PaymentIntent instead, validated separately below.
   //
-  //   PATH B — Legacy cache path.
-  //   The public widget (venneir.com / denture-services.co.uk)
-  //   doesn't pre-load orders, and a customer-facing client can
-  //   tamper its body more easily than Checkpoint can. For those
-  //   callers we keep the original lng_lookup_shopify_order RPC
-  //   which reads the cached shopify_orders table — same code path
-  //   as before this commit, behaviour unchanged. (In practice
-  //   shopifyOrderName is only sent by Checkpoint today, so the
-  //   public widget falls through to "no order" without ever
-  //   touching the lookup.)
+  // The earlier version of this function also kept a fallback that
+  // looked the order up in the cached `shopify_orders` table via
+  // `lng_lookup_shopify_order`. That cache sits on the Meridian DB
+  // and isn't on a recurring sync — every booking placed after the
+  // last manual sync failed with `shopify_order_not_found`. We
+  // removed the fallback because (a) it broke as often as it helped,
+  // and (b) nothing currently calls this endpoint with
+  // shopifyOrderName but without shopifyOrderDetails. The `_orders`
+  // cache is still useful for bulk patient-history queries on the
+  // visit / patient profile surfaces; it just isn't on the booking
+  // critical path any more.
   //
-  // Trust model for Path A: a tampered Checkpoint client could lie
-  // about `financial_status`. Worst-case impact is "fake same-day
-  // booking on a chair without paying" — annoyance, not financial
-  // loss (payment still settles at the till in clinic, and the
-  // attacker can't actually redeem against an order they don't
-  // own). Lower than the alternative of leaving the booking
-  // broken for every order placed after the last cache sync.
+  // Trust model: a tampered Checkpoint client could lie about
+  // `financialStatus`. Worst-case impact is "fake same-day booking
+  // on a chair without paying" — annoyance, not financial loss
+  // (payment still settles at the till; the attacker can't redeem
+  // against an order they don't own). Acceptable tradeoff vs.
+  // leaving the booking broken whenever the cache lags.
   const isSameDayService =
     body.serviceType === 'same_day_appliance' ||
     body.serviceType === 'click_in_veneers';
   const isCheckpointSource = body.source === 'checkpoint';
   let shopifyOrderRow: {
-    id: string;
+    id: string | null;
     name: string;
     total_price_pence: number;
     currency: string | null;
   } | null = null;
   const shopifyOrderName = body.shopifyOrderName?.trim() || null;
+  const trustedDetails = body.shopifyOrderDetails ?? null;
 
-  // Path A: Checkpoint sent the order details we should trust.
-  // We still validate the redemption gate against those fields.
-  const trustedDetails = isCheckpointSource ? body.shopifyOrderDetails ?? null : null;
   if (trustedDetails && shopifyOrderName) {
     if (trustedDetails.cancelledAt) {
       return jsonResponse(400, { error: 'shopify_order_cancelled' });
@@ -390,58 +385,19 @@ Deno.serve(async (req) => {
         detail: trustedDetails.totalPricePence,
       });
     }
+    // Write null, not "", when the snapshot didn't carry an id —
+    // shopify_order_id is a nullable text column and downstream
+    // readers (visits.ts:778) gate on truthiness, so storing the
+    // empty string would just look like noise in the database.
+    const idRaw = trustedDetails.id;
+    const id = idRaw === undefined || idRaw === null || idRaw === ''
+      ? null
+      : String(idRaw);
     shopifyOrderRow = {
-      id: String(trustedDetails.id ?? ''),
+      id,
       name: trustedDetails.name ?? shopifyOrderName,
       total_price_pence: Math.round(totalPence),
       currency: trustedDetails.currency ?? null,
-    };
-  } else if (shopifyOrderName) {
-    // Path B: legacy cache lookup. Untouched.
-    const { data: lookupRows, error: lookupErr } = await supabase.rpc(
-      'lng_lookup_shopify_order',
-      { p_order_name: shopifyOrderName },
-    );
-    if (lookupErr) {
-      await logFailure('shopify_lookup_failed', {
-        error: lookupErr.message,
-        shopifyOrderName,
-      });
-      return jsonResponse(500, { error: 'shopify_lookup_failed' });
-    }
-    const rows = (lookupRows ?? []) as Array<{
-      id: string;
-      name: string;
-      total_price_pence: number;
-      currency: string | null;
-      financial_status: string | null;
-      cancelled_at: string | null;
-    }>;
-    const order = rows[0];
-    if (!order) {
-      return jsonResponse(404, {
-        error: 'shopify_order_not_found',
-        detail: shopifyOrderName,
-      });
-    }
-    if (order.cancelled_at) {
-      return jsonResponse(400, { error: 'shopify_order_cancelled' });
-    }
-    const fin = (order.financial_status ?? '').toLowerCase();
-    if (fin === 'refunded') {
-      return jsonResponse(400, { error: 'shopify_order_refunded' });
-    }
-    if (fin !== 'paid' && fin !== 'partially_refunded') {
-      return jsonResponse(400, {
-        error: 'shopify_order_not_paid',
-        detail: order.financial_status,
-      });
-    }
-    shopifyOrderRow = {
-      id: order.id,
-      name: order.name,
-      total_price_pence: order.total_price_pence,
-      currency: order.currency,
     };
   }
   if (isCheckpointSource && isSameDayService && !shopifyOrderRow) {
