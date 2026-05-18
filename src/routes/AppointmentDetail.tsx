@@ -637,6 +637,19 @@ function Loaded({
             patientLastName={appt.patient.last_name}
           />
         </section>
+      ) : appt.service_type === 'virtual_impression_appointment' &&
+        appt.status === 'rescheduled' &&
+        appt.reschedule_to_id ? (
+        <section style={{ marginTop: theme.space[5] }}>
+          <RescheduledAttendanceCard
+            successorId={appt.reschedule_to_id}
+            onView={() =>
+              appt.reschedule_to_id
+                ? navigate(`/appointment/${appt.reschedule_to_id}`)
+                : undefined
+            }
+          />
+        </section>
       ) : null}
 
       <section style={{ marginTop: theme.space[5] }}>
@@ -1299,6 +1312,99 @@ function platformIcon(platform: string | null, joinUrl: string | null): ReactNod
     );
   }
   return <Video size={13} aria-hidden />;
+}
+
+// Rescheduled-virtual placeholder for the attendance section.
+//
+// The MeetAttendanceCard above gates on `meet_meeting_code &&
+// meet_host_id`. A virtual appointment that was rescheduled before
+// it ran will never satisfy that gate — the original Meet event was
+// deleted, no one ever joined a call against this row's appointment
+// id, and the new conversation now lives on the successor row.
+// Without a hand-off card, the appointment-detail page just silently
+// has no attendance section at all, which leaves the receptionist
+// asking "where's the attendance?" when the answer is "on the new
+// booking that this one was rescheduled to."
+function RescheduledAttendanceCard({
+  successorId: _successorId,
+  onView,
+}: {
+  successorId: string;
+  onView: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const teal = theme.category.virtualImpression;
+  return (
+    <div
+      style={{
+        background: theme.color.surface,
+        borderRadius: theme.radius.card,
+        boxShadow: theme.shadow.card,
+        border: `1px solid ${theme.color.border}`,
+        borderLeft: `3px solid ${teal}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          marginBottom: theme.space[2],
+        }}
+      >
+        <UserCheck size={16} aria-hidden color={theme.color.inkMuted} />
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          Meeting attendance
+        </span>
+      </div>
+      <p
+        style={{
+          margin: 0,
+          marginBottom: theme.space[3],
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        This appointment was rescheduled before it ran, so no meeting
+        took place against it. Attendance for the new booking is on
+        the rescheduled appointment.
+      </p>
+      <button
+        type="button"
+        onClick={onView}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          appearance: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          padding: `${theme.space[2]}px ${theme.space[3]}px`,
+          borderRadius: theme.radius.pill,
+          border: `1px solid ${hovered ? theme.color.ink : theme.color.border}`,
+          background: hovered ? theme.color.bg : theme.color.surface,
+          color: theme.color.ink,
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+      >
+        Open the new booking
+        <ChevronRight size={14} aria-hidden />
+      </button>
+    </div>
+  );
 }
 
 function MeetingLinkCard({ joinUrl }: { joinUrl: string }) {
