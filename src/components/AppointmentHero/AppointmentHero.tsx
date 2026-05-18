@@ -204,67 +204,62 @@ export function AppointmentHero({
           gap: theme.space[2],
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[3],
-            minWidth: 0,
-          }}
-        >
-          <span
-            aria-hidden
+        <div style={{ minWidth: 0 }}>
+          <p
             style={{
-              display: 'inline-flex',
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1.3,
+              display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              width: 32,
-              height: 32,
-              borderRadius: theme.radius.pill,
-              background: theme.color.surface,
-              border: `1px solid ${theme.color.border}`,
-              color: ribbonAccent,
-              flexShrink: 0,
+              gap: theme.space[3],
+              minWidth: 0,
             }}
           >
-            {when.icon ?? <CalendarClock size={16} aria-hidden />}
-          </span>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <p
+            <span
+              aria-hidden
               style={{
-                margin: 0,
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                letterSpacing: theme.type.tracking.tight,
-                lineHeight: 1.2,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                borderRadius: theme.radius.pill,
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                color: ribbonAccent,
+                flexShrink: 0,
               }}
             >
-              {when.dateLong}
-            </p>
-            <p
-              style={{
-                margin: '2px 0 0',
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {when.timeLine}
-              {when.relative ? (
-                // Bind the "·" separator to the relative text so they
-                // wrap together — without this, a narrow viewport
-                // orphaned the bullet on its own line above the
-                // relative phrase.
-                <span style={{ whiteSpace: 'nowrap' }}>
-                  <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
-                  <span style={{ color: ribbonAccent, fontWeight: theme.type.weight.semibold }}>
-                    {when.relative}
-                  </span>
+              {when.icon ?? <CalendarClock size={16} aria-hidden />}
+            </span>
+            <span style={{ minWidth: 0, wordBreak: 'break-word' }}>{when.dateLong}</span>
+          </p>
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {when.timeLine}
+            {when.relative ? (
+              // Bind the "·" separator to the relative text so they
+              // wrap together — without this, a narrow viewport
+              // orphaned the bullet on its own line above the
+              // relative phrase.
+              <span style={{ whiteSpace: 'nowrap' }}>
+                <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
+                <span style={{ color: ribbonAccent, fontWeight: theme.type.weight.semibold }}>
+                  {when.relative}
                 </span>
-              ) : null}
-            </p>
-          </div>
+              </span>
+            ) : null}
+          </p>
         </div>
         {when.service ? (
           <p
