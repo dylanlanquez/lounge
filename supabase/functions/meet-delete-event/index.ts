@@ -41,11 +41,19 @@ async function handle(req: Request): Promise<Response> {
 
   const userJwt = req.headers.get('authorization') ?? '';
   if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in.' });
-  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: userJwt } },
-  });
-  const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return json(200, { ok: false, error: 'Not signed in.' });
+  // Service-role bypass for server-to-server invocations. The
+  // self-serve reschedule (widget-reschedule-booking, anon-callable)
+  // can't pass a staff JWT, so it authenticates the cleanup call to
+  // this function with the project's service-role key. Browser-side
+  // callers continue through the auth.getUser() check.
+  const bearer = userJwt.slice('Bearer '.length).trim();
+  if (bearer !== SUPABASE_SERVICE_ROLE_KEY) {
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: userJwt } },
+    });
+    const { data: who } = await userClient.auth.getUser();
+    if (!who?.user) return json(200, { ok: false, error: 'Not signed in.' });
+  }
 
   let body: { appointment_id?: string };
   try {

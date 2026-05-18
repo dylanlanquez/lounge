@@ -40,7 +40,19 @@
 // Recovering from a partial state (e.g. space created but Calendar
 // failed) requires nulling both columns on the appointment row.
 //
-// Auth: signed-in staff JWT.
+// Auth: signed-in staff JWT for end-user calls (the Lounge schedule
+// page's Generate-Meet-link card), OR the project's service-role
+// key for server-to-server calls from other edge functions
+// (widget-reschedule-booking — anon-callable, so it can't carry a
+// staff JWT — needs to be able to mint a Meet space for the new
+// row after a self-serve reschedule).
+//
+// The service-role bypass compares the incoming bearer to the
+// SERVICE_ROLE env var inside this function's runtime. Both
+// communicating functions read from the same project secret, so the
+// comparison matches exactly when one Lounge edge function calls
+// another. The key never reaches the browser, so end-user paths
+// still go through the auth.getUser() check.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
@@ -69,11 +81,18 @@ async function handle(req: Request): Promise<Response> {
 
   const userJwt = req.headers.get('authorization') ?? '';
   if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
-  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: userJwt } },
-  });
-  const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
+  // Service-role bypass for server-to-server invocations (see
+  // header). The service-role key is a project secret, never
+  // shipped to the browser, so its presence on the request is the
+  // gate. End-user paths fall through to auth.getUser().
+  const bearer = userJwt.slice('Bearer '.length).trim();
+  if (bearer !== SUPABASE_SERVICE_ROLE_KEY) {
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: userJwt } },
+    });
+    const { data: who } = await userClient.auth.getUser();
+    if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
+  }
 
   let body: { appointment_id?: string; host_id?: string };
   try {
