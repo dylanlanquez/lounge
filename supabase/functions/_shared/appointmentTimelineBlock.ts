@@ -237,13 +237,19 @@ function renderDot(active: boolean, hollow: boolean): string {
 // ─────────────────────────────────────────────────────────────────
 
 function formatTime(iso: string): string {
-  // Match the Lounge UI's formatTime — 24-hour HH:MM. Falls back to
-  // the raw ISO substring on parse failure so a malformed value
-  // still surfaces something rather than rendering blank.
+  // Match the Lounge UI's formatTime — 24-hour HH:MM, in Europe/
+  // London. Edge functions run in UTC by default, so a 08:45 BST
+  // start would render as 07:45 in the email if we fell back to the
+  // runtime default. Pinning the time zone makes the email's clock
+  // match what the staff side already shows and what the patient
+  // expects to read. Falls back to the raw ISO substring on parse
+  // failure so a malformed value still surfaces something rather
+  // than rendering blank.
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso.slice(11, 16);
     return d.toLocaleTimeString('en-GB', {
+      timeZone: 'Europe/London',
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,

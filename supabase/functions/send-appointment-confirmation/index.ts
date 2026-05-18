@@ -35,6 +35,7 @@ import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { LNG_INTERNAL_TOKEN_HEADER } from '../_shared/invokeAppointmentConfirmation.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
+import { resolveLivePhasesForAppointment } from '../_shared/livePhaseResolver.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -317,18 +318,34 @@ async function handle(req: Request): Promise<Response> {
   // degrades to empty in the template.
   const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
-  // Phase data feeds the segmented schedule. Best-effort — empty
-  // array degrades to the duration label.
+  // Phase data feeds the segmented schedule AND the
+  // {{appointmentTimeline}} variable. Live-resolved off the booking
+  // type so the email matches what the staff side currently shows
+  // for this service (the materialised snapshot in
+  // lng_appointment_phases is frozen at booking time and drifts the
+  // moment an admin retunes the booking type, which had the email
+  // showing stale phase shapes weeks after the original booking).
+  // Falls back to the snapshot on empty/error so legacy rows
+  // pre-dating any live config still render something.
+  //
   // bookingItems are the widget-time picks the patient committed to
   // (per-arch denture-repair lines + paid upgrades). Joined into the
   // {{bookingItemsBlock}} template variable so the email lists the
   // exact basket the patient saw on the summary screen.
-  const [phases, segmentedThresholdMinutes, brandingAndContact, bookingItems] = await Promise.all([
+  const [livePhases, snapshotPhases, segmentedThresholdMinutes, brandingAndContact, bookingItems] = await Promise.all([
+    resolveLivePhasesForAppointment(admin, {
+      service_type: apt.service_type,
+      repair_variant: apt.repair_variant,
+      product_key: apt.product_key,
+      arch: apt.arch,
+      start_at: apt.start_at,
+    }),
     fetchAppointmentPhases(admin, apt.id),
     resolveSegmentedThresholdMinutes(admin),
     loadBrandingAndContact(admin),
     fetchAppointmentBookingItems(admin, apt.id),
   ]);
+  const phases = livePhases.length > 0 ? livePhases : snapshotPhases;
 
   const variables = buildVariables({
     apt,
@@ -492,6 +509,14 @@ interface AppointmentRow {
    *  instead of the bare service-type ("Same-day appliance"). */
   arch: 'upper' | 'lower' | 'both' | null;
   product_key: string | null;
+  // Needed by the live-phase resolver so {{appointmentTimeline}}
+  // reflects what's currently set up in Admin → Booking types — same
+  // axis pins the in-app Estimated-appointment-length popup feeds
+  // into useAppointmentLivePhases. Materialised snapshot in
+  // lng_appointment_phases drifts the moment the admin retunes a
+  // booking type, so the email would otherwise show stale phases
+  // (Dylan's "phases must reflect the actual timeline" report).
+  repair_variant: string | null;
   /** Payment captured at booking time. deposit_status='paid' means
    *  Stripe charged the deposit amount; paid_in_full_at_booking=true
    *  means the patient picked the "Pay now in full" option so the
@@ -1046,7 +1071,7 @@ async function readAppointment(
   const { data } = await admin
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token, brand_id',
+      'id, patient_id, location_id, start_at, end_at, service_type, event_type_label, arch, product_key, repair_variant, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token, brand_id',
     )
     .eq('id', id)
     .maybeSingle();

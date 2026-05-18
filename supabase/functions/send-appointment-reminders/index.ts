@@ -30,6 +30,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
+import { resolveLivePhasesForAppointment } from '../_shared/livePhaseResolver.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -186,7 +187,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: oneRaw, error: oneErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, repair_variant, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token',
       )
       .eq('id', singleId)
       .maybeSingle();
@@ -215,7 +216,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: rowsRaw, error: sweepErr } = await admin
       .from('lng_appointments')
       .select(
-        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token',
+        'id, patient_id, location_id, start_at, end_at, source, status, service_type, event_type_label, arch, product_key, repair_variant, deposit_status, deposit_pence, deposit_currency, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, join_url, manage_token',
       )
       .eq('status', 'booked')
       .neq('source', 'calendly')
@@ -359,15 +360,27 @@ async function processOne(
   // both can be null and the renderer degrades to empty string.
   const patientFacingRange = await resolvePatientFacingRange(admin, apt.service_type);
 
-  // Phase data + threshold drive {{patientFacingSchedule}}. Empty
-  // phases degrade to the duration label. Booking items snapshot
-  // feeds the denture-repair-table placeholder.
-  const [phases, segmentedThresholdMinutes, brandingAndContact, bookingItems] = await Promise.all([
+  // Phase data + threshold drive {{patientFacingSchedule}} and the
+  // {{appointmentTimeline}} block. Live-resolved off the booking
+  // type — see send-appointment-confirmation for the full rationale,
+  // and _shared/livePhaseResolver.ts for the resolver. Snapshot
+  // fallback keeps legacy rows rendering when the live config has
+  // no phases on file yet. Booking items feed the denture-repair-
+  // table placeholder.
+  const [livePhases, snapshotPhases, segmentedThresholdMinutes, brandingAndContact, bookingItems] = await Promise.all([
+    resolveLivePhasesForAppointment(admin, {
+      service_type: apt.service_type,
+      repair_variant: apt.repair_variant,
+      product_key: apt.product_key,
+      arch: apt.arch,
+      start_at: apt.start_at,
+    }),
     fetchAppointmentPhases(admin, apt.id),
     resolveSegmentedThresholdMinutes(admin),
     loadBrandingAndContact(admin),
     fetchAppointmentBookingItems(admin, apt.id),
   ]);
+  const phases = livePhases.length > 0 ? livePhases : snapshotPhases;
 
   // Build variables. Keep names matching what the admin UI exposes
   // so the editor's autocomplete + the renderer never disagree.
@@ -1413,6 +1426,10 @@ interface AppointmentRow {
    *  the bare service-type label. */
   arch: 'upper' | 'lower' | 'both' | null;
   product_key: string | null;
+  /** Axis pin for the live-phase resolver; matches the confirmation
+   *  function so {{appointmentTimeline}} renders the same shape on
+   *  every channel. See _shared/livePhaseResolver.ts. */
+  repair_variant: string | null;
   /** Payment captured at booking. Drives the {{paymentStatusBlock}}
    *  placeholder so the reminder reminds the patient what they've
    *  already paid AND what (if anything) remains to settle in
