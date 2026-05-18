@@ -4,6 +4,7 @@ import { Avatar } from '../Avatar/Avatar.tsx';
 import { Card } from '../Card/Card.tsx';
 import { StatusPill, type StatusTone } from '../StatusPill/StatusPill.tsx';
 import { theme } from '../../theme/index.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 // AppointmentHero — the unified card that opens both AppointmentDetail
 // and VisitDetail. Two zones inside one card:
@@ -92,6 +93,7 @@ export function AppointmentHero({
   when,
   trailing,
 }: AppointmentHeroProps) {
+  const isMobile = useIsMobile(640);
   const ribbonBg = ribbonBackground(when.tone);
   const ribbonAccent = ribbonAccentColor(when.tone);
 
@@ -100,17 +102,23 @@ export function AppointmentHero({
     // clipped to the card's rounded corners. Without it, the ribbon's
     // bottom corners render square and bleed past the card's curve.
     <Card padding="none" elevation="raised" style={{ overflow: 'hidden' }}>
-      {/* Identity row */}
+      {/* Identity row. On mobile the trailing slot (View profile)
+          competed with the name for horizontal room and forced the
+          name to wrap mid-word — break the row open into:
+            top: avatar + name + trailing
+            below: pills inline, then subtitle
+          so each piece has its own line and breathes. Desktop keeps
+          the original single-row composition. */}
       <div
         style={{
           display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[4],
+          alignItems: isMobile ? 'flex-start' : 'center',
+          gap: isMobile ? theme.space[3] : theme.space[4],
           padding: `${theme.space[5]}px ${theme.space[5]}px`,
           minWidth: 0,
         }}
       >
-        <Avatar name={patient.name} src={patient.avatarSrc} size="lg" />
+        <Avatar name={patient.name} src={patient.avatarSrc} size={isMobile ? 'md' : 'lg'} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
@@ -123,25 +131,42 @@ export function AppointmentHero({
             <p
               style={{
                 margin: 0,
-                fontSize: theme.type.size.xl,
+                fontSize: isMobile ? theme.type.size.lg : theme.type.size.xl,
                 fontWeight: theme.type.weight.semibold,
                 color: theme.color.ink,
                 letterSpacing: theme.type.tracking.tight,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                lineHeight: 1.15,
+                lineHeight: 1.2,
+                wordBreak: 'break-word',
               }}
             >
               {patient.name}
             </p>
-            {pills.map((p, i) => (
-              <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
-            ))}
+            {!isMobile
+              ? pills.map((p, i) => (
+                  <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
+                ))
+              : null}
           </div>
+          {isMobile && pills.length > 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                gap: theme.space[2],
+                flexWrap: 'wrap',
+                marginTop: theme.space[2],
+              }}
+            >
+              {pills.map((p, i) => (
+                <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
+              ))}
+            </div>
+          ) : null}
           {subtitle ? (
             <div
               style={{
-                margin: `${theme.space[1]}px 0 0`,
+                margin: `${theme.space[2]}px 0 0`,
                 fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontVariantNumeric: 'tabular-nums',

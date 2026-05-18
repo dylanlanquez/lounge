@@ -3244,10 +3244,27 @@ function buildVisitHeroProps(
   if (appointment?.jb_ref) textParts.push(`JB${appointment.jb_ref}`);
   textParts.push(isWalkIn ? 'Walk-in' : 'Scheduled');
   const subtitleSource = (appointment?.source ?? 'manual') as AppointmentSource;
+  // Render each ref token in a nowrap span so a narrow viewport
+  // wraps BETWEEN tokens rather than mid-token. Without this the
+  // mobile hero could break "LAP-00416" across two lines, which
+  // looks like data corruption at a glance.
   const subtitle = (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        flexWrap: 'wrap',
+        rowGap: 2,
+      }}
+    >
       <SourceGlyph source={subtitleSource} size={12} />
-      <span>{textParts.join(' · ')}</span>
+      {textParts.map((part, i) => (
+        <span key={`${part}|${i}`} style={{ whiteSpace: 'nowrap' }}>
+          {i > 0 ? <span style={{ color: theme.color.inkSubtle, marginRight: 6 }}>·</span> : null}
+          {part}
+        </span>
+      ))}
     </span>
   );
 
