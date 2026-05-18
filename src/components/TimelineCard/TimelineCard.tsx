@@ -23,6 +23,7 @@ import { DiscountIcon } from '../Icons/DiscountIcon.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
+import { SmsPreviewModal } from '../SmsPreviewModal/SmsPreviewModal.tsx';
 import { theme } from '../../theme/index.ts';
 import type { TimelineEvent } from '../../lib/queries/visitTimeline.ts';
 import {
@@ -64,6 +65,10 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
   // every "View email" trigger in the list — opening one row never tears
   // down another, and the modal mounts above the Card's stacking context.
   const [previewId, setPreviewId] = useState<string | null>(null);
+  // Same one-modal-per-list pattern for SMS rows. View SMS pill on any
+  // sms_queued / sms_delivered / sms_failed row opens this against
+  // the lng_sms_messages id resolved by visitTimeline.ts.
+  const [smsPreviewId, setSmsPreviewId] = useState<string | null>(null);
   // Track which event id is mid-resend so its pill renders a spinner,
   // and stash the toast state for the post-send confirmation. The
   // resend dispatcher uses the row's resendKind + resendAppointmentId
@@ -150,6 +155,7 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
                 event={ev}
                 isLast={i === events.length - 1}
                 onPreviewEmail={setPreviewId}
+                onPreviewSms={setSmsPreviewId}
                 onResend={handleResend}
                 resending={resendingId === ev.id}
               />
@@ -161,6 +167,11 @@ export function TimelineCard({ events, loading, error, emptyMessage }: TimelineC
         open={previewId !== null}
         emailMessageId={previewId}
         onClose={() => setPreviewId(null)}
+      />
+      <SmsPreviewModal
+        open={smsPreviewId !== null}
+        smsMessageId={smsPreviewId}
+        onClose={() => setSmsPreviewId(null)}
       />
       {toast ? (
         <Toast
@@ -232,12 +243,14 @@ function Row({
   event,
   isLast,
   onPreviewEmail,
+  onPreviewSms,
   onResend,
   resending,
 }: {
   event: TimelineEvent;
   isLast: boolean;
   onPreviewEmail: (id: string) => void;
+  onPreviewSms: (id: string) => void;
   onResend: (event: TimelineEvent) => void;
   resending: boolean;
 }) {
@@ -346,7 +359,8 @@ function Row({
           // when one's wired (re-renders against current data), generic
           // emailMessageId replay otherwise.
           const hasResend = hasKindResend || hasView;
-          if (!hasView && !hasResend) return null;
+          const hasViewSms = !!event.smsMessageId;
+          if (!hasView && !hasResend && !hasViewSms) return null;
           return (
             <EmailActionRow>
               {hasView ? (
@@ -354,6 +368,9 @@ function Row({
               ) : null}
               {hasResend ? (
                 <ResendEmailButton busy={resending} onClick={() => onResend(event)} />
+              ) : null}
+              {hasViewSms ? (
+                <ViewSmsButton onClick={() => onPreviewSms(event.smsMessageId!)} />
               ) : null}
             </EmailActionRow>
           );
@@ -399,6 +416,29 @@ function ViewEmailButton({ onClick }: { onClick: () => void }) {
     >
       <Eye size={12} aria-hidden />
       View email
+    </button>
+  );
+}
+
+// SMS counterpart to ViewEmailButton — same pill chrome, swapped
+// icon + label so the timeline reads "View SMS" against text-message
+// rows. There is no Resend SMS sibling yet; the receptionist
+// triggers a fresh send from the Notify the patient card on
+// VisitDetail rather than re-firing a frozen body. Keeping the
+// trigger here surfaces the audit row without duplicating the
+// resend affordance.
+function ViewSmsButton({ onClick }: { onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={emailPillStyle({ hover, busy: false, primary: true })}
+    >
+      <MessageSquare size={12} aria-hidden />
+      View SMS
     </button>
   );
 }

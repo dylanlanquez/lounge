@@ -146,6 +146,78 @@ const ERROR_MAP: Record<string, ErrorExplain> = {
   },
 };
 
+// One persisted SMS row, fetched by id for the TimelineCard's "View
+// SMS" pill. Mirrors useEmailMessage — same shape, same lifecycle —
+// so the timeline pattern reads identically across both channels.
+export interface SmsMessageRow {
+  id: string;
+  patient_id: string | null;
+  visit_id: string | null;
+  appointment_id: string | null;
+  template_key: string | null;
+  to_phone: string;
+  body: string;
+  send_status: 'pending' | 'sent' | 'failed';
+  send_error: string | null;
+  twilio_message_sid: string | null;
+  sent_at: string;
+  sent_by: string | null;
+}
+
+export function useSmsMessage(id: string | null | undefined): {
+  data: SmsMessageRow | null;
+  loading: boolean;
+  error: string | null;
+} {
+  const [data, setData] = useState<SmsMessageRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(!!id);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!id) {
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      const { data: row, error: err } = await supabase
+        .from('lng_sms_messages')
+        .select(
+          'id, patient_id, visit_id, appointment_id, template_key, to_phone, body, send_status, send_error, twilio_message_sid, sent_at, sent_by',
+        )
+        .eq('id', id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setLoading(false);
+        return;
+      }
+      setData((row as SmsMessageRow | null) ?? null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, tick]);
+
+  // Realtime: status callbacks flip send_status from 'pending' →
+  // 'sent' / 'failed' after the modal is already open. Without this
+  // the receptionist would see a stale "Sending..." status in the
+  // preview even though the message has since delivered.
+  useRealtimeRefresh(
+    id ? [{ table: 'lng_sms_messages', filter: `id=eq.${id}` }] : [],
+    useCallback(() => setTick((t) => t + 1), []),
+  );
+
+  return { data, loading, error };
+}
+
 /** Look up a Twilio carrier error code in the dictionary and return
  *  a structured explanation. Accepts the raw `send_error` column
  *  value (which is shaped "code message...") OR just the bare
