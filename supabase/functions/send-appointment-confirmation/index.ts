@@ -869,10 +869,26 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   // (paymentMode='on_the_day') trusting the order to act as proof of
   // payment. Without this branch, the patient would see "Paying on
   // the day" on an appointment they've already paid for.
+  //
+  // Gated on same-day service_type. The "your existing order covers
+  // this appointment" copy only makes sense for an appointment that
+  // has an in-clinic bill the order credits against. Virtual /
+  // in-person impression bookings can ALSO carry a shopify_order_id
+  // (the public widget attaches the order the customer paid through
+  // venneir.com), but the credit semantics don't apply there — the
+  // customer paid for the impression itself, there's no tilled bill.
+  // Surfacing the order for non-same-day services would tell the
+  // patient something untrue.
+  const isSameDayUpgrade =
+    apt.service_type === 'same_day_appliance' ||
+    apt.service_type === 'click_in_veneers';
   const shopifyName = (apt.shopify_order_name ?? '').trim();
   const shopifyPence = apt.shopify_order_total_pence ?? 0;
   const shopifyApplied =
-    !!apt.shopify_order_id && shopifyName.length > 0 && shopifyPence > 0;
+    isSameDayUpgrade &&
+    !!apt.shopify_order_id &&
+    shopifyName.length > 0 &&
+    shopifyPence > 0;
 
   type State = {
     title: string;

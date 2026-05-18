@@ -268,6 +268,20 @@ export function NewBookingSheet({
   // catalogue still surfaces the order input.
   const isShopifyService = useMemo(() => {
     if (!serviceType) return false;
+    // The "Online order" section is exclusive to same-day upgrades.
+    // The catalogue's sold_on_shopify flag is broader (virtual and
+    // in-person impressions are also sold via venneir.com, so they
+    // carry the flag), but the "amount they already paid credits
+    // against the bill at checkout" copy only makes sense for a
+    // same-day service that has an in-clinic bill. Surfacing the
+    // section on a virtual impression booker invited the bug where a
+    // receptionist attached a £69.95 impression order to a virtual
+    // booking and the appointment-detail / manage page / emails all
+    // started rendering a credit card that was meaningless (and
+    // misleading) for that service.
+    if (serviceType !== 'same_day_appliance' && serviceType !== 'click_in_veneers') {
+      return false;
+    }
     return catalogueRows.some((r) => {
       if (!r.sold_on_shopify) return false;
       if (r.service_type !== serviceType) return false;

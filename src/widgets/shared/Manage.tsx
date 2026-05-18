@@ -333,6 +333,15 @@ function BookingPanel({
                  win over the deposit branch, because those rows have
                  deposit_status null / deposit_pence null and would
                  otherwise render no payment row at all.
+                 Gated on same-day service_type — the "covers this
+                 appointment" copy only makes sense when the
+                 appointment has an in-clinic bill the order credits
+                 against. A virtual impression appointment has no
+                 checkout; the customer paid for the impression itself
+                 via Shopify, there's nothing to credit. Surfacing the
+                 order here for non-same-day services would mislead the
+                 patient into expecting a tilled credit that won't
+                 exist.
               2. Paid in full at booking — wins over the deposit copy
                  when the patient picked "Pay now in full", because
                  deposit_pence on those rows is set to the FULL price
@@ -342,7 +351,9 @@ function BookingPanel({
               3. Deposit paid — partial payment captured at booking. */}
         {booking.shopifyOrderId &&
         booking.shopifyOrderName &&
-        booking.shopifyOrderTotalPence ? (
+        booking.shopifyOrderTotalPence &&
+        (booking.serviceType === 'same_day_appliance' ||
+          booking.serviceType === 'click_in_veneers') ? (
           <Row
             icon={<PoundSterling size={14} />}
             primary={`Paid via order ${booking.shopifyOrderName} · ${formatPrice(

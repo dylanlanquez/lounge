@@ -526,7 +526,18 @@ function Loaded({
         ) : null}
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
-        {appt.shopify_order_name && (appt.shopify_order_total_pence ?? 0) > 0 ? (
+        {/* Same-day upgrade only. The "credits against the bill at
+            checkout" semantics rely on a same-day appliance / click-in
+            veneers booking having an in-clinic bill — a virtual or
+            in-person impression appointment has no checkout for the
+            credit to apply to, so even when a Shopify order is
+            attached for audit, surfacing it as a credit here would
+            mislead the receptionist into thinking money's been
+            pre-paid against the till. */}
+        {appt.shopify_order_name &&
+        (appt.shopify_order_total_pence ?? 0) > 0 &&
+        (appt.service_type === 'same_day_appliance' ||
+          appt.service_type === 'click_in_veneers') ? (
           <OnlineOrderCreditCard
             orderName={appt.shopify_order_name}
             pence={appt.shopify_order_total_pence ?? 0}

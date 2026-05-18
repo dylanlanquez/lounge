@@ -860,10 +860,22 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   const pence = apt.deposit_pence ?? 0;
   const paidInFull = apt.paid_in_full_at_booking === true;
   const depositPaid = apt.deposit_status === 'paid' && pence > 0;
+  // Same gate as send-appointment-confirmation: the "covers this
+  // appointment" copy only applies when the appointment has an
+  // in-clinic bill for the order to credit against. Non-same-day
+  // bookings can carry a shopify_order_id (audit trail from the
+  // public widget) but should never surface as "Paid via order" in
+  // the reminder.
+  const isSameDayUpgrade =
+    apt.service_type === 'same_day_appliance' ||
+    apt.service_type === 'click_in_veneers';
   const shopifyName = (apt.shopify_order_name ?? '').trim();
   const shopifyPence = apt.shopify_order_total_pence ?? 0;
   const shopifyApplied =
-    !!apt.shopify_order_id && shopifyName.length > 0 && shopifyPence > 0;
+    isSameDayUpgrade &&
+    !!apt.shopify_order_id &&
+    shopifyName.length > 0 &&
+    shopifyPence > 0;
 
   type State = {
     title: string;
