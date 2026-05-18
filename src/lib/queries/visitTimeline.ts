@@ -82,6 +82,8 @@ export interface TimelineEvent {
     | 'flag'
     | 'box'
     | 'mail'
+    | 'sms'
+    | 'sms_failed'
     | 'deposit'
     | 'paid_in_full'
     | 'discount'
@@ -257,6 +259,12 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Reminder email sent';
     case 'appointment_reminder_skipped':
       return 'Reminder skipped';
+    case 'sms_queued':
+      return 'Text message sending';
+    case 'sms_delivered':
+      return 'Text message delivered';
+    case 'sms_failed':
+      return "Text message didn't reach the patient";
     default:
       return et.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -970,6 +978,20 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         : isRefundIssuedEvent || isResolvedEvent
           ? ('refund_issued' as const)
           : null;
+      // SMS rows get their own chat-bubble icon so a passing reader
+      // can tell a text from an email at a glance. Failed sends use
+      // the badge-with-exclamation variant + alert tone so the row
+      // shouts on a quiet day.
+      const isSmsEvent =
+        r.event_type === 'sms_queued' ||
+        r.event_type === 'sms_delivered' ||
+        r.event_type === 'sms_failed';
+      const isSmsFailed = r.event_type === 'sms_failed';
+      const smsHint = isSmsFailed
+        ? ('sms_failed' as const)
+        : isSmsEvent
+          ? ('sms' as const)
+          : null;
       // Refund (and any other approver-stamped) rows carry the manager
       // who signed off in their payload. Surface that as the timeline
       // event's approver so the renderer can append "approved by X".
@@ -987,14 +1009,17 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         approverAccountId,
         hint:
           refundHint ??
+          smsHint ??
           (isEmailEvent || skipped ? ('mail' as const) : ('flag' as const)),
         tone: isOwedEvent
           ? ('alert' as const)
-          : deliveryFailed
+          : isSmsFailed
             ? ('alert' as const)
-            : skipped
-              ? ('warn' as const)
-              : undefined,
+            : deliveryFailed
+              ? ('alert' as const)
+              : skipped
+                ? ('warn' as const)
+                : undefined,
         emailMessageId,
         resendKind: resendInfo?.kind ?? null,
         resendAppointmentId: resendInfo?.appointmentId ?? null,

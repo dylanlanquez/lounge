@@ -10,6 +10,8 @@ import {
   HandCoins,
   Loader2,
   Mail,
+  MessageSquare,
+  MessageSquareWarning,
   RotateCcw,
   Send,
   ShoppingBag,
@@ -597,6 +599,10 @@ function iconFor(event: TimelineEvent): ReactNode {
       return <Box size={size} />;
     case 'mail':
       return <Mail size={size} />;
+    case 'sms':
+      return <MessageSquare size={size} />;
+    case 'sms_failed':
+      return <MessageSquareWarning size={size} />;
     case 'refund_owed':
       // Hand-with-coins reads as "we're holding the patient's
       // money" — the unresolved-debt moment that the visit page

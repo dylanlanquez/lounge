@@ -103,6 +103,29 @@ Deno.serve(async (req) => {
     patch.send_error = [errorCode, errorMessage].filter(Boolean).join(' ').trim() || null;
   }
 
+  // Read the prior row state so we know whether THIS callback is the
+  // first time we've heard about a terminal outcome (so we can fire
+  // exactly one timeline event per state transition rather than one
+  // per Twilio callback — Twilio fires queued → sent → delivered as
+  // three callbacks for the same message).
+  const { data: priorRow } = await admin
+    .from('lng_sms_messages')
+    .select('id, send_status, patient_id, visit_id, appointment_id, template_key, to_phone, sent_by')
+    .eq('twilio_message_sid', sid)
+    .maybeSingle();
+  const prior = priorRow as
+    | {
+        id: string;
+        send_status: 'pending' | 'sent' | 'failed';
+        patient_id: string | null;
+        visit_id: string | null;
+        appointment_id: string | null;
+        template_key: string | null;
+        to_phone: string;
+        sent_by: string | null;
+      }
+    | null;
+
   const { error: updErr, count } = await admin
     .from('lng_sms_messages')
     .update(patch, { count: 'exact' })
@@ -117,6 +140,34 @@ Deno.serve(async (req) => {
     // — most likely a manual test from the Twilio console. Log so
     // the noise is visible to ops without alarming the caller.
     await logFailure(`twilio-sms-status: no lng_sms_messages row for SID ${sid}`);
+    return new Response('ok', { status: 200 });
+  }
+
+  // Emit a patient_events row on the FIRST transition to a terminal
+  // state. Without this the visit timeline silently keeps showing
+  // "Text message sending" forever (the original 'sms_queued' row
+  // written at send time never gets superseded). Skip duplicates by
+  // gating on the prior status — Twilio fires queued → sent →
+  // delivered as separate callbacks, but only the actual transition
+  // to sent / failed produces a timeline-worthy event.
+  if (prior && prior.send_status !== mapped && mapped !== 'pending' && prior.patient_id) {
+    const transitionEventType =
+      mapped === 'sent' ? 'sms_delivered' : 'sms_failed';
+    await admin.from('patient_events').insert({
+      patient_id: prior.patient_id,
+      event_type: transitionEventType,
+      actor_account_id: prior.sent_by,
+      payload: {
+        template_key: prior.template_key,
+        visit_id: prior.visit_id,
+        appointment_id: prior.appointment_id,
+        to_phone: prior.to_phone,
+        twilio_sid: sid,
+        twilio_status: statusRaw,
+        error_code: errorCode || null,
+        error_message: errorMessage || null,
+      },
+    });
   }
 
   return new Response('ok', {

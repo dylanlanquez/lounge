@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertCircle,
-  Bell,
   CheckCircle2,
   Clock,
   MessageCircleWarning,
+  MessageSquare,
+  MessageSquareWarning,
   RefreshCw,
   Send,
 } from 'lucide-react';
@@ -115,15 +115,21 @@ function NotifyReadyRow({
   phoneOk: boolean;
   onOpen: () => void;
 }) {
-  // No prior SMS — initial state.
+  // No prior SMS — initial state. Copy explicitly says SMS (not the
+  // ambiguous "Notify ready") + the CTA carries the chat-bubble icon
+  // + an explicit "Preview & send" label so a passerby can tell at
+  // a glance (a) what this is, (b) what tapping the button will
+  // actually do (it opens a preview, not an instant send — the
+  // previous "Send SMS" label oversold by implying one-tap fire).
   if (!row) {
     return (
       <ActionRow
         tone="neutral"
-        icon={<Bell size={16} aria-hidden />}
-        title="Notify ready"
-        subtitle="Text the patient that their work is ready to collect."
-        ctaLabel="Send SMS"
+        icon={<MessageSquare size={16} aria-hidden />}
+        title="Text message: ready to collect"
+        subtitle="Send the patient a text saying their work is ready. We'll show you a preview first."
+        ctaLabel="Preview & send"
+        ctaIcon={<MessageSquare size={14} aria-hidden />}
         ctaDisabled={!phoneOk}
         ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
         onClick={onOpen}
@@ -136,8 +142,8 @@ function NotifyReadyRow({
       <ActionRow
         tone="pending"
         icon={<Clock size={16} aria-hidden />}
-        title="Sending…"
-        subtitle={`Handed to the carrier for ${row.to_phone}. Waiting on delivery confirmation.`}
+        title="Text message sending"
+        subtitle={`Handed to the phone network for ${row.to_phone}. Waiting on delivery confirmation. This panel updates by itself.`}
         ctaLabel={null}
       />
     );
@@ -148,9 +154,9 @@ function NotifyReadyRow({
       <ActionRow
         tone="success"
         icon={<CheckCircle2 size={16} aria-hidden />}
-        title={`Delivered ${formatRelative(row.sent_at)}`}
-        subtitle={`Patient was notified on ${row.to_phone}.`}
-        ctaLabel="Resend"
+        title={`Text message delivered ${formatRelative(row.sent_at)}`}
+        subtitle={`Patient was notified on ${row.to_phone}. Tap below to preview and send another one if needed.`}
+        ctaLabel="Preview & send again"
         ctaIcon={<RefreshCw size={14} aria-hidden />}
         ctaDisabled={!phoneOk}
         ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
@@ -162,8 +168,8 @@ function NotifyReadyRow({
   // send_status === 'failed' — show the carrier reason + a Resend
   // button so a corrected phone number takes one tap.
   const explained = explainSmsError(row.send_error);
-  const headline = explained?.what ?? 'Carrier reported the SMS as undelivered.';
-  const followup = explained?.fix ?? 'Try resending; if it keeps failing, call the patient.';
+  const headline = explained?.what ?? 'The phone network reported the text as undelivered.';
+  const followup = explained?.fix ?? 'Try again; if it keeps failing, call the patient instead.';
   return (
     <div
       style={{
@@ -191,7 +197,7 @@ function NotifyReadyRow({
             flexShrink: 0,
           }}
         >
-          <AlertCircle size={16} />
+          <MessageSquareWarning size={16} />
         </span>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span
@@ -202,7 +208,7 @@ function NotifyReadyRow({
               letterSpacing: theme.type.tracking.tight,
             }}
           >
-            SMS didn't reach {row.to_phone}
+            Text message didn't reach {row.to_phone}
           </span>
           <span style={{ fontSize: theme.type.size.sm, color: '#7C1D1D', lineHeight: theme.type.leading.snug }}>
             {headline}
@@ -235,7 +241,7 @@ function NotifyReadyRow({
         <Button variant="primary" onClick={onOpen} disabled={!phoneOk} title={!phoneOk ? 'No phone number on file' : undefined}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
             <RefreshCw size={14} aria-hidden />
-            Resend
+            Preview & try again
           </span>
         </Button>
       </div>
@@ -370,6 +376,11 @@ function NotifyReadySheet({
 
   const isResend = !!previousRow;
   const resendOfFailed = !!previousRow && previousRow.send_status === 'failed';
+  // After the user clicks the CTA, "Preview & send" → opens this
+  // sheet. The sheet title carries the action so the user knows
+  // they're being asked to confirm a SEND, not "save" or anything
+  // else. Re-sending a failed delivery gets a louder title so the
+  // failure context carries into the sheet.
 
   useEffect(() => {
     if (!open) {
@@ -456,10 +467,10 @@ function NotifyReadySheet({
 
   const charCount = preview.body.length;
   const sheetTitle = resendOfFailed
-    ? 'Resend after a failed delivery'
+    ? 'Try the text again'
     : isResend
-      ? 'Resend the ready notification'
-      : 'Notify patient — ready to collect';
+      ? 'Send another text message'
+      : 'Send a text message to the patient';
 
   return (
     <BottomSheet open={open} onClose={onClose} title={sheetTitle}>
@@ -614,7 +625,13 @@ function NotifyReadySheet({
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
               {isResend ? <RefreshCw size={14} aria-hidden /> : <Send size={14} aria-hidden />}
-              {sending ? 'Sending…' : isResend ? 'Resend SMS' : 'Send SMS'}
+              {sending
+                ? 'Sending…'
+                : sendResult.kind === 'sent'
+                  ? 'Sent'
+                  : isResend
+                    ? 'Send the text again'
+                    : 'Send the text'}
             </span>
           </Button>
         </div>
