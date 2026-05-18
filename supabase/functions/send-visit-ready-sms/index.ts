@@ -24,7 +24,7 @@
 //   error:   { ok: false, error: string, reason?: string }
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
-import { sendSms } from '../_shared/twilioSms.ts';
+import { normalisePhone, sendSms } from '../_shared/twilioSms.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -128,14 +128,22 @@ async function handle(req: Request): Promise<Response> {
   if (!patient) {
     return jsonResponse(200, { ok: false, error: 'Patient not found.', reason: 'patient_not_found' });
   }
-  const toPhone = (patient.phone ?? '').trim();
-  if (!toPhone) {
+  const rawPhone = (patient.phone ?? '').trim();
+  if (!rawPhone) {
     return jsonResponse(200, {
       ok: false,
       error: "Patient has no phone number on file.",
       reason: 'no_phone',
     });
   }
+  // Auto-format whatever's on the patient record into E.164 before
+  // it hits Twilio. UK clinics enter phones every which way (07…,
+  // 07878 023 449, +44 7878 023449, 00447…), all of which Twilio
+  // would reject with 21211. normalisePhone handles the common
+  // shapes; the cleaned value flows into both the audit row and
+  // the UI preview so what the receptionist sees is what Twilio
+  // gets.
+  const toPhone = normalisePhone(rawPhone);
 
   // ── Load the template ─────────────────────────────────────────
   const { data: tplRaw, error: tplErr } = await admin

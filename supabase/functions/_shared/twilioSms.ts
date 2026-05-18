@@ -109,10 +109,19 @@ export async function sendSms({ to, body }: SendSmsInput): Promise<SendSmsResult
     };
   }
 
+  // Normalise the recipient before handing to Twilio. UK clinics
+  // routinely store phones as `07878 023449` or `+44 7878 023449`
+  // (national + spaces) which Twilio rejects with 21211. Canonical
+  // here at the SMS boundary so EVERY caller (visit_ready, future
+  // reminders) gets the same forgiveness without having to do it
+  // themselves. UK-first because that's where the clinic is; any
+  // already-E.164 input passes through untouched.
+  const normalisedTo = normalisePhone(to);
+
   const auth = btoa(`${cfg.authUser}:${cfg.authPass}`);
   const form = new URLSearchParams({
     MessagingServiceSid: cfg.messagingServiceSid,
-    To: to,
+    To: normalisedTo,
     Body: body,
   });
   if (cfg.statusCallbackUrl) form.set('StatusCallback', cfg.statusCallbackUrl);
@@ -145,6 +154,20 @@ export async function sendSms({ to, body }: SendSmsInput): Promise<SendSmsResult
     sid: String(json?.sid ?? ''),
     status: String(json?.status ?? 'queued'),
   };
+}
+
+/** Single-arg sibling of toE164 used by the per-message SMS senders
+ *  (visit_ready, future ones). Accepts whatever the patient record
+ *  carries — UK national `07878...`, with spaces / hyphens, with the
+ *  international `00` prefix, or already-E.164 `+447...` — and emits
+ *  the canonical E.164 shape Twilio's Messages API expects. Returns
+ *  the raw input untouched on any unrecognised shape so the caller's
+ *  error surface still fires (better to send and let Twilio reject
+ *  with 21211 than silently drop the message). */
+export function normalisePhone(input: string): string {
+  const raw = (input ?? '').toString();
+  const e164 = toE164(null, raw);
+  return e164 ?? raw;
 }
 
 /** Normalise a UK number into E.164 (+44……). The widget stores
