@@ -73,6 +73,7 @@ export function PatientProfile() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const { account: currentAccount } = useCurrentAccount();
+  const isCsOnly = currentAccount?.is_cs_only === true;
   const isMobile = useIsMobile(640);
   const { data: patient, loading: patientLoading, error: patientError, refresh: refreshPatient } = usePatientProfile(id);
   const { data: files, loading: filesLoading, refresh: refreshFiles } = usePatientProfileFiles(id);
@@ -124,8 +125,8 @@ export function PatientProfile() {
           <ProfileSkeleton isMobile={isMobile} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-            <Hero patient={patient} cases={cases} files={files} onEdit={() => setEditSection('profile')} />
-            <CareDetails patient={patient} onEdit={() => setEditSection('care')} />
+            <Hero patient={patient} cases={cases} files={files} onEdit={isCsOnly ? null : () => setEditSection('profile')} />
+            <CareDetails patient={patient} onEdit={isCsOnly ? null : () => setEditSection('care')} />
             <WaiverStatus
               patientId={patient.id}
               patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}
@@ -464,7 +465,7 @@ function Hero({
   patient: PatientProfileRow;
   cases: PatientCaseRow[];
   files: PatientFileEntry[];
-  onEdit: () => void;
+  onEdit: (() => void) | null;
 }) {
   // The earlier "Active / Inactive" pill mapped to whether the
   // patient had any non-terminal Meridian case — useful in Meridian,
@@ -576,28 +577,30 @@ function Hero({
           </div>
         </div>
 
-        <button
-          type="button"
-          aria-label="Edit patient details"
-          title="Edit patient details"
-          onClick={onEdit}
-          style={{
-            appearance: 'none',
-            width: 36,
-            height: 36,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'transparent',
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.input,
-            color: theme.color.inkMuted,
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
-        >
-          <Pencil size={14} />
-        </button>
+        {onEdit ? (
+          <button
+            type="button"
+            aria-label="Edit patient details"
+            title="Edit patient details"
+            onClick={onEdit}
+            style={{
+              appearance: 'none',
+              width: 36,
+              height: 36,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              color: theme.color.inkMuted,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            <Pencil size={14} />
+          </button>
+        ) : null}
       </div>
 
       <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[5]}px 0` }} />
@@ -1196,7 +1199,7 @@ function CareDetails({
   onEdit,
 }: {
   patient: PatientProfileRow;
-  onEdit: () => void;
+  onEdit: (() => void) | null;
 }) {
   const emergencyName = (patient.emergency_contact_name ?? '').trim();
   const emergencyPhone = (patient.emergency_contact_phone ?? '').trim();
@@ -1217,27 +1220,29 @@ function CareDetails({
         >
           Care details
         </h2>
-        <button
-          type="button"
-          aria-label="Edit care details"
-          title="Edit care details"
-          onClick={onEdit}
-          style={{
-            appearance: 'none',
-            width: 36,
-            height: 36,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'transparent',
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.input,
-            color: theme.color.inkMuted,
-            cursor: 'pointer',
-          }}
-        >
-          <Pencil size={14} />
-        </button>
+        {onEdit ? (
+          <button
+            type="button"
+            aria-label="Edit care details"
+            title="Edit care details"
+            onClick={onEdit}
+            style={{
+              appearance: 'none',
+              width: 36,
+              height: 36,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              color: theme.color.inkMuted,
+              cursor: 'pointer',
+            }}
+          >
+            <Pencil size={14} />
+          </button>
+        ) : null}
       </div>
 
       <div style={{ height: 1, background: theme.color.border, margin: `${theme.space[4]}px 0 ${theme.space[5]}px` }} />
