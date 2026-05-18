@@ -1484,8 +1484,11 @@ export function VisitDetail() {
                 signal to send; later states (complete, ended_early,
                 unsuitable) mean the patient has already left or the
                 visit is closed, and a notification after the fact
-                would be misleading. */}
-            {visit.status === 'arrived' ? (
+                would be misleading. Hidden from CS-only staff — they
+                handle pre/post-visit comms through a different
+                channel and shouldn't be able to fire a "ready to
+                collect" SMS on a live in-clinic visit. */}
+            {visit.status === 'arrived' && !isCsOnly ? (
               <PatientCommsCard
                 visitId={visit.id}
                 patientPhone={patient?.phone ?? null}
