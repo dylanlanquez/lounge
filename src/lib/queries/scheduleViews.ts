@@ -199,6 +199,15 @@ export function useDayAppointments(
   const hasLoaded = cache.current.has(cacheKey);
 
   useEffect(() => {
+    // null locationId means "the caller is still resolving the
+    // location" — don't fire an unfiltered fetch in the meantime.
+    // Doing so caches an "all locations" page under the `${dateIso}|`
+    // key, which then gets discarded the moment the real location
+    // arrives and the cache key flips. Worse, while that stale page
+    // was the active cache entry, the schedule's empty-state branch
+    // could render for one frame between fetches (cache miss for the
+    // new key → data=[] → "No appointments today" flashes).
+    if (locationId === null) return;
     let cancelled = false;
     (async () => {
       const { startIso, endIso } = localDayBounds(dateIso);
@@ -289,6 +298,12 @@ export function useDateRangeCounts(
   const { loading, settle } = useStaleQueryLoading(`${startIso}|${endIso}`);
 
   useEffect(() => {
+    // Same wait-for-location guard as useDayAppointments — skip
+    // firing an unfiltered range count while the location is still
+    // resolving so the strip dots don't get computed from an
+    // every-location row set and then re-computed once the real
+    // location lands.
+    if (locationId === null) return;
     let cancelled = false;
     (async () => {
       const start = new Date(`${startIso}T00:00:00`);

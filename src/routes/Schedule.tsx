@@ -463,11 +463,18 @@ export function Schedule() {
                 fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontVariantNumeric: 'tabular-nums',
-                // Hide while any fetch is in flight — data may be stale
-                // (revalidating a visited day) or absent (first visit,
-                // skeleton showing). Either way the count is unreliable
-                // until loading settles.
-                opacity: day.loading ? 0 : 1,
+                // Hide while ANY async source is still resolving:
+                //   * currentLocation.loading — the day query hasn't
+                //     even been re-scoped to the right location yet,
+                //     so any count here is from an unfiltered or
+                //     stale fetch.
+                //   * day.loading — a fetch for the current
+                //     (date, location) pair is in flight.
+                //   * !day.hasLoaded — the cache doesn't yet have a
+                //     row count for this pair, so day.data.length===0
+                //     would render "No appointments" misleadingly.
+                opacity:
+                  currentLocation.loading || day.loading || !day.hasLoaded ? 0 : 1,
                 transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
               }}
             >
@@ -550,7 +557,25 @@ export function Schedule() {
         </div>
 
         <Card padding={isMobile ? 'sm' : 'md'}>
-          {day.loading && !day.hasLoaded ? (
+          {/* Three things must all be resolved before we can decide
+              what to render in the day card:
+                1. currentLocation — without it the day query runs
+                   against the wrong scope (either every location via
+                   RLS, or no filter at all). Mounting before it
+                   resolves caches an unfiltered first page; when the
+                   location id then lands the cache key flips, data
+                   collapses to [] for one frame, and the empty-state
+                   branch flashes "No appointments today" right
+                   before the real list paints.
+                2. day.hasLoaded — the day query has at least one
+                   completed fetch for the current (date, location)
+                   pair cached.
+                3. day.loading — once both above are true, we can
+                   render the data; the surrounding wrapper handles
+                   the dim-while-revalidating effect for revisits.
+              If any of those isn't ready, show the skeleton. Never
+              let a default empty-state slip in between. */}
+          {currentLocation.loading || (day.loading && !day.hasLoaded) ? (
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>
