@@ -105,7 +105,11 @@ export function iconSvg(name: string, strokeColor: string, size = 16): string {
 const PNG_ICONS_BASE_URL =
   'https://npuvhxakffxqoszytkxw.supabase.co/storage/v1/object/public/lng-email-assets';
 
-const PNG_ICON_NAMES = new Set<string>(['Video']);
+// Keep in sync with EMAIL_ICONS — every key here should have
+// ${name}-white.png and ${name}-dark.png in the lng-email-assets
+// bucket. We allowlist all of them so the admin preview matches what
+// Gmail will render for any icon the SnippetEditor picker exposes.
+const PNG_ICON_NAMES = new Set<string>(Object.keys(EMAIL_ICONS));
 
 function pngVariantFor(strokeColor: string): 'white' | 'dark' {
   const hex = strokeColor.trim().toLowerCase().replace('#', '');

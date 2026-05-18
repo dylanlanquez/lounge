@@ -70,8 +70,10 @@ const PNG_ICONS_BASE_URL =
 
 // Allowlist of icon names that have PNG variants uploaded. The renderer
 // falls back to SVG (still useful for non-Gmail clients that DO render
-// inline SVG) for any icon name not in this set.
-const PNG_ICON_NAMES = new Set<string>(['Video']);
+// inline SVG) for any icon name not in this set. Keep this in sync with
+// EMAIL_ICONS — every key here should have ${name}-white.png and
+// ${name}-dark.png in the lng-email-assets bucket.
+const PNG_ICON_NAMES = new Set<string>(Object.keys(EMAIL_ICONS));
 
 /** Pick the closest PNG variant for a given stroke colour. */
 function pngVariantFor(strokeColor: string): 'white' | 'dark' {
