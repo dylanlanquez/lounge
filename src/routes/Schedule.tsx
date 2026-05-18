@@ -1292,52 +1292,50 @@ export function Schedule() {
           initialIso={newBookingSlot}
           locationId={currentLocation.data.id}
           onClose={() => setNewBookingSlot(null)}
-          onCreated={(_id, info) => {
+          onCreated={(id, info) => {
             setNewBookingSlot(null);
             day.refresh();
             weekCounts.refresh();
-            // Meet creation failure takes priority over the email
-            // outcome — without a join_url the appointment surfaces
-            // as a regular in-person booking, which is more urgent
-            // for the receptionist to know about than a missed email.
-            if (info.meetCreateError) {
-              setConfirmationToast({
-                tone: 'error',
-                title: 'Booking added, meeting link missing',
-                description: `${info.meetCreateError} Open the appointment and tap Generate Meet link to retry.`,
-              });
-              return;
-            }
-            // Single confirmation toast that captures both "booking
-            // saved" and the email outcome — keeps the operator from
-            // having to read two separate toasts in sequence.
-            if (info.emailSent) {
-              setConfirmationToast({
-                tone: 'success',
-                title: 'Booking added',
-                description: 'Confirmation email sent to the patient.',
-              });
-            } else if (info.emailReason === 'no_email_on_patient') {
-              setConfirmationToast({
-                tone: 'info',
-                title: 'Booking added',
-                description: 'No email on file, so no confirmation was sent.',
-              });
-            } else if (info.emailReason === 'delivery_not_configured') {
-              setConfirmationToast({
-                tone: 'info',
-                title: 'Booking added',
-                description: 'Email delivery is not configured on the server.',
-              });
-            } else if (info.emailReason) {
-              setConfirmationToast({
-                tone: 'info',
-                title: 'Booking added',
-                description: `Confirmation email did not send: ${info.emailReason}.`,
-              });
-            } else {
-              setConfirmationToast({ tone: 'success', title: 'Booking added' });
-            }
+            // Land the operator on the booking they just made so it
+            // is immediately visible (and any meet / email surface
+            // they need is one tap away). Pass `from: 'schedule'` so
+            // the breadcrumb sends them back to the same day they
+            // booked from. Toast state piggy-backs on the navigation
+            // — AppointmentDetail surfaces it once on arrival so a
+            // failed Meet creation or unsent email still gets a clear
+            // signal without forcing the operator to read the
+            // timeline.
+            navigate(`/appointment/${id}`, {
+              state: {
+                from: 'schedule',
+                scheduleDate: selectedDate,
+                createdToast: info.meetCreateError
+                  ? {
+                      tone: 'error' as const,
+                      title: 'Booking added, meeting link missing',
+                      description: `${info.meetCreateError} Tap Generate Meet link to retry.`,
+                    }
+                  : info.emailSent
+                    ? {
+                        tone: 'success' as const,
+                        title: 'Booking added',
+                        description: 'Confirmation email sent to the patient.',
+                      }
+                    : info.emailReason === 'no_email_on_patient'
+                      ? {
+                          tone: 'info' as const,
+                          title: 'Booking added',
+                          description: 'No email on file, so no confirmation was sent.',
+                        }
+                      : info.emailReason
+                        ? {
+                            tone: 'info' as const,
+                            title: 'Booking added',
+                            description: `Confirmation email did not send: ${info.emailReason}.`,
+                          }
+                        : { tone: 'success' as const, title: 'Booking added' },
+              },
+            });
           }}
         />
       ) : null}

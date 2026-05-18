@@ -91,18 +91,6 @@ Deno.serve(async (req) => {
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Compose the send_error column so the audit row carries the
-  // carrier error code and a human-readable summary. Only overwrite
-  // when this update actually has error info — don't clobber a
-  // prior carrier error when a later "queued → sending" update
-  // comes through with no ErrorCode.
-  const patch: Record<string, unknown> = {
-    send_status: mapped,
-  };
-  if (errorCode || errorMessage) {
-    patch.send_error = [errorCode, errorMessage].filter(Boolean).join(' ').trim() || null;
-  }
-
   // Read the prior row state so we know whether THIS callback is the
   // first time we've heard about a terminal outcome (so we can fire
   // exactly one timeline event per state transition rather than one
@@ -125,6 +113,31 @@ Deno.serve(async (req) => {
         sent_by: string | null;
       }
     | null;
+
+  // Never downgrade from a terminal state. Twilio fires queued →
+  // sent → delivered as three callbacks; the platform delivers them
+  // over HTTP without ordering guarantees, so a stale "sent"
+  // (Twilio's "carrier accepted", which maps to our 'pending') can
+  // arrive AFTER the terminal "delivered". Without this guard the
+  // late callback resets a finished row to 'pending' and the UI's
+  // "Text message sending…" panel sticks forever even though the
+  // patient received the SMS minutes ago. The first terminal state
+  // we observe wins; later non-terminal updates are ignored.
+  const alreadyTerminal = prior?.send_status === 'sent' || prior?.send_status === 'failed';
+  const effectiveStatus: 'sent' | 'failed' | 'pending' =
+    alreadyTerminal && mapped === 'pending' ? prior!.send_status : mapped;
+
+  // Compose the send_error column so the audit row carries the
+  // carrier error code and a human-readable summary. Only overwrite
+  // when this update actually has error info — don't clobber a
+  // prior carrier error when a later "queued → sending" update
+  // comes through with no ErrorCode.
+  const patch: Record<string, unknown> = {
+    send_status: effectiveStatus,
+  };
+  if (errorCode || errorMessage) {
+    patch.send_error = [errorCode, errorMessage].filter(Boolean).join(' ').trim() || null;
+  }
 
   const { error: updErr, count } = await admin
     .from('lng_sms_messages')
@@ -150,9 +163,9 @@ Deno.serve(async (req) => {
   // gating on the prior status — Twilio fires queued → sent →
   // delivered as separate callbacks, but only the actual transition
   // to sent / failed produces a timeline-worthy event.
-  if (prior && prior.send_status !== mapped && mapped !== 'pending' && prior.patient_id) {
+  if (prior && prior.send_status !== effectiveStatus && effectiveStatus !== 'pending' && prior.patient_id) {
     const transitionEventType =
-      mapped === 'sent' ? 'sms_delivered' : 'sms_failed';
+      effectiveStatus === 'sent' ? 'sms_delivered' : 'sms_failed';
     await admin.from('patient_events').insert({
       patient_id: prior.patient_id,
       event_type: transitionEventType,

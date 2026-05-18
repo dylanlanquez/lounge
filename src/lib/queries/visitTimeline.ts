@@ -100,6 +100,12 @@ export interface TimelineEvent {
   // present that opens EmailPreviewModal against this id — staff see
   // the exact bytes the patient received.
   emailMessageId?: string | null;
+  // lng_sms_messages row id when this event represents an SMS
+  // dispatch (sms_queued / sms_delivered / sms_failed). TimelineCard
+  // renders a "View SMS" trigger that opens SmsPreviewModal against
+  // this id — staff see the exact body the patient received and the
+  // phone number it was sent to.
+  smsMessageId?: string | null;
   // When set, TimelineCard renders a "Resend" pill alongside View
   // email. The kind tells the resend dispatcher which sender to
   // invoke; appointmentId narrows the send to the right booking. The
@@ -935,14 +941,91 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
     // carries the PI ref. Both are richer than a generic
     // patient_events fall-through.
     'deposit_paid',
+    // sms_queued is the "we handed it to Twilio" moment. We dedupe
+    // it AGAINST the matching sms_delivered / sms_failed row when
+    // a terminal-state event exists for the same twilio_sid (see
+    // the dedupe pass below). The bare 'queued' row stays on
+    // its own when the message is still in flight, so the
+    // receptionist sees "Sending..." in the timeline until the
+    // webhook confirms.
   ]);
+
+  // Resolve smsMessageId by joining sms_* events to lng_sms_messages
+  // on twilio_sid in a single batch. Without this the timeline can't
+  // open the View SMS modal because patient_events only carries the
+  // SID, not the lng_sms_messages.id we'd select against. Same trip
+  // also pulls to_phone so the detail line can show the destination
+  // without an extra fetch per row.
+  const smsTwilioSids = rows
+    .filter(
+      (r) =>
+        r.event_type === 'sms_queued' ||
+        r.event_type === 'sms_delivered' ||
+        r.event_type === 'sms_failed',
+    )
+    .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null))
+    .filter((sid): sid is string => !!sid);
+  const smsBySid = new Map<string, { id: string; to_phone: string; send_status: string }>();
+  if (smsTwilioSids.length > 0) {
+    const { data: smsRows } = await supabase
+      .from('lng_sms_messages')
+      .select('id, twilio_message_sid, to_phone, send_status')
+      .in('twilio_message_sid', smsTwilioSids);
+    for (const row of (smsRows ?? []) as Array<{
+      id: string;
+      twilio_message_sid: string | null;
+      to_phone: string;
+      send_status: string;
+    }>) {
+      if (row.twilio_message_sid) {
+        smsBySid.set(row.twilio_message_sid, {
+          id: row.id,
+          to_phone: row.to_phone,
+          send_status: row.send_status,
+        });
+      }
+    }
+  }
+  // Dedupe: once a terminal-state sms event (sms_delivered /
+  // sms_failed) exists for a SID, hide the earlier sms_queued. The
+  // user only wants to see the final state, not the intermediate
+  // "we handed it off" row.
+  const terminalSidSet = new Set(
+    rows
+      .filter((r) => r.event_type === 'sms_delivered' || r.event_type === 'sms_failed')
+      .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null))
+      .filter((sid): sid is string => !!sid),
+  );
   const events: RawTimelineEvent[] = rows
     .filter((r) => !skip.has(r.event_type))
+    .filter((r) => {
+      // Hide sms_queued rows whose SID already has a terminal-state
+      // sibling — the receptionist sees one "Text message
+      // delivered" / "didn't reach" row, not the intermediate
+      // sending step.
+      if (r.event_type !== 'sms_queued') return true;
+      const sid = typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null;
+      return !sid || !terminalSidSet.has(sid);
+    })
     .map((r) => {
       const emailMessageId =
         typeof r.payload?.email_message_id === 'string' && r.payload.email_message_id.length > 0
           ? r.payload.email_message_id
           : null;
+      // SMS event → look up the lng_sms_messages row via the
+      // twilio_sid stamped on payload. smsMessageId powers the View
+      // SMS button; smsToPhone feeds the detail line so the row
+      // reads "Sent to +44…" without an extra fetch in the renderer.
+      const smsTwilioSid =
+        (r.event_type === 'sms_queued' ||
+          r.event_type === 'sms_delivered' ||
+          r.event_type === 'sms_failed') &&
+        typeof r.payload?.twilio_sid === 'string'
+          ? r.payload.twilio_sid
+          : null;
+      const smsRow = smsTwilioSid ? smsBySid.get(smsTwilioSid) ?? null : null;
+      const smsMessageId = smsRow?.id ?? null;
+      const smsToPhone = smsRow?.to_phone ?? null;
       // Email-bearing event_types lift their hint + tone so the
       // Timeline icon matches the "View email" affordance. Appointment
       // emails fold in here too once useVisitTimeline OR-fetches them
@@ -999,12 +1082,20 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
         isRefundIssuedEvent && typeof r.payload?.approver_account_id === 'string'
           ? r.payload.approver_account_id
           : null;
+      // SMS detail line — overrides the generic patient-event
+      // detail for sms_* rows so the receptionist sees the
+      // destination phone right on the timeline. View SMS opens
+      // the body in the modal.
+      const baseDetail = composePatientEventDetail(r);
+      const detail = smsTwilioSid && smsToPhone
+        ? `Sent to ${smsToPhone}${baseDetail ? ` · ${baseDetail}` : ''}`
+        : baseDetail;
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,
         timestamp: r.created_at,
         title: composePatientEventTitle(r),
-        detail: composePatientEventDetail(r),
+        detail,
         actorAccountId: r.actor_account_id,
         approverAccountId,
         hint:
@@ -1021,6 +1112,7 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
                 ? ('warn' as const)
                 : undefined,
         emailMessageId,
+        smsMessageId,
         resendKind: resendInfo?.kind ?? null,
         resendAppointmentId: resendInfo?.appointmentId ?? null,
       };

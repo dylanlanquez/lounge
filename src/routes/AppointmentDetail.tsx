@@ -43,7 +43,9 @@ import {
   Section,
   Skeleton,
   SmilePhotosCard,
+  Toast,
   type StatusTone,
+  type ToastTone,
 } from '../components/index.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -103,6 +105,12 @@ import googleMeetIcon from '../assets/google-meet.png';
 // Action gating runs through availableActions() so the rules are
 // audited in one place — see appointmentDetail.test.ts.
 
+interface CreatedToast {
+  tone: ToastTone;
+  title: string;
+  description?: string;
+}
+
 interface EntryState {
   // Where the receptionist came from. Drives the breadcrumb shape.
   // Falls back to the Ledger trail when missing — direct URL pastes
@@ -111,6 +119,12 @@ interface EntryState {
   from?: 'ledger' | 'patient' | 'schedule';
   patientId?: string;
   patientName?: string;
+  // One-shot toast surfaced when the receptionist lands here straight
+  // from the New Booking sheet. Schedule.tsx attaches this so the
+  // result of the booking (email sent / Meet failure / etc.) stays
+  // visible after navigation. Cleared from history state after first
+  // render so a back-forward doesn't replay it.
+  createdToast?: CreatedToast;
   // YYYY-MM-DD of the day the receptionist was viewing on Schedule
   // when they tapped into this appointment. Used by the breadcrumb
   // back-link so they return to the same day, not today.
@@ -126,6 +140,20 @@ export function AppointmentDetail() {
   const { result, refresh } = useAppointmentDetail(params.id);
 
   const entry = (location.state as EntryState | null) ?? {};
+
+  // One-shot toast carried over from the New Booking sheet. Hold a
+  // local copy so the render survives the immediate history-state
+  // clear (without that clear the toast replays on every back-forward
+  // through this page).
+  const [createdToast, setCreatedToast] = useState<CreatedToast | null>(
+    entry.createdToast ?? null,
+  );
+  useEffect(() => {
+    if (!entry.createdToast) return;
+    const { createdToast: _drop, ...rest } = (location.state as EntryState | null) ?? {};
+    navigate(location.pathname, { replace: true, state: rest });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -168,12 +196,31 @@ export function AppointmentDetail() {
               // Forward the originating Schedule date so VisitDetail's
               // breadcrumb back-link returns to the same day.
               scheduleDate: entry.scheduleDate,
+              createdToast,
             }}
           />
         ) : (
           <Loaded appt={result.data} onChanged={refresh} />
         )}
       </div>
+      {createdToast ? (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: theme.space[6],
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 100,
+          }}
+        >
+          <Toast
+            tone={createdToast.tone}
+            title={createdToast.title}
+            description={createdToast.description}
+            onDismiss={() => setCreatedToast(null)}
+          />
+        </div>
+      ) : null}
     </main>
   );
 }
