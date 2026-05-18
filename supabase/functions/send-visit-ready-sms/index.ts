@@ -112,7 +112,7 @@ async function handle(req: Request): Promise<Response> {
     visit.appointment_id
       ? admin
           .from('lng_appointments')
-          .select('service_type, product_key, arch')
+          .select('service_type, product_key, arch, appointment_ref, walk_in_id')
           .eq('id', visit.appointment_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -122,8 +122,32 @@ async function handle(req: Request): Promise<Response> {
     | null;
   const location = locationRes.data as { name: string | null } | null;
   const appt = apptRes.data as
-    | { service_type: string | null; product_key: string | null; arch: string | null }
+    | {
+        service_type: string | null;
+        product_key: string | null;
+        arch: string | null;
+        appointment_ref: string | null;
+        walk_in_id: string | null;
+      }
     | null;
+
+  // Walk-in fallback: by design lng_appointments.appointment_ref is
+  // NULL on walk-in marker rows (per the
+  // 20260518000007_lng_auto_ref_walk_in_discriminator migration —
+  // the trigger gates on walk_in_id IS NULL). The LAP for walk-ins
+  // lives on lng_walk_ins.appointment_ref instead. Without this
+  // fallback every walk-in visit would render "Reference -." in
+  // the SMS even though a LAP exists on a sibling row.
+  let appointmentRef = (appt?.appointment_ref ?? '').trim();
+  if (!appointmentRef && appt?.walk_in_id) {
+    const { data: walkInRow } = await admin
+      .from('lng_walk_ins')
+      .select('appointment_ref')
+      .eq('id', appt.walk_in_id)
+      .maybeSingle();
+    appointmentRef =
+      ((walkInRow as { appointment_ref: string | null } | null)?.appointment_ref ?? '').trim();
+  }
 
   if (!patient) {
     return jsonResponse(200, { ok: false, error: 'Patient not found.', reason: 'patient_not_found' });
@@ -170,6 +194,17 @@ async function handle(req: Request): Promise<Response> {
   // ── Substitute variables ─────────────────────────────────────
   const variables: Record<string, string> = {
     patientFirstName: (patient.first_name ?? '').trim() || 'there',
+    // appointmentRef is what the patient saw in their original
+    // confirmation email ("Booking Reference: LAP-00042"). That's
+    // the string they actually remember to quote when they walk
+    // into the clinic to collect, so it's the natural primary
+    // reference for the ready-to-collect SMS. lwoRef stays
+    // available as a separate variable for admins who want the
+    // internal lab reference (it's patient-level + immutable per
+    // CLAUDE.md), but it's NOT in the default template body because
+    // many older patient rows don't have one on file and the
+    // resulting "Reference -." looks broken to the patient.
+    appointmentRef: appointmentRef || '—',
     lwoRef: (patient.lwo_ref ?? '').trim() || '—',
     locationName: (location?.name ?? '').trim() || 'the clinic',
     itemLabel: resolveItemLabel(appt),
