@@ -29,6 +29,7 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -532,6 +533,10 @@ function buildVariables(
     inPersonImpressionLabel: composeImpressionLabel(apt, 'in-person'),
     virtualImpressionLabel: composeImpressionLabel(apt, 'virtual'),
     paymentStatusBlock: composePaymentStatusBlock(apt),
+    // Same email-safe twin of PhaseTimeline used by the confirmation
+    // function. See _shared/appointmentTimelineBlock.ts for the
+    // visual spec — keep both functions in sync.
+    appointmentTimeline: composeAppointmentTimelineBlock(phases),
   };
 }
 

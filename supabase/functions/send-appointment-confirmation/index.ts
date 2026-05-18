@@ -34,6 +34,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { LNG_INTERNAL_TOKEN_HEADER } from '../_shared/invokeAppointmentConfirmation.ts';
+import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -1394,6 +1395,14 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     // Payment status — always renders one of three styled cards
     // (paid in full / deposit paid / paying on the day).
     paymentStatusBlock: composePaymentStatusBlock(apt),
+    // Estimated-appointment-length timeline — table-based email
+    // mirror of the in-app PhaseTimeline (the popup the staff side
+    // sees on VisitDetail → Estimated appointment length). Same
+    // visual contract: time column, rail with dots + connectors,
+    // icon pill + heading + sub-line. Empty when the row has no
+    // materialised phases on file so the placeholder collapses to
+    // nothing in that case.
+    appointmentTimeline: composeAppointmentTimelineBlock(ctx.phases),
   };
 
   if (oldApt) {

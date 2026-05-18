@@ -81,10 +81,14 @@ async function handle(req: Request): Promise<Response> {
 
   const userJwt = req.headers.get('authorization') ?? '';
   if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
-  // Service-role bypass for server-to-server invocations (see
-  // header). The service-role key is a project secret, never
-  // shipped to the browser, so its presence on the request is the
-  // gate. End-user paths fall through to auth.getUser().
+  // Service-role bypass for server-to-server invocations. The
+  // service-role key is a project secret, never shipped to the
+  // browser, so its presence on the request is the gate. End-user
+  // paths fall through to auth.getUser(). Deployed with
+  // --no-verify-jwt because the project has migrated to the
+  // sb_secret_* key format which the Functions Gateway no longer
+  // recognises as a valid JWT; we do the auth check inside the
+  // handler instead.
   const bearer = userJwt.slice('Bearer '.length).trim();
   if (bearer !== SUPABASE_SERVICE_ROLE_KEY) {
     const userClient = createClient(SUPABASE_URL, ANON_KEY, {

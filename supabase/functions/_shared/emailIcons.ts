@@ -41,6 +41,8 @@ export const EMAIL_ICONS: Record<string, string> = {
   Award: '<path d="m15.477 12.89 1.515 8.526a.5.5 0 0 1-.81.47l-3.58-2.687a1 1 0 0 0-1.197 0l-3.586 2.686a.5.5 0 0 1-.81-.469l1.514-8.526"/><circle cx="12" cy="8" r="6"/>',
   MessageCircle: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
   Clipboard: '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  Hourglass: '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
+  Flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
 };
 
 /** Build an inline SVG string for use inside email <a> buttons. */
@@ -75,9 +77,27 @@ const PNG_ICONS_BASE_URL =
 // ${name}-dark.png in the lng-email-assets bucket.
 const PNG_ICON_NAMES = new Set<string>(Object.keys(EMAIL_ICONS));
 
-/** Pick the closest PNG variant for a given stroke colour. */
-function pngVariantFor(strokeColor: string): 'white' | 'dark' {
+type IconVariant = 'white' | 'dark' | 'accent';
+
+// Icons that ALSO have an `${name}-accent.png` PNG uploaded (Lounge
+// brand teal #0D9488). Used by the phase-timeline composer where the
+// passive-phase pill and the estimated-finish pill have an
+// accent-coloured icon on an accentBg-tinted background. Keep this
+// list in sync with the bucket — adding an icon here without
+// uploading the PNG will 404 in the email.
+const ACCENT_PNG_NAMES = new Set<string>(['User', 'Hourglass', 'Flag']);
+
+/** Pick the closest PNG variant for a given stroke colour. Handles
+ *  the brand teal explicitly so phase-timeline pills get the right
+ *  accent-coloured icon; otherwise falls back to white-vs-dark by
+ *  perceived luminance. */
+function pngVariantFor(name: string, strokeColor: string): IconVariant {
   const hex = strokeColor.trim().toLowerCase().replace('#', '');
+  if (ACCENT_PNG_NAMES.has(name)) {
+    // Match the brand teal (and any near-shade) onto the accent
+    // variant before falling back to the white/dark binary choice.
+    if (hex === '0d9488' || hex === '0d9488ff') return 'accent';
+  }
   if (hex.length !== 3 && hex.length !== 6) return 'dark';
   const exp = hex.length === 3
     ? hex.split('').map((c) => c + c).join('')
@@ -91,12 +111,19 @@ function pngVariantFor(strokeColor: string): 'white' | 'dark' {
   return luma > 160 ? 'white' : 'dark';
 }
 
-/** Build an <img> tag pointing at a hosted PNG for use inside email
- *  <a> buttons. Returns '' if no PNG is hosted for this icon name; the
- *  caller should treat that as "no icon". */
-export function iconImg(name: string, strokeColor: string, size = 16): string {
+/** Build an <img> tag pointing at a hosted PNG. Default behaviour
+ *  carries a 6px right margin (button-icon use case); callers can
+ *  pass marginRight=0 for cell-aligned uses like the phase timeline
+ *  where the icon is centred inside a 26px pill. */
+export function iconImg(
+  name: string,
+  strokeColor: string,
+  size = 16,
+  marginRight = 6,
+): string {
   if (!PNG_ICON_NAMES.has(name)) return '';
-  const variant = pngVariantFor(strokeColor);
+  const variant = pngVariantFor(name, strokeColor);
   const url = `${PNG_ICONS_BASE_URL}/${name}-${variant}.png`;
-  return `<img src="${url}" width="${size}" height="${size}" alt="" style="vertical-align:middle;display:inline-block;margin-right:6px;border:0;"/>`;
+  const marginRule = marginRight > 0 ? `margin-right:${marginRight}px;` : '';
+  return `<img src="${url}" width="${size}" height="${size}" alt="" style="vertical-align:middle;display:inline-block;${marginRule}border:0;"/>`;
 }
