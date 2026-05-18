@@ -42,6 +42,12 @@ export function TerminalPaymentModal({
   const [state, setState] = useState<TerminalState>('idle');
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Client-supplied attempt id. Stable across HTTP retries of the
+  // SAME user gesture so the server-side idempotency key (which
+  // anchors both the Stripe PI dedupe AND the lng_terminal_payments
+  // unique constraint) lands on the same PaymentIntent. Regenerated
+  // on every fresh modal open so a brand-new tap mints a fresh row.
+  const [attemptId, setAttemptId] = useState<string | null>(null);
 
   // Reset on open
   useEffect(() => {
@@ -49,6 +55,9 @@ export function TerminalPaymentModal({
       setState('idle');
       setPaymentId(null);
       setError(null);
+      // crypto.randomUUID() is supported in every browser we ship to;
+      // Safari iOS 15.4+, Chrome 92+, Firefox 95+. No fallback needed.
+      setAttemptId(crypto.randomUUID());
     }
   }, [open, visitId]);
 
@@ -155,6 +164,7 @@ export function TerminalPaymentModal({
             amount_pence: amountPence,
             reader_id: readerId,
             payment_journey: paymentJourney,
+            attempt_id: attemptId,
           }),
         }
       );

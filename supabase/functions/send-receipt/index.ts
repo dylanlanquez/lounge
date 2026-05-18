@@ -152,9 +152,17 @@ Deno.serve(async (req) => {
     const itemsListText = items
       .map((i) => `${i.name}${i.quantity > 1 ? ` × ${i.quantity}` : ''}`)
       .join('\n');
+    // Pin Europe/London so a payment taken at 23:50 BST doesn't
+    // render as the next calendar day in the receipt header.
+    const dateOpts: Intl.DateTimeFormatOptions = {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Europe/London',
+    };
     const paymentDate = payment.succeeded_at
-      ? new Date(payment.succeeded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-      : new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+      ? new Date(payment.succeeded_at).toLocaleDateString('en-GB', dateOpts)
+      : new Date().toLocaleDateString('en-GB', dateOpts);
     const variables: Record<string, string> = {
       patientFirstName: patient?.first_name ?? 'there',
       totalAmount:      formatPence(totalPence),

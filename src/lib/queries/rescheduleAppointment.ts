@@ -318,6 +318,11 @@ export async function rescheduleAppointment(input: {
       repair_variant: existing.repair_variant,
       product_key: existing.product_key,
       arch: existing.arch,
+      // Backward pointer to the row this reschedule originated from.
+      // The forward chain is set on the old row below; this column
+      // lets reports walk the chain in either direction without
+      // scanning the table.
+      reschedule_from_id: existing.id,
       // Carry the host forward so meet-create-space creates the new
       // Calendar event under the same Google account that owned the
       // original room. Without this, a reschedule of a per-host
@@ -510,20 +515,44 @@ export async function rescheduleAppointment(input: {
     },
   });
 
-  // ── 9. Email confirmation (best-effort) ────────────────────────
+  // ── 9. Email confirmation ──────────────────────────────────────
   // Sends a "your appointment has moved" email with a fresh REQUEST
   // .ics for the new slot AND a CANCEL .ics for the old slot, so
   // the patient's calendar updates instead of accumulating
-  // duplicates. Failure here is logged inside the edge function
-  // (lng_system_failures) — we don't unwind the reschedule because
-  // the DB state is already correct; the operator can manually
-  // resend from the Schedule sheet.
-  void sendAppointmentConfirmation({
-    appointmentId: newAppointmentId,
-    oldAppointmentIdToCancel: existing.id,
-  }).catch(() => {
-    // already logged server-side; nothing to do here
-  });
+  // duplicates. The reschedule itself does NOT unwind on email
+  // failure (the appointment is moved either way), but we DO write
+  // a client-side failure row so the receptionist's audit trail
+  // surfaces "moved the slot, email didn't go out" instead of going
+  // silent. The bare `void .catch(()=>{})` we used before swallowed
+  // even the "edge function unreachable" case.
+  try {
+    const emailResult = await sendAppointmentConfirmation({
+      appointmentId: newAppointmentId,
+      oldAppointmentIdToCancel: existing.id,
+    });
+    if (!emailResult.ok) {
+      await supabase.from('lng_system_failures').insert({
+        severity: 'warning',
+        source: 'rescheduleAppointment.email',
+        message: `Reschedule moved but confirmation email did not send: ${emailResult.error ?? 'unknown'}`,
+        context: {
+          appointment_id: newAppointmentId,
+          old_appointment_id: existing.id,
+          reason: emailResult.reason ?? null,
+        },
+      });
+    }
+  } catch (e) {
+    await supabase.from('lng_system_failures').insert({
+      severity: 'warning',
+      source: 'rescheduleAppointment.email',
+      message: `Reschedule moved but confirmation invoke threw: ${e instanceof Error ? e.message : String(e)}`,
+      context: {
+        appointment_id: newAppointmentId,
+        old_appointment_id: existing.id,
+      },
+    });
+  }
 
   return { newAppointmentId };
 }

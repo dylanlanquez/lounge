@@ -201,8 +201,8 @@ Deno.serve(async (req) => {
     provider: 'resend',
     provider_message_id: send.messageId ?? null,
     send_status: 'sent',
-    html: '',
-    body_text: null,
+    html: send.html,
+    body_text: send.text,
   });
   if (!messageId) {
     await logFailure('refund_receipt_record_failed', {
@@ -257,10 +257,13 @@ function formatGbp(pence: number, currency: string): string {
 function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
+  // Pin Europe/London so a refund issued at 23:50 BST doesn't
+  // render as the next calendar day in the receipt.
   return d.toLocaleDateString('en-GB', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
+    timeZone: 'Europe/London',
   });
 }
 

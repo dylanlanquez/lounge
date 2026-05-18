@@ -305,14 +305,21 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Existing succeeded refunds against this source. Failed refunds
-  // are excluded from the ceiling — they never moved money.
+  // Existing refunds against this source. Sum BOTH succeeded AND
+  // pending — an in-flight Stripe refund has moved no money yet but
+  // it's already promised, so a second refund against the same
+  // source must reserve room for it. Without this, a £40 card
+  // refund still settling at Stripe wouldn't count against the
+  // £100 ceiling, and staff could issue a second £40 — total goes
+  // to £80 refunded when only one £40 was approved.
+  // Failed refunds are still excluded; they never moved money and
+  // never will.
   const refundCol = src.kind === 'payment' ? 'payment_id' : 'deposit_appointment_id';
   const { data: refundedRows, error: refundedErr } = await supabase
     .from('lng_payment_refunds')
-    .select('amount_pence')
+    .select('amount_pence, status')
     .eq(refundCol, src.sourceId)
-    .eq('status', 'succeeded');
+    .in('status', ['succeeded', 'pending']);
   if (refundedErr) {
     return j(500, { ok: false, error: 'Could not read existing refunds', detail: refundedErr.message });
   }
@@ -327,6 +334,40 @@ Deno.serve(async (req) => {
       error: 'refund_exceeds_remaining',
       detail: { requested_pence: amountPence, remaining_pence: refundableCeiling },
     });
+  }
+
+  // Server-side idempotency window: if a refund row with the same
+  // (source, amount) was inserted within the last 10 seconds and is
+  // still pending, treat THIS request as a retry of that one and
+  // return the existing refund_id rather than issuing a fresh Stripe
+  // refund. Stops a stuck "Refunding…" button on the client from
+  // double-firing a refund when the user taps a second time after
+  // the network drops mid-flight. 10s is long enough to swallow a
+  // double-tap and a one-shot retry, short enough that a legitimate
+  // second refund within seconds isn't blocked.
+  {
+    const tenSecondsAgo = new Date(Date.now() - 10_000).toISOString();
+    const { data: recentDup } = await supabase
+      .from('lng_payment_refunds')
+      .select('id, status, currency, amount_pence')
+      .eq(refundCol, src.sourceId)
+      .eq('amount_pence', amountPence)
+      .eq('status', 'pending')
+      .gte('created_at', tenSecondsAgo)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const dup = recentDup as { id: string; status: string; currency: string; amount_pence: number } | null;
+    if (dup) {
+      return j(200, {
+        ok: true,
+        refund_id: dup.id,
+        refund_source: src.kind,
+        cumulative_refunded_pence: alreadyRefunded,
+        is_full_refund: alreadyRefunded >= src.capturedPence,
+        deduplicated: true,
+      });
+    }
   }
   const visitId = src.visitId;
   const appointmentId = src.appointmentId;

@@ -226,6 +226,11 @@ Deno.serve(async (req) => {
       arch: existing.arch,
       notes: existing.notes,
       appointment_ref: newRef,
+      // Backward pointer to the row this reschedule came from. The
+      // forward pointer is stamped on the OLD row below; this lets
+      // reports / timelines walk the chain in either direction
+      // without scanning the table.
+      reschedule_from_id: existing.id,
       meet_host_id: rescheduledMeetHostId,
       // Carry every booking-time commitment forward — patient
       // already paid (deposit OR full-pay OR Shopify-order credit),

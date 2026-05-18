@@ -122,8 +122,8 @@ export async function createWalkInVisit(
   // Calendar marker. Walk-ins live in lng_walk_ins + lng_visits, but the
   // schedule surfaces (today / week strip / patient timeline) read from
   // lng_appointments. Insert a marker row with source='manual' so the
-  // walk-in shows up alongside Calendly bookings — the receptionist sees
-  // a complete picture of who turned up today.
+  // walk-in shows up alongside scheduled bookings — the receptionist
+  // sees a complete picture of who turned up today.
   //
   // walk_in_id is the FK back to lng_walk_ins so consumers that read
   // BOTH lng_appointments and lng_visits (the patient profile timeline,
@@ -133,16 +133,49 @@ export async function createWalkInVisit(
   // their booking via walk_in_id, not appointment_id.
   const start = new Date();
   const end = new Date(start.getTime() + 30 * 60_000);
-  await supabase.from('lng_appointments').insert({
-    patient_id: input.patient_id,
-    location_id: input.location_id,
-    source: 'manual',
-    start_at: start.toISOString(),
-    end_at: end.toISOString(),
-    event_type_label: 'Walk-in',
-    status: 'arrived',
-    walk_in_id: walkIn.id,
-  });
+  const { data: markerRaw } = await supabase
+    .from('lng_appointments')
+    .insert({
+      patient_id: input.patient_id,
+      location_id: input.location_id,
+      source: 'manual',
+      // created_via lets audits + reports distinguish a walk-in
+      // marker from a staff-booked manual appointment. Both carry
+      // source='manual' (they are not Calendly / native widget
+      // bookings); only this column captures the operational
+      // distinction.
+      created_via: 'walk_in',
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      event_type_label: 'Walk-in',
+      status: 'arrived',
+      walk_in_id: walkIn.id,
+    })
+    .select('id')
+    .single();
+  const markerId = (markerRaw as { id: string } | null)?.id ?? null;
+
+  // Mirror appointment_booked for the marker so reports that roll up
+  // "every booking that landed in the schedule" don't have to special-
+  // case walk-ins. visitTimeline.ts already filters appointment_booked
+  // out of the visit-side feed (walk_in_arrived owns the visual row),
+  // so this is audit-only and doesn't double up the UI. Best-effort —
+  // a failure here doesn't unwind the walk-in.
+  if (markerId) {
+    await supabase.from('patient_events').insert({
+      patient_id: input.patient_id,
+      event_type: 'appointment_booked',
+      actor_account_id: (walkInAccountId as string | null) ?? null,
+      payload: {
+        appointment_id: markerId,
+        walk_in_id: walkIn.id,
+        source: 'walk_in_marker',
+        service_type: input.service_type ?? null,
+        start_at: start.toISOString(),
+        end_at: end.toISOString(),
+      },
+    });
+  }
 
   return {
     visit_id: visit.id,

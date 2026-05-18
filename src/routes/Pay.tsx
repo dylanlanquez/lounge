@@ -10,7 +10,12 @@ import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelp
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
-import { useCart, formatPence } from '../lib/queries/carts.ts';
+import {
+  useCart,
+  formatPence,
+  computeCartSubtotal,
+  computeCartOutstanding,
+} from '../lib/queries/carts.ts';
 import {
   recordCashPayment,
   useCartPayments,
@@ -118,9 +123,12 @@ export function Pay() {
   // simply subtotal-after-discount minus that single combined credit.
   // (The previous shape did `subtotal − deposit − amount_paid` and
   // double-subtracted every deposit pound.)
-  const subtotal = items.reduce((s, i) => s + i.line_total_pence - i.discount_pence, 0);
+  //
+  // Subtotal math goes through the canonical carts.ts helper so the
+  // Pay breakdown can never drift from server-side outstanding checks.
   const cartDiscount = cart?.discount_pence ?? 0;
-  const subtotalAfterDiscount = Math.max(0, subtotal - cartDiscount);
+  const subtotalAfterDiscount = computeCartSubtotal(items, cartDiscount);
+  const subtotal = subtotalAfterDiscount + cartDiscount;
   const depositPence = deposit?.status === 'paid' ? deposit.pence : 0;
 
   // Split-payment plumbing. Read the visit's paid-status view so we
@@ -131,7 +139,7 @@ export function Pay() {
   // picker sees the new balance.
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
-  const outstandingPence = Math.max(0, subtotalAfterDiscount - amountPaidPence);
+  const outstandingPence = computeCartOutstanding(subtotalAfterDiscount, amountPaidPence);
   // Pence collected at the till today, separate from the deposit and
   // any Shopify pre-paid credit. Used in the visible breakdown so we
   // can show "Deposit −£X · Collected −£Y" without double-counting.

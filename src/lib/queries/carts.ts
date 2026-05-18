@@ -378,6 +378,37 @@ export async function removeCartLine(input: RemoveCartLineInput): Promise<void> 
   if (error) throw new Error(error.message);
 }
 
+// Canonical cart-money calculations. Anywhere in the app that needs
+// to compute a cart subtotal / outstanding goes through these helpers
+// rather than re-deriving from line items inline. Keeps the
+// definition of "subtotal" in lockstep across views (Pay breakdown,
+// till sheet, anywhere else): line_total minus per-line discount,
+// summed, then minus the cart-wide discount, clamped at zero.
+//
+// The DB's generated `cart.total_pence` column should match the
+// result of `computeCartSubtotal(items, cart.discount_pence)` —
+// drift here is a schema bug.
+export function computeCartSubtotal(
+  items: ReadonlyArray<Pick<CartItemRow, 'line_total_pence' | 'discount_pence'>>,
+  cartDiscountPence: number,
+): number {
+  const itemsSubtotal = items.reduce(
+    (sum, it) => sum + it.line_total_pence - it.discount_pence,
+    0,
+  );
+  return Math.max(0, itemsSubtotal - (cartDiscountPence ?? 0));
+}
+
+// Outstanding the cart still needs to collect, given total paid
+// (deposit + Shopify + till payments — already aggregated into
+// `amount_paid_pence` on the lng_visit_paid_status view).
+export function computeCartOutstanding(
+  subtotalAfterDiscountPence: number,
+  amountPaidPence: number,
+): number {
+  return Math.max(0, subtotalAfterDiscountPence - (amountPaidPence ?? 0));
+}
+
 // One source of truth for GBP rendering across the app. Intl gives us
 // the thousand separators ("£1,248.00", not "£1248.00"), the en-GB
 // minus-sign placement, and 2dp without us hand-rolling it.

@@ -22,6 +22,24 @@ interface StartPaymentBody {
   amount_pence: number;
   reader_id: string;
   payment_journey?: 'standard' | 'klarna' | 'clearpay';
+  // Client-supplied UUID that stays stable across HTTP retries of
+  // the same user gesture. Anchors the Stripe idempotency key so a
+  // network flake that retries the request lands on the SAME
+  // PaymentIntent (Stripe returns the cached PI on matching key)
+  // and the SAME lng_terminal_payments row (unique constraint on
+  // idempotency_key short-circuits the duplicate insert).
+  //
+  // The previous shape derived the idem key from `count(*)`, which
+  // two parallel requests both read as the same value — fine on
+  // the way out (Stripe dedupes) but a SUBSEQUENT retry would read
+  // count+1 and mint a fresh PI, double-charging the patient. With
+  // a client-stable attempt_id that path is closed.
+  //
+  // Optional for backwards compatibility — callers that omit it
+  // fall back to the legacy count-based key (still safer than
+  // nothing thanks to the unique constraint on idempotency_key,
+  // just open to the retry-double-charge edge case above).
+  attempt_id?: string;
 }
 
 Deno.serve(async (req) => {
@@ -112,12 +130,43 @@ Deno.serve(async (req) => {
 
   const journey = body.payment_journey ?? 'standard';
 
-  // Idempotency key: cart + attempt count
-  const { count: attemptCount } = await supabase
-    .from('lng_payments')
-    .select('*', { count: 'exact', head: true })
-    .eq('cart_id', cart.id);
-  const idemKey = `cart_${cart.id}_attempt_${(attemptCount ?? 0) + 1}`;
+  // Idempotency key: prefer client-supplied attempt_id (UUID stable
+  // across retries of the same user gesture); fall back to the legacy
+  // attempt-count scheme for callers that haven't been updated yet.
+  // Client-supplied IDs are normalised to a UUID-like shape so a
+  // hostile body can't craft a collision against another cart.
+  let idemKey: string;
+  if (body.attempt_id && /^[0-9a-fA-F-]{8,64}$/.test(body.attempt_id)) {
+    idemKey = `cart_${cart.id}_${body.attempt_id}`;
+  } else {
+    const { count: attemptCount } = await supabase
+      .from('lng_payments')
+      .select('*', { count: 'exact', head: true })
+      .eq('cart_id', cart.id);
+    idemKey = `cart_${cart.id}_attempt_${(attemptCount ?? 0) + 1}`;
+  }
+
+  // Pre-check: if a terminal payment with this idempotency_key
+  // already exists, this is a retry of an in-flight request and we
+  // should return the existing payment + PI rather than minting a
+  // new one. lng_terminal_payments.idempotency_key has a UNIQUE
+  // constraint so the catch path below is the absolute safety net;
+  // this pre-check just lets the client see a 200 instead of a 500
+  // on a clean retry.
+  {
+    const { data: existing } = await supabase
+      .from('lng_terminal_payments')
+      .select('payment_id, stripe_payment_intent_id')
+      .eq('idempotency_key', idemKey)
+      .maybeSingle();
+    const ex = existing as { payment_id: string; stripe_payment_intent_id: string } | null;
+    if (ex) {
+      return new Response(
+        JSON.stringify({ payment_id: ex.payment_id, payment_intent_id: ex.stripe_payment_intent_id }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+      );
+    }
+  }
 
   // Create PaymentIntent
   const piRes = await stripeFetch('POST', '/payment_intents', {
@@ -161,6 +210,29 @@ Deno.serve(async (req) => {
     idempotency_key: idemKey,
   });
   if (tpErr) {
+    // Most likely a unique-constraint hit on idempotency_key — two
+    // concurrent requests with the same attempt_id raced past the
+    // pre-check above. Re-read the winner's row and return it; the
+    // PI created above is a duplicate of the winner's PI (Stripe
+    // dedupes on the same idem key) so the patient is not double-
+    // charged.
+    if ((tpErr as { code?: string }).code === '23505') {
+      const { data: winner } = await supabase
+        .from('lng_terminal_payments')
+        .select('payment_id, stripe_payment_intent_id')
+        .eq('idempotency_key', idemKey)
+        .maybeSingle();
+      const w = winner as { payment_id: string; stripe_payment_intent_id: string } | null;
+      if (w) {
+        // Roll back our own losing lng_payments row so a second row
+        // doesn't pollute the cart's payment list.
+        await supabase.from('lng_payments').delete().eq('id', payment.id);
+        return new Response(
+          JSON.stringify({ payment_id: w.payment_id, payment_intent_id: w.stripe_payment_intent_id }),
+          { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } },
+        );
+      }
+    }
     await logFailure('lng_terminal_payments_insert_failed', { error: tpErr.message });
     return jsonError(500, 'DB write failed');
   }

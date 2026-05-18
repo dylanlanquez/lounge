@@ -431,7 +431,8 @@ export interface RenderAndSendArgs {
 }
 
 export async function renderAndSend(args: RenderAndSendArgs): Promise<
-  { ok: true; messageId?: string; subject: string } | { ok: false; error: string }
+  | { ok: true; messageId?: string; subject: string; html: string; text: string }
+  | { ok: false; error: string }
 > {
   const subject = substituteVariables(args.template.subject, args.variables);
   const bodyAfterVars = substituteVariables(args.template.body_syntax, args.variables);
@@ -447,5 +448,9 @@ export async function renderAndSend(args: RenderAndSendArgs): Promise<
     text,
   });
   if (!send.ok) return send;
-  return { ok: true, messageId: send.messageId, subject };
+  // Return html + text so the caller can persist the rendered bytes
+  // on lng_email_messages. Without that, the Timeline "View email"
+  // button has nothing to render — the patient saw the email but
+  // staff sees a blank preview.
+  return { ok: true, messageId: send.messageId, subject, html, text };
 }

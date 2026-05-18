@@ -312,10 +312,42 @@ async function processOne(
   // others use the standard appointment_reminder template.
   const isVirtual = !!apt.join_url;
   if (isVirtual && !templates.virtual) {
+    // Match the no_email_on_patient skip pattern below — stamp
+    // reminder_sent_at so the sweep doesn't keep retrying, and emit
+    // a patient_events row so the timeline shows WHY the patient
+    // didn't get a reminder. Without this the skip is silent and
+    // staff debugging an unhappy customer can't see what happened.
+    await admin
+      .from('lng_appointments')
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .eq('id', apt.id);
+    await admin.from('patient_events').insert({
+      patient_id: apt.patient_id,
+      event_type: 'appointment_reminder_skipped',
+      payload: {
+        appointment_id: apt.id,
+        reason: 'virtual_template_not_configured',
+      },
+    });
     return { outcome: 'skipped', reason: 'appointment_reminder_virtual template not configured' };
   }
   const template = isVirtual ? templates.virtual! : templates.standard;
   if (!template.enabled) {
+    // Same loud-skip treatment for an admin-disabled template — the
+    // patient won't receive anything and the timeline needs to
+    // surface that decision rather than going dark.
+    await admin
+      .from('lng_appointments')
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .eq('id', apt.id);
+    await admin.from('patient_events').insert({
+      patient_id: apt.patient_id,
+      event_type: 'appointment_reminder_skipped',
+      payload: {
+        appointment_id: apt.id,
+        reason: 'template_disabled',
+      },
+    });
     return { outcome: 'skipped', reason: 'template_disabled' };
   }
 
