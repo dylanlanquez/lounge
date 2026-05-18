@@ -156,7 +156,18 @@ function localDayBounds(dateIso: string): { startIso: string; endIso: string } {
   return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
-export function useDayAppointments(dateIso: string): DayResult {
+export function useDayAppointments(
+  dateIso: string,
+  // Filter by location at the query level so a staff member visible
+  // to multiple locations via RLS doesn't see the OTHER location's
+  // rows on their schedule. This used to be implicit (RLS narrowed
+  // to one row); but staff with cross-location visibility had both
+  // locations' bookings bleeding through, which made the schedule
+  // look saturated even when the staff member's own chair was free
+  // (or vice versa). When omitted, the query falls back to the
+  // RLS-only behaviour for callers that haven't been updated yet.
+  locationId?: string | null,
+): DayResult {
   // Per-day cache: Map<dateIso, AppointmentRow[]>.
   //
   // Storing rows in a ref (not state) prevents stale cross-day data from
@@ -169,7 +180,11 @@ export function useDayAppointments(dateIso: string): DayResult {
   // Stale-while-revalidate still works for revisited days: the cached rows
   // are shown immediately (dimmed via DayReloadingWrapper) while the fresh
   // fetch runs in the background, then swapped atomically when it lands.
+  // Cache keyed by `${dateIso}|${locationId ?? ''}` so a location
+  // switch (rare in practice but possible for cross-site staff)
+  // never serves stale rows from the previous location's view.
   const cache = useRef<Map<string, AppointmentRow[]>>(new Map());
+  const cacheKey = `${dateIso}|${locationId ?? ''}`;
   // forceUpdate() is the only mechanism that causes React to re-render
   // after a cache write (refs are invisible to the reconciler).
   const [, forceUpdate] = useReducer((n: number) => n + 1, 0);
@@ -178,21 +193,24 @@ export function useDayAppointments(dateIso: string): DayResult {
 
   const { loading, settle } = useStaleQueryLoading(dateIso);
 
-  // Derived from cache — always the correct data for the current date.
-  const data = cache.current.get(dateIso) ?? [];
-  const hasLoaded = cache.current.has(dateIso);
+  // Derived from cache — always the correct data for the current
+  // (date, location) tuple.
+  const data = cache.current.get(cacheKey) ?? [];
+  const hasLoaded = cache.current.has(cacheKey);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const { startIso, endIso } = localDayBounds(dateIso);
-      const run = (sel: string) =>
-        supabase
+      const run = (sel: string) => {
+        let q = supabase
           .from('lng_appointments')
           .select(sel)
           .gte('start_at', startIso)
-          .lte('start_at', endIso)
-          .order('start_at', { ascending: true });
+          .lte('start_at', endIso);
+        if (locationId) q = q.eq('location_id', locationId);
+        return q.order('start_at', { ascending: true });
+      };
       let { data: rows, error: err } = await run(SELECT_WITH_INTAKE);
       // 42703 = undefined_column. Frontend deployed before the intake
       // migration: degrade gracefully without intake instead of blanking.
@@ -205,7 +223,7 @@ export function useDayAppointments(dateIso: string): DayResult {
       if (err) {
         // PGRST200 / 42P01 = pre-migration; treat as empty rather than error.
         if (err.code === 'PGRST200' || err.code === '42P01') {
-          cache.current.set(dateIso, []);
+          cache.current.set(cacheKey,[]);
           forceUpdate();
           setError(null);
         } else {
@@ -214,7 +232,7 @@ export function useDayAppointments(dateIso: string): DayResult {
         settle();
         return;
       }
-      cache.current.set(dateIso, mapRows(rows ?? []));
+      cache.current.set(cacheKey,mapRows(rows ?? []));
       forceUpdate();
       setError(null);
       settle();
@@ -222,7 +240,7 @@ export function useDayAppointments(dateIso: string): DayResult {
     return () => {
       cancelled = true;
     };
-  }, [dateIso, refreshTick, settle]);
+  }, [dateIso, locationId, refreshTick, settle]);
 
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);
@@ -259,7 +277,11 @@ interface DateRangeCountsResult {
 // needs tracking, not historical noise.
 export function useDateRangeCounts(
   startIso: string,
-  endIso: string
+  endIso: string,
+  // Same rationale as useDayAppointments: keep the strip honest to
+  // the staff member's location so cross-site rows don't pump up the
+  // wrong day's dot.
+  locationId?: string | null,
 ): DateRangeCountsResult {
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -271,12 +293,14 @@ export function useDateRangeCounts(
     (async () => {
       const start = new Date(`${startIso}T00:00:00`);
       const end = new Date(`${endIso}T23:59:59.999`);
-      const { data: rows, error: err } = await supabase
+      let q = supabase
         .from('lng_appointments')
         .select('start_at, status')
         .gte('start_at', start.toISOString())
         .lte('start_at', end.toISOString())
         .not('status', 'in', '(cancelled,rescheduled)');
+      if (locationId) q = q.eq('location_id', locationId);
+      const { data: rows, error: err } = await q;
 
       if (cancelled) return;
       if (err) {
@@ -301,7 +325,7 @@ export function useDateRangeCounts(
     return () => {
       cancelled = true;
     };
-  }, [startIso, endIso, refreshTick, settle]);
+  }, [startIso, endIso, locationId, refreshTick, settle]);
 
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);

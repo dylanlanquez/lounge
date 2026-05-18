@@ -3012,6 +3012,28 @@ function StaffTab() {
                     </div>
                     <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {s.login_email || 'No login email'}
+                      {/* Surface the location binding right under the
+                          email. Every booking this staff member creates
+                          from the Schedule or Walk-in flow lands at
+                          this location; an admin scanning the list can
+                          spot when someone's bound to the wrong clinic
+                          at a glance. Null when the account predates
+                          accounts.location_id or hasn't been assigned. */}
+                      {s.location_name ? (
+                        <>
+                          <span aria-hidden style={{ margin: `0 ${theme.space[1]}px`, opacity: 0.4 }}>·</span>
+                          {s.location_name}
+                          {s.location_type ? ` ${s.location_type}` : ''}
+                          {s.location_city ? `, ${s.location_city}` : ''}
+                        </>
+                      ) : (
+                        <>
+                          <span aria-hidden style={{ margin: `0 ${theme.space[1]}px`, opacity: 0.4 }}>·</span>
+                          <span style={{ color: theme.color.warn, fontWeight: theme.type.weight.medium }}>
+                            No location assigned
+                          </span>
+                        </>
+                      )}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: theme.space[2], flex: '0 0 auto' }}>

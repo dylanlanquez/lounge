@@ -56,6 +56,18 @@ export interface StaffRow {
   last_name: string | null;
   display_name: string;
   login_email: string;
+  // Which clinic this staff member is bound to. Drives the
+  // deterministic useCurrentLocation hook — every booking the staff
+  // member creates from the Schedule / Walk-in flows is written at
+  // this location. Surfaced in the Admin → Staff list as a small
+  // "Lab · Glasgow" chip so an admin can see at a glance who's
+  // assigned where. Null when a row was created before the
+  // accounts.location_id column landed, or when an admin hasn't
+  // assigned them yet.
+  location_id: string | null;
+  location_name: string | null;
+  location_type: string | null;
+  location_city: string | null;
 }
 
 interface Result {
@@ -87,12 +99,16 @@ interface RawJoinedRow {
     last_name: string | null;
     name: string | null;
     login_email: string | null;
+    location_id: string | null;
+    location: { id: string; name: string | null; type: string | null; city: string | null } | { id: string; name: string | null; type: string | null; city: string | null }[] | null;
   } | {
     id: string;
     first_name: string | null;
     last_name: string | null;
     name: string | null;
     login_email: string | null;
+    location_id: string | null;
+    location: { id: string; name: string | null; type: string | null; city: string | null } | { id: string; name: string | null; type: string | null; city: string | null }[] | null;
   }[] | null;
 }
 
@@ -109,6 +125,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
   const ln = a?.last_name?.trim() ?? null;
   const email = a?.login_email ?? '';
   const display = fn && ln ? `${fn} ${ln}` : fn ?? ln ?? a?.name?.trim() ?? email ?? r.account_id;
+  const loc = a ? pickOne(a.location) : null;
   return {
     staff_member_id: r.id,
     is_admin: r.is_admin === true,
@@ -131,11 +148,15 @@ function mapRow(r: RawJoinedRow): StaffRow {
     last_name: ln,
     display_name: display,
     login_email: email,
+    location_id: a?.location_id ?? null,
+    location_name: loc?.name ?? null,
+    location_type: loc?.type ?? null,
+    location_city: loc?.city ?? null,
   };
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in

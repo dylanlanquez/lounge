@@ -14,9 +14,27 @@ interface Result {
   error: string | null;
 }
 
-// The receptionist's current location, derived via auth_location_id() RLS.
-// We just SELECT * FROM locations and RLS narrows to the row we are scoped to.
-
+// The receptionist's current location, derived from THEIR OWN
+// accounts.location_id row.
+//
+// The earlier shape (`select * from locations limit 1` and trust RLS
+// to narrow to a single row) silently fell over the moment a staff
+// member had visibility over more than one location: Postgres returns
+// whichever row it surfaces first, with no guarantee it matches the
+// staff member's home clinic. In production that meant a New Booking
+// for a Dylan-Lane session sometimes resolved to the Glasgow lab and
+// sometimes to the Glasgow practice; every booking the form created
+// silently went to whichever location won that coin flip, and the
+// conflict checker (which is per-location) correctly said "free" for
+// whichever chair the form had picked, even when the OTHER chair was
+// fully booked. Receptionist saw bookings stacking on the schedule
+// while the system was happily creating new ones at the second
+// chair they couldn't tell was there.
+//
+// Fix: resolve the staff member's account row (via auth_account_id())
+// and use ITS `location_id` directly. Deterministic, tied to who is
+// logged in, won't drift if the user gains access to another
+// location via RLS later.
 export function useCurrentLocation(): Result {
   const [data, setData] = useState<CurrentLocationRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,18 +43,52 @@ export function useCurrentLocation(): Result {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // The receptionist sees only their own location via RLS; pick the first.
-      const { data: rows, error: err } = await supabase
-        .from('locations')
-        .select('id, name, type, city')
-        .limit(1);
+      // Resolve the staff member's account id from auth.uid() (same
+      // helper every other Lounge surface uses to stamp actor rows).
+      const { data: accountIdRaw, error: accErr } = await supabase.rpc(
+        'auth_account_id',
+      );
       if (cancelled) return;
-      if (err) {
-        setError(err.message);
+      const accountId = (accountIdRaw as string | null) ?? null;
+      if (accErr || !accountId) {
+        setError(accErr?.message ?? 'No staff account for this session');
         setLoading(false);
         return;
       }
-      setData((rows && rows[0]) as CurrentLocationRow | null);
+      // Read THIS account's location pointer. Single row by primary key.
+      const { data: accountRow, error: accountErr } = await supabase
+        .from('accounts')
+        .select('location_id')
+        .eq('id', accountId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (accountErr) {
+        setError(accountErr.message);
+        setLoading(false);
+        return;
+      }
+      const locId = (accountRow as { location_id: string | null } | null)?.location_id ?? null;
+      if (!locId) {
+        setError(
+          'Your account is not bound to a location. Admin → Staff to fix.',
+        );
+        setLoading(false);
+        return;
+      }
+      // Finally, hydrate the location row. By id, no LIMIT, no
+      // ambiguity.
+      const { data: locRow, error: locErr } = await supabase
+        .from('locations')
+        .select('id, name, type, city')
+        .eq('id', locId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (locErr) {
+        setError(locErr.message);
+        setLoading(false);
+        return;
+      }
+      setData((locRow as CurrentLocationRow | null) ?? null);
       setLoading(false);
     })();
     return () => {

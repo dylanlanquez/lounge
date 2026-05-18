@@ -187,7 +187,13 @@ export function Schedule() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const monthPillRef = useRef<HTMLButtonElement | null>(null);
 
-  const day = useDayAppointments(selectedDate);
+  // Filter the day's appointments to the staff member's bound
+  // location. Without this, a staff member with cross-location RLS
+  // visibility (lab + practice) sees both clinics' rows on a single
+  // schedule. That's misleading: each location has its own chair
+  // pool, so the OTHER location's rows look like they're competing
+  // with yours when they aren't.
+  const day = useDayAppointments(selectedDate, currentLocation.data?.id ?? null);
   // Counts power the dots under each day pill in the WeekStrip. The
   // strip materialises every day in a ±60 day window around today, so
   // this query matches that window — earlier this only fetched the
@@ -196,7 +202,7 @@ export function Schedule() {
   // (just date+status), so a 121-day fetch is cheap.
   const stripStartIso = addDaysIso(todayIso, -WEEK_STRIP_WINDOW_RADIUS_DAYS);
   const stripEndIso = addDaysIso(todayIso, WEEK_STRIP_WINDOW_RADIUS_DAYS);
-  const weekCounts = useDateRangeCounts(stripStartIso, stripEndIso);
+  const weekCounts = useDateRangeCounts(stripStartIso, stripEndIso, currentLocation.data?.id ?? null);
 
   // Waiver state for the selected patient. Sections are global; signatures
   // are per-patient. Pre-arrival the "required sections" are inferred from
