@@ -1,6 +1,7 @@
 import { Minus, Package, Plus, Trash2 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 export interface CartLineItemProps {
   name: string;
@@ -42,6 +43,111 @@ export function CartLineItem({
   thumbnailUrl = null,
   readOnly = false,
 }: CartLineItemProps) {
+  const isMobile = useIsMobile(640);
+  // Mobile: stack the line into two visual rows.
+  //   Row 1: thumb · name + description (flex) · trash
+  //   Row 2: qty stepper (left) · line price (right)
+  // The single-row desktop layout puts everything on one flex line
+  // and squeezes the description into a 2-char-wide column on a
+  // 380px phone. Splitting the controls onto their own row gives
+  // the description full width to wrap legibly.
+  if (isMobile) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          background: theme.color.surface,
+          borderRadius: 12,
+          boxShadow: theme.shadow.card,
+          opacity: disabled ? 0.5 : 1,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+          <Thumb src={thumbnailUrl} alt={name} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.base,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                lineHeight: 1.3,
+                wordBreak: 'break-word',
+              }}
+            >
+              {name}
+            </p>
+            <p
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+                lineHeight: 1.4,
+                wordBreak: 'break-word',
+              }}
+            >
+              {description ? `${description} · ` : ''}
+              {formatPence(unitPricePence)} each
+            </p>
+          </div>
+          {readOnly ? null : (
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={disabled}
+              aria-label="Remove line item"
+              style={{
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                color: theme.color.inkMuted,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                padding: theme.space[2],
+                borderRadius: theme.radius.pill,
+                flexShrink: 0,
+                marginTop: -theme.space[1],
+              }}
+            >
+              <Trash2 size={18} />
+            </button>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+          }}
+        >
+          {quantityEnabled && !readOnly ? (
+            <QtyStepper
+              value={quantity}
+              onIncrement={onIncrement}
+              onDecrement={onDecrement}
+              disabled={disabled}
+            />
+          ) : (
+            <span />
+          )}
+          <div
+            style={{
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {formatPence(lineTotalPence)}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       style={{

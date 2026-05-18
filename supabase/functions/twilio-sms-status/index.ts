@@ -121,11 +121,16 @@ Deno.serve(async (req) => {
   // arrive AFTER the terminal "delivered". Without this guard the
   // late callback resets a finished row to 'pending' and the UI's
   // "Text message sending…" panel sticks forever even though the
-  // patient received the SMS minutes ago. The first terminal state
-  // we observe wins; later non-terminal updates are ignored.
-  const alreadyTerminal = prior?.send_status === 'sent' || prior?.send_status === 'failed';
-  const effectiveStatus: 'sent' | 'failed' | 'pending' =
-    alreadyTerminal && mapped === 'pending' ? prior!.send_status : mapped;
+  // patient received the SMS minutes ago.
+  //
+  // priorRow tells us the state AT THE TIME OF READ. That guard alone
+  // isn't enough: two callbacks arriving in parallel can both observe
+  // priorRow='pending', then the slower one's UPDATE clobbers the
+  // faster one's terminal write. The atomic gate is therefore on the
+  // UPDATE itself — when this callback maps to 'pending', the WHERE
+  // clause refuses to touch any row that's already terminal. The
+  // first terminal state to land wins; everything else is a no-op.
+  const effectiveStatus: 'sent' | 'failed' | 'pending' = mapped;
 
   // Compose the send_error column so the audit row carries the
   // carrier error code and a human-readable summary. Only overwrite
@@ -139,10 +144,17 @@ Deno.serve(async (req) => {
     patch.send_error = [errorCode, errorMessage].filter(Boolean).join(' ').trim() || null;
   }
 
-  const { error: updErr, count } = await admin
+  let updateQuery = admin
     .from('lng_sms_messages')
     .update(patch, { count: 'exact' })
     .eq('twilio_message_sid', sid);
+  if (effectiveStatus === 'pending') {
+    // Atomic no-downgrade gate. A late callback arriving with a
+    // non-terminal status (queued / sent / sending) never overwrites
+    // a row whose webhook already saw delivered / failed.
+    updateQuery = updateQuery.eq('send_status', 'pending');
+  }
+  const { error: updErr, count } = await updateQuery;
 
   if (updErr) {
     await logFailure(`twilio-sms-status update failed for ${sid}: ${updErr.message}`);
