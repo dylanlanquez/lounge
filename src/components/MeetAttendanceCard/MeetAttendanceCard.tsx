@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { Card } from '../Card/Card.tsx';
 import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
@@ -850,11 +851,113 @@ function Header({
   pulling: boolean;
   onRefresh: () => void;
 }) {
+  const isMobile = useIsMobile(640);
   const meta = loading
     ? 'Loading'
     : peopleCount === 0
       ? 'No attendance yet'
       : `${peopleCount} ${peopleCount === 1 ? 'person' : 'people'} · ${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`;
+  const codePill = meetingCode ? (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 8px',
+        borderRadius: theme.radius.pill,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        color: theme.color.inkMuted,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.medium,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Video size={11} aria-hidden />
+      {meetingCode}
+    </span>
+  ) : null;
+  const metaText = (
+    <span
+      style={{
+        color: theme.color.inkMuted,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.medium,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {meta}
+    </span>
+  );
+  const refreshButton = (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={pulling}
+      aria-label="Refresh attendance"
+      style={{
+        appearance: 'none',
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+        color: pulling ? theme.color.inkMuted : theme.color.accent,
+        cursor: pulling ? 'wait' : 'pointer',
+        padding: '6px 12px',
+        borderRadius: theme.radius.pill,
+        fontSize: theme.type.size.xs,
+        fontWeight: theme.type.weight.semibold,
+        fontFamily: 'inherit',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        opacity: pulling ? 0.7 : 1,
+        flexShrink: 0,
+      }}
+    >
+      {pulling ? (
+        <Loader2 size={12} aria-hidden style={{ animation: 'lng-meet-spin 600ms linear infinite' }} />
+      ) : (
+        <RefreshCw size={12} aria-hidden />
+      )}
+      {pulling ? 'Pulling' : 'Refresh'}
+    </button>
+  );
+
+  // Mobile: stack the header so the meeting code pill and the meta
+  // counts don't fight the title + Refresh button for horizontal
+  // room. Row 1 = icon + title + Refresh; row 2 = code pill + meta.
+  // The previous single-row layout squeezed the chip into a narrow
+  // column and Safari let its text wrap inside the rounded
+  // pill, which looked like a circular blob with text mashed
+  // through it.
+  if (isMobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
+            <Users size={18} aria-hidden />
+            <h2
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.semibold,
+                letterSpacing: theme.type.tracking.tight,
+                color: theme.color.ink,
+              }}
+            >
+              Meeting attendance
+            </h2>
+          </span>
+          {refreshButton}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
+          {codePill}
+          {metaText}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: theme.space[3] }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], minWidth: 0 }}>
@@ -870,67 +973,11 @@ function Header({
         >
           Meeting attendance
         </h2>
-        {meetingCode ? (
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '2px 8px',
-              borderRadius: theme.radius.pill,
-              background: theme.color.bg,
-              border: `1px solid ${theme.color.border}`,
-              color: theme.color.inkMuted,
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.medium,
-              fontVariantNumeric: 'tabular-nums',
-              marginLeft: theme.space[2],
-            }}
-          >
-            <Video size={11} aria-hidden />
-            {meetingCode}
-          </span>
-        ) : null}
+        {meetingCode ? <span style={{ marginLeft: theme.space[2] }}>{codePill}</span> : null}
       </span>
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
-        <span
-          style={{
-            color: theme.color.inkMuted,
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.medium,
-          }}
-        >
-          {meta}
-        </span>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={pulling}
-          aria-label="Refresh attendance"
-          style={{
-            appearance: 'none',
-            border: `1px solid ${theme.color.border}`,
-            background: theme.color.surface,
-            color: pulling ? theme.color.inkMuted : theme.color.accent,
-            cursor: pulling ? 'wait' : 'pointer',
-            padding: '6px 12px',
-            borderRadius: theme.radius.pill,
-            fontSize: theme.type.size.xs,
-            fontWeight: theme.type.weight.semibold,
-            fontFamily: 'inherit',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            opacity: pulling ? 0.7 : 1,
-          }}
-        >
-          {pulling ? (
-            <Loader2 size={12} aria-hidden style={{ animation: 'lng-meet-spin 600ms linear infinite' }} />
-          ) : (
-            <RefreshCw size={12} aria-hidden />
-          )}
-          {pulling ? 'Pulling' : 'Refresh'}
-        </button>
+        {metaText}
+        {refreshButton}
       </div>
     </div>
   );

@@ -52,14 +52,44 @@ function isStaleChunkError(err: Error | null | undefined): boolean {
   return (
     /Failed to fetch dynamically imported module/i.test(msg) ||
     /Importing a module script failed/i.test(msg) ||
-    // Safari's flavour of the same error.
+    // Safari's flavour of the dynamic-import failure.
     /error loading dynamically imported module/i.test(msg) ||
     // Chrome flavour when index.html lands in place of a 404.
-    /Expected a JavaScript-or-Wasm module script/i.test(msg)
+    /Expected a JavaScript-or-Wasm module script/i.test(msg) ||
+    // iOS/Safari flavour of the same MIME-mismatch — the CDN served
+    // index.html in place of the missing hashed chunk and Safari
+    // refuses to execute it as JS. Different exact wording than
+    // Chrome, so it needs its own pattern or staff stay stuck on
+    // the "Try again / Reload page" screen forever.
+    /is not a valid JavaScript MIME type/i.test(msg) ||
+    /MIME type ['"]text\/html['"]/i.test(msg) ||
+    // Firefox flavour.
+    /Loading module from .* was blocked because of a disallowed MIME type/i.test(msg)
   );
 }
 
 const STALE_RELOAD_FLAG = 'lng.staleChunkReload';
+// How long to honour the "we just auto-reloaded" guard before we let
+// another auto-reload through. Without an expiry, a stale flag from
+// an old session sticks around and any future stale-chunk lands the
+// user on the manual error screen even though a fresh auto-reload
+// would have fixed it. 60s is long enough to short-circuit a real
+// loop (the second reload arrives well inside that window) and
+// short enough that a separate stale-chunk hours later behaves like
+// a first-time event.
+const STALE_RELOAD_TTL_MS = 60_000;
+
+function recentlyAutoReloaded(): boolean {
+  try {
+    const raw = sessionStorage.getItem(STALE_RELOAD_FLAG);
+    if (!raw) return false;
+    const at = Number(raw);
+    if (!Number.isFinite(at)) return false;
+    return Date.now() - at < STALE_RELOAD_TTL_MS;
+  } catch {
+    return false;
+  }
+}
 
 export class ErrorBoundary extends Component<Props, State> {
   override state: State = { hasError: false, error: null, resetCount: 0 };
@@ -80,8 +110,7 @@ export class ErrorBoundary extends Component<Props, State> {
     // error (e.g. the new bundle is actually broken).
     if (isStaleChunkError(error)) {
       try {
-        const alreadyReloaded = sessionStorage.getItem(STALE_RELOAD_FLAG);
-        if (!alreadyReloaded) {
+        if (!recentlyAutoReloaded()) {
           sessionStorage.setItem(STALE_RELOAD_FLAG, String(Date.now()));
           window.location.reload();
         }
@@ -103,10 +132,25 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   reset = (): void => {
+    // Clear the auto-reload guard so a stale-chunk error AFTER this
+    // manual recovery is allowed to auto-reload once more. Without
+    // this clear, staff who tap "Try again" then hit a fresh stale
+    // chunk would see the manual error screen instead of the
+    // automatic reload they expected on the first incident.
+    try {
+      sessionStorage.removeItem(STALE_RELOAD_FLAG);
+    } catch {
+      // No-op.
+    }
     this.setState((s) => ({ hasError: false, error: null, resetCount: s.resetCount + 1 }));
   };
 
   reload = (): void => {
+    try {
+      sessionStorage.removeItem(STALE_RELOAD_FLAG);
+    } catch {
+      // No-op.
+    }
     window.location.reload();
   };
 
@@ -118,12 +162,7 @@ export class ErrorBoundary extends Component<Props, State> {
       // "Updating…" state in the gap so staff don't see the
       // regular "This page hit an error" surface flash by.
       const staleChunk = isStaleChunkError(this.state.error);
-      let alreadyReloaded = false;
-      try {
-        alreadyReloaded = sessionStorage.getItem(STALE_RELOAD_FLAG) !== null;
-      } catch {
-        alreadyReloaded = false;
-      }
+      const alreadyReloaded = recentlyAutoReloaded();
       if (staleChunk && !alreadyReloaded) {
         return (
           <main
