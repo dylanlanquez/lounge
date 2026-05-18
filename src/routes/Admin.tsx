@@ -183,7 +183,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'products', label: 'Products', description: 'Add-on product catalogue, pricing, archiving.' },
   { key: 'booking_types', label: 'Booking types', description: 'Calendly mapping, deposits, services-per-type policy.' },
   { key: 'conflicts', label: 'Resources', description: 'Resource conflict rules so two appointments never share a chair or surgeon.' },
-  { key: 'emails', label: 'Emails', description: 'Editable transactional email templates with version history.' },
+  { key: 'emails', label: 'Emails & SMS', description: 'Editable transactional email + SMS templates with version history.' },
   { key: 'branding', label: 'Branding', description: 'Logo, colour, footer copy applied across emails and receipts.' },
   { key: 'widget', label: 'Widget', description: 'Public-facing booking widget configuration and embed snippet.' },
   { key: 'waivers', label: 'Waivers', description: 'Waiver section authoring + per-service requirement matrix.' },

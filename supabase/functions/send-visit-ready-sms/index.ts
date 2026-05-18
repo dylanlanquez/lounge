@@ -1,0 +1,295 @@
+// send-visit-ready-sms
+//
+// One-shot "your appliance / repair is ready to collect" text fired by
+// a receptionist from the Visit page after the patient's been marked
+// arrived. Two-step contract with the UI:
+//
+//   • Preview pass: ?preview=1 (or { preview: true }) — renders the
+//     template body with the visit's variables and returns the text
+//     without sending anything. Lets the receptionist read the SMS
+//     before committing.
+//   • Send pass: default — same render + Twilio send + audit row in
+//     lng_sms_messages so the timeline can show "SMS sent · last4
+//     07…".
+//
+// Auth: signed-in staff JWT. No service-role bypass — this is always
+// invoked from a browser session (the Visit page button).
+//
+// Body shape:
+//   { visit_id: string, preview?: boolean }
+//
+// Returns
+//   preview: { ok: true, body: string, to: string }
+//   send:    { ok: true, body: string, to: string, twilioSid: string }
+//   error:   { ok: false, error: string, reason?: string }
+
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { sendSms } from '../_shared/twilioSms.ts';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+};
+
+const TEMPLATE_KEY = 'visit_ready';
+
+Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    return jsonResponse(200, {
+      ok: false,
+      error: `send-visit-ready-sms crashed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+    });
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+
+  // ── Auth ────────────────────────────────────────────────────────
+  const userJwt = req.headers.get('authorization') ?? '';
+  if (!userJwt.startsWith('Bearer ')) return jsonResponse(200, { ok: false, error: 'Not signed in.' });
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: userJwt } },
+  });
+  const { data: who } = await userClient.auth.getUser();
+  if (!who?.user) return jsonResponse(200, { ok: false, error: 'Not signed in.' });
+
+  // ── Parse body ──────────────────────────────────────────────────
+  let body: { visit_id?: string; preview?: boolean } = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+  if (!body.visit_id) return jsonResponse(200, { ok: false, error: 'visit_id required' });
+  const preview = body.preview === true;
+
+  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // ── Load the visit + everything we need for variable substitution
+  const { data: visitRow, error: visitErr } = await admin
+    .from('lng_visits')
+    .select('id, patient_id, location_id, appointment_id, status, opened_at')
+    .eq('id', body.visit_id)
+    .maybeSingle();
+  if (visitErr || !visitRow) {
+    return jsonResponse(200, { ok: false, error: 'Visit not found.', reason: 'visit_not_found' });
+  }
+  const visit = visitRow as {
+    id: string;
+    patient_id: string;
+    location_id: string | null;
+    appointment_id: string | null;
+    status: string;
+    opened_at: string;
+  };
+
+  // Resolver order:
+  //   1. patients — first_name, lwo_ref, phone (the SMS destination)
+  //   2. locations — name (for the human "ready to collect at X" line)
+  //   3. lng_appointments — service_type + product_key for itemLabel
+  const [patientRes, locationRes, apptRes] = await Promise.all([
+    admin
+      .from('patients')
+      .select('first_name, lwo_ref, phone')
+      .eq('id', visit.patient_id)
+      .maybeSingle(),
+    visit.location_id
+      ? admin
+          .from('locations')
+          .select('name')
+          .eq('id', visit.location_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    visit.appointment_id
+      ? admin
+          .from('lng_appointments')
+          .select('service_type, product_key, arch')
+          .eq('id', visit.appointment_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  const patient = patientRes.data as
+    | { first_name: string | null; lwo_ref: string | null; phone: string | null }
+    | null;
+  const location = locationRes.data as { name: string | null } | null;
+  const appt = apptRes.data as
+    | { service_type: string | null; product_key: string | null; arch: string | null }
+    | null;
+
+  if (!patient) {
+    return jsonResponse(200, { ok: false, error: 'Patient not found.', reason: 'patient_not_found' });
+  }
+  const toPhone = (patient.phone ?? '').trim();
+  if (!toPhone) {
+    return jsonResponse(200, {
+      ok: false,
+      error: "Patient has no phone number on file.",
+      reason: 'no_phone',
+    });
+  }
+
+  // ── Load the template ─────────────────────────────────────────
+  const { data: tplRaw, error: tplErr } = await admin
+    .from('lng_sms_templates')
+    .select('body, enabled')
+    .eq('key', TEMPLATE_KEY)
+    .maybeSingle();
+  if (tplErr || !tplRaw) {
+    return jsonResponse(200, {
+      ok: false,
+      error: `SMS template "${TEMPLATE_KEY}" not configured. Seed it from Admin → Emails & SMS.`,
+      reason: 'template_not_found',
+    });
+  }
+  const tpl = tplRaw as { body: string; enabled: boolean };
+  if (!tpl.enabled) {
+    return jsonResponse(200, {
+      ok: false,
+      error: 'SMS template is paused. Re-enable it in Admin → Emails & SMS to send.',
+      reason: 'template_disabled',
+    });
+  }
+
+  // ── Substitute variables ─────────────────────────────────────
+  const variables: Record<string, string> = {
+    patientFirstName: (patient.first_name ?? '').trim() || 'there',
+    lwoRef: (patient.lwo_ref ?? '').trim() || '—',
+    locationName: (location?.name ?? '').trim() || 'the clinic',
+    itemLabel: resolveItemLabel(appt),
+  };
+  const renderedBody = substituteVariables(tpl.body, variables);
+
+  // ── Preview branch ────────────────────────────────────────────
+  if (preview) {
+    return jsonResponse(200, {
+      ok: true,
+      preview: true,
+      body: renderedBody,
+      to: toPhone,
+    });
+  }
+
+  // ── Twilio send ───────────────────────────────────────────────
+  const result = await sendSms({ to: toPhone, body: renderedBody });
+
+  // ── Audit row regardless of outcome ───────────────────────────
+  // Resolve the actor (Lounge account id) so the timeline can read
+  // "sent by Sarah Henderson" without joining auth.users.
+  const { data: actorRow } = await admin
+    .from('accounts')
+    .select('id')
+    .eq('auth_user_id', who.user.id)
+    .maybeSingle();
+  const sentBy = (actorRow as { id: string } | null)?.id ?? null;
+
+  if (result.ok) {
+    await admin.from('lng_sms_messages').insert({
+      patient_id: visit.patient_id,
+      visit_id: visit.id,
+      appointment_id: visit.appointment_id,
+      location_id: visit.location_id,
+      template_key: TEMPLATE_KEY,
+      to_phone: toPhone,
+      body: renderedBody,
+      send_status: 'sent',
+      twilio_message_sid: result.sid,
+      sent_by: sentBy,
+    });
+    // Patient-axis event row mirrors the email-send pattern so the
+    // appointment / visit timeline picks it up alongside other
+    // touchpoints. Best-effort — a failed insert here doesn't unwind
+    // the SMS that's already gone out.
+    await admin.from('patient_events').insert({
+      patient_id: visit.patient_id,
+      event_type: 'sms_sent',
+      actor_account_id: sentBy,
+      payload: {
+        template_key: TEMPLATE_KEY,
+        visit_id: visit.id,
+        appointment_id: visit.appointment_id,
+        to_phone: toPhone,
+        twilio_sid: result.sid,
+      },
+    });
+    return jsonResponse(200, {
+      ok: true,
+      body: renderedBody,
+      to: toPhone,
+      twilioSid: result.sid,
+    });
+  }
+
+  await admin.from('lng_sms_messages').insert({
+    patient_id: visit.patient_id,
+    visit_id: visit.id,
+    appointment_id: visit.appointment_id,
+    location_id: visit.location_id,
+    template_key: TEMPLATE_KEY,
+    to_phone: toPhone,
+    body: renderedBody,
+    send_status: 'failed',
+    send_error: `${result.code ?? 'no-code'} ${result.message}`,
+    sent_by: sentBy,
+  });
+  return jsonResponse(200, {
+    ok: false,
+    error: `Twilio send failed: ${result.code ?? 'no-code'} ${result.message}`,
+    reason: 'send_failed',
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Format the {{itemLabel}} variable from the visit's appointment row.
+ *  Falls back to "appliance" for any service type whose label we
+ *  haven't pinned, since "your appliance is ready" reads naturally
+ *  for almost everything. */
+function resolveItemLabel(
+  appt: { service_type: string | null; product_key: string | null; arch: string | null } | null,
+): string {
+  if (!appt) return 'appliance';
+  if (appt.service_type === 'denture_repair') return 'denture repair';
+  if (appt.service_type === 'click_in_veneers') return 'click-in veneers';
+  // same_day_appliance + impression_appointment + virtual_impression_appointment
+  // all map to the product the patient ordered. Product key takes
+  // precedence over a bare "appliance".
+  const productMap: Record<string, string> = {
+    retainer: 'retainer',
+    aligner: 'aligner',
+    whitening_tray: 'whitening tray',
+    whitening_kit: 'whitening kit',
+    night_guard: 'night guard',
+    day_guard: 'day guard',
+    click_in_veneers: 'click-in veneers',
+    missing_tooth: 'tooth retainer',
+  };
+  if (appt.product_key && productMap[appt.product_key]) {
+    return productMap[appt.product_key];
+  }
+  return 'appliance';
+}
+
+function substituteVariables(template: string, variables: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
+    const value = variables[name];
+    return value !== undefined ? value : `{{${name}}}`;
+  });
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  });
+}

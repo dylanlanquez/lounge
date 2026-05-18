@@ -39,6 +39,7 @@ import {
   Input,
   MarketingGallery,
   MultiSelectDropdown,
+  PatientCommsCard,
   PhaseTimeline,
   Section,
   AppointmentExtras,
@@ -1475,6 +1476,21 @@ export function VisitDetail() {
               <div style={{ marginBottom: theme.space[6] }}>
                 <ShopifyOrderCard order={shopifyOrder} />
               </div>
+            ) : null}
+
+            {/* Patient comms — only renders while the visit is live in
+                clinic (status='arrived'). Earlier states haven't had
+                an arrival yet so there's no "your work is ready"
+                signal to send; later states (complete, ended_early,
+                unsuitable) mean the patient has already left or the
+                visit is closed, and a notification after the fact
+                would be misleading. */}
+            {visit.status === 'arrived' ? (
+              <PatientCommsCard
+                visitId={visit.id}
+                patientPhone={patient?.phone ?? null}
+                patientFirstName={patient?.first_name ?? null}
+              />
             ) : null}
 
             {/* Whole banner dims when the visit is unsuitable so it

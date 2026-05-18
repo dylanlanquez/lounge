@@ -39,6 +39,15 @@ import {
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { renderEmail } from '../lib/emailRenderer.ts';
 import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
+import {
+  type SmsTemplateRow,
+  SMS_TEMPLATE_VARIABLES,
+  resetSmsTemplateToDefault,
+  renderSmsPreview,
+  saveSmsTemplate,
+  summariseSmsBody,
+  useSmsTemplates,
+} from '../lib/queries/smsTemplates.ts';
 
 // Admin → Email templates tab.
 //
@@ -282,6 +291,10 @@ export function AdminEmailTemplatesTab() {
           })}
         </div>
       )}
+
+      <SmsTemplatesSection
+        onToast={(t) => setToast(t)}
+      />
 
       {toast ? (
         <div
@@ -2070,4 +2083,435 @@ function SendTestDialog({
       </div>
     </BottomSheet>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SMS section
+//
+// Renders below the email-template list. Each SMS template is its own
+// accordion row with a simple body textarea + variable picker + live
+// preview + Twilio-aware character / segment counter. No subject (SMS
+// doesn't have one), no rich formatting (Twilio is plain text), no
+// history viewer (we still write history rows server-side; a later
+// pass can surface them — for now editors stay focused on the body).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SmsTemplatesSection({
+  onToast,
+}: {
+  onToast: (t: { tone: 'success' | 'error' | 'info'; title: string; description?: string }) => void;
+}) {
+  const templates = useSmsTemplates();
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3], marginTop: theme.space[6] }}>
+      <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          SMS templates
+        </p>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Plain-text messages Lounge fires via Twilio. Use {'{{variable}}'} placeholders the same way as
+          emails. Keep the body tight — every 160 characters becomes another paid SMS segment.
+        </p>
+      </header>
+      {templates.loading ? (
+        <Card padding="md">
+          <Skeleton height={48} />
+        </Card>
+      ) : templates.error ? (
+        <Card padding="md">
+          <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            Couldn't load SMS templates: {templates.error}
+          </p>
+        </Card>
+      ) : templates.data.length === 0 ? (
+        <Card padding="md">
+          <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+            No SMS templates configured.
+          </p>
+        </Card>
+      ) : (
+        <Card padding="none">
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {templates.data.map((row, idx) => (
+              <SmsTemplateRowComponent
+                key={row.key}
+                row={row}
+                isFirst={idx === 0}
+                isOpen={openKey === row.key}
+                onToggle={() => setOpenKey((prev) => (prev === row.key ? null : row.key))}
+                onRefresh={() => templates.refresh()}
+                onToast={onToast}
+              />
+            ))}
+          </ul>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+function SmsTemplateRowComponent({
+  row,
+  isFirst,
+  isOpen,
+  onToggle,
+  onRefresh,
+  onToast,
+}: {
+  row: SmsTemplateRow;
+  isFirst: boolean;
+  isOpen: boolean;
+  onToggle: () => void;
+  onRefresh: () => void;
+  onToast: (t: { tone: 'success' | 'error' | 'info'; title: string; description?: string }) => void;
+}) {
+  const [body, setBody] = useState(row.body);
+  const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Re-seed the textarea on open / external version bump so the
+  // editor doesn't strand stale edits if the row is refetched.
+  useEffect(() => {
+    if (!isOpen) return;
+    setBody(row.body);
+  }, [isOpen, row.body, row.version]);
+
+  const dirty = body !== row.body;
+  const preview = useMemo(() => renderSmsPreview(body), [body]);
+  const summary = useMemo(() => summariseSmsBody(preview), [preview]);
+
+  const handleInsertVariable = (name: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      setBody((b) => `${b}{{${name}}}`);
+      return;
+    }
+    const start = el.selectionStart ?? body.length;
+    const end = el.selectionEnd ?? body.length;
+    const next = body.slice(0, start) + `{{${name}}}` + body.slice(end);
+    setBody(next);
+    // Restore focus + place cursor after the inserted token.
+    requestAnimationFrame(() => {
+      el.focus();
+      const caret = start + `{{${name}}}`.length;
+      el.setSelectionRange(caret, caret);
+    });
+  };
+
+  const handleSave = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      await saveSmsTemplate({ key: row.key, body });
+      onRefresh();
+      onToast({ tone: 'success', title: 'SMS template saved' });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Save failed',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (resetting) return;
+    setResetting(true);
+    try {
+      await resetSmsTemplateToDefault(row.key);
+      onRefresh();
+      onToast({ tone: 'success', title: 'Reset to default' });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Reset failed',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  return (
+    <li style={{ borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}` }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        style={{
+          appearance: 'none',
+          width: '100%',
+          padding: `${theme.space[4]}px ${theme.space[5]}px`,
+          background: 'transparent',
+          border: 'none',
+          textAlign: 'left',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: theme.radius.pill,
+            background: theme.color.accentBg,
+            color: theme.color.accent,
+            flexShrink: 0,
+          }}
+        >
+          <Mail size={16} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {humaniseSmsKey(row.key)}
+          </span>
+          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            {row.description ?? 'SMS template.'}
+          </span>
+        </div>
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0,
+          }}
+        >
+          v{row.version}
+        </span>
+        {isOpen ? (
+          <ChevronDown size={16} color={theme.color.inkMuted} />
+        ) : (
+          <ChevronRight size={16} color={theme.color.inkMuted} />
+        )}
+      </button>
+
+      {isOpen ? (
+        <div
+          style={{
+            padding: `0 ${theme.space[5]}px ${theme.space[5]}px`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[4],
+          }}
+        >
+          {/* Editor */}
+          <label
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[2],
+            }}
+          >
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              Body
+            </span>
+            <textarea
+              ref={textareaRef}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={5}
+              spellCheck
+              style={{
+                appearance: 'none',
+                width: '100%',
+                resize: 'vertical',
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.surface,
+                color: theme.color.ink,
+                fontSize: theme.type.size.base,
+                lineHeight: theme.type.leading.normal,
+                fontFamily: 'inherit',
+              }}
+            />
+            <div
+              style={{
+                display: 'flex',
+                gap: theme.space[3],
+                justifyContent: 'space-between',
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              <span>
+                {summary.characters} character{summary.characters === 1 ? '' : 's'} ·{' '}
+                <span
+                  style={{
+                    fontWeight:
+                      summary.segments > 1 ? theme.type.weight.semibold : theme.type.weight.medium,
+                    color: summary.segments > 1 ? theme.color.warn : theme.color.inkMuted,
+                  }}
+                >
+                  {summary.segments} segment{summary.segments === 1 ? '' : 's'}
+                </span>
+              </span>
+              <span>{summary.encoding === 'gsm-7' ? 'GSM-7 (standard)' : 'UCS-2 (unicode — segments halve)'}</span>
+            </div>
+          </label>
+
+          {/* Variable picker */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              Insert variable
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[2] }}>
+              {SMS_TEMPLATE_VARIABLES.map((v) => (
+                <button
+                  key={v.name}
+                  type="button"
+                  onClick={() => handleInsertVariable(v.name)}
+                  title={v.description}
+                  style={{
+                    appearance: 'none',
+                    fontFamily: 'inherit',
+                    fontSize: theme.type.size.xs,
+                    fontWeight: theme.type.weight.medium,
+                    padding: `${theme.space[1]}px ${theme.space[3]}px`,
+                    borderRadius: theme.radius.pill,
+                    border: `1px solid ${theme.color.border}`,
+                    background: theme.color.surface,
+                    color: theme.color.ink,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {v.label} ·{' '}
+                  <code
+                    style={{
+                      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                      fontSize: 11,
+                      color: theme.color.inkMuted,
+                    }}
+                  >
+                    {`{{${v.name}}}`}
+                  </code>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              Preview
+            </span>
+            <p
+              style={{
+                margin: 0,
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                borderRadius: theme.radius.card,
+                background: theme.color.bg,
+                border: `1px solid ${theme.color.border}`,
+                fontSize: theme.type.size.base,
+                lineHeight: theme.type.leading.normal,
+                color: theme.color.ink,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {preview || (
+                <span style={{ color: theme.color.inkSubtle }}>
+                  Type a message above to see how it'll read on the patient's lock screen.
+                </span>
+              )}
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: theme.space[2],
+            }}
+          >
+            <Button
+              variant="tertiary"
+              onClick={handleReset}
+              disabled={resetting || saving || body === row.default_body}
+            >
+              {resetting ? 'Resetting…' : 'Reset to default'}
+            </Button>
+            <div style={{ display: 'flex', gap: theme.space[2] }}>
+              <Button
+                variant="tertiary"
+                onClick={() => setBody(row.body)}
+                disabled={!dirty || saving}
+              >
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleSave} disabled={!dirty || saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function humaniseSmsKey(key: string): string {
+  if (key === 'visit_ready') return 'Visit ready — your work is ready to collect';
+  // Fallback: replace underscores with spaces + title case.
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }

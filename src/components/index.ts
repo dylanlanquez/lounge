@@ -202,3 +202,6 @@ export type { ReturnSegmentHintsProps } from './ReturnSegmentHints/ReturnSegment
 export { ShipVisitSheet } from './ShipVisitSheet/ShipVisitSheet.tsx';
 export type { ShipVisitSheetProps } from './ShipVisitSheet/ShipVisitSheet.tsx';
 
+export { PatientCommsCard } from './PatientCommsCard/PatientCommsCard.tsx';
+export type { PatientCommsCardProps } from './PatientCommsCard/PatientCommsCard.tsx';
+
