@@ -182,6 +182,35 @@ export function Schedule() {
   // The row currently being edited (notes / staff). Discrete from
 
   const currentLocation = useCurrentLocation();
+  // The New Booking CTA writes to lng_appointments.location_id, and
+  // the conflict checker scopes every "is this slot free" answer per
+  // location, so we can't open the sheet without a resolved location.
+  // Two not-yet-resolved states: still loading, or loaded with an
+  // explicit error (account has no location_id bound). Either way
+  // the click must fail LOUDLY instead of silently doing nothing —
+  // pre-change this was a half-second-of-loading race that looked
+  // identical to "the button is broken".
+  const newBookingBlocker: string | null = currentLocation.loading
+    ? 'Resolving your location, try again in a moment.'
+    : currentLocation.error
+      ? currentLocation.error
+      : !currentLocation.data
+        ? 'Your account is not bound to a location. Admin → Staff to fix.'
+        : null;
+  const tryOpenNewBooking = useCallback(
+    (iso: string) => {
+      if (newBookingBlocker) {
+        setConfirmationToast({
+          tone: 'error',
+          title: "Can't open the booking sheet",
+          description: newBookingBlocker,
+        });
+        return;
+      }
+      setNewBookingSlot(iso);
+    },
+    [newBookingBlocker],
+  );
   // "Jump to date" picker — anchored to the month-label pill so the
   // operator can leap to any date without flicking through weeks.
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -464,8 +493,10 @@ export function Schedule() {
             {!isCsOnly ? (
               <button
                 type="button"
-                onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
+                onClick={() => tryOpenNewBooking(defaultBookingIso(selectedDate, startHour))}
                 aria-label="New booking"
+                title={newBookingBlocker ?? undefined}
+                aria-disabled={newBookingBlocker ? 'true' : undefined}
                 style={{
                   appearance: 'none',
                   display: 'inline-flex',
@@ -476,18 +507,21 @@ export function Schedule() {
                   background: 'rgba(14,20,20,0.05)',
                   border: 'none',
                   borderRadius: theme.radius.pill,
-                  cursor: 'pointer',
+                  cursor: newBookingBlocker ? 'not-allowed' : 'pointer',
                   fontSize: theme.type.size.sm,
                   fontWeight: theme.type.weight.medium,
                   color: theme.color.inkMuted,
+                  opacity: newBookingBlocker ? 0.5 : 1,
                   lineHeight: 1,
                   transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
                 }}
                 onMouseEnter={(e) => {
+                  if (newBookingBlocker) return;
                   (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
                   (e.currentTarget as HTMLElement).style.color = theme.color.accent;
                 }}
                 onMouseLeave={(e) => {
+                  if (newBookingBlocker) return;
                   (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
                   (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
                 }}
@@ -535,10 +569,11 @@ export function Schedule() {
                     : 'Book a new appointment for this day, or pick another above.'
               }
               action={
-                !isCsOnly && currentLocation.data ? (
+                !isCsOnly ? (
                   <Button
                     variant="primary"
-                    onClick={() => setNewBookingSlot(defaultBookingIso(selectedDate, startHour))}
+                    onClick={() => tryOpenNewBooking(defaultBookingIso(selectedDate, startHour))}
+                    title={newBookingBlocker ?? undefined}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
                       <Plus size={16} aria-hidden /> Book new appointment
@@ -561,8 +596,8 @@ export function Schedule() {
                 // rather than letting the sheet open and then trip
                 // on permissions.
                 onEmptyTap={
-                  !isCsOnly && currentLocation.data
-                    ? (iso) => setNewBookingSlot(iso)
+                  !isCsOnly
+                    ? (iso) => tryOpenNewBooking(iso)
                     : undefined
                 }
               >
