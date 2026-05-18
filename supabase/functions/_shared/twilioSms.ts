@@ -175,16 +175,43 @@ export function normalisePhone(input: string): string {
  *  "+44 7…" but legacy / Calendly-imported rows can be in any
  *  format. This is a best-effort cleaner; if it can't decide,
  *  it returns null and the caller skips the row rather than
- *  texting the wrong number. */
+ *  texting the wrong number.
+ *
+ *  Input formats handled (after stripping spaces / dashes / parens):
+ *    07878023449         → +447878023449   (UK national)
+ *    447878023449        → +447878023449   (country code, no +)
+ *    +447878023449       → +447878023449   (already canonical)
+ *    00447878023449      → +447878023449   (international dial prefix)
+ *    +44(0)7878023449    → +447878023449   (UK trunk-0 after +44)
+ *    +44 7878 023 449    → +447878023449   (spaces) */
 export function toE164(country: string | null, local: string | null): string | null {
-  const raw = (local ?? '').replace(/[^\d+]/g, '');
+  let raw = (local ?? '').replace(/[^\d+]/g, '');
+  if (!raw) return null;
+  // International dial prefix `00` → `+`. Catches the common
+  // copy-paste from a contacts list of "00447878023449". Must run
+  // before the `0`-leading UK-national branch below, otherwise the
+  // first 0 gets eaten and we end up with `+44047878023449`.
+  if (raw.startsWith('00')) {
+    raw = '+' + raw.slice(2);
+  }
+  // UK trunk-0 after the country code. People type
+  // "+44 (0) 7878 023449" because that's how it appears on
+  // letterheads / business cards; the (0) is the UK national
+  // dialling prefix that has to be dropped for international. Only
+  // strip when the residue is the right length for a UK mobile
+  // (+44 + 0 + 10-digit local = 14 chars after the strip), so we
+  // don't accidentally chew into a different country's number that
+  // happens to have a 0 after the country code.
+  if (raw.startsWith('+440') && raw.length === 14) {
+    raw = '+44' + raw.slice(4);
+  }
+  // Already E.164 (or normalised above).
   if (raw.startsWith('+')) return raw;
   // Local already includes a UK country prefix without +
   if (raw.startsWith('44') && raw.length >= 11) return `+${raw}`;
   if (raw.startsWith('0') && (country ?? 'GB') === 'GB') {
     return `+44${raw.slice(1)}`;
   }
-  if (!raw) return null;
   // Generic E.164 attempt for non-UK rows: prepend + and hope the
   // local part already carries the country prefix. Twilio will
   // reject malformed numbers with a 4xx, which the caller logs.
