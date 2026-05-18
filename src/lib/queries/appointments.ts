@@ -47,6 +47,13 @@ export interface AppointmentRow {
   notes: string | null;
   intake: IntakeAnswer[] | null;
   join_url: string | null;
+  /** When set, this row is the calendar marker for a walk-in (the
+   *  source-of-truth row lives on lng_walk_ins). Used by the schedule
+   *  to render the "Walk-in" prefix on walk-in rows only — every
+   *  other source='manual' row is a Lounge staff booking from the
+   *  Schedule's New Booking sheet, and should NOT carry that prefix.
+   *  Null on every non-walk-in row. */
+  walk_in_id: string | null;
   // Deposit captured at booking time via Calendly (PayPal / Stripe).
   // null fields = no deposit info captured. deposit_status reflects the
   // outcome — 'paid' = ready to credit at checkout; 'failed' = receptionist

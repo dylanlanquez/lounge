@@ -899,8 +899,9 @@ function formatWhen(iso: string): string {
 //                               "By customer on denture-services.co.uk"
 //   • calendly                → "By customer via Calendly"
 //   • manual + Checkpoint     → "By {staff name} via Checkpoint"
-//   • manual (in-app staff)   → "By {staff name}" if we resolved one,
-//                               otherwise plain "By staff"
+//   • manual (in-app staff)   → "Booked by Lounge staff · {staff name}"
+//                               (and falls back to "Booked by Lounge staff"
+//                               when the actor account can't be resolved).
 function describeBookedBy(
   source: string,
   brandId: string | null,
@@ -913,7 +914,7 @@ function describeBookedBy(
   // keyed callers can't write actor_account_id, so the audit lives
   // on these columns). Prefer that name for the timeline label so
   // the row reads "By Dylan Lane via Checkpoint" instead of the
-  // generic "By staff" the manual path would otherwise return.
+  // generic Lounge-staff line.
   if (createdVia === 'checkpoint') {
     const name = (createdViaActor ?? '').trim() || staffName;
     return name ? `By ${name} via Checkpoint` : 'Via Checkpoint';
@@ -927,7 +928,16 @@ function describeBookedBy(
     return `By customer on ${where}`;
   }
   if (source === 'calendly') return 'By customer via Calendly';
-  if (source === 'manual') return staffName ? `By ${staffName}` : 'By staff';
+  if (source === 'manual') {
+    // source='manual' covers both Lounge-staff bookings (Schedule
+    // New Booking + Reschedule) and walk-in markers. The walk-in
+    // marker path doesn't hit this code (it surfaces via the
+    // walk_in_arrived event, not appointment_booked), so anything
+    // arriving here is a Lounge-staff in-app booking. Label it
+    // accordingly so the audit line is unambiguous.
+    const name = staffName?.trim();
+    return name ? `Booked by Lounge staff · ${name}` : 'Booked by Lounge staff';
+  }
   return source;
 }
 

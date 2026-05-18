@@ -656,7 +656,13 @@ export function Schedule() {
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <SourceGlyph source={selected.source} size={13} />
                 <span>
-                  {selected.source === 'manual' ? 'Walk-in · ' : ''}
+                  {/* The "Walk-in · " prefix only belongs to actual
+                      walk-in marker rows (lng_walk_ins → lng_appointments).
+                      Lounge staff bookings via the Schedule's New Booking
+                      sheet also write source='manual' but carry walk_in_id
+                      null, so they should NOT show "Walk-in" — they're
+                      booked appointments, not unscheduled arrivals. */}
+                  {selected.walk_in_id ? 'Walk-in · ' : ''}
                   {formatStart(selected.start_at)}
                   {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
                 </span>

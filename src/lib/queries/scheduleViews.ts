@@ -43,6 +43,7 @@ interface RawRow {
   notes: string | null;
   intake: AppointmentRow['intake'];
   join_url: AppointmentRow['join_url'];
+  walk_in_id?: string | null;
   deposit_pence?: number | null;
   deposit_currency?: string | null;
   deposit_provider?: 'paypal' | 'stripe' | null;
@@ -80,7 +81,7 @@ const PHASE_SELECT =
 const SELECT_WITH_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, source, event_type_label,
   service_type, product_key, repair_variant, arch, brand_id,
-  staff_account_id, notes, intake, join_url,
+  staff_account_id, notes, intake, join_url, walk_in_id,
   deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
@@ -89,7 +90,7 @@ const SELECT_WITH_INTAKE = `
 const SELECT_NO_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, source, event_type_label,
   service_type, product_key, repair_variant, arch, brand_id,
-  staff_account_id, notes,
+  staff_account_id, notes, walk_in_id,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
   ${PHASE_SELECT}
@@ -118,6 +119,7 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       notes: raw.notes ?? null,
       intake: raw.intake ?? null,
       join_url: raw.join_url ?? null,
+      walk_in_id: raw.walk_in_id ?? null,
       deposit_pence: raw.deposit_pence ?? null,
       deposit_currency: raw.deposit_currency ?? null,
       deposit_provider: raw.deposit_provider ?? null,

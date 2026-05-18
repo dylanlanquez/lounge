@@ -31,6 +31,7 @@ const makeRow = (
   notes: null,
   intake,
   join_url: null,
+  walk_in_id: null,
   deposit_pence: null,
   deposit_currency: null,
   deposit_provider: null,
