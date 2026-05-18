@@ -3420,22 +3420,18 @@ function buildVisitRibbon({
   ) : (
     'Patient in clinic'
   );
-  // Three-way prompt:
-  //   • Empty cart → "Build the cart"
-  //   • Cart has items but nothing left to collect (paid in full at
-  //     booking, fully covered by Shopify credit, deposit covers
-  //     everything, etc.) → "Ready to finish" — there is no till
-  //     payment to take.
-  //   • Cart has items with an outstanding balance → "Take payment".
-  const prompt = !hasItems
-    ? 'Build the cart'
-    : outstandingPence === 0
-      ? 'Ready to finish'
-      : 'Take payment';
+  // Relative prompt ("Take payment" / "Build the cart" / "Ready to
+  // finish") was reading as redundant alongside the primary CTA
+  // further down the page — the operator already knows what to do.
+  // Dropped from the ribbon so the time line is the only thing
+  // there. Keep arrivedStr-aware variables in case we resurface a
+  // contextual phrase later.
+  void hasItems;
+  void outstandingPence;
   return {
     icon: <UserCheck size={16} aria-hidden />,
     timeLine: anchor,
-    relative: prompt,
+    relative: null,
     tone: 'accent',
   };
 }
