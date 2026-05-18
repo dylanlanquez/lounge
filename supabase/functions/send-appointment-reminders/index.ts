@@ -1169,6 +1169,11 @@ function bodyToText(syntax: string): string {
 
 interface BrandSettings {
   logoUrl: string;
+  // Optional light-variant logo for clients honouring
+  // prefers-color-scheme: dark. Keep in lockstep with
+  // _shared/emailRenderer.ts; this file duplicates the shell
+  // renderer for legacy reasons, touch both together.
+  logoUrlDark: string;
   logoShow: boolean;
   logoMaxWidth: number;
   accentColor: string;
@@ -1195,6 +1200,7 @@ async function loadBrandingAndContact(
   const empty = {
     brand: {
       logoUrl: '',
+      logoUrlDark: '',
       logoShow: false,
       logoMaxWidth: 120,
       accentColor: '#0E1414',
@@ -1227,6 +1233,7 @@ async function loadBrandingAndContact(
 
   const brand: BrandSettings = {
     logoUrl: get<string>('email.brand_logo_url', ''),
+    logoUrlDark: get<string>('email.brand_logo_url_dark', ''),
     logoShow: get<boolean>('email.brand_logo_show', true),
     logoMaxWidth: get<number>('email.brand_logo_max_width', 120),
     accentColor: get<string>('email.brand_accent_color', '#0E1414'),
@@ -1259,7 +1266,12 @@ async function loadBrandingAndContact(
 function renderLogoHeader(brand: BrandSettings): string {
   if (!brand.logoShow || !brand.logoUrl) return '';
   const maxWidth = Math.max(40, Math.min(320, brand.logoMaxWidth));
-  return `<p style="margin:0 0 8px 0;text-align:center"><img src="${brand.logoUrl}" alt="" style="max-width:${maxWidth}px;height:auto;display:inline-block;border:0"></p>`;
+  const urlDark = (brand.logoUrlDark ?? '').trim();
+  const imgStyle = `max-width:${maxWidth}px;height:auto;display:inline-block;border:0`;
+  const inner = urlDark
+    ? `<picture><source srcset="${urlDark}" media="(prefers-color-scheme: dark)"><img src="${brand.logoUrl}" alt="" style="${imgStyle}"></picture>`
+    : `<img src="${brand.logoUrl}" alt="" style="${imgStyle}">`;
+  return `<p style="margin:0 0 8px 0;text-align:left">${inner}</p>`;
 }
 
 function renderLegalFooter(brand: BrandSettings): string {
@@ -1274,7 +1286,18 @@ function wrapInLoungeShell(bodyHtml: string, brand: BrandSettings): string {
   const logo = renderLogoHeader(brand);
   const footer = renderLegalFooter(brand);
   return `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <meta name="color-scheme" content="light only">
+  <meta name="supported-color-schemes" content="light only">
+  <style>
+    :root { color-scheme: light only; supported-color-schemes: light only; }
+    body  { color-scheme: light only; supported-color-schemes: light only; }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased;color-scheme:light only">
   <div style="max-width:600px;margin:0 auto;padding:32px 24px">
     <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
       ${logo}${bodyHtml}

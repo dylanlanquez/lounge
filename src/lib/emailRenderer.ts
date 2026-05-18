@@ -49,6 +49,12 @@ export interface BrandOptions {
   /** Logo URL shown at the top of the white card. Empty string or
    *  show=false to omit the header. */
   logoUrl?: string;
+  /** Optional light-variant logo URL used in email clients that
+   *  honour `prefers-color-scheme: dark` and force the email's white
+   *  card to a dark background. When set, the renderer wraps the
+   *  img in <picture> with a dark-mode <source>; when empty, every
+   *  client falls back to `logoUrl`. */
+  logoUrlDark?: string;
   /** Whether to render the logo header at all. */
   logoShow?: boolean;
   /** Logo max-width in pixels. Defaults to 120. */
@@ -369,18 +375,32 @@ export function bodyToText(syntax: string): string {
 /** Logo header rendered inside the white card before the body. The
  *  email shell calls this; the bare/preview shell calls it inline.
  *  Returns empty string when the brand says no logo, so callers can
- *  prepend unconditionally. */
+ *  prepend unconditionally.
+ *
+ *  Left-aligned (margin:0, text-align:left) so the header reads
+ *  consistently with how Lounge frames every other top-of-card
+ *  surface in the app.
+ *
+ *  Dark-mode: when `logoUrlDark` is set, the img is wrapped in
+ *  <picture> with a `(prefers-color-scheme: dark)` <source>. Email
+ *  clients that respect the media query (Apple Mail, Outlook for
+ *  Mac/iOS, Gmail iOS) swap in the light variant when the user is
+ *  in dark mode; everywhere else falls back to the default <img>.
+ *  Inline width/height kept on the trailing <img> because <picture>
+ *  itself doesn't accept those attributes — the <img> is what
+ *  actually renders. */
 export function renderLogoHeader(brand?: BrandOptions): string {
   if (!brand) return '';
   const show = brand.logoShow !== false;
   const url = (brand.logoUrl ?? '').trim();
   if (!show || !url) return '';
   const maxWidth = Math.max(40, Math.min(320, brand.logoMaxWidth ?? 120));
-  // The wrapper is a paragraph with the same 8px bottom margin as
-  // every other block — keeps the rhythm consistent and means the
-  // first body block sits exactly one paragraph break below the
-  // logo regardless of what kind of block it is.
-  return `<p style="margin:0 0 8px 0;text-align:center"><img src="${url}" alt="" style="max-width:${maxWidth}px;height:auto;display:inline-block;border:0"></p>`;
+  const urlDark = (brand.logoUrlDark ?? '').trim();
+  const imgStyle = `max-width:${maxWidth}px;height:auto;display:inline-block;border:0`;
+  const inner = urlDark
+    ? `<picture><source srcset="${urlDark}" media="(prefers-color-scheme: dark)"><img src="${url}" alt="" style="${imgStyle}"></picture>`
+    : `<img src="${url}" alt="" style="${imgStyle}">`;
+  return `<p style="margin:0 0 8px 0;text-align:left">${inner}</p>`;
 }
 
 /** Legal footer block. Renders below the white card (outside it) with
@@ -402,8 +422,35 @@ export function renderLegalFooter(brand?: BrandOptions): string {
 function wrapInLoungeShell(bodyHtml: string, brand?: BrandOptions): string {
   const logo = renderLogoHeader(brand);
   const footer = renderLegalFooter(brand);
+  // Force the email to render in light mode in every client that
+  // respects the directive. The meta + style + body attribute trio
+  // covers the three layers different clients honour:
+  //   * <meta name="color-scheme" content="light only">   — Apple Mail,
+  //     Outlook for Mac/iOS, AOL, Yahoo. Tells the client we're not
+  //     a dark-aware design.
+  //   * <meta name="supported-color-schemes" ...>        — the
+  //     older Apple Mail equivalent. Cheap to ship both.
+  //   * CSS `color-scheme: light` on :root + body        — required
+  //     by Outlook iOS for the meta to take effect, harmless on the
+  //     others.
+  // Gmail web / Gmail Android still apply their own "force dark"
+  // algorithm regardless, which is what the dark-variant logo URL
+  // (via renderLogoHeader's <picture>) and the off-white card
+  // background mitigate. No fix is 100% — these three layers cover
+  // the bulk of users where it matters.
   return `<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased">
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <meta name="color-scheme" content="light only">
+  <meta name="supported-color-schemes" content="light only">
+  <style>
+    :root { color-scheme: light only; supported-color-schemes: light only; }
+    body  { color-scheme: light only; supported-color-schemes: light only; }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0E1414;line-height:1.6;-webkit-font-smoothing:antialiased;color-scheme:light only">
   <div style="max-width:600px;margin:0 auto;padding:32px 24px">
     <div style="background:#FFFFFF;border:1px solid #E5E2DC;border-radius:14px;padding:32px 28px;font-size:15px;color:#0E1414">
       ${logo}${bodyHtml}

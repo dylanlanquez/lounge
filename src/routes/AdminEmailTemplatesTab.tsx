@@ -1402,6 +1402,7 @@ function HtmlSourceView({
   const brand = useMemo(
     () => ({
       logoUrl: clinicSettings.data.brandLogoUrl,
+      logoUrlDark: clinicSettings.data.brandLogoUrlDark,
       logoShow: clinicSettings.data.brandLogoShow,
       logoMaxWidth: clinicSettings.data.brandLogoMaxWidth,
       accentColor: clinicSettings.data.brandAccentColor,
@@ -1477,6 +1478,7 @@ function BodyPreview({
   const brand = useMemo(
     () => ({
       logoUrl: clinicSettings.data.brandLogoUrl,
+      logoUrlDark: clinicSettings.data.brandLogoUrlDark,
       logoShow: clinicSettings.data.brandLogoShow,
       logoMaxWidth: clinicSettings.data.brandLogoMaxWidth,
       accentColor: clinicSettings.data.brandAccentColor,

@@ -39,6 +39,12 @@ export type OpeningHoursWeek = readonly [
 export interface ClinicSettings {
   // Branding
   brandLogoUrl: string;
+  /** Optional light-variant logo URL shown in email clients that
+   *  honour prefers-color-scheme: dark. When set, the email shell
+   *  swaps to this URL via <picture> so a black-on-white logo stays
+   *  legible against the darkened card. When empty, every client
+   *  sees brandLogoUrl. */
+  brandLogoUrlDark: string;
   brandLogoShow: boolean;
   brandLogoMaxWidth: number;
   brandAccentColor: string;
@@ -76,6 +82,7 @@ const DEFAULT_OPENING: OpeningHoursWeek = [
 
 const DEFAULTS: ClinicSettings = {
   brandLogoUrl: 'https://lounge.venneir.com/lounge-logo.png',
+  brandLogoUrlDark: '',
   brandLogoShow: true,
   brandLogoMaxWidth: 120,
   brandAccentColor: '#0E1414',
@@ -98,6 +105,7 @@ const DEFAULTS: ClinicSettings = {
  *  row for partial updates without re-emitting the whole document. */
 const KEY_MAP = {
   'email.brand_logo_url': 'brandLogoUrl',
+  'email.brand_logo_url_dark': 'brandLogoUrlDark',
   'email.brand_logo_show': 'brandLogoShow',
   'email.brand_logo_max_width': 'brandLogoMaxWidth',
   'email.brand_accent_color': 'brandAccentColor',

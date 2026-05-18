@@ -244,28 +244,34 @@ function BrandingCard({
   onToast: (t: Toast) => void;
 }) {
   const [logoUrl, setLogoUrl] = useState(data.brandLogoUrl);
+  const [logoUrlDark, setLogoUrlDark] = useState(data.brandLogoUrlDark);
   const [logoShow, setLogoShow] = useState(data.brandLogoShow);
   const [logoMaxWidth, setLogoMaxWidth] = useState(data.brandLogoMaxWidth);
   const [accent, setAccent] = useState(data.brandAccentColor);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingDark, setUploadingDark] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputDarkRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setLogoUrl(data.brandLogoUrl);
+    setLogoUrlDark(data.brandLogoUrlDark);
     setLogoShow(data.brandLogoShow);
     setLogoMaxWidth(data.brandLogoMaxWidth);
     setAccent(data.brandAccentColor);
-  }, [data.brandLogoUrl, data.brandLogoShow, data.brandLogoMaxWidth, data.brandAccentColor]);
+  }, [data.brandLogoUrl, data.brandLogoUrlDark, data.brandLogoShow, data.brandLogoMaxWidth, data.brandAccentColor]);
 
   const dirty =
     logoUrl !== data.brandLogoUrl ||
+    logoUrlDark !== data.brandLogoUrlDark ||
     logoShow !== data.brandLogoShow ||
     logoMaxWidth !== data.brandLogoMaxWidth ||
     accent !== data.brandAccentColor;
 
   const reset = () => {
     setLogoUrl(data.brandLogoUrl);
+    setLogoUrlDark(data.brandLogoUrlDark);
     setLogoShow(data.brandLogoShow);
     setLogoMaxWidth(data.brandLogoMaxWidth);
     setAccent(data.brandAccentColor);
@@ -276,6 +282,7 @@ function BrandingCard({
     try {
       await Promise.all([
         saveClinicSetting('brandLogoUrl', logoUrl.trim()),
+        saveClinicSetting('brandLogoUrlDark', logoUrlDark.trim()),
         saveClinicSetting('brandLogoShow', logoShow),
         saveClinicSetting('brandLogoMaxWidth', logoMaxWidth),
         saveClinicSetting('brandAccentColor', accent.trim()),
@@ -293,7 +300,10 @@ function BrandingCard({
     }
   };
 
-  const onUpload = async (file: File) => {
+  const onUploadFor = async (
+    file: File,
+    target: 'light' | 'dark',
+  ): Promise<void> => {
     if (!file.type.startsWith('image/')) {
       onToast({ tone: 'error', title: 'Pick an image file (PNG, JPG, SVG)' });
       return;
@@ -302,27 +312,27 @@ function BrandingCard({
       onToast({ tone: 'error', title: 'Logo too large', description: 'Keep it under 2MB.' });
       return;
     }
-    setUploading(true);
+    const setBusy = target === 'dark' ? setUploadingDark : setUploading;
+    setBusy(true);
     try {
-      // Path like `logo/2026-05-04T12-34-56.png`. The timestamp gives
-      // us a fresh URL each upload so email clients refresh their
-      // cache instead of serving a stale logo.
+      // Timestamped path so each upload mints a fresh URL (cache-bust
+      // for email clients). Dark variants go under logo-dark/ so the
+      // bucket listing keeps the two pairs grouped.
       const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png';
-      const path = `logo/${new Date().toISOString().replace(/[:.]/g, '-')}.${ext}`;
+      const prefix = target === 'dark' ? 'logo-dark' : 'logo';
+      const path = `${prefix}/${new Date().toISOString().replace(/[:.]/g, '-')}.${ext}`;
       const { error: upErr } = await supabase.storage
         .from('branding')
         .upload(path, file, { contentType: file.type, upsert: false });
       if (upErr) throw new Error(upErr.message);
       const { data: pub } = supabase.storage.from('branding').getPublicUrl(path);
       if (!pub?.publicUrl) throw new Error('Could not resolve public URL for the upload');
-      // Stage the URL in the form state. The user still needs to hit
-      // Save to publish — keeps the "must be locked in" rule the
-      // admin asked for. Until then, the live preview keeps showing
-      // the previously-saved logo.
-      setLogoUrl(pub.publicUrl);
+      // Stage in the form state — still needs Save Changes to publish.
+      if (target === 'dark') setLogoUrlDark(pub.publicUrl);
+      else setLogoUrl(pub.publicUrl);
       onToast({
         tone: 'info',
-        title: 'Logo uploaded',
+        title: target === 'dark' ? 'Dark-mode logo uploaded' : 'Logo uploaded',
         description: 'Hit Save changes to publish it. It won\'t go out in emails until you do.',
       });
     } catch (e) {
@@ -332,13 +342,18 @@ function BrandingCard({
         description: e instanceof Error ? e.message : 'Unknown error',
       });
     } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setBusy(false);
+      const ref = target === 'dark' ? fileInputDarkRef : fileInputRef;
+      if (ref.current) ref.current.value = '';
     }
   };
 
   const onRemove = () => {
     setLogoUrl('');
+  };
+
+  const onRemoveDark = () => {
+    setLogoUrlDark('');
   };
 
   return (
@@ -363,7 +378,7 @@ function BrandingCard({
             style={{ display: 'none' }}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) onUpload(file);
+              if (file) void onUploadFor(file, 'light');
             }}
           />
           <Button
@@ -396,6 +411,44 @@ function BrandingCard({
               Unsaved changes
             </span>
           ) : null}
+        </div>
+        <Input
+          label="Dark-mode logo URL"
+          value={logoUrlDark}
+          onChange={(e) => setLogoUrlDark(e.target.value)}
+          placeholder="https://lounge.venneir.com/lounge-logo-light.png"
+          helper="Optional. Used by email clients in dark mode (Apple Mail, Outlook iOS, Gmail iOS). Upload a light-coloured version of the logo so it stays visible against the darkened email card. Leave blank to send the same logo everywhere."
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
+          <input
+            ref={fileInputDarkRef}
+            type="file"
+            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void onUploadFor(file, 'dark');
+            }}
+          />
+          <Button
+            variant="secondary"
+            onClick={() => fileInputDarkRef.current?.click()}
+            loading={uploadingDark}
+            disabled={uploadingDark}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Upload size={14} aria-hidden /> Upload dark-mode logo
+            </span>
+          </Button>
+          <Button
+            variant="tertiary"
+            onClick={onRemoveDark}
+            disabled={uploadingDark || !logoUrlDark}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Trash2 size={14} aria-hidden /> Remove dark-mode logo
+            </span>
+          </Button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], flexWrap: 'wrap' }}>
           <Checkbox
