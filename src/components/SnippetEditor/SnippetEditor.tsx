@@ -211,6 +211,28 @@ const StyledButton = TiptapNode.create({
 const BUTTON_LINE_RE =
   /^\[button:(.+?)(?:\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*)(?:\|([^|<>\]"(]*)\|([^|<>\]"(]*)\|([^|<>\]"(]*))?)?\]\(([^)]+)\)$/;
 
+// Peel `{color:...}{...}/{w:...}{/w}/**…**` wrappers off the outside
+// of a single line so the anchored button regex above can still match
+// when the editor's serialiser laid down inline marks around the
+// shortcode. Strips at most one of each kind per iteration and loops
+// until the line stops shrinking, so any reasonable nesting order
+// resolves. Pure text-in / text-out; no HTML.
+function stripButtonLineWrappers(line: string): string {
+  let s = line;
+  for (let i = 0; i < 8; i++) {
+    let next = s;
+    const color = next.match(/^\{color:[^}]+\}([\s\S]+)\{\/color\}$/);
+    if (color && color[1]) next = color[1];
+    const weight = next.match(/^\{w:[^}]+\}([\s\S]+)\{\/w\}$/);
+    if (weight && weight[1]) next = weight[1];
+    const bold = next.match(/^\*\*([\s\S]+)\*\*$/);
+    if (bold && bold[1]) next = bold[1];
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
 function buildEditorButtonSpan(m: RegExpMatchArray): string {
   const label        = m[1]  ?? '';
   const bgColor      = m[2]  || '#0E1414';
@@ -291,7 +313,20 @@ export function syntaxToHtml(text: string): string {
     // would allow greedy parameter groups to match across <p> tags).
     // Trim defensively: a trailing \r (CRLF input) or space would break
     // the $ anchor even though the syntax itself is valid.
-    const btnM = line.trim().match(BUTTON_LINE_RE);
+    //
+    // Tolerate inline-mark wrappers around the button shortcode.
+    // htmlToSyntax has historically allowed the WYSIWYG editor to
+    // serialise a button button-node out as the underlying
+    // `{color:...}{w:600}**[button:…](url)**{/w}{/color}` markup when
+    // the user touched its inline styling — which then failed the
+    // anchored button regex on the way back in and rendered as
+    // plain `button:Label|hex|…|Icon` text in the editor (and
+    // identical raw markdown in Send-test outputs). Peeling the
+    // wrappers off here keeps the round-trip lossless: the editor
+    // re-renders a clean styled button, and the next save emits
+    // pure `[button:…](url)` markup so the email functions render
+    // it the same way they always have.
+    const btnM = stripButtonLineWrappers(line.trim()).match(BUTTON_LINE_RE);
     if (btnM) {
       if (inList) { htmlLines.push('</ul>'); inList = false; }
       htmlLines.push(buildEditorButtonSpan(btnM));
@@ -411,7 +446,20 @@ export function htmlToSyntax(html: string): string {
   };
   const wc = (node: globalThis.Node): string =>
     Array.from(node.childNodes).map(walk).join('');
-  return wc(d).replace(/^\n+|\n+$/g, '');
+  const raw = wc(d).replace(/^\n+|\n+$/g, '');
+  // Final guard: strip any inline-mark wrappers that ended up around
+  // a button shortcode. The walker can legitimately emit
+  // `**[button:…](url)**` or `{color:…}**[button:…](url)**{/color}`
+  // when the editor put a button inside a STRONG / styled SPAN — but
+  // a styled button carries its own font-weight / colour inside the
+  // shortcode params, so the wrappers are noise that breaks the
+  // anchored line regex on the next syntaxToHtml round-trip. Strip
+  // them once at the boundary so the stored markdown is always the
+  // canonical form.
+  return raw.replace(
+    /(?:\{color:[^}]+\})?(?:\{w:[^}]+\})?\*\*(\[button:[^\]]+\]\([^)]+\))\*\*(?:\{\/w\})?(?:\{\/color\})?/g,
+    '$1',
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
