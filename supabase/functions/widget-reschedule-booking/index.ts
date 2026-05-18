@@ -55,12 +55,27 @@ interface ExistingAppointment {
   notes: string | null;
   appointment_ref: string | null;
   start_at: string;
+  // Booking-time commitments that MUST follow the patient across
+  // every reschedule. Without these the new row reads as if the
+  // patient hadn't paid, hadn't filled in their intake, and hadn't
+  // landed on a specific brand — and the appointment-detail card
+  // (plus the patient's own confirmation email) would silently
+  // forget what the original booking carried.
   deposit_status: string | null;
   deposit_pence: number | null;
   deposit_currency: string | null;
   deposit_provider: string | null;
   deposit_external_id: string | null;
   deposit_paid_at: string | null;
+  paid_in_full_at_booking: boolean | null;
+  intake: unknown;
+  brand_id: string | null;
+  shopify_order_id: string | null;
+  shopify_order_name: string | null;
+  shopify_order_total_pence: number | null;
+  shopify_order_currency: string | null;
+  shopify_order_linked_at: string | null;
+  shopify_order_linked_by: string | null;
   google_calendar_event_id: string | null;
   // Carried forward so the rescheduled virtual_impression appointment
   // can route through meet-create-space (which needs a host's OAuth
@@ -96,7 +111,7 @@ Deno.serve(async (req) => {
   const { data: existingRaw, error: lookupErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, google_calendar_event_id, meet_host_id',
+      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, paid_in_full_at_booking, intake, brand_id, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by, google_calendar_event_id, meet_host_id',
     )
     .eq('manage_token', token)
     .maybeSingle();
@@ -212,17 +227,29 @@ Deno.serve(async (req) => {
       notes: existing.notes,
       appointment_ref: newRef,
       meet_host_id: rescheduledMeetHostId,
-      // Carry the deposit forward — patient already paid; the
-      // Stripe PI is associated with the same booking, just a new
-      // row. Reports filtering by status='booked' will see exactly
-      // one paid row at a time (old row flips to 'rescheduled'
-      // below).
+      // Carry every booking-time commitment forward — patient
+      // already paid (deposit OR full-pay OR Shopify-order credit),
+      // filled in their intake, and was tied to a specific brand at
+      // booking time. The Stripe PI / Shopify order / brand
+      // identity all stay associated with the same booking; just
+      // the row id is new. Reports filtering by status='booked'
+      // will see exactly one paid row at a time (old row flips to
+      // 'rescheduled' below).
       deposit_status: existing.deposit_status,
       deposit_pence: existing.deposit_pence,
       deposit_currency: existing.deposit_currency,
       deposit_provider: existing.deposit_provider,
       deposit_external_id: existing.deposit_external_id,
       deposit_paid_at: existing.deposit_paid_at,
+      paid_in_full_at_booking: existing.paid_in_full_at_booking ?? false,
+      intake: existing.intake,
+      brand_id: existing.brand_id,
+      shopify_order_id: existing.shopify_order_id,
+      shopify_order_name: existing.shopify_order_name,
+      shopify_order_total_pence: existing.shopify_order_total_pence,
+      shopify_order_currency: existing.shopify_order_currency,
+      shopify_order_linked_at: existing.shopify_order_linked_at,
+      shopify_order_linked_by: existing.shopify_order_linked_by,
     })
     .select('id, manage_token')
     .single();
