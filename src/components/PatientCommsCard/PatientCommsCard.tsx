@@ -1,27 +1,41 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Bell, MessageCircleWarning, Send } from 'lucide-react';
+import {
+  AlertCircle,
+  Bell,
+  CheckCircle2,
+  Clock,
+  MessageCircleWarning,
+  RefreshCw,
+  Send,
+} from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import { theme } from '../../theme/index.ts';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
+import {
+  type VisitReadySmsRow,
+  explainSmsError,
+  useLatestVisitReadySms,
+} from '../../lib/queries/visitReadySms.ts';
 
 // PatientCommsCard — receptionist-side "Notify patient" affordance
-// for the Visit page. Sits under the visit hero and exposes one
-// action today (visit_ready SMS); the card framing leaves room to
-// add reschedule pings / appointment reminders / etc later without
-// re-arranging the page.
+// for the Visit page. Surfaces the patient's most recent
+// visit_ready SMS state in real time via lng_sms_messages so a
+// silent carrier failure ("Unknown destination handset", spam
+// filter, etc) doesn't slip through. State machine:
 //
-// Flow:
-//   1. Receptionist taps Notify ready
-//   2. Sheet opens and shows the rendered SMS body for THIS visit
-//      (server-rendered via send-visit-ready-sms?preview=true so the
-//      same variable substitution path the actual send uses produces
-//      the preview — no client/server drift)
-//   3. Receptionist hits Send to fire it through Twilio
-//   4. Card flips to "Sent {{time}}" state so it's clear the SMS
-//      already went out; staff can still re-send (rare but legitimate
-//      — e.g. patient says they never got it)
+//   • No SMS yet            → "Notify ready" CTA, Bell icon
+//   • Twilio accepted       → "Sending to +44…" with spinner
+//   • Delivered             → "Delivered N min ago" with Resend
+//   • Carrier failed        → loud error card with carrier reason
+//                             and concrete next-step copy +
+//                             Resend button (so a fixed phone
+//                             number takes one tap to re-fire)
+//
+// Realtime keeps the card fresh the moment the twilio-sms-status
+// webhook flips 'pending' → 'sent' / 'failed', so the receptionist
+// doesn't walk away thinking a failed send went through.
 
 export interface PatientCommsCardProps {
   visitId: string;
@@ -36,14 +50,12 @@ export function PatientCommsCard({
 }: PatientCommsCardProps) {
   const [open, setOpen] = useState(false);
   const phoneOk = !!patientPhone && patientPhone.trim().length > 0;
+  const latest = useLatestVisitReadySms(visitId);
+  const row = latest.data;
+
   return (
     <>
-      <Card
-        padding="lg"
-        style={{
-          marginBottom: theme.space[6],
-        }}
-      >
+      <Card padding="lg" style={{ marginBottom: theme.space[6] }}>
         <header
           style={{
             display: 'flex',
@@ -63,13 +75,7 @@ export function PatientCommsCard({
           >
             Patient comms
           </h3>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-            }}
-          >
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
             Texts and emails to{' '}
             <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
               {patientFirstName ?? 'the patient'}
@@ -78,14 +84,10 @@ export function PatientCommsCard({
           </p>
         </header>
 
-        <ActionRow
-          icon={<Bell size={16} aria-hidden />}
-          title="Notify ready"
-          subtitle="Text the patient that their work is ready to collect."
-          ctaLabel="Send SMS"
-          ctaDisabled={!phoneOk}
-          ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
-          onClick={() => setOpen(true)}
+        <NotifyReadyRow
+          row={row}
+          phoneOk={phoneOk}
+          onOpen={() => setOpen(true)}
         />
       </Card>
 
@@ -93,32 +95,180 @@ export function PatientCommsCard({
         open={open}
         onClose={() => setOpen(false)}
         visitId={visitId}
+        previousRow={row}
+        onSent={() => latest.refresh()}
       />
     </>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Action row primitive
+// Action row variants
 // ─────────────────────────────────────────────────────────────────
 
+function NotifyReadyRow({
+  row,
+  phoneOk,
+  onOpen,
+}: {
+  row: VisitReadySmsRow | null;
+  phoneOk: boolean;
+  onOpen: () => void;
+}) {
+  // No prior SMS — initial state.
+  if (!row) {
+    return (
+      <ActionRow
+        tone="neutral"
+        icon={<Bell size={16} aria-hidden />}
+        title="Notify ready"
+        subtitle="Text the patient that their work is ready to collect."
+        ctaLabel="Send SMS"
+        ctaDisabled={!phoneOk}
+        ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
+        onClick={onOpen}
+      />
+    );
+  }
+
+  if (row.send_status === 'pending') {
+    return (
+      <ActionRow
+        tone="pending"
+        icon={<Clock size={16} aria-hidden />}
+        title="Sending…"
+        subtitle={`Handed to the carrier for ${row.to_phone}. Waiting on delivery confirmation.`}
+        ctaLabel={null}
+      />
+    );
+  }
+
+  if (row.send_status === 'sent') {
+    return (
+      <ActionRow
+        tone="success"
+        icon={<CheckCircle2 size={16} aria-hidden />}
+        title={`Delivered ${formatRelative(row.sent_at)}`}
+        subtitle={`Patient was notified on ${row.to_phone}.`}
+        ctaLabel="Resend"
+        ctaIcon={<RefreshCw size={14} aria-hidden />}
+        ctaDisabled={!phoneOk}
+        ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
+        onClick={onOpen}
+      />
+    );
+  }
+
+  // send_status === 'failed' — show the carrier reason + a Resend
+  // button so a corrected phone number takes one tap.
+  const explained = explainSmsError(row.send_error);
+  const headline = explained?.what ?? 'Carrier reported the SMS as undelivered.';
+  const followup = explained?.fix ?? 'Try resending; if it keeps failing, call the patient.';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.card,
+        background: '#FDECEC',
+        border: '1px solid #F1BFBF',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: theme.radius.pill,
+            background: 'rgba(220, 38, 38, 0.12)',
+            color: '#B91C1C',
+            flexShrink: 0,
+          }}
+        >
+          <AlertCircle size={16} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: '#7C1D1D',
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            SMS didn't reach {row.to_phone}
+          </span>
+          <span style={{ fontSize: theme.type.size.sm, color: '#7C1D1D', lineHeight: theme.type.leading.snug }}>
+            {headline}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: '#7C1D1D',
+              lineHeight: theme.type.leading.snug,
+              marginTop: 4,
+            }}
+          >
+            {followup}
+          </span>
+          {row.send_error ? (
+            <code
+              style={{
+                marginTop: 8,
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                fontSize: 11,
+                color: 'rgba(124, 29, 29, 0.7)',
+              }}
+            >
+              {row.send_error}
+            </code>
+          ) : null}
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button variant="primary" onClick={onOpen} disabled={!phoneOk} title={!phoneOk ? 'No phone number on file' : undefined}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+            <RefreshCw size={14} aria-hidden />
+            Resend
+          </span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ActionRow({
+  tone,
   icon,
   title,
   subtitle,
   ctaLabel,
+  ctaIcon,
   ctaDisabled,
   ctaDisabledHint,
   onClick,
 }: {
+  tone: 'neutral' | 'pending' | 'success';
   icon: React.ReactNode;
   title: string;
   subtitle: string;
-  ctaLabel: string;
-  ctaDisabled: boolean;
-  ctaDisabledHint: string | undefined;
-  onClick: () => void;
+  ctaLabel: string | null;
+  ctaIcon?: React.ReactNode;
+  ctaDisabled?: boolean;
+  ctaDisabledHint?: string;
+  onClick?: () => void;
 }) {
+  const pillColors = {
+    neutral: { bg: theme.color.accentBg, fg: theme.color.accent },
+    pending: { bg: '#FEF3C7', fg: '#92400E' },
+    success: { bg: '#E8F5EC', fg: '#13502B' },
+  }[tone];
   return (
     <div
       style={{
@@ -140,8 +290,8 @@ function ActionRow({
           width: 36,
           height: 36,
           borderRadius: theme.radius.pill,
-          background: theme.color.accentBg,
-          color: theme.color.accent,
+          background: pillColors.bg,
+          color: pillColors.fg,
           flexShrink: 0,
         }}
       >
@@ -158,18 +308,21 @@ function ActionRow({
         >
           {title}
         </span>
-        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-          {subtitle}
-        </span>
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{subtitle}</span>
       </div>
-      <Button
-        variant="primary"
-        onClick={onClick}
-        disabled={ctaDisabled}
-        title={ctaDisabledHint}
-      >
-        {ctaLabel}
-      </Button>
+      {ctaLabel && onClick ? (
+        <Button
+          variant="primary"
+          onClick={onClick}
+          disabled={ctaDisabled}
+          title={ctaDisabledHint}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+            {ctaIcon}
+            {ctaLabel}
+          </span>
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -198,10 +351,14 @@ function NotifyReadySheet({
   open,
   onClose,
   visitId,
+  previousRow,
+  onSent,
 }: {
   open: boolean;
   onClose: () => void;
   visitId: string;
+  previousRow: VisitReadySmsRow | null;
+  onSent: () => void;
 }) {
   const [preview, setPreview] = useState<PreviewState>(INITIAL_PREVIEW);
   const [sending, setSending] = useState(false);
@@ -211,10 +368,9 @@ function NotifyReadySheet({
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
 
-  // Hit the edge function in preview mode whenever the sheet opens
-  // so the body the receptionist reads is the exact body the send
-  // would emit. Re-runs on every open (not once per mount) so a
-  // template edit in Admin between two opens picks up immediately.
+  const isResend = !!previousRow;
+  const resendOfFailed = !!previousRow && previousRow.send_status === 'failed';
+
   useEffect(() => {
     if (!open) {
       setPreview(INITIAL_PREVIEW);
@@ -286,19 +442,33 @@ function NotifyReadySheet({
         return;
       }
       setSendResult({ kind: 'sent', to: data.to ?? preview.to });
+      onSent();
       // Auto-close after a short delay so the receptionist sees the
-      // success state before the sheet goes away.
-      setTimeout(() => onClose(), 1100);
+      // success state before the sheet goes away. Realtime
+      // subscription on the card behind will pick up the row and
+      // flip into "Sending…" → "Delivered" / "Failed" without
+      // another click.
+      setTimeout(() => onClose(), 1200);
     } finally {
       setSending(false);
     }
-  }, [visitId, preview.to, onClose]);
+  }, [visitId, preview.to, onClose, onSent]);
 
   const charCount = preview.body.length;
+  const sheetTitle = resendOfFailed
+    ? 'Resend after a failed delivery'
+    : isResend
+      ? 'Resend the ready notification'
+      : 'Notify patient — ready to collect';
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Notify patient — ready to collect">
+    <BottomSheet open={open} onClose={onClose} title={sheetTitle}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        {/* Optional context strip about a previous failure */}
+        {resendOfFailed && previousRow ? (
+          <PreviousFailurePanel row={previousRow} />
+        ) : null}
+
         {/* Body preview */}
         <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
           <header
@@ -349,10 +519,7 @@ function NotifyReadySheet({
             {preview.status === 'loading' ? (
               <span style={{ color: theme.color.inkMuted }}>Rendering preview…</span>
             ) : preview.status === 'error' ? (
-              <ErrorPanel
-                reason={preview.reason}
-                message={preview.message ?? 'Preview failed.'}
-              />
+              <ErrorPanel reason={preview.reason} message={preview.message ?? 'Preview failed.'} />
             ) : preview.body ? (
               preview.body
             ) : (
@@ -408,7 +575,7 @@ function NotifyReadySheet({
               fontWeight: theme.type.weight.medium,
             }}
           >
-            Sent to {sendResult.to}.
+            Handed off to the carrier for {sendResult.to}. The card will update when delivery is confirmed.
           </div>
         ) : null}
         {sendResult.kind === 'error' ? (
@@ -446,8 +613,8 @@ function NotifyReadySheet({
             disabled={preview.status !== 'loaded' || sending || sendResult.kind === 'sent'}
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-              <Send size={14} aria-hidden />
-              {sending ? 'Sending…' : 'Send SMS'}
+              {isResend ? <RefreshCw size={14} aria-hidden /> : <Send size={14} aria-hidden />}
+              {sending ? 'Sending…' : isResend ? 'Resend SMS' : 'Send SMS'}
             </span>
           </Button>
         </div>
@@ -456,16 +623,32 @@ function NotifyReadySheet({
   );
 }
 
-function ErrorPanel({
-  reason,
-  message,
-}: {
-  reason: string | null;
-  message: string;
-}) {
-  // Soft-tone reason-specific guidance for the common cases — keeps
-  // the error human even when Twilio / the template / the patient row
-  // is the actual culprit.
+function PreviousFailurePanel({ row }: { row: VisitReadySmsRow }) {
+  const explained = explainSmsError(row.send_error);
+  return (
+    <div
+      style={{
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.card,
+        background: '#FDECEC',
+        border: '1px solid #F1BFBF',
+        color: '#7C1D1D',
+        fontSize: theme.type.size.sm,
+        lineHeight: theme.type.leading.snug,
+      }}
+    >
+      <strong style={{ display: 'block', marginBottom: 4 }}>
+        Previous send didn't reach {row.to_phone}
+      </strong>
+      <span>{explained?.what ?? 'Carrier reported the SMS as undelivered.'}</span>
+      {explained?.fix ? (
+        <span style={{ display: 'block', marginTop: 6 }}>{explained.fix}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function ErrorPanel({ reason, message }: { reason: string | null; message: string }) {
   const hint =
     reason === 'no_phone'
       ? 'Add a number to the patient profile and try again.'
@@ -496,3 +679,19 @@ function ErrorPanel({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────
+
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'recently';
+  const diffMs = Date.now() - then;
+  const mins = Math.round(diffMs / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}

@@ -192,6 +192,14 @@ async function handle(req: Request): Promise<Response> {
   const sentBy = (actorRow as { id: string } | null)?.id ?? null;
 
   if (result.ok) {
+    // Initial state is 'pending' — Twilio has ACCEPTED the message
+    // for delivery but the carrier hasn't reported back yet. The
+    // twilio-sms-status webhook flips this to 'sent' on delivered
+    // or 'failed' on undelivered/failed/canceled, usually within a
+    // few seconds for UK numbers. Without the in-flight state the
+    // UI would tell the receptionist "sent" when really we're still
+    // waiting on the carrier — and a 30005 ten seconds later would
+    // arrive after the receptionist had walked away.
     await admin.from('lng_sms_messages').insert({
       patient_id: visit.patient_id,
       visit_id: visit.id,
@@ -200,17 +208,20 @@ async function handle(req: Request): Promise<Response> {
       template_key: TEMPLATE_KEY,
       to_phone: toPhone,
       body: renderedBody,
-      send_status: 'sent',
+      send_status: 'pending',
       twilio_message_sid: result.sid,
       sent_by: sentBy,
     });
     // Patient-axis event row mirrors the email-send pattern so the
     // appointment / visit timeline picks it up alongside other
-    // touchpoints. Best-effort — a failed insert here doesn't unwind
-    // the SMS that's already gone out.
+    // touchpoints. 'sms_queued' captures the actual state: we've
+    // handed it to Twilio, but the carrier's verdict is still
+    // pending. A future migration / patient-event consumer can
+    // listen for the webhook's 'delivered'/'failed' events when we
+    // wire them; for now the audit row's status is the truth.
     await admin.from('patient_events').insert({
       patient_id: visit.patient_id,
-      event_type: 'sms_sent',
+      event_type: 'sms_queued',
       actor_account_id: sentBy,
       payload: {
         template_key: TEMPLATE_KEY,

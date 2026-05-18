@@ -64,12 +64,20 @@ Deno.serve(async (req) => {
   // Twilio's full status set:
   //   queued, accepted, sending, sent, receiving, received, delivered,
   //   undelivered, failed, read, canceled, scheduled, partially_delivered
-  // Map onto our lng_sms_messages.send_status check constraint
-  // (sent | failed | pending). Anything that means "in flight"
-  // collapses to 'pending'; final-state success → 'sent'; final-
-  // state failure → 'failed'.
+  //
+  // Map onto our lng_sms_messages.send_status check constraint:
+  //   'pending' = in-flight (queued, accepted, sending, AND Twilio's
+  //               own 'sent' — which only means "carrier accepted",
+  //               not "phone got it")
+  //   'sent'    = delivered (final success — phone reported delivery)
+  //   'failed'  = undelivered / failed / canceled
+  //
+  // 'sent' deliberately diverges from Twilio's 'sent' so the
+  // receptionist's "Sent to +44…" state in the UI means "actually
+  // arrived at the handset", not "we handed it off". The patient is
+  // the audience that matters here, not the SMS infrastructure.
   let mapped: 'sent' | 'failed' | 'pending';
-  if (statusRaw === 'delivered' || statusRaw === 'sent') {
+  if (statusRaw === 'delivered') {
     mapped = 'sent';
   } else if (
     statusRaw === 'undelivered' ||
