@@ -557,12 +557,122 @@ function RowList({
 
 function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
   const [hover, setHover] = useState(false);
+  const isMobile = useIsMobile(640);
   const fullName = ledgerName(row);
   const dateLabel = formatRowDate(row.event_at);
   const timeLabel = formatRowTime(row.event_at);
   const serviceLabel = humaniseEventTypeLabel(row.service_label) ?? defaultServiceLabel(row);
   const tone = STATUS_TO_TONE[row.status];
   const sourceLabel = humaniseLedgerSource(row.source);
+
+  // Mobile: the 4-column grid (name | service | date | status) collapses
+  // every column to ~50px on a 360px viewport, which truncates everything
+  // to ellipses. Restructure into a 2-column row instead:
+  //   leading:  avatar
+  //   primary:  name on top, service + meta (source · ref · date) wrapping
+  //             under it, payment line below
+  //   trailing: status pill stacked over the chevron so neither competes
+  //             for primary-column width
+  if (isMobile) {
+    return (
+      <button
+        type="button"
+        onClick={onPick}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          appearance: 'none',
+          width: '100%',
+          textAlign: 'left',
+          background: hover ? theme.color.surface : 'transparent',
+          border: 'none',
+          borderBottom: `1px solid ${theme.color.border}`,
+          padding: `${theme.space[3]}px ${theme.space[3]}px`,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: theme.space[3],
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <Avatar name={fullName} src={row.patient_avatar_data} size="md" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              lineHeight: 1.25,
+            }}
+          >
+            {fullName}
+          </p>
+          <p
+            style={{
+              margin: '2px 0 0',
+              fontSize: theme.type.size.sm,
+              color: theme.color.ink,
+              lineHeight: 1.3,
+              wordBreak: 'break-word',
+            }}
+          >
+            {serviceLabel}
+          </p>
+          <p
+            style={{
+              margin: '4px 0 0',
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0 6px',
+              lineHeight: 1.4,
+            }}
+          >
+            <span style={{ whiteSpace: 'nowrap' }}>{dateLabel}</span>
+            <span style={{ color: theme.color.inkSubtle, whiteSpace: 'nowrap' }}>{timeLabel}</span>
+            <span style={{ color: theme.color.inkSubtle }}>·</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{sourceLabel}</span>
+            {row.appointment_ref ? (
+              <>
+                <span style={{ color: theme.color.inkSubtle }}>·</span>
+                <span style={{ whiteSpace: 'nowrap' }}>{row.appointment_ref}</span>
+              </>
+            ) : null}
+          </p>
+          <div style={{ marginTop: 4 }}>
+            <PaymentLine state={row.payment_state} />
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: theme.space[2],
+            flexShrink: 0,
+            paddingTop: 2,
+          }}
+        >
+          <StatusPill tone={tone} size="sm">
+            {humaniseLedgerStatus(row.status)}
+          </StatusPill>
+          <ChevronRight
+            size={16}
+            color={hover ? theme.color.ink : theme.color.inkSubtle}
+            aria-hidden
+          />
+        </div>
+      </button>
+    );
+  }
 
   return (
     <button
