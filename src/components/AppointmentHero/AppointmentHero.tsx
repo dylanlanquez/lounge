@@ -145,9 +145,10 @@ export function AppointmentHero({
                 fontSize: theme.type.size.sm,
                 color: theme.color.inkMuted,
                 fontVariantNumeric: 'tabular-nums',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                // Allow wrapping so the LAP / MP ref pair never truncates
+                // mid-token — on mobile the previous nowrap+ellipsis
+                // chopped the LAP ref off the right edge.
+                wordBreak: 'break-word',
               }}
             >
               {subtitle}
@@ -216,12 +217,16 @@ export function AppointmentHero({
             >
               {when.timeLine}
               {when.relative ? (
-                <>
+                // Bind the "·" separator to the relative text so they
+                // wrap together — without this, a narrow viewport
+                // orphaned the bullet on its own line above the
+                // relative phrase.
+                <span style={{ whiteSpace: 'nowrap' }}>
                   <span style={{ color: theme.color.inkSubtle }}>{' · '}</span>
                   <span style={{ color: ribbonAccent, fontWeight: theme.type.weight.semibold }}>
                     {when.relative}
                   </span>
-                </>
+                </span>
               ) : null}
             </p>
           </div>
@@ -230,7 +235,6 @@ export function AppointmentHero({
           <p
             style={{
               margin: 0,
-              paddingLeft: 44,
               fontSize: theme.type.size.sm,
               color: theme.color.ink,
               fontWeight: theme.type.weight.medium,
