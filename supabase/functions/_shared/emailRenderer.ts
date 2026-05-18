@@ -168,6 +168,26 @@ export function parseFormatting(syntax: string): string {
       blocks.push(`<hr style="${_STYLE_HR}">`);
       continue;
     }
+    // Raw-HTML passthrough — lines that start with a recognised
+    // block-level tag are emitted verbatim so a placeholder can ship
+    // pre-rendered HTML (e.g. {{paymentStatusBlock}},
+    // {{dentureRepairTable}}, {{appointmentTimeline}}). Without this
+    // rule each placeholder gets wrapped in a <p> which the browser
+    // auto-closes the moment it hits the inner <div> or <table>,
+    // leaving stranded empty paragraphs that show up in Gmail as
+    // extra vertical whitespace bracketing every block. Tag list is
+    // a hand-picked allowlist so a paragraph that happens to start
+    // with "<3" or an inline link doesn't accidentally trigger it.
+    // Composers are responsible for shipping each block on ONE line
+    // (no embedded \n) so this rule sees a single line as one block.
+    // Mirrors src/lib/emailRenderer.ts line 221 — keep the two
+    // parsers in lockstep so the admin preview matches reality.
+    if (/^\s*<(table|div|section|article|aside|figure)[\s>]/i.test(line)) {
+      flushBuffer();
+      flushList();
+      blocks.push(line);
+      continue;
+    }
     const h4 = line.match(/^#### (.+)$/);
     if (h4 && h4[1]) {
       flushBuffer();
