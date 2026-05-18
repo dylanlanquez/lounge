@@ -103,84 +103,94 @@ export function AppointmentHero({
     // bottom corners render square and bleed past the card's curve.
     <Card padding="none" elevation="raised" style={{ overflow: 'hidden' }}>
       {/* Identity row. On mobile the trailing slot (View profile)
-          competed with the name for horizontal room and forced the
-          name to wrap mid-word — break the row open into:
-            top: avatar + name + trailing
-            below: pills inline, then subtitle
-          so each piece has its own line and breathes. Desktop keeps
-          the original single-row composition. */}
+          competed with the identity column for horizontal room and
+          squeezed the refs subtitle into one-token-per-line. Pull
+          the trailing slot to its own row above the identity stack
+          (right-aligned) so the name / pills / subtitle have the
+          card's full width. Desktop keeps the single-row layout. */}
       <div
         style={{
-          display: 'flex',
-          alignItems: isMobile ? 'flex-start' : 'center',
-          gap: isMobile ? theme.space[3] : theme.space[4],
           padding: `${theme.space[5]}px ${theme.space[5]}px`,
           minWidth: 0,
         }}
       >
-        <Avatar name={patient.name} src={patient.avatarSrc} size={isMobile ? 'md' : 'lg'} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: theme.space[3],
-              flexWrap: 'wrap',
-            }}
-          >
-            <p
-              style={{
-                margin: 0,
-                fontSize: isMobile ? theme.type.size.lg : theme.type.size.xl,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                letterSpacing: theme.type.tracking.tight,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                lineHeight: 1.2,
-                wordBreak: 'break-word',
-              }}
-            >
-              {patient.name}
-            </p>
-            {!isMobile
-              ? pills.map((p, i) => (
-                  <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
-                ))
-              : null}
+        {isMobile && trailing ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: theme.space[2] }}>
+            {trailing}
           </div>
-          {isMobile && pills.length > 0 ? (
+        ) : null}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: isMobile ? 'flex-start' : 'center',
+            gap: isMobile ? theme.space[3] : theme.space[4],
+            minWidth: 0,
+          }}
+        >
+          <Avatar name={patient.name} src={patient.avatarSrc} size={isMobile ? 'md' : 'lg'} />
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
                 display: 'flex',
-                gap: theme.space[2],
+                alignItems: 'center',
+                gap: theme.space[3],
                 flexWrap: 'wrap',
-                marginTop: theme.space[2],
               }}
             >
-              {pills.map((p, i) => (
-                <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
-              ))}
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: isMobile ? theme.type.size.lg : theme.type.size.xl,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                  letterSpacing: theme.type.tracking.tight,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  lineHeight: 1.2,
+                  wordBreak: 'break-word',
+                }}
+              >
+                {patient.name}
+              </p>
+              {!isMobile
+                ? pills.map((p, i) => (
+                    <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
+                  ))
+                : null}
             </div>
-          ) : null}
-          {subtitle ? (
-            <div
-              style={{
-                margin: `${theme.space[2]}px 0 0`,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
-                fontVariantNumeric: 'tabular-nums',
-                // Allow wrapping so the LAP / MP ref pair never truncates
-                // mid-token — on mobile the previous nowrap+ellipsis
-                // chopped the LAP ref off the right edge.
-                wordBreak: 'break-word',
-              }}
-            >
-              {subtitle}
-            </div>
-          ) : null}
+            {isMobile && pills.length > 0 ? (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: theme.space[2],
+                  flexWrap: 'wrap',
+                  marginTop: theme.space[2],
+                }}
+              >
+                {pills.map((p, i) => (
+                  <HeroPill key={`${p.tone}|${p.label}|${i}`} pill={p} />
+                ))}
+              </div>
+            ) : null}
+            {subtitle ? (
+              <div
+                style={{
+                  margin: `${theme.space[2]}px 0 0`,
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                  // Allow wrapping so the LAP / MP ref pair never truncates
+                  // mid-token — on mobile the previous nowrap+ellipsis
+                  // chopped the LAP ref off the right edge.
+                  wordBreak: 'break-word',
+                }}
+              >
+                {subtitle}
+              </div>
+            ) : null}
+          </div>
+          {!isMobile && trailing ? <div style={{ flexShrink: 0 }}>{trailing}</div> : null}
         </div>
-        {trailing ? <div style={{ flexShrink: 0 }}>{trailing}</div> : null}
       </div>
 
       {/* "When" ribbon */}
@@ -198,8 +208,8 @@ export function AppointmentHero({
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: theme.space[2],
-            flexWrap: 'wrap',
+            gap: theme.space[3],
+            minWidth: 0,
           }}
         >
           <span
@@ -219,7 +229,7 @@ export function AppointmentHero({
           >
             {when.icon ?? <CalendarClock size={16} aria-hidden />}
           </span>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <p
               style={{
                 margin: 0,
