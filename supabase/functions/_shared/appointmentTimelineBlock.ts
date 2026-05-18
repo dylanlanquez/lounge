@@ -107,9 +107,14 @@ function renderPhaseRow(phase: Phase): string {
   const iconColor = active ? '#FFFFFF' : ACCENT;
   const iconName = active ? 'User' : 'Hourglass';
   const icon = _iconImg(iconName, iconColor, 14, 0);
+  // Customer-facing copy. The Lounge popup is staff-only ("Patient
+  // required" / "Patient back by HH:MM" — the receptionist's POV);
+  // in this email we're addressing the patient directly, so rewrite
+  // in second-person plain English. Active = "You're with us";
+  // passive = "Step away — we're ready for you again at HH:MM".
   const presence = active
-    ? 'Patient required'
-    : `Patient back by ${endStr}`;
+    ? "You're with us"
+    : `Step away, back at ${endStr}`;
 
   return [
     `<tr>`,
