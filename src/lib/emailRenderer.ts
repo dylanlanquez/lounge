@@ -1,4 +1,4 @@
-import { iconSvg } from './emailIcons.ts';
+import { iconImg, iconSvg } from './emailIcons.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Email body renderer.
@@ -319,7 +319,13 @@ function applyInlines(text: string): string {
       const mbC     = mb   || '12';
       const bwNum   = Number(bw || '0');
       const bcC     = bc   || '#0E1414';
-      const iconHtml = icon ? iconSvg(icon, tcC, 16) : '';
+      // Match the edge function renderer: prefer the hosted PNG (Gmail
+      // strips inline <svg>), fall back to SVG when no PNG is uploaded
+      // for this icon. Keeps the admin preview honest to what Gmail
+      // will actually show.
+      const iconHtml = icon
+        ? iconImg(icon, tcC, 16) || iconSvg(icon, tcC, 16)
+        : '';
       const border  = bwNum > 0 ? `border:${bwNum}px solid ${bcC};` : '';
       return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em;${border}">${iconHtml}${label}</a>`;
     },

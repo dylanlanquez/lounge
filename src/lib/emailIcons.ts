@@ -90,3 +90,40 @@ export function iconSvg(name: string, strokeColor: string, size = 16): string {
   if (!inner) return '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;display:inline-block;margin-right:6px">${inner}</svg>`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PNG icon URLs — Gmail-safe alternative to inline SVG.
+//
+// Mirrors supabase/functions/_shared/emailIcons.ts. The admin preview
+// uses this to render exactly what the sent email will look like in
+// Gmail (inline <svg> is stripped by Gmail's sanitiser, so previewing
+// SVG misleads the admin into thinking their button will keep the
+// icon). PNG_ICON_NAMES lists the icons that have been rendered to
+// PNG at both stroke colours and uploaded to lng-email-assets.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PNG_ICONS_BASE_URL =
+  'https://npuvhxakffxqoszytkxw.supabase.co/storage/v1/object/public/lng-email-assets';
+
+const PNG_ICON_NAMES = new Set<string>(['Video']);
+
+function pngVariantFor(strokeColor: string): 'white' | 'dark' {
+  const hex = strokeColor.trim().toLowerCase().replace('#', '');
+  if (hex.length !== 3 && hex.length !== 6) return 'dark';
+  const exp = hex.length === 3
+    ? hex.split('').map((c) => c + c).join('')
+    : hex;
+  const r = parseInt(exp.slice(0, 2), 16);
+  const g = parseInt(exp.slice(2, 4), 16);
+  const b = parseInt(exp.slice(4, 6), 16);
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luma > 160 ? 'white' : 'dark';
+}
+
+/** Build an <img> tag pointing at a hosted PNG. '' if no PNG hosted. */
+export function iconImg(name: string, strokeColor: string, size = 16): string {
+  if (!PNG_ICON_NAMES.has(name)) return '';
+  const variant = pngVariantFor(strokeColor);
+  const url = `${PNG_ICONS_BASE_URL}/${name}-${variant}.png`;
+  return `<img src="${url}" width="${size}" height="${size}" alt="" style="vertical-align:middle;display:inline-block;margin-right:6px;border:0;"/>`;
+}

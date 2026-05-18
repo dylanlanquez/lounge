@@ -30,7 +30,7 @@
 //   [button:label|bg|tc|radius|mt|mb](url)
 //                         styled button (6 styling args)
 
-import { iconSvg as _iconSvg } from './emailIcons.ts';
+import { iconImg as _iconImg, iconSvg as _iconSvg } from './emailIcons.ts';
 
 export interface BrandSettings {
   logoUrl: string;
@@ -111,7 +111,16 @@ function _applyInlines(text: string): string {
       const mbC = mb || '12';
       const bwNum = Number(bw || '0');
       const bcC = bc || '#0E1414';
-      const iconHtml = icon ? _iconSvg(icon, tcC, 16) : '';
+      // Gmail strips inline <svg> from message bodies, so an
+      // SVG-only icon renders fine in the admin preview but
+      // disappears in actual inboxes. Try the PNG path first
+      // (Gmail-safe) and fall back to inline SVG when the icon
+      // hasn't been uploaded to lng-email-assets — that fallback
+      // still works in clients that DO support inline SVG (Apple
+      // Mail, modern Outlook web).
+      const iconHtml = icon
+        ? _iconImg(icon, tcC, 16) || _iconSvg(icon, tcC, 16)
+        : '';
       const border = bwNum > 0 ? `border:${bwNum}px solid ${bcC};` : '';
       return `<a href="${url}" style="display:inline-block;padding:12px 28px;background:${bgC};color:${tcC};text-decoration:none;border-radius:${radC}px;font-weight:600;font-size:14px;margin:${mtC}px 0 ${mbC}px 0;letter-spacing:-0.005em;${border}">${iconHtml}${label}</a>`;
     },

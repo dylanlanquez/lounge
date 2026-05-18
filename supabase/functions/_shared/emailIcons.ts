@@ -49,3 +49,52 @@ export function iconSvg(name: string, strokeColor: string, size = 16): string {
   if (!inner) return '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;display:inline-block;margin-right:6px">${inner}</svg>`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PNG icon URLs (Gmail-safe alternative to inline SVG)
+//
+// Gmail's HTML sanitiser strips inline <svg> elements wholesale, so the
+// pretty SVG buttons that render fine in the admin preview show up in
+// Gmail as text-only. Mitigation: emit <img src> pointing at hosted
+// PNGs in the public bucket `lng-email-assets`.
+//
+// Each icon is rendered at two stroke colours (white for dark buttons,
+// dark for light buttons) and uploaded as `${name}-white.png` /
+// `${name}-dark.png`. To add a new icon: render to PNG at both colours
+// (32×32, transparent bg), upload to the bucket, then list the icon
+// name in PNG_ICON_NAMES so the renderer knows it's safe to reference.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PNG_ICONS_BASE_URL =
+  'https://npuvhxakffxqoszytkxw.supabase.co/storage/v1/object/public/lng-email-assets';
+
+// Allowlist of icon names that have PNG variants uploaded. The renderer
+// falls back to SVG (still useful for non-Gmail clients that DO render
+// inline SVG) for any icon name not in this set.
+const PNG_ICON_NAMES = new Set<string>(['Video']);
+
+/** Pick the closest PNG variant for a given stroke colour. */
+function pngVariantFor(strokeColor: string): 'white' | 'dark' {
+  const hex = strokeColor.trim().toLowerCase().replace('#', '');
+  if (hex.length !== 3 && hex.length !== 6) return 'dark';
+  const exp = hex.length === 3
+    ? hex.split('').map((c) => c + c).join('')
+    : hex;
+  const r = parseInt(exp.slice(0, 2), 16);
+  const g = parseInt(exp.slice(2, 4), 16);
+  const b = parseInt(exp.slice(4, 6), 16);
+  // Perceived luminance, ITU BT.601. Buttons with light text → white icon,
+  // dark text → dark icon.
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luma > 160 ? 'white' : 'dark';
+}
+
+/** Build an <img> tag pointing at a hosted PNG for use inside email
+ *  <a> buttons. Returns '' if no PNG is hosted for this icon name; the
+ *  caller should treat that as "no icon". */
+export function iconImg(name: string, strokeColor: string, size = 16): string {
+  if (!PNG_ICON_NAMES.has(name)) return '';
+  const variant = pngVariantFor(strokeColor);
+  const url = `${PNG_ICONS_BASE_URL}/${name}-${variant}.png`;
+  return `<img src="${url}" width="${size}" height="${size}" alt="" style="vertical-align:middle;display:inline-block;margin-right:6px;border:0;"/>`;
+}
