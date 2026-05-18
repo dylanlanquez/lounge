@@ -235,6 +235,15 @@ export function useAppointmentTimeline(
           supabase
             .from('lng_system_failures')
             .select('id, source, severity, message, context, occurred_at')
+            // 'info' severity is a heads-up for ops (e.g. phase config
+            // drift, non-final phase trimmed to fit) and stays in the
+            // table so an Admin tool can query it, but it is not a
+            // failure as far as the patient-facing timeline is
+            // concerned. Surfacing one as "System failure" caused
+            // false alarms on every healthy virtual_impression booking
+            // whose phases sum to 20m against a 30m block. Strip them
+            // from the timeline; warning/error/critical still render.
+            .neq('severity', 'info')
             .or(orClauses.map((c) => c.replace('payload->>', 'context->>')).join(','))
             .order('occurred_at', { ascending: true }),
         ]);
