@@ -25,15 +25,14 @@ import { useWidgetBookingTypes } from '../data.ts';
 // is the sole navigation control (no auto-advance).
 
 const AXIS_HELPER: Record<AxisKey, string> = {
-  // repair_variant intentionally has NO helper paragraph — the
-  // title ("What needs fixing?") is unambiguous and the options
-  // themselves are the answer. The no-helper marginTop branch
-  // below keeps the title → grid spacing consistent.
+  // Every axis step is helper-less now. The title is doing the work
+  // ("Which appliance do you need?" / "What needs fixing?" / "Which
+  // teeth?") and the option cards carry the actual choices. The
+  // previous product_key helper ("Pick the option that fits, we'll
+  // confirm any details when you arrive.") was redundant noise so
+  // we dropped it.
   repair_variant: '',
-  product_key:
-    "Pick the option that fits, we'll confirm any details when you arrive.",
-  // Arch step also skips the helper — title is descriptive enough
-  // and the option cards carry no sub-copy.
+  product_key: '',
   arch: '',
 };
 
@@ -209,10 +208,12 @@ function AxisOptions({
 // Renders an extra "Click-in veneers" option card inside the
 // same-day-appliance product picker. Looks up the live
 // click-in-veneers booking type from useWidgetBookingTypes so
-// admin toggles (enabled / display_label / etc) flow through
-// without a code change, and so picking the card hands the
-// canonical WidgetBookingType row to setService — same shape
-// the dedicated Service step uses.
+// admin toggles flow through without a code change. Clicking the
+// card calls pivotToService, which both swaps state.service AND
+// jumps stepKey to the new service's first non-Service step —
+// the patient already implicitly cleared the Service step by
+// reaching this picker, so we don't make them re-confirm it on
+// the way through.
 function CrossServiceClickInOption({
   api,
   accent,
@@ -228,7 +229,7 @@ function CrossServiceClickInOption({
       key={`cross-${clickIn.id}`}
       selected={false}
       anySelected={!!api.state.axes.product_key}
-      onSelect={() => api.setService(clickIn)}
+      onSelect={() => api.pivotToService(clickIn)}
       accent={accent}
       ariaLabel={clickIn.label.replace(/<[^>]*>/g, '')}
     >

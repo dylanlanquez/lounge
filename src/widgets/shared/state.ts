@@ -496,15 +496,12 @@ export function useBookingState(
 
   // Choosing a service resets axis pins and upgrades (previous
   // service's choices don't transfer). Navigation does NOT advance
-  // automatically when picked from the Service step — the footer
-  // Next button is the sole way to move forward, matching the
-  // retainer-cart UX. BUT — when called from a deeper step (e.g.
-  // the cross-service Click-in veneers card on the same-day
-  // product picker), the user is currently sitting on a stepKey
-  // that no longer belongs to the new service's activeSteps; we
-  // pivot them back to the Service step so they can confirm and
-  // tap Next into the new service's flow. From the Service step
-  // itself this is a no-op (already there).
+  // automatically — the footer Next button is the sole way to move
+  // between steps, matching the retainer-cart UX. If the customer
+  // back-navigates and re-picks a service, they explicitly tap Next
+  // to walk into the new axes. Mid-flow pivots (cross-service
+  // option cards) are responsible for their own step navigation —
+  // see pivotToService below.
   const setService = (service: WidgetBookingType | null) => {
     setState((prev) => ({
       ...prev,
@@ -513,7 +510,40 @@ export function useBookingState(
       repairItems: [],
       upgradeIds: [],
     }));
-    setStepKey('service');
+  };
+
+  // Pivot to a different service mid-flow AND jump straight to the
+  // new service's first non-Service step. Used by the cross-service
+  // Click-in veneers card on the same-day product picker: the
+  // patient already implicitly cleared the Service step, so we skip
+  // it and drop them onto the new service's first question (arch /
+  // upgrades / time, whatever activeStepsFor returns first that
+  // isn't 'service').
+  const pivotToService = (service: WidgetBookingType) => {
+    setState((prev) => ({
+      ...prev,
+      service,
+      axes: {},
+      repairItems: [],
+      upgradeIds: [],
+    }));
+    // Compute the NEW service's active steps with a synthesized
+    // state so we can pick the first non-Service step deterministically.
+    // useUpgrades isn't known here yet — assume false; the Upgrades
+    // step lands on the first Next press regardless when it does
+    // get gated in.
+    const synthState: WidgetState = {
+      ...state,
+      service,
+      axes: {},
+      repairItems: [],
+      upgradeIds: [],
+    };
+    const nextActiveSteps = activeStepsFor(synthState, false, locations.length);
+    const firstNonService = nextActiveSteps.find((k) => k !== 'service' && k !== 'location');
+    if (firstNonService) {
+      setStepKey(firstNonService);
+    }
   };
 
   /** Update one axis pin. Does NOT advance to the next step —
@@ -684,6 +714,7 @@ export function useBookingState(
     state,
     setState,
     setService,
+    pivotToService,
     setAxisPin,
     toggleUpgrade,
     setRepairArch,
