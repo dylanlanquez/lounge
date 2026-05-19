@@ -133,7 +133,9 @@ async function handleCompleted(
   // lng_system_failures).
   let confirmed = body;
   if (session.result_url) {
-    const verify = await klarnaFetch('POST', stripBase(session.result_url), {});
+    // Klarna's result endpoint is GET (POST returns 400). Same fix
+    // as the QR retrieval call in klarna-create-session.
+    const verify = await klarnaFetch('GET', stripBase(session.result_url));
     if (verify.ok && verify.body && typeof verify.body === 'object') {
       const v = verify.body as Record<string, unknown>;
       if (typeof v.status === 'string') {

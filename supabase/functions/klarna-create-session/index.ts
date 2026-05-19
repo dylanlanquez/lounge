@@ -377,8 +377,13 @@ Deno.serve(async (req) => {
     return jsonError(502, 'Klarna session response invalid');
   }
 
-  // Pull the QR + payment_link.
-  const resultRes = await klarnaFetch('POST', stripBase(created.distribution.result_url), {}, idemKey);
+  // Pull the QR + payment_link. Klarna's result endpoint accepts
+  // GET with no body — POST returns
+  //   { error_code: 'BAD_REQUEST', error_messages: ["Request
+  //     method 'POST' is not supported"] }
+  // (earlier docs read described it as "send an empty body", which
+  // we interpreted as POST. It's actually GET with no body.)
+  const resultRes = await klarnaFetch('GET', stripBase(created.distribution.result_url));
   if (!resultRes.ok) {
     await supabase
       .from('lng_klarna_sessions')
