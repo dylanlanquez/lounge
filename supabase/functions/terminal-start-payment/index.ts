@@ -199,7 +199,15 @@ Deno.serve(async (req) => {
   piParams.append('metadata[visit_id]', body.visit_id);
   piParams.append('metadata[cart_id]', cart.id);
   piParams.append('metadata[payment_journey]', journey);
-  const piRes = await stripeFetch('POST', '/payment_intents', piParams, idemKey);
+  // Klarna PI creation needs the dahlia API version so Stripe's
+  // backend recognises this as a Klarna+Terminal QR flow. Anything
+  // older creates the PI but the reader never sees Klarna as an
+  // offered method, so it falls back to the standard card UI
+  // (which is exactly what we hit on the live reader after the
+  // first fix — PI accepted, reader rendering "Tap or insert").
+  // Card / Clearpay calls stay on acacia until we audit the diff.
+  const piApiVersion = journey === 'klarna' ? '2026-04-22.dahlia' : undefined;
+  const piRes = await stripeFetch('POST', '/payment_intents', piParams, idemKey, piApiVersion);
   if (!piRes.ok) {
     await logFailure('payment_intent_create_failed', { error: piRes.body });
     return jsonError(502, 'PaymentIntent failed');
@@ -310,11 +318,19 @@ async function stripeFetch(
   // klarna on a single PaymentIntent — URLSearchParams from a
   // Record can't carry repeats because it would coalesce on key).
   body?: Record<string, string> | URLSearchParams,
-  idempotencyKey?: string
+  idempotencyKey?: string,
+  // Optional per-call API version override. The default acacia
+  // version predates Klarna's display-QR-on-Terminal support; the
+  // Klarna PI creation needs at least the dahlia version (shipped
+  // 2026-04-22) for the reader to recognise Klarna as an offered
+  // method and surface the QR. Other endpoints stay on acacia
+  // until we audit the diff — versions are mostly back-compat but
+  // a global bump would touch refunds + reader connect too.
+  apiVersion?: string,
 ): Promise<{ ok: boolean; body: unknown }> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
-    'Stripe-Version': '2024-10-28.acacia',
+    'Stripe-Version': apiVersion ?? '2024-10-28.acacia',
   };
   if (body) headers['Content-Type'] = 'application/x-www-form-urlencoded';
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
