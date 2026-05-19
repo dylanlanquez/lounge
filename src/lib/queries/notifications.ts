@@ -32,6 +32,15 @@ export const NOTIFICATION_EVENT_TYPES = [
   'appointment_cancelled',
   'appointment_rescheduled',
   'visit_ended_early',
+  // Symmetric to visit_ended_early — fires from
+  // lng_reverse_visit_end when staff resumes a visit that was
+  // ended early or marked unsuitable. Same visit_id-only payload.
+  'patient_unsuitable_reversed',
+  // No-show pair: appointment_id on both. Reversed event fires
+  // when staff undoes a no-show because the patient arrived late
+  // or the status was set in error.
+  'no_show',
+  'no_show_reversed',
 ] as const;
 
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
@@ -74,6 +83,26 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationEventType, {
     verb: 'had their visit ended early for',
     settings: 'Visits ended early',
     hint: 'When staff ends an in-clinic visit before completion.',
+  },
+  patient_unsuitable_reversed: {
+    short: 'Visit resumed',
+    // verb unused — the row template hardcodes the sentence for
+    // this type since it doesn't fit the "[name] verb type" shape.
+    verb: 'had their visit resumed for',
+    settings: 'Resumed visits',
+    hint: 'When staff resumes a visit that was previously ended early or marked unsuitable.',
+  },
+  no_show: {
+    short: 'No show',
+    verb: 'was marked as no show for',
+    settings: 'No-shows',
+    hint: 'When an appointment is marked no-show because the patient did not arrive.',
+  },
+  no_show_reversed: {
+    short: 'No show reversed',
+    verb: 'had their no-show reversed for',
+    settings: 'Reversed no-shows',
+    hint: 'When a no-show is undone because the patient arrived late or the status was set in error.',
   },
 };
 
@@ -342,10 +371,17 @@ export function useNotifications(): UseNotificationsResult {
             if (typeof p.new_appointment_id === 'string') {
               directAppointmentIds.add(p.new_appointment_id);
             }
-          } else if (e.event_type === 'visit_ended_early') {
+          } else if (
+            e.event_type === 'visit_ended_early' ||
+            e.event_type === 'patient_unsuitable_reversed'
+          ) {
+            // Both visit-axis events carry only visit_id — the
+            // booking type is resolved via the visit row's
+            // appointment or walk-in link.
             if (typeof p.visit_id === 'string') visitIds.add(p.visit_id);
           } else {
-            // appointment_booked / appointment_cancelled.
+            // appointment_booked / appointment_cancelled / no_show /
+            // no_show_reversed — all four use payload.appointment_id.
             if (typeof p.appointment_id === 'string') {
               directAppointmentIds.add(p.appointment_id);
             }
@@ -517,7 +553,10 @@ function mapEventToRow(
       typeof payload.new_appointment_id === 'string' ? payload.new_appointment_id : null;
     appointmentIdForLink = newApptId;
     apptRow = newApptId ? appointmentsById.get(newApptId) ?? null : null;
-  } else if (type === 'visit_ended_early') {
+  } else if (
+    type === 'visit_ended_early' ||
+    type === 'patient_unsuitable_reversed'
+  ) {
     visitId = typeof payload.visit_id === 'string' ? payload.visit_id : null;
     const visit = visitId ? visitsById.get(visitId) ?? null : null;
     if (visit?.appointment_id) {
@@ -527,7 +566,8 @@ function mapEventToRow(
       walkInServiceType = walkInsById.get(visit.walk_in_id)?.service_type ?? null;
     }
   } else {
-    // appointment_booked / appointment_cancelled.
+    // appointment_booked / appointment_cancelled / no_show /
+    // no_show_reversed.
     const apptId =
       typeof payload.appointment_id === 'string' ? payload.appointment_id : null;
     appointmentIdForLink = apptId;
@@ -570,9 +610,18 @@ function mapEventToRow(
       (typeof payload.new_start_at === 'string' ? payload.new_start_at : null) ??
       apptRow?.start_at ??
       null;
-  } else if (type === 'visit_ended_early') {
+  } else if (type === 'visit_ended_early' || type === 'patient_unsuitable_reversed') {
+    // Visit-axis events have no future start_at to show — the
+    // "Nm ago" chip carries the only time signal these rows need.
+    startAt = null;
+  } else if (type === 'no_show_reversed') {
+    // No-show reversed reads better without the original date
+    // (it's a state correction, not a scheduling event). The
+    // restored status appears on the appointment's own surface
+    // when staff clicks through.
     startAt = null;
   } else {
+    // appointment_booked / appointment_cancelled / no_show.
     startAt =
       (typeof payload.start_at === 'string' ? payload.start_at : null) ??
       apptRow?.start_at ??
@@ -581,10 +630,11 @@ function mapEventToRow(
   const scheduledAtLabel = startAt ? formatNotificationDateTime(startAt) : null;
 
   // Link path:
-  //   • visit_ended_early → /visit/<id>        (after arrival)
-  //   • everything else   → /appointment/<id>  (pre-visit)
+  //   • visit_ended_early + patient_unsuitable_reversed
+  //     → /visit/<id>        (visit-scoped surface)
+  //   • everything else → /appointment/<id>  (pre-visit / appointment surface)
   const linkPath =
-    type === 'visit_ended_early'
+    type === 'visit_ended_early' || type === 'patient_unsuitable_reversed'
       ? visitId
         ? `/visit/${visitId}`
         : null

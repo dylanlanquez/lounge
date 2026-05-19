@@ -1,4 +1,12 @@
-import { CalendarPlus2, CalendarClock, CalendarX2, Ban } from 'lucide-react';
+import {
+  CalendarPlus2,
+  CalendarClock,
+  CalendarX2,
+  Ban,
+  RotateCcw,
+  UserX,
+  UserCheck,
+} from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { NotificationEventType } from '../../lib/queries/notifications.ts';
 
@@ -46,6 +54,24 @@ const SPEC_BY_TYPE: Record<NotificationEventType, IconSpec> = {
     Icon: Ban,
     fg: theme.color.warn,
     bg: 'rgba(179, 104, 21, 0.10)',
+  },
+  // Reversal events use the accent green and a Rotate icon — these
+  // are positive corrections (something was un-done) so they sit
+  // alongside "booked" tonally rather than alert / warn.
+  patient_unsuitable_reversed: {
+    Icon: RotateCcw,
+    fg: theme.color.accent,
+    bg: 'rgba(31, 77, 58, 0.10)',
+  },
+  no_show: {
+    Icon: UserX,
+    fg: theme.color.alert,
+    bg: 'rgba(184, 58, 42, 0.10)',
+  },
+  no_show_reversed: {
+    Icon: UserCheck,
+    fg: theme.color.accent,
+    bg: 'rgba(31, 77, 58, 0.10)',
   },
 };
 

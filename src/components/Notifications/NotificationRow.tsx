@@ -140,7 +140,9 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
                 color: theme.color.accent,
               }}
             >
-              {row.event_type === 'visit_ended_early' ? 'View visit' : 'View appointment'}
+              {row.event_type === 'visit_ended_early' || row.event_type === 'patient_unsuitable_reversed'
+                ? 'View visit'
+                : 'View appointment'}
               <ArrowRight size={14} />
             </span>
           ) : null}
@@ -276,6 +278,66 @@ function NotificationSentence({
         <>
           {Name}
           <Muted>{`’s visit ended early`}</Muted>.
+        </>
+      );
+
+    case 'patient_unsuitable_reversed':
+      // Visit was resumed (the in-app "Resume visit" button or an
+      // admin reversing an unsuitable verdict). Same name+type
+      // shape as visit_ended_early so the two sit visually
+      // symmetric in the list.
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted>{`’s `}</Muted>
+          {Type}
+          <Muted> visit was resumed</Muted>.
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted>{`’s visit was resumed`}</Muted>.
+        </>
+      );
+
+    case 'no_show':
+      // "Dylan Lane was marked as no show for their Denture Repair on Tuesday, 19 May 2026 at 11:30 BST."
+      // Type-unknown: "Dylan Lane was marked as no show for their appointment on [date]."
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted> was marked as no show for their </Muted>
+          {Type}
+          {Date ? (
+            <>
+              <Muted> on </Muted>
+              {Date}
+            </>
+          ) : null}
+          .
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted> was marked as no show for their appointment{Date ? ' on ' : ''}</Muted>
+          {Date}.
+        </>
+      );
+
+    case 'no_show_reversed':
+      // "Dylan Lane's Denture Repair no-show was reversed."
+      // Type-unknown: "Dylan Lane's no-show was reversed."
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted>{`’s `}</Muted>
+          {Type}
+          <Muted> no-show was reversed</Muted>.
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted>{`’s no-show was reversed`}</Muted>.
         </>
       );
   }
