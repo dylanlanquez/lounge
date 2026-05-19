@@ -316,13 +316,9 @@ function SmsTemplateRowComponent({
     setDisplayName(row.display_name ?? '');
   }, [isOpen, row.body, row.version, row.display_name]);
 
-  // Name is only edited from the General pill. Service-typed rows
-  // inherit the General row's name, so showing a Name input there
-  // would imply per-service rename which is not supported.
-  const showNameEditor = serviceType === null;
   const dirty =
     body !== row.body ||
-    (showNameEditor && (displayName.trim() || null) !== (row.display_name ?? null));
+    (displayName.trim() || null) !== (row.display_name ?? null);
   const preview = useMemo(() => renderSmsPreview(body), [body]);
   const summary = useMemo(() => summariseSmsBody(preview), [preview]);
 
@@ -351,9 +347,7 @@ function SmsTemplateRowComponent({
         key: row.key,
         service_type: serviceType,
         body,
-        // Name is only writable on the General pill. Forwarding
-        // undefined for service-typed rows leaves the column alone.
-        display_name: showNameEditor ? displayName : undefined,
+        display_name: displayName,
       });
       onRefresh();
       onToast({ tone: 'success', title: 'SMS template saved' });
@@ -557,18 +551,23 @@ function SmsTemplateRowComponent({
             gap: theme.space[4],
           }}
         >
-          {/* Name editor. General pill only, since service-typed rows
-              inherit the General name in the receptionist's picker.
-              Leave blank to fall back to the built-in humanised label. */}
-          {showNameEditor ? (
-            <Input
-              label="Name in the picker"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder={humaniseSmsKey(row.key)}
-              helper="Shown as the title of this row and as the option label in the Send-an-SMS dropdown on the Visit page. Leave blank to use the default."
-            />
-          ) : null}
+          {/* Name editor. Per row, so each pill can carry its own
+              label. The receptionist's Send-an-SMS picker on the
+              Visit page reads from the General row, so editing on
+              a service-typed pill renames how this override reads in
+              admin without affecting the picker. Blank falls back
+              to the built-in humanised label. */}
+          <Input
+            label="Name in the picker"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder={humaniseSmsKey(row.key)}
+            helper={
+              serviceType
+                ? `Renames this ${serviceLabel ?? 'override'} row in admin. The Send-an-SMS dropdown on the Visit page always reads from the General row, so to change what the receptionist sees, edit the name on the General pill.`
+                : "Shown as the title of this row and as the option label in the Send-an-SMS dropdown on the Visit page. Leave blank to use the default."
+            }
+          />
 
           {/* Editor */}
           <label
