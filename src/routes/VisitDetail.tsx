@@ -3284,6 +3284,7 @@ function buildVisitHeroProps(
       dateLong,
       timeLine: ribbon.timeLine,
       relative: ribbon.relative,
+      secondary: ribbon.secondary ?? null,
       service,
       tone: ribbon.tone,
       icon: ribbon.icon,
@@ -3330,6 +3331,10 @@ function buildVisitRibbon({
   icon: ReactNode;
   timeLine: ReactNode;
   relative: string | null;
+  /** Standalone affordance rendered on its own row beneath the time
+   * anchor — used to surface "Estimated appointment length →" for
+   * the live in-clinic state without dragging it inline. */
+  secondary?: ReactNode | null;
   tone: AppointmentHeroTone;
 } {
   // Terminal visit states ignore cart status — once a visit is
@@ -3399,6 +3404,10 @@ function buildVisitRibbon({
   // the projection reflects reality from the moment the patient
   // walked in.
   const arrivedStr = formatTime(visit.opened_at);
+  // Time anchor — kept clean of the Estimated-appointment-length
+  // affordance. The link is surfaced on its own row via `secondary`
+  // below so a narrow viewport never orphans a "·" separator above
+  // it.
   const anchor: ReactNode = isWalkIn ? (
     `Walked in ${arrivedStr}`
   ) : appointment ? (
@@ -3413,12 +3422,6 @@ function buildVisitRibbon({
       <span>Booked for {formatTime(appointment.start_at)}</span>
       <span style={{ color: theme.color.inkSubtle }}>·</span>
       <span>Arrived {arrivedStr}</span>
-      {onShowTimeline ? (
-        <>
-          <span style={{ color: theme.color.inkSubtle }}>·</span>
-          <VisitTimelineLink onClick={onShowTimeline} />
-        </>
-      ) : null}
     </span>
   ) : (
     'Patient in clinic'
@@ -3435,6 +3438,7 @@ function buildVisitRibbon({
     icon: <UserCheck size={16} aria-hidden />,
     timeLine: anchor,
     relative: null,
+    secondary: onShowTimeline ? <VisitTimelineLink onClick={onShowTimeline} /> : null,
     tone: 'accent',
   };
 }

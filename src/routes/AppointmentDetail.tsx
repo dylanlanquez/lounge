@@ -1023,6 +1023,7 @@ function Hero({
           dateLong,
           timeLine: ribbon.timeLine,
           relative,
+          secondary: ribbon.secondary ?? null,
           service,
           tone: ribbon.tone,
           icon: ribbon.icon,
@@ -1152,6 +1153,12 @@ function buildApptRibbon(
   dateLong?: string;
   timeLine: ReactNode;
   relative: string | null;
+  /** Standalone secondary affordance rendered on its OWN row below
+   * the time/relative line — used to surface the "Estimated
+   * appointment length" link without dragging it inline with the
+   * "Booked for 08:30 · In 3 days" anchor, where a wrap on a narrow
+   * viewport orphaned the bullet separator. */
+  secondary?: ReactNode | null;
   tone: AppointmentHeroTone;
 } {
   const startMs = new Date(appt.start_at).getTime();
@@ -1159,24 +1166,22 @@ function buildApptRibbon(
   const timeRange = formatTimeRange(appt.start_at, appt.end_at);
   const startStr = formatTime(appt.start_at);
   // For 'booked' rows we replace the misleading "09:15 — 09:45" range
-  // with just the start time + an inline link that opens the full
-  // phase timeline. The end of the appointment can be hours later if
-  // the booking has a passive lab phase mid-flow (e.g. Click-in
-  // veneers: Book-in 10m + Impression 5m + Manufacture 4h + Try In
-  // 10m), so the patient and the receptionist were both reading a
-  // dishonest single-block window. We only swap when the timeline is
-  // actually available (caller passed a non-null onShowTimeline) —
-  // services with zero or one configured phase fall back to the
-  // original range string.
+  // with just the start time. The end of the appointment can be
+  // hours later if the booking has a passive lab phase mid-flow
+  // (e.g. Click-in veneers: Book-in 10m + Impression 5m +
+  // Manufacture 4h + Try In 10m), so the patient and the
+  // receptionist were both reading a dishonest single-block window.
+  // We only swap when the timeline is actually available (caller
+  // passed a non-null onShowTimeline) — services with zero or one
+  // configured phase fall back to the original range string.
+  // The "Estimated appointment length" link is rendered separately
+  // as the ribbon's `secondary` row below so the time anchor stays
+  // a clean single phrase.
   const canShowTimeline = onShowTimeline !== null;
-  const bookedForLine: ReactNode = canShowTimeline ? (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-      <span>Booked for {startStr}</span>
-      <TimelineLink onClick={onShowTimeline!} />
-    </span>
-  ) : (
-    `Booked for ${timeRange}`
-  );
+  const bookedForLine: ReactNode = canShowTimeline ? `Booked for ${startStr}` : `Booked for ${timeRange}`;
+  const timelineLink: ReactNode | null = canShowTimeline ? (
+    <TimelineLink onClick={onShowTimeline!} />
+  ) : null;
 
   switch (appt.status) {
     case 'booked': {
@@ -1190,6 +1195,7 @@ function buildApptRibbon(
           icon: <CalendarClock size={16} aria-hidden />,
           timeLine: bookedForLine,
           relative: relativeDay(appt.start_at),
+          secondary: timelineLink,
           tone: 'accent',
         };
       }
@@ -1197,6 +1203,7 @@ function buildApptRibbon(
         icon: <AlertTriangle size={16} aria-hidden />,
         timeLine: bookedForLine,
         relative: 'Patient overdue',
+        secondary: timelineLink,
         tone: 'warn',
       };
     }

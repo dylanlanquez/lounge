@@ -58,6 +58,12 @@ export interface AppointmentHeroWhen {
    * related row. Rendered in the accent colour so action affordances
    * land on the natural focal point of the ribbon. */
   relative?: ReactNode | null;
+  /** Optional standalone secondary line rendered on its OWN row below
+   * the time anchor — used by AppointmentDetail to surface the
+   * "Estimated appointment length →" link without dragging it inline
+   * with the "Booked for 08:30 · In 3 days" anchor. ReactNode so
+   * callers can compose interactive content. */
+  secondary?: ReactNode | null;
   /** Optional service / event-type label below the date row. */
   service?: string | null;
   /** Drives the ribbon tint. */
@@ -260,6 +266,20 @@ export function AppointmentHero({
               </span>
             ) : null}
           </p>
+          {when.secondary ? (
+            // Standalone affordance below the time/relative anchor.
+            // Reads as its own action ("Estimated appointment length →")
+            // rather than being squeezed inline with the date/relative
+            // phrase, where a wrap would orphan the "·" separator.
+            <p
+              style={{
+                margin: `${theme.space[2]}px 0 0`,
+                fontSize: theme.type.size.sm,
+              }}
+            >
+              {when.secondary}
+            </p>
+          ) : null}
         </div>
         {when.service ? (
           <p
