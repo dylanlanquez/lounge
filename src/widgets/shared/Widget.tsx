@@ -105,6 +105,10 @@ export interface WidgetPrefill {
   shopifyCustomerEmail?: string | null;
   /** Held but not used yet — see staff-link-shopify-customer. */
   shopifyCustomerId?: string | null;
+  /** When true, the same-day appliance product picker renders an
+   *  extra cross-service "Click-in veneers" card. Driven by the
+   *  embed dataset (data-include-click-in="1"). Defaults false. */
+  includeClickIn?: boolean;
 }
 
 export interface WidgetProps {
@@ -278,6 +282,7 @@ function WidgetReady({
       productConfig={productConfig}
       onClose={onClose}
       prefill={enrichedPrefill}
+      includeClickIn={prefill?.includeClickIn === true}
     />
   );
 }
@@ -293,6 +298,7 @@ function BookingFlow({
   productConfig,
   onClose,
   prefill: resolvedPrefill,
+  includeClickIn,
 }: {
   locations: WidgetLocation[];
   copy: WidgetCopy;
@@ -303,6 +309,11 @@ function BookingFlow({
    *  from the pre-mount catalogue lookup so useBookingState's state
    *  initialiser has everything it needs synchronously. */
   prefill: ResolvedPrefill;
+  /** Pass-through opt-in for the cross-service Click-in veneers
+   *  card on the same-day product picker. Driven by the embed's
+   *  data-include-click-in flag — not part of ResolvedPrefill
+   *  because it's a render hint, not a state seed. */
+  includeClickIn: boolean;
 }) {
   const hasMeaningfulPrefill = Boolean(
     resolvedPrefill.service ||
@@ -594,6 +605,7 @@ function BookingFlow({
       copy={copy}
       brand={brand}
       locations={locations}
+      includeClickIn={includeClickIn}
       onNext={onFooterNext}
       onSubmit={submit}
       submitting={submitting}
@@ -620,6 +632,7 @@ function ChromeShell({
   copy,
   brand,
   locations,
+  includeClickIn,
   onNext,
   onSubmit,
   submitting,
@@ -636,6 +649,9 @@ function ChromeShell({
   copy: WidgetCopy;
   brand?: WidgetBrand;
   locations: WidgetLocation[];
+  /** Pass-through from prefill — gates the cross-service Click-in
+   *  veneers card on the same-day product picker. */
+  includeClickIn: boolean;
   onNext: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
@@ -732,6 +748,7 @@ function ChromeShell({
             copy={copy}
             locations={locations}
             accent={accent}
+            includeClickIn={includeClickIn}
             submissionError={submissionError}
             onDismissError={onDismissError}
             onSubmit={onSubmit}
@@ -925,6 +942,7 @@ function StepBody({
   copy,
   locations,
   accent,
+  includeClickIn,
   submissionError,
   onDismissError,
   onSubmit,
@@ -937,6 +955,10 @@ function StepBody({
   copy: WidgetCopy;
   locations: WidgetLocation[];
   accent: string;
+  /** When true, the same-day-appliance product picker renders an
+   *  extra cross-service "Click-in veneers" card. Driven by the
+   *  embed dataset (data-include-click-in="1") via WidgetPrefill. */
+  includeClickIn: boolean;
   submissionError: string | null;
   onDismissError: () => void;
   onSubmit: (paymentIntentId: string | null) => void;
@@ -991,6 +1013,7 @@ function StepBody({
         copy={copy}
         locations={locations}
         accent={accent}
+        includeClickIn={includeClickIn}
         onSubmit={onSubmit}
         submitting={submitting}
         paymentRef={paymentRef}
@@ -1006,6 +1029,7 @@ function StepRouter({
   copy,
   locations,
   accent,
+  includeClickIn,
   onSubmit,
   submitting,
   paymentRef,
@@ -1016,6 +1040,7 @@ function StepRouter({
   copy: WidgetCopy;
   locations: WidgetLocation[];
   accent: string;
+  includeClickIn: boolean;
   onSubmit: (paymentIntentId: string | null) => void;
   submitting: boolean;
   paymentRef: React.MutableRefObject<PaymentApi | null>;
@@ -1024,7 +1049,7 @@ function StepRouter({
 }) {
   if (api.stepKey.startsWith('axis:')) {
     const axisKey = api.stepKey.slice(5) as AxisKey;
-    return <AxisStep api={api} axisKey={axisKey} accent={accent} />;
+    return <AxisStep api={api} axisKey={axisKey} accent={accent} includeClickIn={includeClickIn} />;
   }
   // Denture-repair custom step keys. These never overlap with the
   // generic axis flow — see activeStepsFor in state.ts.

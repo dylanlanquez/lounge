@@ -21,6 +21,14 @@ interface MountDataset {
   repairVariant?: string;
   shopifyCustomerEmail?: string;
   shopifyCustomerId?: string;
+  /** data-include-click-in="1" on the trigger. Opt-in: when set,
+   *  the product picker (axis:product_key) renders an extra
+   *  Click-in veneers card alongside the same-day appliance
+   *  options so a same-day landing page can also offer the
+   *  cross-service path without a second button. Defaults off so
+   *  service-pinned triggers don't quietly reveal a different
+   *  service from underneath the patient. */
+  includeClickIn?: string;
 }
 
 interface DloungeApi {
@@ -101,6 +109,7 @@ function getDlounge(): DloungeApi | undefined {
           repairVariant: ds.repairVariant,
           shopifyCustomerEmail: ds.shopifyCustomerEmail,
           shopifyCustomerId: ds.shopifyCustomerId,
+          includeClickIn: ds.includeClickIn,
         },
         closeFromHost,
       );

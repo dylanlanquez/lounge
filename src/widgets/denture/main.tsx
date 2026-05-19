@@ -26,6 +26,11 @@ interface MountDataset {
   repairVariant?: string;
   shopifyCustomerEmail?: string;
   shopifyCustomerId?: string;
+  /** When "1", the product picker for same-day appliances renders
+   *  an extra "Click-in veneers" cross-service card. Opt-in so a
+   *  service-pinned trigger doesn't quietly offer a different
+   *  service from underneath the patient. */
+  includeClickIn?: string;
 }
 
 interface DloungeApi {
@@ -77,6 +82,7 @@ function renderTree(dataset: MountDataset, onClose: (() => void) | undefined) {
     locationId: dataset.location ?? null,
     shopifyCustomerEmail: dataset.shopifyCustomerEmail ?? null,
     shopifyCustomerId: dataset.shopifyCustomerId ?? null,
+    includeClickIn: dataset.includeClickIn === '1',
   };
   return (
     <StrictMode>

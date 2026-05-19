@@ -41,27 +41,34 @@ export function AxisStep({
   api,
   axisKey,
   accent = QUIZ.ACCENT,
+  includeClickIn = false,
 }: {
   api: BookingStateApi;
   axisKey: AxisKey;
   accent?: string;
+  /** When true and the active service is same-day-appliance, the
+   *  product picker appends a cross-service Click-in veneers card.
+   *  Driven by data-include-click-in="1" on the embed trigger. */
+  includeClickIn?: boolean;
 }) {
   const service = api.state.service;
   if (!service) return null;
   const axes = axesForService(service.serviceType as BookingServiceType);
   const axis = axes.find((a) => a.key === axisKey) ?? null;
   if (!axis) return null;
-  return <AxisOptions api={api} axis={axis} accent={accent} />;
+  return <AxisOptions api={api} axis={axis} accent={accent} includeClickIn={includeClickIn} />;
 }
 
 function AxisOptions({
   api,
   axis,
   accent,
+  includeClickIn,
 }: {
   api: BookingStateApi;
   axis: AxisDef;
   accent: string;
+  includeClickIn: boolean;
 }) {
   const [options, setOptions] = useState<AxisValueOption[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -180,16 +187,17 @@ function AxisOptions({
             );
           })}
           {/* Cross-service option appended to the same-day-appliance
-              product picker so a patient who picked "Same-day
-              appliance" at the service step can still pivot to
-              click-in veneers without back-navigating. Picking it
-              calls setService, which resets axes / repair lines /
-              upgrades, and the booking flow continues into the
-              click-in-veneers shape on the next Next tap. Only
-              rendered when click-in veneers is enabled in the live
-              booking-types config (no widget surface for it = don't
-              offer it here). */}
-          {api.state.service?.serviceType === 'same_day_appliance' ? (
+              product picker so a patient who picked the same-day
+              appliance service can still pivot to click-in veneers
+              without back-navigating. OPT-IN via the embed's
+              data-include-click-in flag — service-pinned triggers
+              (e.g. a "Book a retainer" CTA) don't quietly offer a
+              different service from underneath the patient. Picking
+              the card calls setService, which now also resets
+              stepKey to 'service' so the patient lands on the
+              Service step with click-in veneers selected and can
+              tap Next into the click-in-veneers flow. */}
+          {includeClickIn && api.state.service?.serviceType === 'same_day_appliance' ? (
             <CrossServiceClickInOption api={api} accent={accent} />
           ) : null}
         </OptionGrid>

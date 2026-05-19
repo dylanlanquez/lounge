@@ -496,10 +496,15 @@ export function useBookingState(
 
   // Choosing a service resets axis pins and upgrades (previous
   // service's choices don't transfer). Navigation does NOT advance
-  // automatically — the footer Next button is the sole way to move
-  // between steps, matching the retainer-cart UX. If the customer
-  // back-navigates and re-picks a service, they explicitly tap Next
-  // to walk into the new axes.
+  // automatically when picked from the Service step — the footer
+  // Next button is the sole way to move forward, matching the
+  // retainer-cart UX. BUT — when called from a deeper step (e.g.
+  // the cross-service Click-in veneers card on the same-day
+  // product picker), the user is currently sitting on a stepKey
+  // that no longer belongs to the new service's activeSteps; we
+  // pivot them back to the Service step so they can confirm and
+  // tap Next into the new service's flow. From the Service step
+  // itself this is a no-op (already there).
   const setService = (service: WidgetBookingType | null) => {
     setState((prev) => ({
       ...prev,
@@ -508,6 +513,7 @@ export function useBookingState(
       repairItems: [],
       upgradeIds: [],
     }));
+    setStepKey('service');
   };
 
   /** Update one axis pin. Does NOT advance to the next step —
