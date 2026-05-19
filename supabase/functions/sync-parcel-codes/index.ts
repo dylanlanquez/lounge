@@ -19,13 +19,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { sendShippingEmail } from '../_shared/shippingEmail.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL               = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const CHECKPOINT_SUPABASE_URL    = Deno.env.get('CHECKPOINT_SUPABASE_URL') ?? '';
 const CHECKPOINT_SERVICE_ROLE_KEY = Deno.env.get('CHECKPOINT_SERVICE_ROLE_KEY') ?? '';
 const RESEND_API_KEY             = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM                = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -163,6 +163,7 @@ async function trySendEmail(
 
   if (!claimed?.length) return; // another concurrent call won the race
 
+  const sender = await getEmailSenderHeaders(admin);
   const sent = await sendShippingEmail(admin, {
     visitId:          visit.id,
     patientEmail:     patient.email,
@@ -173,7 +174,8 @@ async function trySendEmail(
     items:            [],
     dispatchRef:      visit.dispatch_ref,
     resendApiKey:     RESEND_API_KEY,
-    resendFrom:       RESEND_FROM,
+    resendFrom:       sender.from,
+    resendReplyTo:    sender.replyTo,
   });
 
   if (sent) {

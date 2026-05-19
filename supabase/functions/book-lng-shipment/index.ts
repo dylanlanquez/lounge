@@ -30,6 +30,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { sendShippingEmail } from '../_shared/shippingEmail.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL             = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -40,7 +41,6 @@ const ANON_KEY                 = Deno.env.get('SUPABASE_ANON_KEY')!;
 // egress IP are rejected by DPD's IP allowlist.
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM    = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
 
 const CHECKPOINT_SUPABASE_URL        = Deno.env.get('CHECKPOINT_SUPABASE_URL') ?? '';
 const CHECKPOINT_SERVICE_ROLE_KEY    = Deno.env.get('CHECKPOINT_SERVICE_ROLE_KEY') ?? '';
@@ -354,6 +354,7 @@ async function handle(req: Request): Promise<Response> {
 
     if (claimed && claimed.length > 0) {
       try {
+        const sender = await getEmailSenderHeaders(admin);
         const result = await sendShippingEmail(admin, {
           visitId:          visit_id,
           patientId:        visit.patient_id,
@@ -366,7 +367,8 @@ async function handle(req: Request): Promise<Response> {
           items:            itemLabels,
           dispatchRef:      dispatch_ref,
           resendApiKey:     RESEND_API_KEY,
-          resendFrom:       RESEND_FROM,
+          resendFrom:       sender.from,
+          resendReplyTo:    sender.replyTo,
         });
         dispatchEmailMessageId = result.emailMessageId;
       } catch (e) {

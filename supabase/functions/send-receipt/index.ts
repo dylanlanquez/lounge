@@ -19,24 +19,14 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { properCase } from '../_shared/properCase.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
+import { sendSms as sendSmsShared } from '../_shared/twilioSms.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-// Use the same verified sender as every other Lounge email (booking
-// confirmations, reminders, dispatch). The previous receipts@venneir.com
-// alias wasn't on a verified domain so Resend rejected every send with
-// 403 validation_error. RESEND_FROM_BOOKING is the canonical env var
-// across this project; receipts now ride on the same DNS-verified
-// lounge@venneir.com sender so deliveries land instead of bouncing.
-const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@notifications.venneir.com>';
-const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@notifications.venneir.com';
-
-const TWILIO_SID = Deno.env.get('TWILIO_ACCOUNT_SID') ?? '';
-const TWILIO_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN') ?? '';
-const TWILIO_FROM = Deno.env.get('TWILIO_FROM_NUMBER') ?? '';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -183,9 +173,16 @@ Deno.serve(async (req) => {
   }
 
   // 2. Deliver
+  //
+  // From + reply-to are resolved at send time from admin (Admin →
+  // Branding → Email sender). Falling back to env + hardcoded
+  // defaults keeps preview / dev DBs working before lng_settings
+  // is seeded. We compute them once here so the audit row's
+  // from_email and the actual Resend request stay in lockstep.
+  const senderHeaders = await getEmailSenderHeaders(supabase);
   let deliveryResult: { ok: true; provider: string; messageId?: string } | { ok: false; error: string };
   if (receipt.channel === 'email') {
-    deliveryResult = await sendEmail(recipient, subject, html, text);
+    deliveryResult = await sendEmail(senderHeaders, recipient, subject, html, text);
   } else if (receipt.channel === 'sms') {
     deliveryResult = await sendSms(recipient, text);
   } else {
@@ -216,8 +213,8 @@ Deno.serve(async (req) => {
         html,
         body_text: text,
         to_email: recipient,
-        from_email: RESEND_FROM,
-        reply_to: RESEND_REPLY_TO,
+        from_email: senderHeaders.from,
+        reply_to: senderHeaders.replyTo,
         send_status: 'failed',
         send_error: deliveryResult.error,
       });
@@ -257,8 +254,8 @@ Deno.serve(async (req) => {
       html,
       body_text: text,
       to_email: recipient,
-      from_email: RESEND_FROM,
-      reply_to: RESEND_REPLY_TO,
+      from_email: senderHeaders.from,
+      reply_to: senderHeaders.replyTo,
       provider: deliveryResult.provider,
       provider_message_id: deliveryResult.messageId ?? null,
       send_status: 'sent',
@@ -329,6 +326,7 @@ async function writeReceiptTimelineEvent(args: {
 // ---------- Senders ----------
 
 async function sendEmail(
+  headers: { from: string; replyTo: string },
   to: string,
   subject: string,
   html: string,
@@ -342,9 +340,9 @@ async function sendEmail(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: RESEND_FROM,
+      from: headers.from,
       to: [to],
-      reply_to: RESEND_REPLY_TO,
+      reply_to: headers.replyTo,
       subject,
       html,
       text,
@@ -355,26 +353,24 @@ async function sendEmail(
   return { ok: true, provider: 'resend', messageId: (body as { id?: string }).id };
 }
 
+// Receipts now ride the same Twilio Messaging Service ("Venneir"
+// alphanumeric sender in GB) as the visit-ready / please-call /
+// please-return SMS, instead of the raw TWILIO_FROM_NUMBER path.
+// One sender across every patient-facing text means a patient who
+// replies to a receipt with "stop" lands the STOP keyword on the
+// same number that booking + reminders went through.
 async function sendSms(
   to: string,
   text: string
 ): Promise<{ ok: true; provider: string; messageId?: string } | { ok: false; error: string }> {
-  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
-    return { ok: false, error: 'delivery_not_configured: TWILIO_* unset' };
+  const result = await sendSmsShared({ to, body: text });
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: `Twilio ${result.status}${result.code ? ` ${result.code}` : ''}: ${result.message}`,
+    };
   }
-  const auth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);
-  const params = new URLSearchParams({ From: TWILIO_FROM, To: to, Body: text });
-  const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${auth}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: params.toString(),
-  });
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, error: `Twilio ${r.status}: ${(body as { message?: string }).message ?? 'failed'}` };
-  return { ok: true, provider: 'twilio', messageId: (body as { sid?: string }).sid };
+  return { ok: true, provider: 'twilio', messageId: result.sid };
 }
 
 // ---------- Render ----------

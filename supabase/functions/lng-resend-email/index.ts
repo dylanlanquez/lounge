@@ -25,6 +25,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -131,17 +132,16 @@ async function handle(req: Request): Promise<Response> {
   //    treated as the canonical record. The only thing that shifts
   //    is the recipient.
   //
-  // From/reply-to always come from the env var (the canonical
-  // DNS-verified sender), never the stored from_email. A row that
-  // was originally written before the sender was unified (e.g. the
-  // legacy receipts@venneir.com alias) would otherwise replay to an
-  // unverified domain and bounce with the same Resend 403 the
-  // original send failed on. The persisted from is informational
-  // audit, not a routing instruction.
-  const envFrom = Deno.env.get('RESEND_FROM_BOOKING')
-    ?? 'Venneir Appointments <lounge@notifications.venneir.com>';
-  const envReplyTo = Deno.env.get('RESEND_REPLY_TO_BOOKING')
-    ?? 'lounge@notifications.venneir.com';
+  // From/reply-to always come from the current admin-edited sender
+  // row (Admin → Branding → Email sender), never the stored
+  // from_email. A row that was originally written before the sender
+  // was unified (e.g. the legacy receipts@venneir.com alias) would
+  // otherwise replay to an unverified domain and bounce with the
+  // same Resend 403 the original send failed on. The persisted
+  // from_email is informational audit, not a routing instruction.
+  const senderHeaders = await getEmailSenderHeaders(admin);
+  const envFrom = senderHeaders.from;
+  const envReplyTo = senderHeaders.replyTo;
   const resendBody: Record<string, unknown> = {
     from: envFrom,
     to: [recipient],

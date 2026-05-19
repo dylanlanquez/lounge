@@ -31,6 +31,7 @@ export interface ShippingEmailCtx {
   dispatchRef:       string;
   resendApiKey:      string;
   resendFrom:        string;
+  resendReplyTo:     string;
 }
 
 export interface ShippingEmailResult {
@@ -82,6 +83,7 @@ export async function sendShippingEmail(
     body: JSON.stringify({
       from:    ctx.resendFrom,
       to:      [ctx.patientEmail],
+      reply_to: ctx.resendReplyTo,
       subject,
       html,
       text: bodyText,
@@ -102,6 +104,7 @@ export async function sendShippingEmail(
       body_text:   bodyText,
       to_email:    ctx.patientEmail,
       from_email:  ctx.resendFrom,
+      reply_to:    ctx.resendReplyTo,
       send_status: 'failed',
       send_error:  `Resend ${res.status}: ${body.slice(0, 500)}`,
     });
@@ -122,6 +125,7 @@ export async function sendShippingEmail(
     body_text:   bodyText,
     to_email:    ctx.patientEmail,
     from_email:  ctx.resendFrom,
+    reply_to:    ctx.resendReplyTo,
     provider_message_id: providerMessageId,
     send_status: 'sent',
   });

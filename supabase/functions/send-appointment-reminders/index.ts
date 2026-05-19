@@ -32,13 +32,12 @@ import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
 import { resolveLivePhasesForAppointment } from '../_shared/livePhaseResolver.ts';
 import { properCase } from '../_shared/properCase.ts';
+import { getEmailSenderHeaders, type EmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
-const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
 
 // Optional shared secret. When set, callers must pass
 // X-Cron-Secret: <value> OR Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>.
@@ -105,6 +104,13 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  // Resolve the canonical From + Reply-To headers once per cron tick
+  // from Admin → Branding → Email sender. Threaded through processOne
+  // so every reminder in the same sweep ships under the same identity
+  // even if an admin saves a rebrand mid-loop (we read once, send
+  // consistent), and the receipt audit rows record the exact pair the
+  // Resend POST used.
+  const senderHeaders = await getEmailSenderHeaders(admin);
 
   // ── Load templates ─────────────────────────────────────────────
   // Per-service overrides (M17): we may have multiple rows per
@@ -248,7 +254,7 @@ async function handle(req: Request): Promise<Response> {
       const perRowVirtual =
         resolveTemplate('appointment_reminder_virtual', apt.service_type ?? null) ??
         virtualTemplate;
-      const result = await processOne(admin, { standard: perRowStandard, virtual: perRowVirtual }, apt);
+      const result = await processOne(admin, senderHeaders, { standard: perRowStandard, virtual: perRowVirtual }, apt);
       if (result.outcome === 'sent') sent += 1;
       else if (result.outcome === 'skipped') skipped += 1;
       else {
@@ -305,6 +311,7 @@ type TemplateRow = { subject: string; body_syntax: string; enabled: boolean };
 
 async function processOne(
   admin: SupabaseClient,
+  senderHeaders: EmailSenderHeaders,
   templates: { standard: TemplateRow; virtual: TemplateRow | null },
   apt: AppointmentRow,
 ): Promise<ProcessResult> {
@@ -437,7 +444,7 @@ async function processOne(
   const text = bodyToText(bodyAfterVars);
 
   // Send.
-  const sendResult = await sendEmail({ to: patient.email, subject, html, text });
+  const sendResult = await sendEmail({ headers: senderHeaders, to: patient.email, subject, html, text });
   if (!sendResult.ok) {
     await recordEmailMessage(admin, {
       patient_id: apt.patient_id,
@@ -449,8 +456,8 @@ async function processOne(
       html,
       body_text: text,
       to_email: patient.email,
-      from_email: RESEND_FROM,
-      reply_to: RESEND_REPLY_TO,
+      from_email: senderHeaders.from,
+      reply_to: senderHeaders.replyTo,
       send_status: 'failed',
       send_error: sendResult.error,
     });
@@ -479,8 +486,8 @@ async function processOne(
     html,
     body_text: text,
     to_email: patient.email,
-    from_email: RESEND_FROM,
-    reply_to: RESEND_REPLY_TO,
+    from_email: senderHeaders.from,
+    reply_to: senderHeaders.replyTo,
     provider_message_id: sendResult.messageId ?? null,
     send_status: 'sent',
   });
@@ -1390,6 +1397,7 @@ function wrapInLoungeShell(bodyHtml: string, brand: BrandSettings): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function sendEmail(args: {
+  headers: EmailSenderHeaders;
   to: string;
   subject: string;
   html: string;
@@ -1404,9 +1412,9 @@ async function sendEmail(args: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: RESEND_FROM,
+        from: args.headers.from,
         to: [args.to],
-        reply_to: RESEND_REPLY_TO,
+        reply_to: args.headers.replyTo,
         subject: args.subject,
         html: args.html,
         text: args.text,

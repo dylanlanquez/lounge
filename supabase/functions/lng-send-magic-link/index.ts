@@ -30,6 +30,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { loadBrand, loadTemplate, renderAndSend } from '../_shared/emailRenderer.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -39,14 +40,6 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 const REDIRECT_TO =
   Deno.env.get('LNG_MAGICLINK_REDIRECT_URL') ?? 'https://lounge.venneir.com/schedule';
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM =
-  Deno.env.get('LNG_AUTH_FROM') ??
-  Deno.env.get('RESEND_FROM_BOOKING') ??
-  'Venneir Appointments <lounge@venneir.com>';
-const RESEND_REPLY_TO =
-  Deno.env.get('LNG_AUTH_REPLY_TO') ??
-  Deno.env.get('RESEND_REPLY_TO_BOOKING') ??
-  'lounge@venneir.com';
 const LOUNGE_PUBLIC_URL = (
   Deno.env.get('LOUNGE_PUBLIC_URL') ?? 'https://lounge.venneir.com'
 ).replace(/\/+$/, '');
@@ -179,10 +172,11 @@ Deno.serve(async (req) => {
     });
   }
   const brand = await loadBrand(admin);
+  const sender = await getEmailSenderHeaders(admin);
   const result = await renderAndSend({
     apiKey: RESEND_API_KEY,
-    from: RESEND_FROM,
-    replyTo: RESEND_REPLY_TO,
+    from: sender.from,
+    replyTo: sender.replyTo,
     to: recipientEmail,
     template: tpl,
     brand,

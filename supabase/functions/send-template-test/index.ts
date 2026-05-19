@@ -23,14 +23,13 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { parseFormatting, wrapInLoungeShell, EMPTY_BRAND } from '../_shared/emailRenderer.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
-const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
 
 Deno.serve(async (req) => {
   try {
@@ -117,13 +116,12 @@ async function handle(req: Request): Promise<Response> {
   const html = wrapInLoungeShell(parseFormatting(bodyAfterVars), EMPTY_BRAND);
   const text = bodyToText(bodyAfterVars);
 
-  const sendResult = await sendEmail({ to, subject: subjectFinal, html, text });
+  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const sender = await getEmailSenderHeaders(admin);
+  const sendResult = await sendEmail({ headers: sender, to, subject: subjectFinal, html, text });
   if (!sendResult.ok) {
     return jsonResponse(200, { ok: false, error: sendResult.error });
   }
-
-  // Audit row so admins can see who sent which test.
-  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   await admin.from('lng_event_log').insert({
     source: 'send-template-test',
     event_type: 'test_sent',
@@ -181,6 +179,7 @@ function bodyToText(syntax: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function sendEmail(args: {
+  headers: { from: string; replyTo: string };
   to: string;
   subject: string;
   html: string;
@@ -195,9 +194,9 @@ async function sendEmail(args: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: RESEND_FROM,
+        from: args.headers.from,
         to: [args.to],
-        reply_to: RESEND_REPLY_TO,
+        reply_to: args.headers.replyTo,
         subject: args.subject,
         html: args.html,
         text: args.text,

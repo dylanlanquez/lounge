@@ -33,6 +33,7 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 import { LNG_INTERNAL_TOKEN_HEADER } from '../_shared/invokeAppointmentConfirmation.ts';
 import { properCase } from '../_shared/properCase.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
@@ -43,13 +44,6 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-// Booking emails go from a separate sender than receipts so the
-// patient sees a coherent thread per topic. Falls back to the
-// lounge@ address per the working agreement; can be overridden via
-// the RESEND_FROM_BOOKING env var if we ever want to test on a
-// dev sender without redeploying.
-const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
-const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
 // Used to build the {{manageUrl}} variable. Defaults to the
 // customer-facing book.venneir.com domain so links land on the
 // widget-only deployment with no staff code in scope. Override
@@ -130,6 +124,10 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  // Pull the canonical sender once per invocation. Admin → Branding
+  // → Email sender drives display name + reply-to; the verified
+  // Resend address comes from env (RESEND_SENDER_ADDRESS).
+  const senderHeaders = await getEmailSenderHeaders(admin);
 
   // ── Hydrate new appointment ────────────────────────────────────
   const apt = await readAppointment(admin, appointmentId);
@@ -208,8 +206,8 @@ async function handle(req: Request): Promise<Response> {
       location: locationFreeform(location),
       startAt: apt.start_at,
       endAt: apt.end_at,
-      organizerEmail: RESEND_REPLY_TO,
-      organizerName: 'Venneir Appointments',
+      organizerEmail: senderHeaders.replyTo,
+      organizerName: senderHeaders.fromName,
       attendeeEmail: patient.email,
       attendeeName: fullName(patient),
       url: apt.join_url ?? null,
@@ -226,8 +224,8 @@ async function handle(req: Request): Promise<Response> {
       location: locationFreeform(location),
       startAt: apt.start_at,
       endAt: apt.end_at,
-      organizerEmail: RESEND_REPLY_TO,
-      organizerName: 'Venneir Appointments',
+      organizerEmail: senderHeaders.replyTo,
+      organizerName: senderHeaders.fromName,
       attendeeEmail: patient.email,
       attendeeName: fullName(patient),
       url: apt.join_url ?? null,
@@ -243,8 +241,8 @@ async function handle(req: Request): Promise<Response> {
         location: locationFreeform(location),
         startAt: oldApt.start_at,
         endAt: oldApt.end_at,
-        organizerEmail: RESEND_REPLY_TO,
-        organizerName: 'Venneir Appointments',
+        organizerEmail: senderHeaders.replyTo,
+        organizerName: senderHeaders.fromName,
         attendeeEmail: patient.email,
         attendeeName: fullName(patient),
         url: oldApt.join_url ?? null,
@@ -394,6 +392,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const sendResult = await sendEmail({
+    headers: senderHeaders,
     to: patient.email,
     subject,
     html,
@@ -415,8 +414,8 @@ async function handle(req: Request): Promise<Response> {
       html,
       body_text: text,
       to_email: patient.email,
-      from_email: RESEND_FROM,
-      reply_to: RESEND_REPLY_TO,
+      from_email: senderHeaders.from,
+      reply_to: senderHeaders.replyTo,
       send_status: 'failed',
       send_error: sendResult.error,
     });
@@ -448,8 +447,8 @@ async function handle(req: Request): Promise<Response> {
     html,
     body_text: text,
     to_email: patient.email,
-    from_email: RESEND_FROM,
-    reply_to: RESEND_REPLY_TO,
+    from_email: senderHeaders.from,
+    reply_to: senderHeaders.replyTo,
     provider_message_id: sendResult.messageId ?? null,
     send_status: 'sent',
   });
@@ -1879,6 +1878,7 @@ function fullName(p: PatientRow): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function sendEmail(args: {
+  headers: { from: string; replyTo: string };
   to: string;
   subject: string;
   html: string;
@@ -1894,9 +1894,9 @@ async function sendEmail(args: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: RESEND_FROM,
+        from: args.headers.from,
         to: [args.to],
-        reply_to: RESEND_REPLY_TO,
+        reply_to: args.headers.replyTo,
         subject: args.subject,
         html: args.html,
         text: args.text,

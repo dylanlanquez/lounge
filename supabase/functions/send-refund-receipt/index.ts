@@ -20,16 +20,12 @@ import {
 } from '../_shared/emailRenderer.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { properCase } from '../_shared/properCase.ts';
+import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM =
-  Deno.env.get('RESEND_FROM_BOOKING') ??
-  'Venneir Appointments <lounge@notifications.venneir.com>';
-const RESEND_REPLY_TO =
-  Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@notifications.venneir.com';
 
 const TEMPLATE_KEY = 'refund_receipt';
 
@@ -167,10 +163,11 @@ Deno.serve(async (req) => {
   if (!RESEND_API_KEY) {
     return j(200, { ok: false, reason: 'delivery_not_configured' });
   }
+  const sender = await getEmailSenderHeaders(supabase);
   const send = await renderAndSend({
     apiKey: RESEND_API_KEY,
-    from: RESEND_FROM,
-    replyTo: RESEND_REPLY_TO,
+    from: sender.from,
+    replyTo: sender.replyTo,
     to: patient.email,
     template,
     brand,
@@ -197,8 +194,8 @@ Deno.serve(async (req) => {
     template_key: TEMPLATE_KEY,
     subject: send.subject,
     to_email: patient.email,
-    from_email: RESEND_FROM,
-    reply_to: RESEND_REPLY_TO,
+    from_email: sender.from,
+    reply_to: sender.replyTo,
     provider: 'resend',
     provider_message_id: send.messageId ?? null,
     send_status: 'sent',
