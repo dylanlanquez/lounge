@@ -1901,6 +1901,10 @@ export function VisitDetail() {
                           patientId={patient.id}
                           patientPhone={patient.phone ?? null}
                           patientFirstName={patient.first_name ?? null}
+                          cartSignature={items
+                            .map((it) => `${it.service_type ?? ''}|${it.product_key ?? ''}`)
+                            .sort()
+                            .join(';')}
                         />
                       ) : null}
                       <VisitActionStack

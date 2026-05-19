@@ -179,6 +179,48 @@ async function handle(req: Request): Promise<Response> {
     settingsRows.map((r) => [r.key, typeof r.value === 'string' ? r.value : String(r.value ?? '')]),
   );
 
+  // Cart composition drives template + itemLabel selection. The
+  // appointment's own service_type is a starting hint (and the
+  // pre-cart fallback), but once the receptionist has added lines
+  // the cart is the ground truth for "what is this patient
+  // actually collecting". A mixed cart (e.g. a same-day retainer
+  // alongside a denture repair) cannot be served by a per-service
+  // override that names one of those service types, so we
+  // collapse the lookup to null and let lng_resolve_sms_template
+  // fall back to the General row.
+  let cartServiceTypes = new Set<string>();
+  let cartProductKeys = new Set<string>();
+  const { data: cartRow } = await admin
+    .from('lng_carts')
+    .select('id')
+    .eq('visit_id', visit.id)
+    .maybeSingle();
+  if (cartRow) {
+    const { data: itemRows } = await admin
+      .from('lng_cart_items')
+      .select('service_type, product_key')
+      .eq('cart_id', (cartRow as { id: string }).id)
+      .is('removed_at', null);
+    for (const r of (itemRows ?? []) as Array<{
+      service_type: string | null;
+      product_key: string | null;
+    }>) {
+      if (r.service_type) cartServiceTypes.add(r.service_type);
+      if (r.product_key) cartProductKeys.add(r.product_key);
+    }
+  }
+  // Effective service_type for template resolution:
+  //   1+ distinct in cart   → single one wins, multiple ⇒ null (mixed → General)
+  //   none in cart          → fall back to the appointment's hint (pre-cart UX)
+  let effectiveServiceType: string | null;
+  if (cartServiceTypes.size === 1) {
+    effectiveServiceType = [...cartServiceTypes][0]!;
+  } else if (cartServiceTypes.size > 1) {
+    effectiveServiceType = null;
+  } else {
+    effectiveServiceType = appt?.service_type ?? null;
+  }
+
   // Walk-in fallback: by design lng_appointments.appointment_ref is
   // NULL on walk-in marker rows. The LAP for walk-ins lives on
   // lng_walk_ins.appointment_ref. Without this fallback every walk-in
@@ -226,7 +268,7 @@ async function handle(req: Request): Promise<Response> {
   // get the same downstream rendering.
   const { data: tplRpc, error: tplErr } = await admin.rpc('lng_resolve_sms_template', {
     p_key: templateKey,
-    p_service_type: appt?.service_type ?? null,
+    p_service_type: effectiveServiceType,
   });
   if (tplErr || !tplRpc || (Array.isArray(tplRpc) && tplRpc.length === 0)) {
     return jsonResponse(200, {
@@ -272,7 +314,7 @@ async function handle(req: Request): Promise<Response> {
     staffFirstName: staffFirstName || 'your clinician',
     appointmentRef: appointmentRef || '-',
     lwoRef: (patient.lwo_ref ?? '').trim() || '-',
-    itemLabel: resolveItemLabel(appt),
+    itemLabel: resolveItemLabel(appt, cartServiceTypes, cartProductKeys),
   };
   const renderedBody = substituteVariables(tpl.body, variables);
 
@@ -353,24 +395,53 @@ async function handle(req: Request): Promise<Response> {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Pick the noun the patient sees in "your {{itemLabel}} is ready
+// to collect". Cart is the source of truth once lines exist:
+//
+//   • mixed services in cart  → "appliance" (generic singular keeps
+//                               existing template wording grammatical
+//                               in the General-fallback path)
+//   • single service in cart  → service / product label from cart
+//                               (e.g. same_day_appliance + retainer
+//                               only ⇒ "retainer"; mixed product
+//                               keys under the same service ⇒
+//                               "appliance")
+//   • cart empty              → fall back to the appointment hint so
+//                               pre-cart sends ("running late",
+//                               "reminder to attend") still read
+//                               correctly
+const PRODUCT_KEY_LABELS: Record<string, string> = {
+  retainer: 'retainer',
+  aligner: 'aligner',
+  whitening_tray: 'whitening tray',
+  whitening_kit: 'whitening kit',
+  night_guard: 'night guard',
+  day_guard: 'day guard',
+  click_in_veneers: 'click-in veneers',
+  missing_tooth: 'tooth retainer',
+};
+
 function resolveItemLabel(
   appt: { service_type: string | null; product_key: string | null; arch: string | null } | null,
+  cartServiceTypes: Set<string>,
+  cartProductKeys: Set<string>,
 ): string {
+  if (cartServiceTypes.size > 1) return 'appliance';
+  if (cartServiceTypes.size === 1) {
+    const svc = [...cartServiceTypes][0]!;
+    if (svc === 'denture_repair') return 'denture repair';
+    if (svc === 'click_in_veneers') return 'click-in veneers';
+    if (svc === 'same_day_appliance' && cartProductKeys.size === 1) {
+      const pk = [...cartProductKeys][0]!;
+      return PRODUCT_KEY_LABELS[pk] ?? 'appliance';
+    }
+    return 'appliance';
+  }
   if (!appt) return 'appliance';
   if (appt.service_type === 'denture_repair') return 'denture repair';
   if (appt.service_type === 'click_in_veneers') return 'click-in veneers';
-  const productMap: Record<string, string> = {
-    retainer: 'retainer',
-    aligner: 'aligner',
-    whitening_tray: 'whitening tray',
-    whitening_kit: 'whitening kit',
-    night_guard: 'night guard',
-    day_guard: 'day guard',
-    click_in_veneers: 'click-in veneers',
-    missing_tooth: 'tooth retainer',
-  };
-  if (appt.product_key && productMap[appt.product_key]) {
-    return productMap[appt.product_key];
+  if (appt.product_key && PRODUCT_KEY_LABELS[appt.product_key]) {
+    return PRODUCT_KEY_LABELS[appt.product_key];
   }
   return 'appliance';
 }

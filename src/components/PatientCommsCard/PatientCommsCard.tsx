@@ -58,6 +58,13 @@ export interface PatientCommsCardProps {
   patientId: string | null;
   patientPhone: string | null;
   patientFirstName: string | null;
+  /** Stable composition signature of the active cart lines
+   *  (service_type|product_key joined, sorted). Bumps when items
+   *  enter or leave the cart, so the preview sheet's edge-function
+   *  call refetches and the template/itemLabel reflect the cart's
+   *  current shape — including the General-template fallback on a
+   *  mixed cart. */
+  cartSignature: string;
 }
 
 export function PatientCommsCard({
@@ -65,6 +72,7 @@ export function PatientCommsCard({
   patientId,
   patientPhone,
   patientFirstName,
+  cartSignature,
 }: PatientCommsCardProps) {
   const [open, setOpen] = useState(false);
   const [templateKey, setTemplateKey] = useState<string>('visit_ready');
@@ -135,6 +143,7 @@ export function PatientCommsCard({
         onClose={() => setOpen(false)}
         visitId={visitId}
         templateKey={templateKey}
+        cartSignature={cartSignature}
         previousRow={row}
         onSent={() => latest.refresh()}
       />
@@ -645,6 +654,7 @@ function NotifyReadySheet({
   onClose,
   visitId,
   templateKey,
+  cartSignature,
   previousRow,
   onSent,
 }: {
@@ -653,6 +663,10 @@ function NotifyReadySheet({
   visitId: string;
   /** Picked on the card itself before the sheet opens. */
   templateKey: string;
+  /** Bumps when cart composition changes — re-renders the preview
+   *  so the receptionist sees the template/itemLabel the send path
+   *  will actually use at this moment. */
+  cartSignature: string;
   previousRow: VisitSmsRow | null;
   onSent: () => void;
 }) {
@@ -679,7 +693,11 @@ function NotifyReadySheet({
       return;
     }
     let cancelled = false;
-    setPreview({ status: 'loading', body: '', to: '', reason: null, message: null });
+    // Preserve the prior body/to so a cart-change reload doesn't
+    // blank the bubble for the half-second the edge function takes
+    // to come back. The status flag still gates the Send button so
+    // the receptionist can't fire a stale render.
+    setPreview((prev) => ({ ...prev, status: 'loading', reason: null, message: null }));
     // Clear any prior send result so flipping the template after a
     // failure (or a quick successive send) doesn't leave a stale
     // banner pinned to the bottom of the sheet.
@@ -727,7 +745,7 @@ function NotifyReadySheet({
     return () => {
       cancelled = true;
     };
-  }, [open, visitId, templateKey]);
+  }, [open, visitId, templateKey, cartSignature]);
 
   const handleSend = useCallback(async () => {
     setSending(true);
@@ -827,7 +845,7 @@ function NotifyReadySheet({
               minHeight: 88,
             }}
           >
-            {preview.status === 'loading' ? (
+            {preview.status === 'loading' && !preview.body ? (
               <span
                 style={{
                   alignSelf: 'center',
