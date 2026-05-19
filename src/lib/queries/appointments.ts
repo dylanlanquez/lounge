@@ -8,7 +8,17 @@ export interface IntakeAnswer {
 // Where the appointment row originated. Drives the icon shown on the
 // schedule + detail surfaces — Calendly glyph for public-bookings,
 // walking-figure for walk-ins / manually added rows.
+// The base source axis (lng_appointments.source) is what the row was
+// written with — three discrete values stored in the DB.
 export type AppointmentSource = 'calendly' | 'manual' | 'native';
+
+// Synthetic display-side union. 'checkpoint' is NOT a stored source
+// (those rows live as source='native' with created_via='checkpoint')
+// but every display path that surfaces an origin glyph or label
+// should be able to pick it as a first-class option. Glyph + source
+// resolvers accept this wider type; readers of lng_appointments.source
+// keep using the narrower AppointmentSource.
+export type AppointmentSourceForDisplay = AppointmentSource | 'checkpoint';
 
 // One materialised phase as needed by the schedule grid + appointment
 // detail. Subset of lng_appointment_phases — schedule consumers don't

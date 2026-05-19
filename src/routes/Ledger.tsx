@@ -25,12 +25,18 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { properCase } from '../lib/queries/appointments.ts';
+import {
+  formatCustomerServiceTitleLabel,
+  properCase,
+  type AppointmentSourceForDisplay,
+} from '../lib/queries/appointments.ts';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
+import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import {
   LEDGER_PAGE_SIZE,
   humaniseLedgerSource,
   humaniseLedgerStatus,
+  ledgerSourceGlyphKey,
   useLedger,
   type LedgerFilters,
   type LedgerFulfilmentMethod,
@@ -561,9 +567,32 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
   const fullName = ledgerName(row);
   const dateLabel = formatRowDate(row.event_at);
   const timeLabel = formatRowTime(row.event_at);
-  const serviceLabel = humaniseEventTypeLabel(row.service_label) ?? defaultServiceLabel(row);
+  // Service label comes from the same composer the AppointmentDetail
+  // hero uses, so a given booking reads identically across both
+  // surfaces ("Same-day Lower Day Guard" — not the raw stored
+  // "Same-day appliance · Day Guard · Lower" string). Falls back to
+  // the stored service_label for legacy Calendly rows that don't
+  // carry the new axis pins (product_key / repair_variant / arch).
+  const composedLabel = row.service_type
+    ? formatCustomerServiceTitleLabel({
+        service_type: row.service_type,
+        event_type_label: row.service_label,
+        arch: row.arch,
+        product_key: row.product_key,
+      })
+    : null;
+  const serviceLabel =
+    composedLabel ?? humaniseEventTypeLabel(row.service_label) ?? defaultServiceLabel(row);
   const tone = STATUS_TO_TONE[row.status];
-  const sourceLabel = humaniseLedgerSource(row.source);
+  // Source label + glyph honour created_via — Checkpoint bookings
+  // are stored as source='native' but should read as Checkpoint
+  // with the sparkles glyph, matching the AppointmentDetail hero.
+  const sourceLabel = humaniseLedgerSource(row.source, row.created_via);
+  // Resolved glyph key. Walk-in rows render no glyph (existing
+  // behaviour); everything else maps to one of the four supported
+  // values (calendly / native / checkpoint / manual). The cast is
+  // safe because the resolver only emits values in that set.
+  const glyphSource = ledgerSourceGlyphKey(row.source, row.created_via) as AppointmentSourceForDisplay;
 
   // Mobile: the 4-column grid (name | service | date | status) collapses
   // every column to ~50px on a 360px viewport, which truncates everything
@@ -639,7 +668,10 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
             <span style={{ whiteSpace: 'nowrap' }}>{dateLabel}</span>
             <span style={{ color: theme.color.inkSubtle, whiteSpace: 'nowrap' }}>{timeLabel}</span>
             <span style={{ color: theme.color.inkSubtle }}>·</span>
-            <span style={{ whiteSpace: 'nowrap' }}>{sourceLabel}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+              <SourceGlyph source={glyphSource} size={11} />
+              {sourceLabel}
+            </span>
             {row.appointment_ref ? (
               <>
                 <span style={{ color: theme.color.inkSubtle }}>·</span>
@@ -736,10 +768,16 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
             }}
           >
-            {sourceLabel}
-            {row.appointment_ref ? ` · ${row.appointment_ref}` : ''}
+            <SourceGlyph source={glyphSource} size={11} />
+            <span>
+              {sourceLabel}
+              {row.appointment_ref ? ` · ${row.appointment_ref}` : ''}
+            </span>
           </p>
         </div>
         <p

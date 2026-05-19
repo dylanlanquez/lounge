@@ -1,10 +1,11 @@
 import { type CSSProperties } from 'react';
-import { AlertTriangle, Ban, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Ban, Footprints, MousePointerClick, RotateCcw, Sparkles } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
 import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
 import {
   type AppointmentSource,
+  type AppointmentSourceForDisplay,
   formatLateDuration,
 } from '../../lib/queries/appointments.ts';
 import googleMeetIcon from '../../assets/google-meet.png';
@@ -360,7 +361,13 @@ function formatTime(iso: string): string {
 // Exported so the schedule list + grid + bottom sheet + Appointment
 // and Visit detail headers all share the same glyph. Single helper,
 // three branches — change here flows everywhere.
-export function SourceGlyph({ source, size = 12 }: { source: AppointmentSource; size?: number }) {
+export function SourceGlyph({
+  source,
+  size = 12,
+}: {
+  source: AppointmentSourceForDisplay;
+  size?: number;
+}) {
   // Explicit per-source branches with no fall-through. The previous
   // shape rendered Footprints for anything that wasn't 'calendly' or
   // 'native' — which, while data was loading and source was briefly
@@ -378,6 +385,16 @@ export function SourceGlyph({ source, size = 12 }: { source: AppointmentSource; 
         size={size + 2}
         color={theme.color.inkSubtle}
         aria-label="Booked via widget"
+        style={{ flexShrink: 0 }}
+      />
+    );
+  }
+  if (source === 'checkpoint') {
+    return (
+      <Sparkles
+        size={size + 2}
+        color={theme.color.inkSubtle}
+        aria-label="Booked via Checkpoint"
         style={{ flexShrink: 0 }}
       />
     );

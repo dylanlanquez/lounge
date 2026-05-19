@@ -906,7 +906,7 @@ function Hero({
         : appt.brand_id === 'venneir'
           ? 'venneir.com'
           : 'Booking widget'
-      : humaniseLedgerSource(appt.source);
+      : humaniseLedgerSource(appt.source, appt.created_via);
   // Subtitle is a JSX node so the SourceGlyph (walk-in vs widget vs
   // Calendly) sits inline with the text. The icon is the at-a-glance
   // signal the schedule cards use; mirroring it on the detail page
@@ -932,7 +932,7 @@ function Hero({
       }}
     >
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <SourceGlyph source={appt.source} size={12} />
+        <SourceGlyph source={isCheckpointBooking ? 'checkpoint' : appt.source} size={12} />
         <span>{refTextParts.join(' · ')}</span>
       </span>
       {isCheckpointBooking ? (
