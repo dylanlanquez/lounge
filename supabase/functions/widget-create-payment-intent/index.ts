@@ -15,14 +15,16 @@
 //   5. Create a Stripe PaymentIntent:
 //        amount       — server-resolved deposit
 //        currency     — gbp
-//        receipt_email — so Stripe auto-emails the receipt and we
-//                        avoid a custom receipt template for v1
 //        metadata     — source=widget + service/axes/location for
 //                       webhook reconciliation
 //        idempotency_key — hash of (email + start_at + service +
 //                          axes) so duplicate invocations during the
 //                          same booking flow re-use the same PI
 //                          rather than charging twice.
+//      Note: receipt_email is intentionally NOT set. send-receipt
+//      delivers our branded receipt via Resend; passing receipt_email
+//      to Stripe would double-email the patient (Stripe sends one
+//      too, regardless of the dashboard email setting).
 //   6. Return clientSecret + depositPence so the widget Payment
 //      step can confirm via Stripe Elements.
 //
@@ -225,7 +227,12 @@ Deno.serve(async (req) => {
       amount: String(amountPence),
       currency: 'gbp',
       'payment_method_types[]': 'card',
-      receipt_email: body.email,
+      // receipt_email intentionally omitted. We send our own
+      // branded receipt via Resend (clinic@notifications.venneir.com)
+      // through send-receipt. Setting receipt_email here would make
+      // Stripe ALSO send its own receipt, even when the dashboard's
+      // "Successful payments" email is disabled, and patients ended
+      // up receiving two receipts per deposit.
       'metadata[source]': 'widget',
       'metadata[service_type]': body.serviceType,
       'metadata[start_at]': body.startAt,
