@@ -6,6 +6,7 @@ import {
   RotateCcw,
   UserX,
   UserCheck,
+  Undo2,
 } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { NotificationEventType } from '../../lib/queries/notifications.ts';
@@ -72,6 +73,15 @@ const SPEC_BY_TYPE: Record<NotificationEventType, IconSpec> = {
     Icon: UserCheck,
     fg: theme.color.accent,
     bg: 'rgba(31, 77, 58, 0.10)',
+  },
+  // Refund-issued sits in the alert-red family — money has moved
+  // back to the patient, which is a state staff must notice (it
+  // affects cash reconciliation + receipts). Undo2 reads more as
+  // "money returned" than the generic Rotate.
+  refund_issued: {
+    Icon: Undo2,
+    fg: theme.color.alert,
+    bg: 'rgba(184, 58, 42, 0.10)',
   },
 };
 

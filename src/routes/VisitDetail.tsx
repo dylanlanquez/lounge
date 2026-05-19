@@ -1450,6 +1450,8 @@ export function VisitDetail() {
                   visitLivePhases.length > 1
                     ? () => setVisitTimelineOpen(true)
                     : null,
+                  refundedToDatePence,
+                  amountPaidPence,
                 )}
                 trailing={
                   patient ? (
@@ -3265,6 +3267,8 @@ function buildVisitHeroProps(
   outstandingPence: number,
   onChangeFulfilment: () => void,
   onShowTimeline: (() => void) | null,
+  refundedToDatePence: number,
+  amountPaidPence: number,
 ): Omit<AppointmentHeroProps, 'trailing'> {
   const isWalkIn = visit.arrival_type === 'walk_in';
   const headlineIso: string = !isWalkIn && appointment ? appointment.start_at : visit.opened_at;
@@ -3307,11 +3311,28 @@ function buildVisitHeroProps(
     { tone: visitStatusTone(visit.status), label: visitStatusLabel(visit.status) },
   ];
   const isTerminated = visit.status === 'unsuitable' || visit.status === 'ended_early';
+  // Refund axis pill. When money has been returned, displace the
+  // "Paid in full" cart status with a refund label so the hero never
+  // reads as "Paid in full" when funds were partially or fully
+  // clawed back (Dylan's UX call — one pill, refund takes
+  // precedence). 'full' shows "Refunded"; 'partial' carries the
+  // amount inline so staff sees how much came back at a glance.
+  const isFullyRefunded = refundedToDatePence > 0 && amountPaidPence <= 0;
+  const isPartiallyRefunded = refundedToDatePence > 0 && amountPaidPence > 0;
   if (cart && !isTerminated) {
-    pills.push({
-      tone: cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show',
-      label: cartStatusLabel(cart.status),
-    });
+    if (isFullyRefunded || isPartiallyRefunded) {
+      pills.push({
+        tone: 'refunded',
+        label: isFullyRefunded
+          ? 'Refunded'
+          : `Partially refunded ${formatPence(refundedToDatePence)}`,
+      });
+    } else {
+      pills.push({
+        tone: cart.status === 'paid' ? 'arrived' : cart.status === 'open' ? 'neutral' : 'no_show',
+        label: cartStatusLabel(cart.status),
+      });
+    }
   }
   if (visit.status === 'complete' && visit.fulfilment_method) {
     const isShipping = visit.fulfilment_method === 'shipping';

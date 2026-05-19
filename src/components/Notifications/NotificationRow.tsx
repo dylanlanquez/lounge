@@ -140,7 +140,9 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
                 color: theme.color.accent,
               }}
             >
-              {row.event_type === 'visit_ended_early' || row.event_type === 'patient_unsuitable_reversed'
+              {row.event_type === 'visit_ended_early' ||
+              row.event_type === 'patient_unsuitable_reversed' ||
+              (row.event_type === 'refund_issued' && row.link_path?.startsWith('/visit/'))
                 ? 'View visit'
                 : 'View appointment'}
               <ArrowRight size={14} />
@@ -340,6 +342,91 @@ function NotificationSentence({
           <Muted>{`’s no-show was reversed`}</Muted>.
         </>
       );
+
+    case 'refund_issued': {
+      // "Dylan Lane was refunded £30.00 on their Denture Repair, partial cash refund."
+      // "Dylan Lane was refunded £199.00 on their Denture Repair, full cash refund."
+      // Type-unknown: "Dylan Lane was refunded £30.00, partial cash refund."
+      const amount =
+        typeof row.refund_amount_pence === 'number'
+          ? formatPenceForSentence(row.refund_amount_pence)
+          : null;
+      const fullnessLabel = row.refund_is_full === false ? 'partial' : 'full';
+      const methodLabel = humaniseRefundMethod(row.refund_method);
+      const tail = `${fullnessLabel}${methodLabel ? ` ${methodLabel}` : ''} refund`;
+      if (!amount) {
+        // Defensive — every refund_issued payload carries
+        // amount_pence; this branch keeps us safe if a legacy row
+        // is missing the field.
+        return typeKnown ? (
+          <>
+            {Name}
+            <Muted> was refunded on their </Muted>
+            {Type}
+            <Muted>{`, ${tail}`}</Muted>.
+          </>
+        ) : (
+          <>
+            {Name}
+            <Muted>{` was refunded, ${tail}`}</Muted>.
+          </>
+        );
+      }
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted> was refunded </Muted>
+          <HighlightedText
+            text={amount}
+            highlight={highlight}
+            weight={theme.type.weight.semibold}
+          />
+          <Muted> on their </Muted>
+          {Type}
+          <Muted>{`, ${tail}`}</Muted>.
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted> was refunded </Muted>
+          <HighlightedText
+            text={amount}
+            highlight={highlight}
+            weight={theme.type.weight.semibold}
+          />
+          <Muted>{`, ${tail}`}</Muted>.
+        </>
+      );
+    }
+  }
+}
+
+// Locally-scoped helpers — pence formatting + method label. Kept
+// here instead of imported from queries/carts so the sentence
+// stays self-contained and the helper signature can't accidentally
+// drift from the template.
+function formatPenceForSentence(pence: number): string {
+  const pounds = Math.abs(pence) / 100;
+  const formatted = pounds.toLocaleString('en-GB', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `£${formatted}`;
+}
+
+function humaniseRefundMethod(method: string | null): string {
+  if (!method) return '';
+  switch (method) {
+    case 'cash':
+      return 'cash';
+    case 'card_terminal':
+      return 'card';
+    case 'klarna':
+      return 'Klarna';
+    case 'clearpay':
+      return 'Clearpay';
+    default:
+      return method;
   }
 }
 

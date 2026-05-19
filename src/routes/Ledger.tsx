@@ -31,6 +31,7 @@ import {
   type AppointmentSourceForDisplay,
 } from '../lib/queries/appointments.ts';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
+import { formatPence } from '../lib/queries/carts.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import {
   LEDGER_PAGE_SIZE,
@@ -41,6 +42,7 @@ import {
   type LedgerFilters,
   type LedgerFulfilmentMethod,
   type LedgerPaymentState,
+  type LedgerRefundState,
   type LedgerRow,
   type LedgerServiceType,
   type LedgerStatus,
@@ -89,16 +91,25 @@ const SERVICE_TYPE_OPTIONS: ReadonlyArray<{ value: LedgerServiceType; label: str
 
 // Payment axis filter — independent of the workflow Status filter (a
 // row can be Complete and Paid in full; the two pills compose). The
-// four values mirror lng_ledger.payment_state:
+// values mirror lng_ledger.payment_state:
 //   • Paid in full — cart settled to zero.
 //   • Deposit paid — money against the booking but cart not in full.
 //   • Unpaid       — no money received.
-//   • Refunded     — cart voided after payment.
+// Refunds moved to their own axis (see REFUND_OPTIONS) so staff can
+// find Partially-refunded rows distinct from Refunded-in-full.
 const PAYMENT_OPTIONS: ReadonlyArray<{ value: LedgerPaymentState; label: string }> = [
   { value: 'paid', label: 'Paid in full' },
   { value: 'deposit_paid', label: 'Deposit paid' },
   { value: 'unpaid', label: 'Unpaid' },
-  { value: 'refunded', label: 'Refunded' },
+];
+
+// Refund axis filter — orthogonal to payment_state. A row that was
+// 'paid' then partially refunded still matches refund_state='partial'
+// here; the pill row shows the refund label (replacing 'Paid in full'
+// per Dylan's UX call). Selecting both reads as "any refund".
+const REFUND_OPTIONS: ReadonlyArray<{ value: LedgerRefundState; label: string }> = [
+  { value: 'partial', label: 'Partially refunded' },
+  { value: 'full', label: 'Refunded in full' },
 ];
 
 // Fulfilment axis — only present once a visit reaches completion.
@@ -133,6 +144,7 @@ export function Ledger() {
   const [statuses, setStatuses] = useState<LedgerStatus[]>([]);
   const [serviceTypes, setServiceTypes] = useState<LedgerServiceType[]>([]);
   const [paymentStates, setPaymentStates] = useState<LedgerPaymentState[]>([]);
+  const [refundStates, setRefundStates] = useState<LedgerRefundState[]>([]);
   const [fulfilmentMethods, setFulfilmentMethods] = useState<LedgerFulfilmentMethod[]>([]);
   const [dateRange, setDateRange] = useState<DateRange | null>(null);
   const [page, setPage] = useState(0);
@@ -142,12 +154,13 @@ export function Ledger() {
       statuses,
       serviceTypes,
       paymentStates,
+      refundStates,
       fulfilmentMethods,
       fromDate: dateRange?.start ?? null,
       toDate: dateRange?.end ?? null,
       search,
     }),
-    [statuses, serviceTypes, paymentStates, fulfilmentMethods, dateRange, search],
+    [statuses, serviceTypes, paymentStates, refundStates, fulfilmentMethods, dateRange, search],
   );
 
   const { data, loading, error, hasMore } = useLedger(filters, page);
@@ -156,7 +169,7 @@ export function Ledger() {
   // new search, not flicking through the previous result set.
   useEffect(() => {
     setPage(0);
-  }, [statuses, serviceTypes, paymentStates, fulfilmentMethods, dateRange, search]);
+  }, [statuses, serviceTypes, paymentStates, refundStates, fulfilmentMethods, dateRange, search]);
 
   useEffect(() => {
     document.getElementById('root')?.scrollTo(0, 0);
@@ -172,6 +185,7 @@ export function Ledger() {
     statuses.length > 0 ||
     serviceTypes.length > 0 ||
     paymentStates.length > 0 ||
+    refundStates.length > 0 ||
     fulfilmentMethods.length > 0 ||
     dateRange !== null ||
     trimmed.length > 0;
@@ -179,6 +193,7 @@ export function Ledger() {
     setStatuses([]);
     setServiceTypes([]);
     setPaymentStates([]);
+    setRefundStates([]);
     setFulfilmentMethods([]);
     setDateRange(null);
     setSearch('');
@@ -216,6 +231,8 @@ export function Ledger() {
               onServiceTypesChange={setServiceTypes}
               paymentStates={paymentStates}
               onPaymentStatesChange={setPaymentStates}
+              refundStates={refundStates}
+              onRefundStatesChange={setRefundStates}
               fulfilmentMethods={fulfilmentMethods}
               onFulfilmentMethodsChange={setFulfilmentMethods}
               dateRange={dateRange}
@@ -315,6 +332,8 @@ function FiltersRow({
   onServiceTypesChange,
   paymentStates,
   onPaymentStatesChange,
+  refundStates,
+  onRefundStatesChange,
   fulfilmentMethods,
   onFulfilmentMethodsChange,
   dateRange,
@@ -330,6 +349,8 @@ function FiltersRow({
   onServiceTypesChange: (next: LedgerServiceType[]) => void;
   paymentStates: LedgerPaymentState[];
   onPaymentStatesChange: (next: LedgerPaymentState[]) => void;
+  refundStates: LedgerRefundState[];
+  onRefundStatesChange: (next: LedgerRefundState[]) => void;
   fulfilmentMethods: LedgerFulfilmentMethod[];
   onFulfilmentMethodsChange: (next: LedgerFulfilmentMethod[]) => void;
   dateRange: DateRange | null;
@@ -353,6 +374,8 @@ function FiltersRow({
           onStatusesChange={onStatusesChange}
           paymentStates={paymentStates}
           onPaymentStatesChange={onPaymentStatesChange}
+          refundStates={refundStates}
+          onRefundStatesChange={onRefundStatesChange}
           fulfilmentMethods={fulfilmentMethods}
           onFulfilmentMethodsChange={onFulfilmentMethodsChange}
         />
@@ -682,7 +705,11 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
             ) : null}
           </p>
           <div style={{ marginTop: 4 }}>
-            <PaymentLine state={row.payment_state} />
+            <PaymentLine
+              state={row.payment_state}
+              refundState={row.refund_state}
+              refundedPence={row.refunded_pence}
+            />
           </div>
         </div>
         <div
@@ -809,7 +836,11 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
             {dateLabel}
             <span style={{ color: theme.color.inkSubtle, marginLeft: theme.space[2] }}>{timeLabel}</span>
           </p>
-          <PaymentLine state={row.payment_state} />
+          <PaymentLine
+            state={row.payment_state}
+            refundState={row.refund_state}
+            refundedPence={row.refunded_pence}
+          />
         </div>
         <div style={{ justifySelf: 'end' }}>
           <StatusPill tone={tone} size="sm">
@@ -836,7 +867,60 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
 // rather than a second status competing with the appointment status
 // pill on the right. Unpaid renders nothing — that's the default
 // state, the absence is the signal.
-function PaymentLine({ state }: { state: LedgerPaymentState }) {
+//
+// Refund overlay: when refundState !== 'none' the pill displaces the
+// payment label entirely (Dylan's UX call — one pill, refund takes
+// precedence over Paid in full / Deposit paid). 'partial' shows the
+// amount inline so staff sees how much came back without a second
+// surface. 'full' just reads "Refunded".
+function PaymentLine({
+  state,
+  refundState,
+  refundedPence,
+}: {
+  state: LedgerPaymentState;
+  refundState: LedgerRefundState;
+  refundedPence: number;
+}) {
+  if (refundState === 'partial') {
+    return (
+      <p
+        style={{
+          margin: '2px 0 0',
+          fontSize: theme.type.size.xs,
+          color: theme.color.alert,
+          fontWeight: theme.type.weight.medium,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          whiteSpace: 'nowrap',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <RotateCcw size={12} aria-hidden />
+        Partially refunded {formatPence(refundedPence)}
+      </p>
+    );
+  }
+  if (refundState === 'full') {
+    return (
+      <p
+        style={{
+          margin: '2px 0 0',
+          fontSize: theme.type.size.xs,
+          color: theme.color.alert,
+          fontWeight: theme.type.weight.medium,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <RotateCcw size={12} aria-hidden />
+        Refunded
+      </p>
+    );
+  }
   if (state === 'unpaid') return null;
   const config = (() => {
     switch (state) {
@@ -1021,6 +1105,8 @@ function CombinedStatusFilter({
   onStatusesChange,
   paymentStates,
   onPaymentStatesChange,
+  refundStates,
+  onRefundStatesChange,
   fulfilmentMethods,
   onFulfilmentMethodsChange,
 }: {
@@ -1028,6 +1114,8 @@ function CombinedStatusFilter({
   onStatusesChange: (next: LedgerStatus[]) => void;
   paymentStates: LedgerPaymentState[];
   onPaymentStatesChange: (next: LedgerPaymentState[]) => void;
+  refundStates: LedgerRefundState[];
+  onRefundStatesChange: (next: LedgerRefundState[]) => void;
   fulfilmentMethods: LedgerFulfilmentMethod[];
   onFulfilmentMethodsChange: (next: LedgerFulfilmentMethod[]) => void;
 }) {
@@ -1040,9 +1128,11 @@ function CombinedStatusFilter({
 
   const statusSet = new Set(statuses);
   const paymentSet = new Set(paymentStates);
+  const refundSet = new Set(refundStates);
   const fulfilmentSet = new Set(fulfilmentMethods);
 
-  const totalSelected = statuses.length + paymentStates.length + fulfilmentMethods.length;
+  const totalSelected =
+    statuses.length + paymentStates.length + refundStates.length + fulfilmentMethods.length;
   const hasValue = totalSelected > 0;
 
   // Display: single selection shows the label so a one-axis filter
@@ -1053,6 +1143,7 @@ function CombinedStatusFilter({
     if (totalSelected === 1) {
       if (statuses[0]) return STATUS_OPTIONS.find((o) => o.value === statuses[0])?.label ?? '';
       if (paymentStates[0]) return PAYMENT_OPTIONS.find((o) => o.value === paymentStates[0])?.label ?? '';
+      if (refundStates[0]) return REFUND_OPTIONS.find((o) => o.value === refundStates[0])?.label ?? '';
       if (fulfilmentMethods[0]) return FULFILMENT_OPTIONS.find((o) => o.value === fulfilmentMethods[0])?.label ?? '';
     }
     return `${totalSelected} selected`;
@@ -1102,6 +1193,10 @@ function CombinedStatusFilter({
     if (paymentSet.has(v)) onPaymentStatesChange(paymentStates.filter((x) => x !== v));
     else onPaymentStatesChange([...paymentStates, v]);
   };
+  const toggleRefund = (v: LedgerRefundState) => {
+    if (refundSet.has(v)) onRefundStatesChange(refundStates.filter((x) => x !== v));
+    else onRefundStatesChange([...refundStates, v]);
+  };
   const toggleFulfilment = (v: LedgerFulfilmentMethod) => {
     if (fulfilmentSet.has(v)) onFulfilmentMethodsChange(fulfilmentMethods.filter((x) => x !== v));
     else onFulfilmentMethodsChange([...fulfilmentMethods, v]);
@@ -1109,6 +1204,7 @@ function CombinedStatusFilter({
   const clearAll = () => {
     onStatusesChange([]);
     onPaymentStatesChange([]);
+    onRefundStatesChange([]);
     onFulfilmentMethodsChange([]);
   };
 
@@ -1220,6 +1316,16 @@ function CombinedStatusFilter({
                     label={opt.label}
                     checked={paymentSet.has(opt.value)}
                     onClick={() => togglePayment(opt.value)}
+                  />
+                ))}
+                <SectionDivider />
+                <SectionLabel>Refund</SectionLabel>
+                {REFUND_OPTIONS.map((opt) => (
+                  <OptionRow
+                    key={opt.value}
+                    label={opt.label}
+                    checked={refundSet.has(opt.value)}
+                    onClick={() => toggleRefund(opt.value)}
                   />
                 ))}
                 <SectionDivider />

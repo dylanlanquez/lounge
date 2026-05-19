@@ -21,7 +21,12 @@ export type StatusTone =
   // booking has money against it, but the cart isn't settled in full.
   // The lighter weight stops staff reading the row as "fully paid"
   // when only the deposit has cleared.
-  | 'deposit_paid';
+  | 'deposit_paid'
+  // Soft red wash for refund-axis pills (full or partial). Matches
+  // the cancelled treatment in weight so a refund reads as a
+  // distinct money-axis fact without competing with the cancelled
+  // workflow status next to it.
+  | 'refunded';
 
 export interface StatusPillProps {
   tone: StatusTone;
@@ -83,6 +88,11 @@ const TONE_STYLES: Record<StatusTone, CSSProperties> = {
     background: theme.color.accentBg,
     color: theme.color.accent,
     boxShadow: `inset 0 0 0 1px rgba(31, 77, 58, 0.22)`,
+  },
+  refunded: {
+    background: 'rgba(184, 58, 42, 0.10)',
+    color: theme.color.alert,
+    boxShadow: `inset 0 0 0 1px rgba(184, 58, 42, 0.25)`,
   },
 };
 

@@ -999,18 +999,36 @@ function Hero({
     { tone, label: humaniseAppointmentStatus(appt.status) },
   ];
   if (appt.deposit_status === 'paid' && (appt.deposit_pence ?? 0) > 0) {
-    // Same money fact, two labels: paid_in_full_at_booking flips
-    // the read from "partial up-front" to "the whole bill is
-    // settled". Keep the deposit_paid tone so the visual family
-    // (soft accent fill) stays consistent on the hero, but swap
-    // the copy + glyph so the receptionist doesn't go chasing a
-    // balance that doesn't exist.
-    const fullyPaid = appt.paid_in_full_at_booking;
-    pills.push({
-      tone: 'deposit_paid',
-      label: fullyPaid ? 'Paid in full' : 'Deposit paid',
-      icon: fullyPaid ? <BadgeCheck size={14} aria-hidden /> : <DepositGlyph size={14} />,
-    });
+    // Refund-axis check before the deposit / paid-in-full label:
+    // when money has been returned, displace the green money pill
+    // with a soft-red Refunded / Partially refunded pill so the
+    // hero never reads as "Paid in full" when funds were partly or
+    // fully clawed back (Dylan's UX call — one pill, refund takes
+    // precedence). 'partial' carries the refund amount inline.
+    const grossDeposit = appt.deposit_pence ?? 0;
+    if (depositRefundedPence > 0) {
+      const isFull = depositRefundedPence >= grossDeposit;
+      pills.push({
+        tone: 'refunded',
+        label: isFull
+          ? 'Refunded'
+          : `Partially refunded ${formatPence(depositRefundedPence)}`,
+        icon: <RotateCcw size={14} aria-hidden />,
+      });
+    } else {
+      // Same money fact, two labels: paid_in_full_at_booking flips
+      // the read from "partial up-front" to "the whole bill is
+      // settled". Keep the deposit_paid tone so the visual family
+      // (soft accent fill) stays consistent on the hero, but swap
+      // the copy + glyph so the receptionist doesn't go chasing a
+      // balance that doesn't exist.
+      const fullyPaid = appt.paid_in_full_at_booking;
+      pills.push({
+        tone: 'deposit_paid',
+        label: fullyPaid ? 'Paid in full' : 'Deposit paid',
+        icon: fullyPaid ? <BadgeCheck size={14} aria-hidden /> : <DepositGlyph size={14} />,
+      });
+    }
   }
 
   return (

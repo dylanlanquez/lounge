@@ -41,6 +41,12 @@ export const NOTIFICATION_EVENT_TYPES = [
   // or the status was set in error.
   'no_show',
   'no_show_reversed',
+  // Refund issued — fires from terminal-refund + klarna-refund on
+  // every succeeded refund (partial or full, any method). Payload
+  // carries amount_pence + is_full_refund + method + visit_id +
+  // appointment_id so the row template can read "Refunded £30 ·
+  // cash" without a second query.
+  'refund_issued',
 ] as const;
 
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
@@ -104,6 +110,15 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationEventType, {
     settings: 'Reversed no-shows',
     hint: 'When a no-show is undone because the patient arrived late or the status was set in error.',
   },
+  refund_issued: {
+    short: 'Refund issued',
+    // verb unused — refund row uses its own sentence shape that
+    // carries the amount inline (template handles refund_issued
+    // separately).
+    verb: 'was refunded for',
+    settings: 'Refunds issued',
+    hint: 'When a refund is issued against any payment or deposit — partial or full, any method.',
+  },
 };
 
 // ── Notification row shape ────────────────────────────────────────
@@ -130,6 +145,13 @@ export interface NotificationRow {
   // (visit_ended_early has only the close time, not a future
   // appointment slot).
   scheduled_at_label: string | null;
+  // Refund-specific metadata. Populated only on refund_issued
+  // rows so the template can render "Refunded £30 · cash" /
+  // "Fully refunded £199 · cash" without a second query. Null on
+  // every other event type.
+  refund_amount_pence: number | null;
+  refund_is_full: boolean | null;
+  refund_method: string | null;
 }
 
 // ── Booking-type label (no arch) ──────────────────────────────────
@@ -379,6 +401,16 @@ export function useNotifications(): UseNotificationsResult {
             // booking type is resolved via the visit row's
             // appointment or walk-in link.
             if (typeof p.visit_id === 'string') visitIds.add(p.visit_id);
+          } else if (e.event_type === 'refund_issued') {
+            // Refunds may carry visit_id (most cart-side refunds)
+            // or appointment_id (deposit refunds on appointments
+            // that never opened a visit) or both. Resolve through
+            // visit when present so the booking-type label uses
+            // the same path as visit_ended_early.
+            if (typeof p.visit_id === 'string') visitIds.add(p.visit_id);
+            else if (typeof p.appointment_id === 'string') {
+              directAppointmentIds.add(p.appointment_id);
+            }
           } else {
             // appointment_booked / appointment_cancelled / no_show /
             // no_show_reversed — all four use payload.appointment_id.
@@ -565,6 +597,20 @@ function mapEventToRow(
     if (visit?.walk_in_id) {
       walkInServiceType = walkInsById.get(visit.walk_in_id)?.service_type ?? null;
     }
+  } else if (type === 'refund_issued') {
+    // Refunds: visit-axis preferred; fall back to appointment-axis
+    // (deposit refunds on appointments that never opened a visit).
+    visitId = typeof payload.visit_id === 'string' ? payload.visit_id : null;
+    const visit = visitId ? visitsById.get(visitId) ?? null : null;
+    if (visit?.appointment_id) {
+      apptRow = appointmentsById.get(visit.appointment_id) ?? null;
+      appointmentIdForLink = visit.appointment_id;
+    } else if (visit?.walk_in_id) {
+      walkInServiceType = walkInsById.get(visit.walk_in_id)?.service_type ?? null;
+    } else if (typeof payload.appointment_id === 'string') {
+      appointmentIdForLink = payload.appointment_id;
+      apptRow = appointmentsById.get(payload.appointment_id) ?? null;
+    }
   } else {
     // appointment_booked / appointment_cancelled / no_show /
     // no_show_reversed.
@@ -620,6 +666,10 @@ function mapEventToRow(
     // restored status appears on the appointment's own surface
     // when staff clicks through.
     startAt = null;
+  } else if (type === 'refund_issued') {
+    // Refund rows carry their own self-contained sentence (amount
+    // + method + reason), so no scheduled-at line is needed.
+    startAt = null;
   } else {
     // appointment_booked / appointment_cancelled / no_show.
     startAt =
@@ -632,15 +682,36 @@ function mapEventToRow(
   // Link path:
   //   • visit_ended_early + patient_unsuitable_reversed
   //     → /visit/<id>        (visit-scoped surface)
+  //   • refund_issued → /visit/<id> when present (cart refund),
+  //     else /appointment/<id> (deposit refund pre-visit)
   //   • everything else → /appointment/<id>  (pre-visit / appointment surface)
   const linkPath =
     type === 'visit_ended_early' || type === 'patient_unsuitable_reversed'
       ? visitId
         ? `/visit/${visitId}`
         : null
-      : appointmentIdForLink
-        ? `/appointment/${appointmentIdForLink}`
-        : null;
+      : type === 'refund_issued'
+        ? visitId
+          ? `/visit/${visitId}`
+          : appointmentIdForLink
+            ? `/appointment/${appointmentIdForLink}`
+            : null
+        : appointmentIdForLink
+          ? `/appointment/${appointmentIdForLink}`
+          : null;
+
+  const refundAmount =
+    type === 'refund_issued' && typeof payload.amount_pence === 'number'
+      ? payload.amount_pence
+      : null;
+  const refundIsFull =
+    type === 'refund_issued' && typeof payload.is_full_refund === 'boolean'
+      ? payload.is_full_refund
+      : null;
+  const refundMethod =
+    type === 'refund_issued' && typeof payload.method === 'string'
+      ? payload.method
+      : null;
 
   return {
     id: event.id,
@@ -651,6 +722,9 @@ function mapEventToRow(
     link_path: linkPath,
     booking_type: bookingType,
     scheduled_at_label: scheduledAtLabel,
+    refund_amount_pence: refundAmount,
+    refund_is_full: refundIsFull,
+    refund_method: refundMethod,
   };
 }
 

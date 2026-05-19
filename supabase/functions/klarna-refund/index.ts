@@ -185,7 +185,87 @@ Deno.serve(async (req) => {
     })
     .eq('id', refundId);
 
-  return jsonOk({ refund_id: refundId });
+  // Full-refund threshold + payment-row flip — mirrors the
+  // terminal-refund flow so the cart status auto-unlocks when
+  // money's been fully returned via Klarna. Reads the cumulative
+  // refunded total to avoid duplicating it from the request.
+  const { data: refundsSoFar } = await supabase
+    .from('lng_payment_refunds')
+    .select('amount_pence')
+    .eq('payment_id', pay.id)
+    .eq('status', 'succeeded');
+  const cumulativeRefunded = ((refundsSoFar ?? []) as { amount_pence: number }[]).reduce(
+    (acc, r) => acc + (r.amount_pence ?? 0),
+    0,
+  );
+  const isFullRefund = cumulativeRefunded >= pay.amount_pence;
+  if (isFullRefund) {
+    await supabase
+      .from('lng_payments')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+      .eq('id', pay.id);
+  }
+
+  // Patient resolution for the timeline event. The visit's
+  // appointment carries patient_id (preferred); fall back to the
+  // walk-in if the visit wasn't from an appointment.
+  let patientId: string | null = null;
+  if (appointmentId) {
+    const { data: apptRow } = await supabase
+      .from('lng_appointments')
+      .select('patient_id')
+      .eq('id', appointmentId)
+      .maybeSingle();
+    patientId = (apptRow as { patient_id: string | null } | null)?.patient_id ?? null;
+  }
+  if (!patientId) {
+    const { data: visitWalkIn } = await supabase
+      .from('lng_visits')
+      .select('walk_in_id')
+      .eq('id', ses.visit_id)
+      .maybeSingle();
+    const walkInId = (visitWalkIn as { walk_in_id: string | null } | null)?.walk_in_id ?? null;
+    if (walkInId) {
+      const { data: walkIn } = await supabase
+        .from('lng_walk_ins')
+        .select('patient_id')
+        .eq('id', walkInId)
+        .maybeSingle();
+      patientId = (walkIn as { patient_id: string | null } | null)?.patient_id ?? null;
+    }
+  }
+
+  // patient_events.refund_issued — mirrors the terminal-refund
+  // payload shape so the notification bell + visit timeline treat
+  // every refund identically, regardless of method (cash, card,
+  // Klarna, Clearpay).
+  if (patientId) {
+    await supabase.from('patient_events').insert({
+      patient_id: patientId,
+      event_type: 'refund_issued',
+      actor_account_id: performedBy,
+      notes: body.reason_note.trim(),
+      payload: {
+        refund_id: refundId,
+        refund_source: 'payment',
+        payment_id: pay.id,
+        deposit_appointment_id: null,
+        amount_pence: body.amount_pence,
+        cumulative_refunded_pence: cumulativeRefunded,
+        source_captured_pence: pay.amount_pence,
+        is_full_refund: isFullRefund,
+        method: 'klarna',
+        reason_category: body.reason_category,
+        reason_note: body.reason_note.trim(),
+        visit_id: ses.visit_id,
+        appointment_id: appointmentId,
+        staff_account_id: performedBy,
+        approver_account_id: body.approver_account_id,
+      },
+    });
+  }
+
+  return jsonOk({ refund_id: refundId, is_full_refund: isFullRefund });
 });
 
 const CORS_HEADERS = {
