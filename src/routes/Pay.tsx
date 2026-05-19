@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
@@ -76,11 +76,25 @@ export function Pay() {
   const visitState = (location.state as PayEntryState | null)?.visitEntry ?? undefined;
   const goBackToVisit = () =>
     navigate(`/visit/${id}`, visitState ? { state: visitState } : undefined);
-  const [stage, setStage] = useState<Stage>('choose');
+  // ── URL-survives-refresh stage state ──────────────────────────
+  // The success stage is the only payment stage worth preserving
+  // across tab-switches / refreshes / browser back. Cash/card are
+  // mid-flow and resetting them to 'choose' on reload is the
+  // safer default (an interrupted card swipe shouldn't replay
+  // itself). When stage='success' we write ?stage=success&payment=<id>
+  // to the URL; on next mount we read it back so the receipt
+  // picker re-mounts on the same payment instead of dropping the
+  // staff onto the method picker for a £0 outstanding bill.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlStage = searchParams.get('stage');
+  const urlPayment = searchParams.get('payment');
+  const [stage, setStage] = useState<Stage>(
+    urlStage === 'success' && urlPayment ? 'success' : 'choose',
+  );
   const [tendered, setTendered] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [paymentId, setPaymentId] = useState<string | null>(urlPayment);
   const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>('email');
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -299,6 +313,32 @@ export function Pay() {
   const willClearBill = chargeAmountPence > 0 && chargeAmountPence >= outstandingPence;
   // Variable kept around for receipt copy (the "£X paid" headline).
   const total = chargeAmountPence;
+
+  // Keep ?stage=success&payment=<id> in the URL whenever we're on
+  // the success stage. Clear it on any other stage. `replace: true`
+  // so this doesn't pollute browser history with one entry per
+  // micro-transition — refresh / back behave like a normal page.
+  useEffect(() => {
+    const want =
+      stage === 'success' && paymentId
+        ? { stage: 'success', payment: paymentId }
+        : null;
+    const haveStage = searchParams.get('stage');
+    const havePayment = searchParams.get('payment');
+    if (want) {
+      if (haveStage !== want.stage || havePayment !== want.payment) {
+        const next = new URLSearchParams(searchParams);
+        next.set('stage', want.stage);
+        next.set('payment', want.payment);
+        setSearchParams(next, { replace: true });
+      }
+    } else if (haveStage || havePayment) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('stage');
+      next.delete('payment');
+      setSearchParams(next, { replace: true });
+    }
+  }, [stage, paymentId, searchParams, setSearchParams]);
 
   const submitCash = async () => {
     if (!cart) return;
