@@ -152,6 +152,38 @@ export const SMS_TEMPLATE_VARIABLES: ReadonlyArray<SmsTemplateVariable> = [
       'Immutable internal lab reference written when the patient is first created. Same patient always carries the same lwoRef across every visit. Many older patient records do not have one on file (renders as a dash), so prefer {{appointmentRef}} for customer-facing copy.',
     sample: 'LWO-12345',
   },
+  // Receipt-only variables. Resolved by send-receipt's SMS branch
+  // from the closed cart + payment row. Other SMS templates won't
+  // have access to these (the resolver leaves them as literal
+  // `{{name}}` placeholders), so use them only in payment_receipt.
+  {
+    name: 'totalAmount',
+    label: 'Total amount paid',
+    description:
+      'The formatted GBP total taken at the till, e.g. "£120.00". Receipt SMS only.',
+    sample: '£120.00',
+  },
+  {
+    name: 'paidBy',
+    label: 'Payment method',
+    description:
+      'How the patient paid: "Card", "Cash", "Klarna", or "Clearpay". Receipt SMS only.',
+    sample: 'Card',
+  },
+  {
+    name: 'receiptRef',
+    label: 'Receipt reference',
+    description:
+      'Short 8-character payment reference the patient can quote if they need to ask about the charge. Receipt SMS only.',
+    sample: 'a1b2c3d4',
+  },
+  {
+    name: 'paymentDate',
+    label: 'Payment date',
+    description:
+      'Date the payment was taken, e.g. "5 May 2026". Receipt SMS only.',
+    sample: '5 May 2026',
+  },
 ];
 
 interface ListResult {
@@ -371,6 +403,7 @@ export function humaniseSmsKey(key: string): string {
     please_call: 'Please give us a call',
     running_late: 'Clinician running late',
     reminder_to_attend: 'Reminder to attend',
+    payment_receipt: 'Payment receipt',
   };
   return map[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }

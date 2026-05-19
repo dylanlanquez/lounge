@@ -41,14 +41,50 @@ const SMS_SERVICE_PILLS: ReadonlyArray<{ label: string; value: string | null }> 
 ];
 
 // Canonical row order. Visit-ready is the primary template; the
-// four below it are the manually-sent secondary keys.
+// four below it are the manually-sent secondary keys; payment_receipt
+// is the till-side text that fires when a cashier picks SMS as the
+// receipt channel after taking payment. The receipt has no service-
+// typed variants — it's a one-off transactional text — so the
+// SMS_KEYS_FOR_SERVICE allowlist below drops it from every per-
+// service pill, the same way visit_shipped / payment_receipt are
+// dropped from service-typed email pills.
 const SMS_TEMPLATE_KEYS: ReadonlyArray<string> = [
   'visit_ready',
   'please_return',
   'please_call',
   'running_late',
   'reminder_to_attend',
+  'payment_receipt',
 ];
+
+// Per-pill template-key allowlist. The General pill (selectedServiceType
+// === null) shows everything; each service-typed pill is constrained
+// to the keys that are actually service-customisable. payment_receipt
+// is intentionally absent from every service-typed set because the
+// receipt text doesn't change by booking type.
+const SMS_KEYS_FOR_SERVICE: Record<string, ReadonlySet<string>> = {
+  click_in_veneers: new Set([
+    'visit_ready',
+    'please_return',
+    'please_call',
+    'running_late',
+    'reminder_to_attend',
+  ]),
+  same_day_appliance: new Set([
+    'visit_ready',
+    'please_return',
+    'please_call',
+    'running_late',
+    'reminder_to_attend',
+  ]),
+  denture_repair: new Set([
+    'visit_ready',
+    'please_return',
+    'please_call',
+    'running_late',
+    'reminder_to_attend',
+  ]),
+};
 
 type ToastMsg = { tone: 'success' | 'error' | 'info'; title: string; description?: string };
 
@@ -121,7 +157,18 @@ export function AdminSmsTemplatesTab() {
       ) : (
         <Card padding="none">
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {SMS_TEMPLATE_KEYS.map((key, idx) => {
+            {(() => {
+              // Drop keys that have no business appearing on the
+              // selected pill — payment_receipt isn't service-typed,
+              // so the per-service pills filter it out.
+              const allow = selectedServiceType
+                ? SMS_KEYS_FOR_SERVICE[selectedServiceType] ?? null
+                : null;
+              const visibleKeys = allow
+                ? SMS_TEMPLATE_KEYS.filter((k) => allow.has(k))
+                : SMS_TEMPLATE_KEYS;
+              return visibleKeys;
+            })().map((key, idx) => {
               const variantKey = `${key}|${selectedServiceType ?? '__general__'}`;
               const tpl = rowByKeyAndService.get(variantKey) ?? null;
               const generalRow = rowByKeyAndService.get(`${key}|__general__`) ?? null;

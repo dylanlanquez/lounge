@@ -1065,14 +1065,34 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
           ? r.payload.twilio_sid
           : null;
       const smsRow = smsTwilioSid ? smsBySid.get(smsTwilioSid) ?? null : null;
-      const smsMessageId = smsRow?.id ?? null;
+      // Receipt SMS rows carry their lng_sms_messages.id directly on
+      // the payload (no twilio_sid round trip needed). Same for any
+      // future channel that records the persisted row id at insert
+      // time. Falling back to this lets the View SMS button render
+      // on receipt_sent rows even though they don't fire the
+      // sms_delivered / sms_failed lifecycle events.
+      const smsMessageIdFromPayload =
+        typeof r.payload?.sms_message_id === 'string' && r.payload.sms_message_id.length > 0
+          ? r.payload.sms_message_id
+          : null;
+      const smsMessageId = smsRow?.id ?? smsMessageIdFromPayload ?? null;
       const smsToPhone = smsRow?.to_phone ?? null;
+      // Receipt rows are dual-channel: the event_type is the same
+      // for both, the channel field on payload tells us which one.
+      // SMS receipts behave like SMS rows (chat-bubble icon, View
+      // SMS pill); email receipts behave like email rows (mail
+      // icon, View email pill).
+      const isReceiptSmsRow =
+        r.event_type === 'receipt_sent' && r.payload?.channel === 'sms';
       // Email-bearing event_types lift their hint + tone so the
       // Timeline icon matches the "View email" affordance. Appointment
       // emails fold in here too once useVisitTimeline OR-fetches them
       // alongside visit-scoped rows; their email_message_id flows
       // through unchanged so View email + Resend pills work the same.
-      const isEmailEvent = EMAIL_EVENT_TYPES.has(r.event_type) && !!emailMessageId;
+      // SMS receipts are explicitly excluded so they don't fall into
+      // the email branch and pick up the mail icon by mistake.
+      const isEmailEvent =
+        EMAIL_EVENT_TYPES.has(r.event_type) && !!emailMessageId && !isReceiptSmsRow;
       // Receipt rows now also fire on delivery failure (with the
       // failed-status lng_email_messages id) so the timeline reflects
       // every attempt. Lift the tone to alert when the payload carries
@@ -1105,10 +1125,14 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // SMS rows get their own chat-bubble icon so a passing reader
       // can tell a text from an email at a glance. Failed sends use
       // the badge-with-exclamation variant + alert tone so the row
-      // shouts on a quiet day.
-      const isSmsEvent =
+      // shouts on a quiet day. Receipt SMS rows ride the same hint
+      // family — delivery_status=failed lifts to sms_failed; success
+      // / pending stays on the plain chat bubble.
+      const isSmsLifecycleEvent =
         r.event_type === 'sms_delivered' || r.event_type === 'sms_failed';
-      const isSmsFailed = r.event_type === 'sms_failed';
+      const isSmsFailed =
+        r.event_type === 'sms_failed' || (isReceiptSmsRow && deliveryFailed);
+      const isSmsEvent = isSmsLifecycleEvent || isReceiptSmsRow;
       const smsHint = isSmsFailed
         ? ('sms_failed' as const)
         : isSmsEvent
@@ -1124,11 +1148,20 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
       // SMS detail line — overrides the generic patient-event
       // detail for sms_* rows so the receptionist sees the
       // destination phone right on the timeline. View SMS opens
-      // the body in the modal.
+      // the body in the modal. Receipt SMS rows already carry the
+      // recipient phone on payload.recipient (the send-receipt
+      // edge function stamps it there), so we use that directly
+      // instead of going via the twilio_sid lookup.
+      const receiptSmsRecipient =
+        isReceiptSmsRow && typeof r.payload?.recipient === 'string'
+          ? r.payload.recipient
+          : null;
       const baseDetail = composePatientEventDetail(r);
       const detail = smsTwilioSid && smsToPhone
         ? `Sent to ${smsToPhone}${baseDetail ? ` · ${baseDetail}` : ''}`
-        : baseDetail;
+        : receiptSmsRecipient
+          ? `Sent to ${receiptSmsRecipient}${baseDetail ? ` · ${baseDetail}` : ''}`
+          : baseDetail;
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,

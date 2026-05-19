@@ -18,6 +18,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { recordSmsMessage } from '../_shared/smsRecord.ts';
 import { properCase } from '../_shared/properCase.ts';
 import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
 import { sendSms as sendSmsShared } from '../_shared/twilioSms.ts';
@@ -165,11 +166,48 @@ Deno.serve(async (req) => {
     subject = substituteVariables(tpl.subject, variables);
     const bodyAfterVars = substituteVariables(tpl.body_syntax, variables);
     html = wrapReceiptHtml(parseFormatting(bodyAfterVars));
+    // The SMS channel deliberately doesn't share the email body's
+    // text form. The email's bodyToText is a fully-laid-out
+    // receipt with a "1 × £X" line per item and a totals block —
+    // perfectly readable in an inbox but a 280+ character lock-
+    // screen wall on a phone, which fragments into multiple paid
+    // SMS segments. Admin → SMS → Payment receipt is the editor;
+    // the row is keyed by ('payment_receipt', NULL) in
+    // lng_sms_templates. When the SMS row is enabled, use it; if
+    // it's missing or paused, fall back to the email's text form
+    // (keeps deliverability when an admin disables the SMS row
+    // without intending to suppress receipts entirely).
     text = bodyToText(bodyAfterVars);
+    if (receipt.channel === 'sms') {
+      const smsBody = await resolveSmsReceiptBody({
+        supabase,
+        visit,
+        patient,
+        clinicSettings: null,
+        variables,
+      });
+      if (smsBody !== null) text = smsBody;
+    }
   } else {
     subject = `Your Venneir Lounge receipt · ${formatPence(totalPence)} · ${paidBy}`;
     html = renderHtml({ items, totalPence, subjectMethod: paidBy, payment, patient });
     text = renderText({ items, totalPence, subjectMethod: paidBy, payment, patient });
+    if (receipt.channel === 'sms') {
+      const variables: Record<string, string> = {
+        patientFirstName: properCase(patient?.first_name ?? '') || 'there',
+        totalAmount: formatPence(totalPence),
+        paidBy,
+        receiptRef: payment.id.slice(0, 8),
+      };
+      const smsBody = await resolveSmsReceiptBody({
+        supabase,
+        visit,
+        patient,
+        clinicSettings: null,
+        variables,
+      });
+      if (smsBody !== null) text = smsBody;
+    }
   }
 
   // 2. Deliver
@@ -193,11 +231,21 @@ Deno.serve(async (req) => {
   //
   // The patient_events row is written in BOTH branches so the visit
   // timeline always reflects what was attempted — a failed send still
-  // leaves a tappable trail with the persisted HTML + the failure
-  // reason. Without this the only signal staff would have that a
-  // receipt attempt happened at all is the payment_succeeded row
-  // above it, which doesn't tell them whether to retry from /admin.
+  // leaves a tappable trail with the persisted HTML / body + the
+  // failure reason. Without this the only signal staff would have
+  // that a receipt attempt happened at all is the payment_succeeded
+  // row above it, which doesn't tell them whether to retry from
+  // /admin.
+  //
+  // Email- and SMS-channel receipts both persist their rendered
+  // bytes (HTML for email, body text for SMS) into the matching
+  // lng_*_messages table, and the returned row id rides on the
+  // patient_events payload as email_message_id / sms_message_id.
+  // That's what powers the Timeline's "View email" / "View SMS"
+  // pills — without these audit rows the buttons have nothing to
+  // open.
   let emailMessageId: string | null = null;
+  let smsMessageId: string | null = null;
   if (!deliveryResult.ok) {
     await supabase
       .from('lng_receipts')
@@ -218,6 +266,16 @@ Deno.serve(async (req) => {
         send_status: 'failed',
         send_error: deliveryResult.error,
       });
+    } else if (receipt.channel === 'sms') {
+      smsMessageId = await recordSmsMessage(supabase, {
+        patient_id: patientId,
+        visit_id: cart?.visit_id ?? null,
+        template_key: 'payment_receipt',
+        to_phone: recipient,
+        body: text,
+        send_status: 'failed',
+        send_error: deliveryResult.error,
+      });
     }
     await writeReceiptTimelineEvent({
       supabase,
@@ -227,6 +285,7 @@ Deno.serve(async (req) => {
       payment,
       recipient,
       emailMessageId,
+      smsMessageId,
       deliveryError: deliveryResult.error,
     });
     return jsonResponse(200, { ok: false, error: deliveryResult.error });
@@ -242,8 +301,8 @@ Deno.serve(async (req) => {
     })
     .eq('id', receipt.id);
 
-  // Persist email-channel receipt so the Visit Timeline's receipt event
-  // exposes a "View email" preview. SMS receipts have no HTML to record.
+  // Persist the rendered bytes per channel so the Visit Timeline's
+  // receipt event exposes a "View email" or "View SMS" preview.
   if (receipt.channel === 'email') {
     emailMessageId = await recordEmailMessage(supabase, {
       patient_id: patientId,
@@ -260,6 +319,20 @@ Deno.serve(async (req) => {
       provider_message_id: deliveryResult.messageId ?? null,
       send_status: 'sent',
     });
+  } else if (receipt.channel === 'sms') {
+    smsMessageId = await recordSmsMessage(supabase, {
+      patient_id: patientId,
+      visit_id: cart?.visit_id ?? null,
+      template_key: 'payment_receipt',
+      to_phone: recipient,
+      body: text,
+      // Twilio's webhook flips this to 'sent' / 'failed' later via
+      // twilio-sms-status. We start it as 'pending' (the same shape
+      // visit-ready uses) so the audit row is honest about the
+      // round trip not yet being acknowledged by Twilio.
+      send_status: 'pending',
+      twilio_message_sid: deliveryResult.messageId ?? null,
+    });
   }
 
   await writeReceiptTimelineEvent({
@@ -270,6 +343,7 @@ Deno.serve(async (req) => {
     payment,
     recipient,
     emailMessageId,
+    smsMessageId,
     deliveryError: null,
   });
 
@@ -290,6 +364,7 @@ async function writeReceiptTimelineEvent(args: {
   payment: PaymentRow;
   recipient: string;
   emailMessageId: string | null;
+  smsMessageId: string | null;
   deliveryError: string | null;
 }): Promise<void> {
   if (!args.patientId || !args.visitId) {
@@ -310,7 +385,14 @@ async function writeReceiptTimelineEvent(args: {
       recipient: args.recipient,
       payment_id: args.payment.id,
       visit_id: args.visitId,
+      // Channel-specific message-id handles. The Timeline's
+      // "View email" / "View SMS" pills resolve against these
+      // ids — email_message_id for the email branch,
+      // sms_message_id for the SMS branch. The other is null for
+      // each row; the renderer picks the right one based on
+      // channel.
       email_message_id: args.emailMessageId,
+      sms_message_id: args.smsMessageId,
       delivery_status: args.deliveryError ? 'failed' : 'sent',
       delivery_error: args.deliveryError,
     },
@@ -371,6 +453,75 @@ async function sendSms(
     };
   }
   return { ok: true, provider: 'twilio', messageId: result.sid };
+}
+
+// Pull the admin-editable SMS receipt body and substitute the same
+// variables the email render uses. Returns null when the row is
+// missing or paused; the caller then falls back to the email-derived
+// text so receipts still go out even when an admin has disabled the
+// SMS row without realising. clinicName is resolved here (mirrors
+// send-visit-ready-sms) so the template can reference it without the
+// caller plumbing extra context.
+async function resolveSmsReceiptBody(args: {
+  supabase: SupabaseClient;
+  visit: { id: string; patient_id: string } | null;
+  patient: { first_name: string | null; last_name: string | null; email: string | null; phone: string | null } | null;
+  clinicSettings: null;
+  variables: Record<string, string>;
+}): Promise<string | null> {
+  // Read the SMS row keyed by (payment_receipt, NULL). Service-typed
+  // overrides aren't supported for receipts — the row is one-off
+  // transactional copy that doesn't change by booking type.
+  const { data: smsTplRaw } = await args.supabase
+    .from('lng_sms_templates')
+    .select('body, enabled')
+    .eq('key', 'payment_receipt')
+    .is('service_type', null)
+    .maybeSingle();
+  const smsTpl = smsTplRaw as { body: string; enabled: boolean } | null;
+  if (!smsTpl?.enabled) return null;
+  // Resolve clinicName from the visit's location. Falls back to the
+  // brand from lng_settings 'email.from_name' so a freshly-seeded DB
+  // without a location row still renders a usable template, then to
+  // "the clinic" as the last-resort literal — same chain as the
+  // other SMS senders.
+  let clinicName = '';
+  if (args.visit) {
+    const { data: visitLocationRow } = await args.supabase
+      .from('lng_visits')
+      .select('location_id')
+      .eq('id', args.visit.id)
+      .maybeSingle();
+    const locationId = (visitLocationRow as { location_id: string | null } | null)?.location_id ?? null;
+    if (locationId) {
+      const { data: locationRow } = await args.supabase
+        .from('locations')
+        .select('name')
+        .eq('id', locationId)
+        .maybeSingle();
+      clinicName = ((locationRow as { name: string | null } | null)?.name ?? '').trim();
+    }
+  }
+  if (!clinicName) {
+    const { data: brandRow } = await args.supabase
+      .from('lng_settings')
+      .select('value')
+      .eq('key', 'email.from_name')
+      .is('location_id', null)
+      .maybeSingle();
+    const raw = (brandRow as { value: unknown } | null)?.value;
+    if (typeof raw === 'string') clinicName = raw.trim();
+  }
+  if (!clinicName) clinicName = 'the clinic';
+
+  const enrichedVariables: Record<string, string> = {
+    ...args.variables,
+    clinicName,
+    // Legacy alias so templates that still use {{locationName}}
+    // resolve. send-visit-ready-sms uses the same alias.
+    locationName: clinicName,
+  };
+  return substituteVariables(smsTpl.body, enrichedVariables);
 }
 
 // ---------- Render ----------
