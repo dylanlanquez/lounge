@@ -4393,7 +4393,20 @@ function CreditRow({
             lineHeight: 1.4,
           }}
         >
-          {`${formatPence(grossPence)} paid · ${formatPence(refundedPence)} ${refundedAwayCopy}`}
+          {`${formatPence(grossPence)} paid · `}
+          {/* Refund clause is the part staff need to spot at a
+              glance — money has left the till. Bold + alert tone
+              lifts it off the muted audit line so a quick scan
+              registers "this column had a refund" without reading
+              the whole sentence. */}
+          <strong
+            style={{
+              color: theme.color.alert,
+              fontWeight: theme.type.weight.semibold,
+            }}
+          >
+            {`${formatPence(refundedPence)} ${refundedAwayCopy}`}
+          </strong>
         </span>
       ) : null}
     </div>

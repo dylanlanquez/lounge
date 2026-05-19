@@ -589,7 +589,10 @@ export function Pay() {
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'}: {formatPence(depositPence)} paid · {formatPence(refundedAgainstDepositPence)} {refundedAwayCopy}
+                  {deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'}: {formatPence(depositPence)} paid ·{' '}
+                  <strong style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+                    {formatPence(refundedAgainstDepositPence)} {refundedAwayCopy}
+                  </strong>
                 </p>
               ) : null}
               {tillGrossPence > 0 && refundedAgainstTillPence > 0 ? (
@@ -601,7 +604,10 @@ export function Pay() {
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  Collected at till: {formatPence(tillGrossPence)} paid · {formatPence(refundedAgainstTillPence)} {refundedAwayCopy}
+                  Collected at till: {formatPence(tillGrossPence)} paid ·{' '}
+                  <strong style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>
+                    {formatPence(refundedAgainstTillPence)} {refundedAwayCopy}
+                  </strong>
                 </p>
               ) : null}
             </div>
