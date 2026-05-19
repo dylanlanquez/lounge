@@ -237,9 +237,13 @@ export function TerminalPaymentModal({
             <p style={{ margin: 0, textAlign: 'center', color: theme.color.ink, fontSize: theme.type.size.md }}>
               When the customer is ready, send the {formatPence(amountPence)} request to the reader.
             </p>
-            {paymentJourney !== 'standard' ? (
+            {paymentJourney === 'klarna' ? (
               <p style={{ margin: 0, textAlign: 'center', color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-                Receipt will say <strong>Visa contactless</strong>. That is correct for {paymentJourney === 'klarna' ? 'Klarna' : 'Clearpay'}.
+                The reader will display a QR code. Customer scans it with their phone and pays in the Klarna app.
+              </p>
+            ) : paymentJourney === 'clearpay' ? (
+              <p style={{ margin: 0, textAlign: 'center', color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
+                Receipt will say <strong>Visa contactless</strong>. That is correct for Clearpay.
               </p>
             ) : null}
           </div>
@@ -250,7 +254,11 @@ export function TerminalPaymentModal({
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: theme.space[4], padding: `${theme.space[6]}px 0` }}>
             <Loader2 size={48} style={{ color: theme.color.accent, animation: 'lng-spin 0.8s linear infinite' }} />
             <p style={{ margin: 0, textAlign: 'center', color: theme.color.ink, fontSize: theme.type.size.md }}>
-              {state === 'starting' ? 'Sending to reader…' : 'Waiting for the customer to tap or insert.'}
+              {state === 'starting'
+                ? 'Sending to reader…'
+                : paymentJourney === 'klarna'
+                  ? 'Customer scans the QR on the reader screen.'
+                  : 'Waiting for the customer to tap or insert.'}
             </p>
             <p style={{ margin: 0, textAlign: 'center', color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
               The reader screen shows the next step.
