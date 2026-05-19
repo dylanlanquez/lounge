@@ -112,7 +112,10 @@ import {
   removeCartDiscount,
   useActiveCartDiscount,
 } from '../lib/queries/cartDiscounts.ts';
-import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
+import {
+  listResolvedManagerRecipients,
+  sendManagerNotification,
+} from '../lib/queries/managerNotifications.ts';
 import { ManagerNotificationNotice } from '../components/ManagerNotificationNotice/ManagerNotificationNotice.tsx';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
@@ -1016,10 +1019,18 @@ export function VisitDetail() {
           discount_reason: discountReason.trim() || null,
         },
       };
+      // Resolve the recipient list ONCE before the action so the
+      // exact set notified ends up on both the audit row AND the
+      // email send below. Reading lng_settings between the two
+      // could yield two different snapshots if an admin edits the
+      // list mid-action — which would split the audit story.
+      const recipients = await listResolvedManagerRecipients().catch(() => []);
+      const notifiedIds = recipients.map((r) => r.accountId);
       await applyCartDiscount({
         cart_id: cart.id,
         amount_pence: pence,
         reason: discountReason,
+        notified_account_ids: notifiedIds,
       });
       void sendManagerNotification({
         actionKind: 'discount_applied',
@@ -1045,9 +1056,12 @@ export function VisitDetail() {
     setDiscountError(null);
     try {
       const removedAmount = activeDiscount?.amount_pence ?? 0;
+      const recipients = await listResolvedManagerRecipients().catch(() => []);
+      const notifiedIds = recipients.map((r) => r.accountId);
       await removeCartDiscount({
         cart_id: cart.id,
         reason: discountReason,
+        notified_account_ids: notifiedIds,
       });
       void sendManagerNotification({
         actionKind: 'discount_removed',
@@ -1078,10 +1092,13 @@ export function VisitDetail() {
     setDiscountBusy(true);
     setDiscountError(null);
     try {
+      const recipients = await listResolvedManagerRecipients().catch(() => []);
+      const notifiedIds = recipients.map((r) => r.accountId);
       await amendCartDiscount({
         cart_id: cart.id,
         amount_pence: pence,
         reason: discountReason,
+        notified_account_ids: notifiedIds,
       });
       void sendManagerNotification({
         actionKind: 'discount_amended',

@@ -4,6 +4,7 @@ import {
   Box,
   CalendarCheck,
   CreditCard,
+  BellRing,
   Eye,
   FileSignature,
   Flag,
@@ -349,6 +350,9 @@ function Row({
             ) : null}
           </p>
         ) : null}
+        {event.notifiedManagers && event.notifiedManagers.length > 0 ? (
+          <NotifiedManagersLine managers={event.notifiedManagers} />
+        ) : null}
         {event.facts && event.facts.length > 0 ? (
           <FactsLine facts={event.facts} />
         ) : null}
@@ -529,6 +533,38 @@ const TONE: Record<'accent' | 'warn' | 'alert' | 'neutral', EventTone> = {
 // flat inline prose (every word same weight, no visual depth). Chips
 // give the structured facts their own visual rhythm while staying
 // quieter than the event title.
+// Below the detail line, a compact note that surfaces the managers
+// who received the manager_notification email when the event was
+// recorded. Bell icon + comma-joined names. Reads at the same
+// weight as the actor suffix above so the eye groups them as one
+// audit unit.
+function NotifiedManagersLine({
+  managers,
+}: {
+  managers: ReadonlyArray<{ id: string; name: string }>;
+}) {
+  const names = managers.map((m) => m.name).join(', ');
+  const label = managers.length === 1 ? 'Notified' : 'Notified';
+  return (
+    <p
+      style={{
+        margin: `${theme.space[1]}px 0 0`,
+        fontSize: theme.type.size.xs,
+        color: theme.color.inkSubtle,
+        lineHeight: 1.5,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        flexWrap: 'wrap',
+      }}
+    >
+      <BellRing size={11} aria-hidden style={{ flexShrink: 0 }} />
+      <span style={{ fontWeight: theme.type.weight.medium }}>{label}:</span>
+      <span>{names}</span>
+    </p>
+  );
+}
+
 function FactsLine({ facts }: { facts: ReadonlyArray<{ label: string; value: string }> }) {
   return (
     <div

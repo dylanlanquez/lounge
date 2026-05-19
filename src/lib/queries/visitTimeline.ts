@@ -114,14 +114,25 @@ export interface TimelineEvent {
   // if the original to_email stored on lng_email_messages is stale.
   resendKind?: 'confirmation' | 'cancellation' | 'reminder' | null;
   resendAppointmentId?: string | null;
+  // Resolved list of managers notified by email when this event was
+  // produced. Snapshotted on the source row at action time so it
+  // reflects the truth at the moment the action happened, even if
+  // the admin later edits the recipient list. Empty array means no
+  // managers were configured to receive notifications when the
+  // event fired; the renderer treats that case the same as
+  // "field absent" and skips the sub-line.
+  notifiedManagers?: ReadonlyArray<{ id: string; name: string }>;
 }
 
 // Internal shape used by the fetchers — same as TimelineEvent but
 // carries the actor's raw account id so the resolver can swap it for
-// a display name in one batch query. Same for the approver.
-type RawTimelineEvent = Omit<TimelineEvent, 'actor' | 'approver'> & {
+// a display name in one batch query. Same for the approver. The
+// notifiedManagerAccountIds array is resolved into a public-facing
+// notifiedManagers list of {id, name} pairs.
+type RawTimelineEvent = Omit<TimelineEvent, 'actor' | 'approver' | 'notifiedManagers'> & {
   actorAccountId?: string | null;
   approverAccountId?: string | null;
+  notifiedManagerAccountIds?: ReadonlyArray<string>;
 };
 
 interface VisitRow {
@@ -489,29 +500,45 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           ...patientEvents,
         ];
 
-        // Step 4: resolve actor + approver names in one batched
-        // query, then attach. Approver is suppressed when it's the
-        // same account as the actor — self-approval already reads
-        // as "by X" without the redundant "approved by X".
+        // Step 4: resolve actor + approver + notified-manager names in
+        // one batched query, then attach. Approver is suppressed when
+        // it's the same account as the actor — self-approval already
+        // reads as "by X" without the redundant "approved by X".
         const lookupIds = Array.from(
           new Set(
             allRaw
-              .flatMap((e) => [e.actorAccountId, e.approverAccountId])
+              .flatMap((e) => [
+                e.actorAccountId,
+                e.approverAccountId,
+                ...(e.notifiedManagerAccountIds ?? []),
+              ])
               .filter((id): id is string => !!id),
           ),
         );
         const nameById = await fetchAccountNames(lookupIds);
 
         const resolved: TimelineEvent[] = allRaw.map((raw) => {
-          const { actorAccountId, approverAccountId, ...rest } = raw;
+          const { actorAccountId, approverAccountId, notifiedManagerAccountIds, ...rest } = raw;
           const actor = actorAccountId ? nameById.get(actorAccountId) : undefined;
           const approver =
             approverAccountId && approverAccountId !== actorAccountId
               ? nameById.get(approverAccountId)
               : undefined;
+          const notifiedManagers =
+            notifiedManagerAccountIds && notifiedManagerAccountIds.length > 0
+              ? notifiedManagerAccountIds
+                  .map((id) => {
+                    const name = nameById.get(id);
+                    return name ? { id, name } : null;
+                  })
+                  .filter((r): r is { id: string; name: string } => r !== null)
+              : undefined;
           const out: TimelineEvent = { ...rest };
           if (actor) out.actor = actor;
           if (approver) out.approver = approver;
+          if (notifiedManagers && notifiedManagers.length > 0) {
+            out.notifiedManagers = notifiedManagers;
+          }
           return out;
         });
 
@@ -693,7 +720,9 @@ async function fetchCartDiscountEvents(visitId: string): Promise<RawTimelineEven
 
   const { data: discounts, error: dErr } = await supabase
     .from('lng_cart_discounts')
-    .select('id, amount_pence, reason, approved_by, removed_at, removed_reason, removed_by, created_at')
+    .select(
+      'id, amount_pence, reason, applied_by, approved_by, applied_notified_account_ids, removed_at, removed_reason, removed_by, removed_notified_account_ids, created_at',
+    )
     .eq('cart_id', (cart as { id: string }).id)
     .order('created_at', { ascending: true });
   if (dErr) throw new Error(dErr.message);
@@ -703,10 +732,13 @@ async function fetchCartDiscountEvents(visitId: string): Promise<RawTimelineEven
     id: string;
     amount_pence: number;
     reason: string | null;
+    applied_by: string | null;
     approved_by: string | null;
+    applied_notified_account_ids: unknown;
     removed_at: string | null;
     removed_reason: string | null;
     removed_by: string | null;
+    removed_notified_account_ids: unknown;
     created_at: string;
   }>) {
     out.push({
@@ -715,8 +747,13 @@ async function fetchCartDiscountEvents(visitId: string): Promise<RawTimelineEven
       timestamp: d.created_at,
       title: 'Discount applied',
       detail: joinDetail(`-${PENCE(d.amount_pence)}`, d.reason),
-      actorAccountId: d.approved_by,
+      // Prefer applied_by (cashier) so the timeline reads "by
+      // Cashier" under the new manager-notification flow where
+      // approved_by is null. Falls back to approved_by for the
+      // historical rows that pre-date the May 2026 change.
+      actorAccountId: d.applied_by ?? d.approved_by,
       hint: 'discount' as const,
+      notifiedManagerAccountIds: coerceStringArray(d.applied_notified_account_ids),
     });
     if (d.removed_at) {
       out.push({
@@ -727,10 +764,20 @@ async function fetchCartDiscountEvents(visitId: string): Promise<RawTimelineEven
         detail: d.removed_reason ?? undefined,
         actorAccountId: d.removed_by,
         hint: 'discount' as const,
+        notifiedManagerAccountIds: coerceStringArray(d.removed_notified_account_ids),
       });
     }
   }
   return out;
+}
+
+// Coerce a jsonb value into a string[] without throwing. Used to
+// normalise the new lng_cart_discounts.*_notified_account_ids
+// columns into a clean array regardless of how postgres-js typed
+// the round trip. A missing or malformed value yields [].
+function coerceStringArray(raw: unknown): ReadonlyArray<string> {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === 'string');
 }
 
 async function fetchCartItemEvents(visitId: string): Promise<RawTimelineEvent[]> {

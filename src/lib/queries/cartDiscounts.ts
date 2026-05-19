@@ -164,6 +164,12 @@ export interface ApplyDiscountInput {
    *  notifications). Pass null for new actions; non-null is still
    *  accepted for any legacy code path that hasn't been updated. */
   approver_id?: string | null;
+  /** accounts.id values for the managers being notified at action
+   *  time. Snapshotted onto applied_notified_account_ids so the
+   *  visit timeline can render "Notified: A, B" even if the admin
+   *  edits the recipient list later. Pass [] when no recipients
+   *  are configured. */
+  notified_account_ids?: ReadonlyArray<string>;
 }
 
 // Applies a sale-level discount. Requires:
@@ -207,6 +213,7 @@ export async function applyCartDiscount(input: ApplyDiscountInput): Promise<void
     reason,
     applied_by: cashierId,
     approved_by: input.approver_id ?? null,
+    applied_notified_account_ids: input.notified_account_ids ?? [],
   });
   if (insErr) throw new Error(insErr.message);
 
@@ -225,6 +232,9 @@ export interface RemoveDiscountInput {
   reason: string;
   /** Legacy field — see ApplyDiscountInput.approver_id. */
   approver_id?: string | null;
+  /** accounts.id values being notified at removal time —
+   *  see ApplyDiscountInput.notified_account_ids. */
+  notified_account_ids?: ReadonlyArray<string>;
 }
 
 // Removes the active discount on a cart. Same approval shape as
@@ -256,6 +266,7 @@ export async function removeCartDiscount(input: RemoveDiscountInput): Promise<vo
       removed_at: new Date().toISOString(),
       removed_by: cashierId,
       removed_reason: reason,
+      removed_notified_account_ids: input.notified_account_ids ?? [],
     })
     .eq('id', (active as { id: string }).id);
   if (updErr) throw new Error(updErr.message);
@@ -273,6 +284,9 @@ export interface AmendDiscountInput {
   reason: string;
   /** Legacy field — see ApplyDiscountInput.approver_id. */
   approver_id?: string | null;
+  /** accounts.id values being notified at action time —
+   *  see ApplyDiscountInput.notified_account_ids. */
+  notified_account_ids?: ReadonlyArray<string>;
 }
 
 // Amends an active discount: same approval shape, soft-deletes the
@@ -351,6 +365,7 @@ export async function amendCartDiscount(input: AmendDiscountInput): Promise<void
     reason,
     applied_by: cashierId,
     approved_by: input.approver_id ?? null,
+    applied_notified_account_ids: input.notified_account_ids ?? [],
   });
   if (insErr) throw new Error(insErr.message);
 
