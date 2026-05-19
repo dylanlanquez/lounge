@@ -143,6 +143,8 @@ export const TEST_PATIENT_EMAILS: readonly string[] = [
   'hello@lanquez.com',
   'alex@venneir.com',
   'venneirlaboratory@gmail.com',
+  'dylando@venneir.com',
+  'stephen.vazquez@venneir.com',
 ];
 
 export interface WipeTestPatientAppointmentsResult {
