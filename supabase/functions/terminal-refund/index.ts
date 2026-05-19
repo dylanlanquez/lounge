@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
     amount_pence?: number;
     reason_category?: string;
     reason_note?: string;
-    approver_account_id?: string;
+    approver_account_id?: string | null;
   };
   try {
     body = await req.json();
@@ -109,9 +109,11 @@ Deno.serve(async (req) => {
     return j(400, { ok: false, error: 'amount_pence must be a positive integer' });
   }
   const amountPence = Math.round(body.amount_pence);
-  if (!body.approver_account_id) {
-    return j(400, { ok: false, error: 'Manager approval is required to issue a refund.' });
-  }
+  // approver_account_id is now optional. Manager approval is async —
+  // a notification email lands on every configured manager after the
+  // refund succeeds (Admin → Emails → Manager notifications).
+  // Historical refunds (pre 19 May 2026) still have an approver
+  // stamped, but new flows pass null.
   if (!body.reason_category || !VALID_REASON_CATEGORIES.has(body.reason_category)) {
     return j(400, { ok: false, error: 'reason_category invalid' });
   }
@@ -389,7 +391,7 @@ Deno.serve(async (req) => {
     reason_category: body.reason_category,
     reason_note: reasonNote,
     performed_by_account_id: refundedBy,
-    approver_account_id: body.approver_account_id,
+    approver_account_id: body.approver_account_id ?? null,
     visit_id: visitId,
     appointment_id: appointmentId,
   };
@@ -639,7 +641,7 @@ Deno.serve(async (req) => {
         visit_id: visitId,
         appointment_id: appointmentId,
         staff_account_id: refundedBy,
-        approver_account_id: body.approver_account_id,
+        approver_account_id: body.approver_account_id ?? null,
       },
     });
   }

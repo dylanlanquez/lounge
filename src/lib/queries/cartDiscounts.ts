@@ -158,14 +158,17 @@ export interface ApplyDiscountInput {
   cart_id: string;
   amount_pence: number;
   reason: string;
-  approver_id: string;
+  /** Legacy field. As of the May 2026 manager-notification redesign,
+   *  cashiers no longer pick an approver on the sheet — managers are
+   *  notified by email after the fact (Admin → Emails → Manager
+   *  notifications). Pass null for new actions; non-null is still
+   *  accepted for any legacy code path that hasn't been updated. */
+  approver_id?: string | null;
 }
 
 // Applies a sale-level discount. Requires:
 //   - cart in 'open' state (we don't mutate paid carts here)
 //   - amount > 0 and ≤ subtotal (no negative totals)
-//   - approver_id present (the picked manager; can be the cashier
-//     themselves if they have manager rights)
 //
 // Updates cart.discount_pence atomically with the audit insert.
 // One active discount per cart is enforced by a unique partial
@@ -174,7 +177,6 @@ export async function applyCartDiscount(input: ApplyDiscountInput): Promise<void
   const reason = input.reason.trim();
   if (reason.length === 0) throw new Error('A reason is required.');
   if (input.amount_pence <= 0) throw new Error('Discount amount must be positive.');
-  if (!input.approver_id) throw new Error('Pick a manager to approve.');
 
   const { data: meId } = await supabase.rpc('auth_account_id');
   const cashierId = (meId as string | null) ?? null;
@@ -204,7 +206,7 @@ export async function applyCartDiscount(input: ApplyDiscountInput): Promise<void
     amount_pence: input.amount_pence,
     reason,
     applied_by: cashierId,
-    approved_by: input.approver_id,
+    approved_by: input.approver_id ?? null,
   });
   if (insErr) throw new Error(insErr.message);
 
@@ -221,7 +223,8 @@ export async function applyCartDiscount(input: ApplyDiscountInput): Promise<void
 export interface RemoveDiscountInput {
   cart_id: string;
   reason: string;
-  approver_id: string;
+  /** Legacy field — see ApplyDiscountInput.approver_id. */
+  approver_id?: string | null;
 }
 
 // Removes the active discount on a cart. Same approval shape as
@@ -232,7 +235,6 @@ export interface RemoveDiscountInput {
 export async function removeCartDiscount(input: RemoveDiscountInput): Promise<void> {
   const reason = input.reason.trim();
   if (reason.length === 0) throw new Error('A reason is required to remove the discount.');
-  if (!input.approver_id) throw new Error('Pick a manager to approve.');
 
   const { data: meId } = await supabase.rpc('auth_account_id');
   const cashierId = (meId as string | null) ?? null;
@@ -269,7 +271,8 @@ export interface AmendDiscountInput {
   cart_id: string;
   amount_pence: number;
   reason: string;
-  approver_id: string;
+  /** Legacy field — see ApplyDiscountInput.approver_id. */
+  approver_id?: string | null;
 }
 
 // Amends an active discount: same approval shape, soft-deletes the
@@ -291,7 +294,6 @@ export async function amendCartDiscount(input: AmendDiscountInput): Promise<void
   const reason = input.reason.trim();
   if (reason.length === 0) throw new Error('A reason is required.');
   if (input.amount_pence <= 0) throw new Error('Discount amount must be positive.');
-  if (!input.approver_id) throw new Error('Pick a manager to approve.');
 
   const { data: meId } = await supabase.rpc('auth_account_id');
   const cashierId = (meId as string | null) ?? null;
@@ -348,7 +350,7 @@ export async function amendCartDiscount(input: AmendDiscountInput): Promise<void
     amount_pence: input.amount_pence,
     reason,
     applied_by: cashierId,
-    approved_by: input.approver_id,
+    approved_by: input.approver_id ?? null,
   });
   if (insErr) throw new Error(insErr.message);
 

@@ -4,6 +4,7 @@ import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 import { Input } from '../Input/Input.tsx';
+import { ManagerNotificationNotice } from '../ManagerNotificationNotice/ManagerNotificationNotice.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   REFUND_REASON_CATEGORIES,
@@ -12,7 +13,7 @@ import {
   type RefundReasonCategory,
   type RefundableSourceRow,
 } from '../../lib/queries/payments.ts';
-import { listManagers, type ManagerRow } from '../../lib/queries/staff.ts';
+import { sendManagerNotification } from '../../lib/queries/managerNotifications.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
 
 // RefundSheet — staff-facing refund flow.
@@ -47,6 +48,14 @@ export interface RefundSheetProps {
   suggestedPence: number;
   /** Pre-selected reason category. Staff can change it. */
   defaultCategory?: RefundReasonCategory;
+  /** Optional context plumbed into the manager-notification email
+   *  after a successful refund. Pass when the caller has them on
+   *  hand (VisitDetail / AppointmentDetail both do). When omitted
+   *  the email still fires but lands without the {{patientName}} /
+   *  {{visitRef}} substitutions. */
+  patientId?: string | null;
+  visitId?: string | null;
+  staffAccountId?: string | null;
   onCompleted?: () => void;
 }
 
@@ -62,6 +71,9 @@ export function RefundSheet({
   appointmentId,
   suggestedPence,
   defaultCategory = 'item_removed',
+  patientId = null,
+  visitId = null,
+  staffAccountId = null,
   onCompleted,
 }: RefundSheetProps) {
   const {
@@ -73,9 +85,6 @@ export function RefundSheet({
 
   const [reasonCategory, setReasonCategory] = useState<RefundReasonCategory>(defaultCategory);
   const [reasonNote, setReasonNote] = useState('');
-  const [managers, setManagers] = useState<ManagerRow[]>([]);
-  const [managerAccountId, setManagerAccountId] = useState('');
-  const [managersError, setManagersError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [perRowErrors, setPerRowErrors] = useState<Record<string, string>>({});
@@ -93,31 +102,10 @@ export function RefundSheet({
     if (!open) return;
     setReasonCategory(defaultCategory);
     setReasonNote('');
-    setManagerAccountId('');
     setSubmitError(null);
     setPerRowErrors({});
     setAmountInput((suggestedPence / 100).toFixed(2));
   }, [open, defaultCategory, suggestedPence]);
-
-  // Load managers (active is_manager) once per open. Same query the
-  // discount + void approvers use.
-  useEffect(() => {
-    if (!open) return undefined;
-    let cancelled = false;
-    setManagersError(null);
-    listManagers()
-      .then((list) => {
-        if (cancelled) return;
-        setManagers(list);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setManagersError(e instanceof Error ? e.message : 'Could not load managers');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
 
   // Refundable ceiling — the most we can possibly hand back across
   // all sources. Used to clamp the amount input + drive the "max"
@@ -161,32 +149,26 @@ export function RefundSheet({
   const overCeiling = requestedPence > refundableCeilingPence;
 
   const noteOk = reasonNote.trim().length > 0;
-  const managerOk = managerAccountId.length > 0;
   const amountOk = requestedPence > 0 && !overCeiling;
   const canSubmit =
     !submitting &&
     amountOk &&
     allocations.length > 0 &&
     allocationShortfallPence === 0 &&
-    noteOk &&
-    managerOk;
+    noteOk;
 
   const handleSubmit = async () => {
     setSubmitting(true);
     setSubmitError(null);
     setPerRowErrors({});
     try {
-      const manager = managers.find((m) => m.account_id === managerAccountId);
-      if (!manager) {
-        throw new Error('Pick an approving manager.');
-      }
-      // Approver id is taken straight from the dropdown — no
-      // password verification step. The manager's email +
-      // account id are stamped on every audit row downstream so
-      // the timeline still records who signed off.
-      const approverId = manager.account_id;
+      // approverAccountId is the legacy field on lng_payment_refunds —
+      // now nullable per the May 2026 manager-notification redesign.
+      // The post-hoc audit trail lives in the email send below + the
+      // patient_events row downstream.
       const errors: Record<string, string> = {};
       let succeeded = 0;
+      let succeededPence = 0;
       for (const alloc of allocations) {
         try {
           if (alloc.source.kind === 'payment') {
@@ -195,7 +177,7 @@ export function RefundSheet({
               amountPence: alloc.pence,
               reasonCategory,
               reasonNote: reasonNote.trim(),
-              approverAccountId: approverId,
+              approverAccountId: null,
             });
           } else {
             await refundPartial({
@@ -203,16 +185,30 @@ export function RefundSheet({
               amountPence: alloc.pence,
               reasonCategory,
               reasonNote: reasonNote.trim(),
-              approverAccountId: approverId,
+              approverAccountId: null,
             });
           }
           succeeded += 1;
+          succeededPence += alloc.pence;
         } catch (e) {
           errors[alloc.source.id] = e instanceof Error ? e.message : String(e);
         }
       }
       refresh();
       setPerRowErrors(errors);
+      if (succeededPence > 0) {
+        // Fire the manager notification covering only the successful
+        // allocations — a partial-fail refund should still report the
+        // exact pence that went through.
+        void sendManagerNotification({
+          actionKind: 'refund_issued',
+          amountPence: succeededPence,
+          reason: reasonNote.trim(),
+          patientId,
+          visitId,
+          staffAccountId,
+        });
+      }
       if (Object.keys(errors).length === 0 && succeeded > 0) {
         if (onCompleted) onCompleted();
         onClose();
@@ -339,28 +335,12 @@ export function RefundSheet({
           />
         </SheetSection>
 
-        {/* Section 3 — manager approval */}
+        {/* Section 3 — manager notification */}
         <SheetSection
-          title="Manager approval"
-          subtitle="Refunds always need a manager. Pick the one who said yes."
+          title="Manager notification"
+          subtitle="The configured managers will get an emailed record of this refund."
         >
-          {managersError ? <ErrorLine message={managersError} /> : null}
-          <DropdownSelect<string>
-            label="Approving manager"
-            required
-            value={managerAccountId}
-            options={managers.map((m) => ({
-              value: m.account_id,
-              label: `${m.name} (${m.login_email})`,
-            }))}
-            onChange={(v) => setManagerAccountId(v)}
-            placeholder={
-              managers.length === 0
-                ? 'No managers configured. Add one in Admin, Staff.'
-                : 'Pick the manager who approved this refund'
-            }
-            disabled={managers.length === 0 || submitting}
-          />
+          <ManagerNotificationNotice />
         </SheetSection>
 
         {submitError ? <ErrorLine message={submitError} /> : null}

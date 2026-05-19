@@ -36,7 +36,6 @@ import {
   Button,
   Card,
   CollapsibleCard,
-  DropdownSelect,
   EmptyState,
   Input,
   MarketingGallery,
@@ -110,11 +109,11 @@ import type { PatientRow } from '../lib/queries/patients.ts';
 import {
   amendCartDiscount,
   applyCartDiscount,
-  listManagers,
   removeCartDiscount,
   useActiveCartDiscount,
-  type ManagerRow,
 } from '../lib/queries/cartDiscounts.ts';
+import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
+import { ManagerNotificationNotice } from '../components/ManagerNotificationNotice/ManagerNotificationNotice.tsx';
 import { patientFullName } from '../lib/queries/patients.ts';
 import {
   formatPence,
@@ -368,15 +367,15 @@ export function VisitDetail() {
   // for why we read live vs the materialised snapshot.
   const [visitTimelineOpen, setVisitTimelineOpen] = useState(false);
 
-  // Cart-level discount state. Apply / Remove share the same sheet
-  // shape — manager picker + reason text. Whoever's picked from the
-  // dropdown lands on the audit row as the approver; no password
-  // verification (speed > strict proof per Dylan's call).
+  // Cart-level discount state. Apply / Amend / Remove share the same
+  // sheet — amount (apply/amend), reason, then a ManagerNotificationNotice
+  // that surfaces who'll get an emailed record of the action. Per the
+  // May 2026 redesign there's no per-action manager picker — the
+  // recipient list lives in Admin → Emails → Manager notifications,
+  // and the send fires fire-and-forget after the action succeeds.
   const [discountSheet, setDiscountSheet] = useState<'apply' | 'amend' | 'remove' | null>(null);
   const [discountAmountText, setDiscountAmountText] = useState('');
   const [discountReason, setDiscountReason] = useState('');
-  const [discountManagerId, setDiscountManagerId] = useState<string>('');
-  const [discountManagers, setDiscountManagers] = useState<ManagerRow[]>([]);
   const [discountBusy, setDiscountBusy] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 
@@ -979,7 +978,7 @@ export function VisitDetail() {
     }
   };
 
-  const openDiscountSheet = async (mode: 'apply' | 'amend' | 'remove') => {
+  const openDiscountSheet = (mode: 'apply' | 'amend' | 'remove') => {
     setDiscountError(null);
     // Pre-fill amount + reason from the active discount when amending
     // so staff sees what they're changing from. Apply / Remove start
@@ -991,14 +990,7 @@ export function VisitDetail() {
       setDiscountAmountText('');
       setDiscountReason('');
     }
-    setDiscountManagerId('');
     setDiscountSheet(mode);
-    try {
-      const list = await listManagers();
-      setDiscountManagers(list);
-    } catch (e) {
-      setDiscountError(e instanceof Error ? e.message : 'Could not load managers');
-    }
   };
 
   const submitApplyDiscount = async () => {
@@ -1028,7 +1020,14 @@ export function VisitDetail() {
         cart_id: cart.id,
         amount_pence: pence,
         reason: discountReason,
-        approver_id: discountManagerId,
+      });
+      void sendManagerNotification({
+        actionKind: 'discount_applied',
+        amountPence: pence,
+        reason: discountReason.trim(),
+        patientId: patient?.id ?? null,
+        visitId: visit?.id ?? null,
+        staffAccountId: currentAccount?.account_id ?? null,
       });
       setDiscountSheet(null);
       refresh();
@@ -1045,10 +1044,18 @@ export function VisitDetail() {
     setDiscountBusy(true);
     setDiscountError(null);
     try {
+      const removedAmount = activeDiscount?.amount_pence ?? 0;
       await removeCartDiscount({
         cart_id: cart.id,
         reason: discountReason,
-        approver_id: discountManagerId,
+      });
+      void sendManagerNotification({
+        actionKind: 'discount_removed',
+        amountPence: removedAmount,
+        reason: discountReason.trim(),
+        patientId: patient?.id ?? null,
+        visitId: visit?.id ?? null,
+        staffAccountId: currentAccount?.account_id ?? null,
       });
       setDiscountSheet(null);
       refresh();
@@ -1075,7 +1082,14 @@ export function VisitDetail() {
         cart_id: cart.id,
         amount_pence: pence,
         reason: discountReason,
-        approver_id: discountManagerId,
+      });
+      void sendManagerNotification({
+        actionKind: 'discount_amended',
+        amountPence: pence,
+        reason: discountReason.trim(),
+        patientId: patient?.id ?? null,
+        visitId: visit?.id ?? null,
+        staffAccountId: currentAccount?.account_id ?? null,
       });
       setDiscountSheet(null);
       refresh();
@@ -1826,6 +1840,9 @@ export function VisitDetail() {
                 if (moreItems.length === 0) return null;
                 return (
                   <ActionMenu
+                    presentation="sheet"
+                    sheetTitle="More visit actions"
+                    sheetDescription="Pick an action below. Each one is the irreversible affordance pulled out of the main row."
                     ariaLabel="More visit actions"
                     items={moreItems}
                     trigger={
@@ -2054,6 +2071,9 @@ export function VisitDetail() {
         appointmentId={visit?.appointment_id ?? null}
         suggestedPence={owedToPatientPence}
         defaultCategory={refundDefaultCategory}
+        patientId={patient?.id ?? null}
+        visitId={visit?.id ?? null}
+        staffAccountId={currentAccount?.account_id ?? null}
         onCompleted={() => {
           // Re-pull paid-status + cart-payment list so the banner
           // disappears immediately on a clean refund and the
@@ -2707,10 +2727,10 @@ export function VisitDetail() {
         }
         description={
           discountSheet === 'remove'
-            ? 'Removing the discount restores the full bill. Manager re-enters their password to authorise — this lands on the audit row alongside the original approver.'
+            ? 'Removing the discount restores the full bill. The configured managers will be notified by email about what changed.'
             : discountSheet === 'amend'
-              ? 'Change the amount or reason. The existing audit row is retired and a fresh one is inserted, both attributed to the approving manager. Patient sees the new total immediately.'
-              : 'Sale-wide discount on this visit. Manager re-enters their password to authorise; both your name and theirs land on the audit row.'
+              ? 'Change the amount or reason. The patient sees the new total immediately; the configured managers will be notified by email.'
+              : 'Sale-wide discount on this visit. The configured managers will be notified by email with a summary of what was applied.'
         }
         footer={
           <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2760,45 +2780,7 @@ export function VisitDetail() {
                   : 'Why is the discount being given? (e.g. compensation, repeat-patient courtesy)'
             }
           />
-          <div
-            style={{
-              padding: theme.space[3],
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.bg,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: theme.space[3],
-            }}
-          >
-            <h3
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.md,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                letterSpacing: theme.type.tracking.tight,
-              }}
-            >
-              Manager sign-off
-            </h3>
-            <DropdownSelect<string>
-              label="Approving manager"
-              required
-              value={discountManagerId}
-              options={discountManagers.map((m) => ({
-                value: m.id,
-                label: `${m.name} (${m.login_email})`,
-              }))}
-              onChange={(v) => setDiscountManagerId(v)}
-              placeholder={
-                discountManagers.length === 0
-                  ? 'No managers configured. Add one in Admin > Staff.'
-                  : 'Pick the manager who approved this'
-              }
-              disabled={discountManagers.length === 0}
-            />
-          </div>
+          <ManagerNotificationNotice />
           {discountError ? (
             <p
               role="alert"
@@ -3860,9 +3842,9 @@ function Totals({
   dim?: boolean;
   /** When set, renders the discount approver + reason as an indented
    *  hairline row immediately under the Discount line so staff can
-   *  see at a glance who authorised it. Used for cart-wide manager-
-   *  approved discounts (per-line discounts don't have an approver). */
-  activeDiscount?: { approver_name: string | null; reason: string } | null;
+   *  see at a glance what was applied + by whom. Used for cart-wide
+   *  discounts (per-line discounts don't have an audit row). */
+  activeDiscount?: { applier_name: string | null; reason: string } | null;
   onAmendDiscount?: () => void;
   onRemoveDiscount?: () => void;
   /** When true, the Amend / Remove buttons render under the
@@ -3895,7 +3877,7 @@ function Totals({
           // the reduction + its authorisation read as one unit.
           <DiscountBanner
             amountPence={discount}
-            approverName={activeDiscount.approver_name}
+            applierName={activeDiscount.applier_name}
             reason={activeDiscount.reason}
             onAmend={discountEditable ? onAmendDiscount : undefined}
             onRemove={discountEditable ? onRemoveDiscount : undefined}
@@ -4466,13 +4448,13 @@ function CreditRow({
 // competing with them.
 function DiscountBanner({
   amountPence,
-  approverName,
+  applierName,
   reason,
   onAmend,
   onRemove,
 }: {
   amountPence: number;
-  approverName: string | null;
+  applierName: string | null;
   reason: string;
   onAmend: (() => void) | undefined;
   onRemove: (() => void) | undefined;
@@ -4540,7 +4522,7 @@ function DiscountBanner({
             <DiscountIcon size={14} color={theme.color.accent} />
           </span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            Approved by {approverName ?? 'manager'}
+            {applierName ? `Applied by ${applierName}` : 'Discount applied'}
             {reason ? ` · ${reason}` : ''}
           </span>
         </span>

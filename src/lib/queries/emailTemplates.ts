@@ -734,6 +734,73 @@ const REFUND_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   },
 ];
 
+const MANAGER_NOTIFICATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'actionTitle',
+    label: 'Action title',
+    description:
+      'Human heading the email is about, e.g. "Discount applied", "Refund issued", "Payment voided". Same value renders in the subject line.',
+    sample: 'Discount applied',
+  },
+  {
+    name: 'actionSummary',
+    label: 'Action summary',
+    description:
+      'One-line summary of what happened, e.g. "£25.00 discount applied on LAP-00042." Use directly under the heading.',
+    sample: '£25.00 discount applied on LAP-00042.',
+  },
+  {
+    name: 'amount',
+    label: 'Amount',
+    description: 'Formatted GBP amount with thousand separators, e.g. "£1,250.00".',
+    sample: '£25.00',
+  },
+  {
+    name: 'reason',
+    label: 'Reason',
+    description: 'The free-text reason the cashier typed when actioning this.',
+    sample: 'Repeat patient courtesy discount.',
+  },
+  {
+    name: 'patientName',
+    label: 'Patient name',
+    description: 'First + last name of the patient on the visit. Empty when the action is not attached to a patient.',
+    sample: 'Sarah Henderson',
+  },
+  {
+    name: 'visitRef',
+    label: 'Visit reference (LAP)',
+    description: 'LAP-NNNNN reference of the appointment, e.g. "LAP-00042". Empty until intake stamps it.',
+    sample: 'LAP-00042',
+  },
+  {
+    name: 'staffName',
+    label: 'Processed by',
+    description: 'First + last name of the cashier who processed the action.',
+    sample: 'James Walker',
+  },
+  {
+    name: 'managerName',
+    label: 'Manager name (per-recipient)',
+    description:
+      'First + last name of the recipient manager. Renders differently for each recipient when more than one manager is configured.',
+    sample: 'Dylan McAleer',
+  },
+  {
+    name: 'processedAt',
+    label: 'Processed at',
+    description: 'Date and time the action was processed, in Europe/London, e.g. "Tue 19 May 2026 at 14:32".',
+    sample: 'Tue 19 May 2026 at 14:32',
+  },
+  {
+    name: 'visitUrl',
+    label: 'Open visit link',
+    description:
+      'Deep-link back to the visit page in Lounge. Drop into [button:Open visit]({{visitUrl}}) for a tappable CTA.',
+    sample: 'https://lounge.venneir.com/visit/abc123',
+  },
+];
+
 const SHIPPING_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   {
     name: 'patientFirstName',
@@ -853,6 +920,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent to the patient when a refund is issued against a payment or deposit. Confirms the amount, the original method the refund is returning to, and the timing the patient should expect (5-10 working days on cards, immediate on cash). One General template, no per-service variants.',
     variables: REFUND_VARIABLES,
+  },
+  {
+    key: 'manager_notification',
+    label: 'Manager notification',
+    group: 'Manager notifications',
+    description:
+      'Sent from manager@notifications.venneir.com to each configured manager whenever a cashier applies, amends, or removes a discount, issues a refund, or voids a payment. Recipients are picked above this template editor.',
+    variables: MANAGER_NOTIFICATION_VARIABLES,
   },
 ];
 

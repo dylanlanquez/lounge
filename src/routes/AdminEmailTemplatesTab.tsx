@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Send,
 } from 'lucide-react';
+import { ManagerNotificationRecipientsCard } from '../components/ManagerNotificationRecipients/ManagerNotificationRecipients.tsx';
 import type { Editor } from '@tiptap/react';
 import {
   BottomSheet,
@@ -226,6 +227,9 @@ export function AdminEmailTemplatesTab() {
               >
                 {groupName}
               </p>
+              {groupName === 'Manager notifications' && selectedServiceType === null ? (
+                <ManagerNotificationRecipientsCard onToast={(t) => setToast(t)} />
+              ) : null}
               <Card padding="none">
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                   {visibleKeys.map((key, idx) => {

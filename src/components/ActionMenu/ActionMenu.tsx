@@ -1,24 +1,25 @@
 import { cloneElement, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { theme } from '../../theme/index.ts';
+import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 
 // ActionMenu
 //
-// Button-anchored popover for secondary actions that would
-// otherwise crowd a primary CTA row. Click the trigger button
-// to open, click an item to fire, click outside / press Esc to
-// close. Each item renders an icon + label + optional muted hint;
-// disabled items still show but don't dispatch.
+// Button-anchored popover OR bottom-sheet for secondary actions
+// that would otherwise crowd a primary CTA row. Click the trigger
+// button to open, click an item to fire, click outside / press Esc
+// to close.
 //
-// Styling mirrors the rest of the app's dropdown / sheet language
-// — surface fill, hairline border, soft shadow, pill radius. No
-// fancy slide animation, just a 120ms fade so the popover lands
-// without competing with whatever the user is about to do.
+// Two presentations:
+//   * 'popover' (default) — portal-mounted anchored dropdown, the
+//     original tight desktop pattern.
+//   * 'sheet' — opens as a BottomSheet from the screen edge. Used
+//     on touch surfaces where a giant tap target reads better than
+//     a tiny dropdown, and where the May 2026 sheet language is
+//     already the dominant idiom (cart / visit pages).
 //
-// Portal-mounted so a parent with overflow:hidden / transform
-// doesn't clip the popover the moment it lands. Position is
-// computed from the trigger's bounding rect at open time and
-// kept in sync on scroll / resize while the menu is open.
+// Each item renders an icon + label + optional muted hint; disabled
+// items still show but don't dispatch.
 
 export interface ActionMenuItem {
   key: string;
@@ -37,14 +38,23 @@ export interface ActionMenuItem {
 export interface ActionMenuProps {
   trigger: React.ReactElement;
   items: ActionMenuItem[];
-  /** Side the popover opens on relative to the trigger. Defaults
-   *  to 'bottom-end' so the menu's right edge aligns with the
-   *  trigger's right edge — sensible for a More button at the
-   *  end of an action row. */
+  /** Popover mode only — side the popover opens on relative to the
+   *  trigger. Defaults to 'bottom-end' so the menu's right edge
+   *  aligns with the trigger's right edge — sensible for a More
+   *  button at the end of an action row. */
   align?: 'bottom-end' | 'top-end';
   /** Optional aria-label on the popover for screen readers.
    *  Defaults to "More actions". */
   ariaLabel?: string;
+  /** Default 'popover' (anchored dropdown). Use 'sheet' for touch /
+   *  cart-row surfaces where a BottomSheet is the right size for a
+   *  More menu. */
+  presentation?: 'popover' | 'sheet';
+  /** Sheet mode only — title rendered in the BottomSheet header.
+   *  Defaults to 'More actions'. */
+  sheetTitle?: string;
+  /** Sheet mode only — sub-line under the title. */
+  sheetDescription?: string;
 }
 
 export function ActionMenu({
@@ -52,8 +62,182 @@ export function ActionMenu({
   items,
   align = 'bottom-end',
   ariaLabel = 'More actions',
+  presentation = 'popover',
+  sheetTitle = 'More actions',
+  sheetDescription,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false);
+
+  // Clone the trigger once so we can wire its onClick to toggle the
+  // menu without forcing the caller to import a Button variant
+  // they don't already use. The caller's own onClick (if any) still
+  // runs first. Wrapped once at this level so both presentations
+  // share the exact same trigger node (no double-wrapping).
+  const wiredTrigger = useMemo(
+    () => wireTriggerClick(trigger, () => setOpen((v) => !v)),
+    [trigger],
+  );
+
+  if (presentation === 'sheet') {
+    return (
+      <>
+        {wiredTrigger}
+        <BottomSheet
+          open={open}
+          onClose={() => setOpen(false)}
+          title={sheetTitle}
+          description={sheetDescription}
+        >
+          <ul
+            role="menu"
+            aria-label={ariaLabel}
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {items.map((it, idx) => (
+              <li
+                key={it.key}
+                style={{
+                  borderTop: idx === 0 ? 'none' : `1px solid ${theme.color.border}`,
+                }}
+              >
+                <SheetActionRow
+                  item={it}
+                  onClose={() => setOpen(false)}
+                />
+              </li>
+            ))}
+          </ul>
+        </BottomSheet>
+      </>
+    );
+  }
+
+  return (
+    <PopoverActionMenu
+      trigger={wiredTrigger}
+      items={items}
+      ariaLabel={ariaLabel}
+      align={align}
+      open={open}
+      onOpenChange={setOpen}
+    />
+  );
+}
+
+function SheetActionRow({
+  item,
+  onClose,
+}: {
+  item: ActionMenuItem;
+  onClose: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={item.disabled}
+      onClick={() => {
+        if (item.disabled) return;
+        onClose();
+        item.onClick();
+      }}
+      style={{
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        width: '100%',
+        textAlign: 'left',
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        cursor: item.disabled ? 'not-allowed' : 'pointer',
+        opacity: item.disabled ? 0.5 : 1,
+        color: item.tone === 'alert' ? theme.color.alert : theme.color.ink,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.base,
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+      onMouseEnter={(e) => {
+        if (item.disabled) return;
+        (e.currentTarget as HTMLButtonElement).style.background = theme.color.bg;
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: theme.radius.pill,
+          background:
+            item.tone === 'alert'
+              ? 'rgba(184, 58, 42, 0.08)'
+              : theme.color.bg,
+          color: item.tone === 'alert' ? theme.color.alert : theme.color.inkMuted,
+          border: `1px solid ${theme.color.border}`,
+          flexShrink: 0,
+          marginTop: 1,
+        }}
+      >
+        {item.icon}
+      </span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+        <span
+          style={{
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1.3,
+          }}
+        >
+          {item.label}
+        </span>
+        {item.hint ? (
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            {item.hint}
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Popover presentation — original anchored dropdown.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PopoverActionMenu({
+  trigger,
+  items,
+  ariaLabel,
+  align,
+  open,
+  onOpenChange,
+}: {
+  trigger: React.ReactElement;
+  items: ActionMenuItem[];
+  ariaLabel: string;
+  align: 'bottom-end' | 'top-end';
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+}) {
   const [rect, setRect] = useState<DOMRect | null>(null);
   const triggerWrapRef = useRef<HTMLSpanElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -80,45 +264,22 @@ export function ActionMenu({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') onOpenChange(false);
     };
     const onClick = (e: MouseEvent) => {
       const tgt = e.target as Node | null;
       if (!tgt) return;
       if (popoverRef.current?.contains(tgt)) return;
       if (triggerWrapRef.current?.contains(tgt)) return;
-      setOpen(false);
+      onOpenChange(false);
     };
     document.addEventListener('keydown', onKey);
-    // 'click' (not 'mousedown') so the trigger's own onClick can
-    // toggle the menu before the document handler tears it down.
     document.addEventListener('click', onClick);
     return () => {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('click', onClick);
     };
-  }, [open]);
-
-  // Clone the trigger so we can wire its onClick to toggle the
-  // menu without forcing the caller to import a Button variant
-  // they don't already use. The caller's own onClick (if any)
-  // still runs first.
-  const wrappedTrigger = useMemo(() => {
-    return (
-      <span
-        ref={triggerWrapRef}
-        style={{ display: 'inline-flex' }}
-        onClick={(e) => {
-          // Let the original trigger's onClick run if it has one,
-          // then toggle. cloneElement re-wires onClick below so
-          // the outer span here is purely a positioning anchor.
-          void e;
-        }}
-      >
-        {wireTriggerClick(trigger, () => setOpen((v) => !v))}
-      </span>
-    );
-  }, [trigger]);
+  }, [open, onOpenChange]);
 
   const popover =
     open && rect
@@ -137,7 +298,7 @@ export function ActionMenu({
                 disabled={it.disabled}
                 onClick={() => {
                   if (it.disabled) return;
-                  setOpen(false);
+                  onOpenChange(false);
                   it.onClick();
                 }}
                 style={{
@@ -208,11 +369,10 @@ export function ActionMenu({
 
   return (
     <>
-      {wrappedTrigger}
+      <span ref={triggerWrapRef} style={{ display: 'inline-flex' }}>
+        {trigger}
+      </span>
       {popover}
-      {/* Keyframes mounted inside the component so the fade plays
-          consistently whether or not any other modal surface has
-          declared its own keyframes higher up the tree. */}
       <style>{`
         @keyframes lng-menu-fade {
           from { opacity: 0; transform: translateY(-4px); }

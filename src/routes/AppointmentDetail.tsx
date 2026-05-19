@@ -825,6 +825,7 @@ function Hero({
   tone: StatusTone;
 }) {
   const navigate = useNavigate();
+  const { account: currentAccount } = useCurrentAccount();
   // Sheet state for the phase timeline. Lives in the hero because
   // the "Estimated appointment length" affordance lives in the
   // hero's timeLine. Sheet itself renders via portal so DOM position
@@ -1060,6 +1061,9 @@ function Hero({
         appointmentId={appt.id}
         suggestedPence={depositRemainingPence}
         defaultCategory="visit_cancelled"
+        patientId={appt.patient_id ?? null}
+        visitId={null}
+        staffAccountId={currentAccount?.account_id ?? null}
         onCompleted={() => setDepositRefundsTick((t) => t + 1)}
       />
       <BottomSheet

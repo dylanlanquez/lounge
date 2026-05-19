@@ -544,7 +544,7 @@ export type RefundPartialInput =
       amountPence: number;
       reasonCategory: RefundReasonCategory;
       reasonNote: string;
-      approverAccountId: string;
+      approverAccountId: string | null;
     }
   | {
       paymentId?: never;
@@ -552,7 +552,7 @@ export type RefundPartialInput =
       amountPence: number;
       reasonCategory: RefundReasonCategory;
       reasonNote: string;
-      approverAccountId: string;
+      approverAccountId: string | null;
     };
 
 export interface RefundPartialResult {
@@ -571,12 +571,13 @@ export interface RefundPartialResult {
 //   • Cash refunds also write an lng_payment_refunds row — one
 //     audit table for every refund regardless of source.
 //
-// Manager approval (approverAccountId) is required and must differ
-// from the caller; the edge function double-checks.
+// Manager approval is now async — staff fire the refund, a separate
+// notification email lands on every configured manager (Admin →
+// Emails → Manager notifications). approverAccountId is therefore
+// optional; pass null for refunds issued under the new flow.
 export async function refundPartial(input: RefundPartialInput): Promise<RefundPartialResult> {
   const note = input.reasonNote.trim();
   if (note.length === 0) throw new Error('A reason note is required to issue a refund');
-  if (!input.approverAccountId) throw new Error('Manager approval is required.');
   if (!Number.isFinite(input.amountPence) || input.amountPence <= 0) {
     throw new Error('Refund amount must be greater than zero');
   }
@@ -584,7 +585,7 @@ export async function refundPartial(input: RefundPartialInput): Promise<RefundPa
     amount_pence: Math.round(input.amountPence),
     reason_category: input.reasonCategory,
     reason_note: note,
-    approver_account_id: input.approverAccountId,
+    approver_account_id: input.approverAccountId ?? null,
   };
   if (input.paymentId) {
     payload.payment_id = input.paymentId;
@@ -649,11 +650,10 @@ export async function voidPayment(
   paymentId: string,
   _method: PaymentMethod,
   reason: string,
-  approverAccountId: string,
-): Promise<void> {
+  approverAccountId: string | null,
+): Promise<{ amountPence: number }> {
   const trimmed = reason.trim();
   if (trimmed.length === 0) throw new Error('A reason is required to void a payment');
-  if (!approverAccountId) throw new Error('Manager approval is required.');
 
   // Re-read the payment so we know the full amount to refund. The
   // void-this-whole-payment UX in Pay.tsx doesn't ask staff for an
@@ -692,6 +692,7 @@ export async function voidPayment(
     reasonNote: trimmed,
     approverAccountId,
   });
+  return { amountPence: remaining };
 }
 
 export function useVisitPaidStatus(visitId: string | undefined) {

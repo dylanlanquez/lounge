@@ -39,7 +39,7 @@ interface RefundBody {
   amount_pence: number;
   reason_category: string;
   reason_note: string;
-  approver_account_id: string;
+  approver_account_id?: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -58,10 +58,9 @@ Deno.serve(async (req) => {
   if (
     !body.payment_id ||
     !Number.isFinite(body.amount_pence) || body.amount_pence <= 0 ||
-    !body.reason_category || !body.reason_note?.trim() ||
-    !body.approver_account_id
+    !body.reason_category || !body.reason_note?.trim()
   ) {
-    return jsonError(400, 'payment_id, amount_pence (positive int), reason_category, reason_note, approver_account_id required');
+    return jsonError(400, 'payment_id, amount_pence (positive int), reason_category, reason_note required');
   }
 
   const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -71,9 +70,9 @@ Deno.serve(async (req) => {
   const { data: meRow } = await userClient.rpc('auth_account_id');
   const performedBy = (meRow as string | null) ?? null;
   if (!performedBy) return jsonError(401, 'Could not resolve actor');
-  if (performedBy === body.approver_account_id) {
-    return jsonError(409, 'Performer and approver must be different staff');
-  }
+  // approver_account_id is now optional. Manager approval is async —
+  // a notification email lands on every configured manager after the
+  // refund succeeds (Admin → Emails → Manager notifications).
 
   // Resolve the payment, its visit, and the Klarna order_id from
   // the linked session row.
@@ -131,7 +130,7 @@ Deno.serve(async (req) => {
       reason_category: body.reason_category,
       reason_note: body.reason_note.trim(),
       performed_by_account_id: performedBy,
-      approver_account_id: body.approver_account_id,
+      approver_account_id: body.approver_account_id ?? null,
       visit_id: ses.visit_id,
       appointment_id: appointmentId,
     })
@@ -260,7 +259,7 @@ Deno.serve(async (req) => {
         visit_id: ses.visit_id,
         appointment_id: appointmentId,
         staff_account_id: performedBy,
-        approver_account_id: body.approver_account_id,
+        approver_account_id: body.approver_account_id ?? null,
       },
     });
   }

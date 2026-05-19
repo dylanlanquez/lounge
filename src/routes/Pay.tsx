@@ -24,8 +24,9 @@ import {
   voidPayment,
   type CartPaymentRow,
 } from '../lib/queries/payments.ts';
-import { listManagers, type ManagerRow } from '../lib/queries/cartDiscounts.ts';
-import { DropdownSelect } from '../components/DropdownSelect/DropdownSelect.tsx';
+import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
+import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
+import { ManagerNotificationNotice } from '../components/ManagerNotificationNotice/ManagerNotificationNotice.tsx';
 import { patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
@@ -233,40 +234,36 @@ export function Pay() {
   const { data: cartPayments, refresh: refreshCartPayments } = useCartPayments(cart?.id ?? null);
   const succeededPayments = cartPayments.filter((p) => p.status === 'succeeded');
 
-  // Void sheet state. Captures the reason + the approving manager's
-  // credentials. The cashier can't approve their own void — the
-  // manager re-auths in a parallel client and we capture their
-  // accounts.id without disturbing the cashier's session.
+  // Void sheet state. Captures the reason — manager approval has
+  // moved out of band: configured managers get an emailed
+  // notification after the void succeeds (Admin → Emails → Manager
+  // notifications).
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidTarget, setVoidTarget] = useState<CartPaymentRow | null>(null);
   const [voidReason, setVoidReason] = useState('');
-  const [voidManagerId, setVoidManagerId] = useState('');
-  const [voidManagers, setVoidManagers] = useState<ManagerRow[]>([]);
   const [voidBusy, setVoidBusy] = useState(false);
   const [voidError, setVoidError] = useState<string | null>(null);
-  const openVoidSheet = async (p: CartPaymentRow) => {
+  const { account: currentAccount } = useCurrentAccount();
+  const openVoidSheet = (p: CartPaymentRow) => {
     setVoidTarget(p);
     setVoidReason('');
-    setVoidManagerId('');
     setVoidError(null);
     setVoidOpen(true);
-    try {
-      const list = await listManagers();
-      setVoidManagers(list);
-    } catch (e) {
-      setVoidError(e instanceof Error ? e.message : 'Could not load managers');
-    }
   };
   const submitVoid = async () => {
     if (!voidTarget) return;
-    if (!voidManagerId) {
-      setVoidError('Pick the manager who approved this.');
-      return;
-    }
     setVoidBusy(true);
     setVoidError(null);
     try {
-      await voidPayment(voidTarget.id, voidTarget.method, voidReason, voidManagerId);
+      const result = await voidPayment(voidTarget.id, voidTarget.method, voidReason, null);
+      void sendManagerNotification({
+        actionKind: 'payment_voided',
+        amountPence: result.amountPence,
+        reason: voidReason.trim(),
+        patientId: patient?.id ?? null,
+        visitId: visit?.id ?? null,
+        staffAccountId: currentAccount?.account_id ?? null,
+      });
       setVoidOpen(false);
       setVoidTarget(null);
       // Both the paid roll-up and the captured-payments list need
@@ -958,17 +955,16 @@ export function Pay() {
         </div>
       ) : null}
 
-      {/* Void payment sheet. Required reason + manager email/password
-          for the 2-staff sign-off. The manager signs in to a
-          parallel Supabase client (no session swap) so we can
-          capture their accounts.id without disturbing the cashier
-          who's running the till. */}
+      {/* Void payment sheet. Required reason. Manager approval is
+          asynchronous: the configured managers (Admin → Emails →
+          Manager notifications) get an emailed record after the
+          void succeeds. */}
       <BottomSheet
         open={voidOpen}
         onClose={() => !voidBusy && setVoidOpen(false)}
         dismissable={!voidBusy}
         title={voidTarget ? `Void ${formatPence(voidTarget.amount_pence)} payment` : 'Void payment'}
-        description="Voiding requires a manager sign-off. Both you and the manager will be on the audit row."
+        description="The configured managers will be notified by email about this void."
         footer={
           <div
             style={{
@@ -995,50 +991,7 @@ export function Pay() {
             onChange={(e) => setVoidReason(e.target.value)}
             placeholder="e.g. Customer changed mind on method, retake as card"
           />
-          <div
-            style={{
-              padding: theme.space[4],
-              borderRadius: theme.radius.input,
-              border: `1px solid ${theme.color.border}`,
-              background: theme.color.bg,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: theme.space[3],
-            }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.md,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  letterSpacing: theme.type.tracking.tight,
-                }}
-              >
-                Manager sign-off
-              </h3>
-              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-                Pick the manager who approved this void. Their email lands on the audit row.
-              </p>
-            </div>
-            <DropdownSelect<string>
-              label="Approving manager"
-              required
-              value={voidManagerId}
-              options={voidManagers.map((m) => ({
-                value: m.id,
-                label: `${m.name} (${m.login_email})`,
-              }))}
-              onChange={(v) => setVoidManagerId(v)}
-              placeholder={
-                voidManagers.length === 0
-                  ? 'No managers configured. Add one in Admin > Staff.'
-                  : 'Pick the manager who approved this'
-              }
-              disabled={voidManagers.length === 0}
-            />
-          </div>
+          <ManagerNotificationNotice />
           {voidError ? (
             <p
               role="alert"
