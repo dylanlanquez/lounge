@@ -57,7 +57,11 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
         style={{
           display: 'flex',
           gap: theme.space[4],
-          padding: `${theme.space[4]}px ${theme.space[5]}px`,
+          // 20px top + bottom gives the row breathing room without
+          // bloat — splits the difference between iOS list-row 14px
+          // and Linear-inbox 24px conventions. 16px was reading too
+          // tight on the tablet at the default zoom.
+          padding: `${theme.space[5]}px ${theme.space[5]}px`,
           borderBottom: `1px solid ${theme.color.border}`,
           position: 'relative',
           // Unseen rows show a 3px accent-coloured spine on the left
