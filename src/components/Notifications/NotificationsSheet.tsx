@@ -49,8 +49,14 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
     }
   }, [open]);
 
-  // Lock root scroll while the sheet is open. Same pattern as
-  // BottomSheet.tsx so the two surfaces behave identically.
+  // Lock root scroll while the sheet is open. We also pad the
+  // root by the disappearing scrollbar's width so a centred portal
+  // doesn't visibly shift sideways the moment the bell opens —
+  // the previous "tiniest glimpse" flash Dylan saw was the
+  // scrollbar collapsing and the popup recentering 7-8 px to the
+  // left in the same paint. Compensating before flipping overflow
+  // keeps the layout pinned. Identical pattern is applied in
+  // BottomSheet so every modal surface behaves the same way.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -58,11 +64,22 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
     };
     document.addEventListener('keydown', onKey);
     const root = document.getElementById('root');
-    const prev = root?.style.overflow ?? '';
-    if (root) root.style.overflow = 'hidden';
+    const prevOverflow = root?.style.overflow ?? '';
+    const prevPaddingRight = root?.style.paddingRight ?? '';
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+    if (root) {
+      if (scrollbarWidth > 0) {
+        root.style.paddingRight = `${scrollbarWidth}px`;
+      }
+      root.style.overflow = 'hidden';
+    }
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) root.style.overflow = prev;
+      if (root) {
+        root.style.overflow = prevOverflow;
+        root.style.paddingRight = prevPaddingRight;
+      }
     };
   }, [open, onClose]);
 
@@ -391,6 +408,22 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
           </Button>
         </footer>
       </div>
+      {/* Keyframes live inside the portal so the bell can fire its
+          sheet-up + fade animations whether or not any BottomSheet
+          is also mounted. Without this, opening the bell from a
+          screen with no other modal active rendered the sheet at
+          its final position immediately — no slide, which made the
+          appearance read as a flash. */}
+      <style>{`
+        @keyframes lng-fade {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes lng-sheet-up {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+      `}</style>
     </div>,
     document.body,
   );

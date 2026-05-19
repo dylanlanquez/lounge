@@ -60,13 +60,27 @@ export function BottomSheet({
     document.addEventListener('keydown', onKey);
     // Lock the page scroll while the sheet is open. The page
     // scrolls on #root (body is pinned for iOS rubber-band reasons,
-    // see globalStyles), so we toggle overflow there.
+    // see globalStyles), so we toggle overflow there. Compensate
+    // for the disappearing scrollbar width by padding #root by the
+    // same number of pixels — otherwise a centred portal visibly
+    // shifts sideways the moment the sheet opens.
     const root = document.getElementById('root');
     const prevOverflow = root?.style.overflow ?? '';
-    if (root) root.style.overflow = 'hidden';
+    const prevPaddingRight = root?.style.paddingRight ?? '';
+    const scrollbarWidth =
+      window.innerWidth - document.documentElement.clientWidth;
+    if (root) {
+      if (scrollbarWidth > 0) {
+        root.style.paddingRight = `${scrollbarWidth}px`;
+      }
+      root.style.overflow = 'hidden';
+    }
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) root.style.overflow = prevOverflow;
+      if (root) {
+        root.style.overflow = prevOverflow;
+        root.style.paddingRight = prevPaddingRight;
+      }
     };
   }, [open, onClose, dismissable]);
 

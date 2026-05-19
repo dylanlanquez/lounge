@@ -41,10 +41,15 @@ const SPEC_BY_TYPE: Record<NotificationEventType, IconSpec> = {
     fg: theme.color.accent,
     bg: 'rgba(31, 77, 58, 0.10)',
   },
+  // Reschedule is a neutral-but-informational state: nothing has
+  // gone wrong, but the booking moved. Blue from the avatar palette
+  // separates it cleanly from graphite "consult / anything else"
+  // tones used elsewhere and reads as an info pip — distinct from
+  // booked (green), cancelled (red), ended (amber).
   appointment_rescheduled: {
     Icon: CalendarClock,
-    fg: theme.category.consult,
-    bg: 'rgba(74, 79, 85, 0.10)',
+    fg: '#1E5BA8',
+    bg: 'rgba(30, 91, 168, 0.10)',
   },
   appointment_cancelled: {
     Icon: CalendarX2,
