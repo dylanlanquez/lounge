@@ -111,6 +111,13 @@ function AxisOptions({
       }}
     >
       {helper ? (
+        // Centred via flex `alignSelf` because the auto-margin path
+        // wasn't visibly landing in every Shopify-embed context — the
+        // parent picks up its own flex cross-axis rules and the
+        // `<p>` ended up cross-axis stretched, so any text-align
+        // looked left-anchored to the eye. alignSelf gives the
+        // item its own cross-axis anchor that the flex layout
+        // can't override.
         <p
           style={{
             margin: 0,
@@ -119,8 +126,7 @@ function AxisOptions({
             lineHeight: 1.45,
             maxWidth: 600,
             textAlign: 'center',
-            marginLeft: 'auto',
-            marginRight: 'auto',
+            alignSelf: 'center',
           }}
         >
           {helper}
