@@ -1777,6 +1777,34 @@ export function VisitDetail() {
                   </Button>
                 </span>
               ) : null}
+              {/* Always-on Refund affordance. The owed-back banner
+                  covers the auto-prompted case (owed > 0); this
+                  button covers the goodwill / disputed / post-
+                  completion refunds where the books look balanced
+                  but staff still needs to send money back. Gated on
+                  there being any captured payment OR deposit to
+                  refund against — otherwise RefundSheet would just
+                  show its empty state. */}
+              {amountPaidPence > 0 ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    // The dropdown inside RefundSheet has the full
+                    // set of categories — staff picks the right
+                    // one for an ad-hoc refund. Default to
+                    // cart_correction since that's the most
+                    // common "money came back" reason outside the
+                    // owed-banner case.
+                    setRefundDefaultCategory('cart_correction');
+                    setRefundOpen(true);
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <RotateCcw size={16} aria-hidden />
+                    Refund
+                  </span>
+                </Button>
+              ) : null}
               {visit.status === 'complete' && visit.fulfilment_method === 'shipping' && !visit.dispatch_ref ? (
                 // Visit completed with shipping method but dispatch not yet
                 // processed (e.g. sheet was closed before submitting).

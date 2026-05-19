@@ -102,7 +102,7 @@ export function SignIn() {
               fontSize: theme.type.size.sm,
             }}
           >
-            Receptionist email and PIN.
+            Receptionist email and password.
           </p>
 
           <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
@@ -118,14 +118,13 @@ export function SignIn() {
               placeholder="dylan@venneir.com"
             />
             <Input
-              label="PIN"
+              label="Password"
               type="password"
-              inputMode="numeric"
               autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••"
+              placeholder="Your password"
             />
             <Button
               type="submit"
@@ -149,7 +148,7 @@ export function SignIn() {
             textAlign: 'center',
           }}
         >
-          Trouble signing in? Speak to Dylan; PIN reset takes 30 seconds.
+          Trouble signing in? Speak to Dylan; a password reset takes 30 seconds.
         </p>
       </div>
 
