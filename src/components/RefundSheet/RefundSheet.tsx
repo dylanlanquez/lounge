@@ -14,6 +14,7 @@ import {
 } from '../../lib/queries/payments.ts';
 import { listManagers, type ManagerRow } from '../../lib/queries/staff.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
+import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
 
 // RefundSheet — staff-facing refund flow.
 //
@@ -76,6 +77,12 @@ export function RefundSheet({
   const [managers, setManagers] = useState<ManagerRow[]>([]);
   const [managerAccountId, setManagerAccountId] = useState('');
   const [managersError, setManagersError] = useState<string | null>(null);
+  // The lng_payment_refunds.performed_by_account_id <>
+  // approver_account_id check constraint rejects refunds where the
+  // performer is also the approver. We strip the current user out
+  // of the manager dropdown so the rule surfaces in the UI rather
+  // than as a generic DB error after submit.
+  const { account: currentAccount } = useCurrentAccount();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [perRowErrors, setPerRowErrors] = useState<Record<string, string>>({});
@@ -345,22 +352,33 @@ export function RefundSheet({
           subtitle="Refunds always need a manager. Pick the one who said yes."
         >
           {managersError ? <ErrorLine message={managersError} /> : null}
-          <DropdownSelect<string>
-            label="Approving manager"
-            required
-            value={managerAccountId}
-            options={managers.map((m) => ({
-              value: m.account_id,
-              label: `${m.name} (${m.login_email})`,
-            }))}
-            onChange={(v) => setManagerAccountId(v)}
-            placeholder={
-              managers.length === 0
-                ? 'No managers configured. Add one in Admin, Staff.'
-                : 'Pick the manager who approved this refund'
-            }
-            disabled={managers.length === 0 || submitting}
-          />
+          {(() => {
+            const me = currentAccount?.account_id ?? null;
+            const eligible = me
+              ? managers.filter((m) => m.account_id !== me)
+              : managers;
+            const onlyMe = me && managers.length > 0 && eligible.length === 0;
+            return (
+              <DropdownSelect<string>
+                label="Approving manager"
+                required
+                value={managerAccountId}
+                options={eligible.map((m) => ({
+                  value: m.account_id,
+                  label: `${m.name} (${m.login_email})`,
+                }))}
+                onChange={(v) => setManagerAccountId(v)}
+                placeholder={
+                  managers.length === 0
+                    ? 'No managers configured. Add one in Admin, Staff.'
+                    : onlyMe
+                      ? 'You cannot approve your own refund. Ask another manager to sign in on a second device.'
+                      : 'Pick the manager who approved this refund'
+                }
+                disabled={eligible.length === 0 || submitting}
+              />
+            );
+          })()}
         </SheetSection>
 
         {submitError ? <ErrorLine message={submitError} /> : null}
