@@ -691,62 +691,117 @@ function NotifyReadySheet({
             ) : null}
           </header>
 
+          {/* Body — iMessage-style outbound bubble, accent fill,
+              right-anchored, with a soft tail. Surrounds the message
+              in the spatial cue the patient will see on their phone
+              so the receptionist instantly recognises what's being
+              previewed, rather than reading a plain text block. */}
           <div
             style={{
-              minHeight: 96,
-              padding: theme.space[4],
+              padding: `${theme.space[4]}px ${theme.space[3]}px`,
               borderRadius: theme.radius.card,
               background: theme.color.bg,
               border: `1px solid ${theme.color.border}`,
-              fontSize: theme.type.size.base,
-              lineHeight: theme.type.leading.normal,
-              color: theme.color.ink,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              minHeight: 88,
             }}
           >
             {preview.status === 'loading' ? (
-              <span style={{ color: theme.color.inkMuted }}>Rendering preview…</span>
+              <span
+                style={{
+                  alignSelf: 'center',
+                  color: theme.color.inkMuted,
+                  fontSize: theme.type.size.sm,
+                }}
+              >
+                Rendering preview…
+              </span>
             ) : preview.status === 'error' ? (
               <ErrorPanel reason={preview.reason} message={preview.message ?? 'Preview failed.'} />
             ) : preview.body ? (
-              preview.body
+              <div
+                style={{
+                  maxWidth: '85%',
+                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                  borderRadius: 18,
+                  borderBottomRightRadius: 6,
+                  background: theme.color.accent,
+                  color: '#FFFFFF',
+                  fontSize: theme.type.size.base,
+                  lineHeight: 1.45,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  boxShadow: theme.shadow.card,
+                }}
+              >
+                {preview.body}
+              </div>
             ) : (
-              <span style={{ color: theme.color.inkMuted }}>—</span>
+              <span
+                style={{
+                  alignSelf: 'center',
+                  color: theme.color.inkMuted,
+                  fontSize: theme.type.size.sm,
+                }}
+              >
+                —
+              </span>
             )}
           </div>
 
           {preview.status === 'loaded' && preview.to ? (
-            <p
+            <div
               style={{
-                margin: 0,
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
+                marginTop: theme.space[2],
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
               }}
             >
-              Sending to{' '}
               <span
                 style={{
-                  color: theme.color.ink,
+                  fontSize: theme.type.size.xs,
                   fontWeight: theme.type.weight.medium,
+                  textTransform: 'uppercase',
+                  letterSpacing: theme.type.tracking.wide,
+                  color: theme.color.inkSubtle,
+                }}
+              >
+                Sending to
+              </span>
+              <span
+                style={{
+                  fontSize: theme.type.size.lg,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                  letterSpacing: theme.type.tracking.tight,
                   fontVariantNumeric: 'tabular-nums',
                 }}
               >
-                {preview.to}
+                {formatUkPhone(preview.to)}
               </span>
-              . Edit the wording from{' '}
-              <a
-                href="/admin"
+              <span
                 style={{
-                  color: theme.color.accent,
-                  fontWeight: theme.type.weight.medium,
-                  textDecoration: 'none',
+                  marginTop: 4,
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
                 }}
               >
-                Admin → Emails &amp; SMS
-              </a>
-              .
-            </p>
+                Edit the wording in{' '}
+                <Link
+                  to="/admin"
+                  style={{
+                    color: theme.color.accent,
+                    fontWeight: theme.type.weight.medium,
+                    textDecoration: 'none',
+                  }}
+                >
+                  Admin → Emails &amp; SMS
+                </Link>
+                .
+              </span>
+            </div>
           ) : null}
         </section>
 
