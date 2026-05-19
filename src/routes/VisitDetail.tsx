@@ -273,8 +273,11 @@ export function VisitDetail() {
 
   // "End visit early" sheet — visible CTA on the action row for
   // closing out a visit before the till. Reason picker (5 cards):
-  //   unsuitable        → reveals product picker; loops removeCartLineWithReason
-  //   patient_declined  → endVisitEarly with note
+  //   unsuitable        → reveals product picker; submit calls
+  //                       endVisitEarly with the picked lines (one
+  //                       atomic lng_end_visit_early RPC behind it)
+  //   patient_declined  → endVisitEarly with note (all active lines
+  //                       soft-deleted with reason='visit_ended_early')
   //   patient_walked_out→ endVisitEarly with note
   //   wrong_booking     → endVisitEarly with note
   //   other             → endVisitEarly with note
@@ -1186,30 +1189,26 @@ export function VisitDetail() {
           end_note: unsuitNote.trim(),
         },
       };
-      if (endReason === 'unsuitable') {
-        // Loop through picked items via the unified removal flow.
-        // The orchestrator handles termination once active items
-        // hit zero.
-        for (const itemId of unsuitItemIds) {
-          const it = unsuitEligibleItems.find((x) => x.id === itemId);
-          if (!it) continue;
-          await removeCartLineWithReason({
-            cart_item_id: it.id,
-            catalogue_id: it.catalogue_id,
-            visit_id: visit.id,
-            patient_id: patient.id,
-            reason: 'unsuitable',
-            note: unsuitNote,
-          });
-        }
-      } else {
-        await endVisitEarly({
-          patient_id: patient.id,
-          visit_id: visit.id,
-          reason: endReason,
-          note: unsuitNote,
-        });
-      }
+      // One atomic RPC for both branches (unsuitable picks + the
+      // non-clinical end-visit reasons). Prior code looped
+      // removeCartLineWithReason() N times on the unsuitable path,
+      // which left a half-written window if the tab closed
+      // mid-loop — some lines soft-deleted, visit row not yet
+      // flipped, refund banner racing the cart-empty check.
+      const picks =
+        endReason === 'unsuitable'
+          ? unsuitItemIds
+              .map((id) => unsuitEligibleItems.find((x) => x.id === id))
+              .filter((it): it is (typeof unsuitEligibleItems)[number] => !!it)
+              .map((it) => ({ cart_item_id: it.id, catalogue_id: it.catalogue_id }))
+          : undefined;
+      await endVisitEarly({
+        patient_id: patient.id,
+        visit_id: visit.id,
+        reason: endReason,
+        note: unsuitNote,
+        picks,
+      });
       setUnsuitOpen(false);
       refresh();
       refreshPaid();
@@ -2221,11 +2220,13 @@ export function VisitDetail() {
 
       {/* End visit early sheet. Five reason categories — picking
           'Patient unsuitable' reveals the product picker; the rest
-          end the visit on a non-clinical reason. Submit branches
-          accordingly: unsuitable loops removeCartLineWithReason,
-          everything else calls endVisitEarly which soft-deletes any
-          remaining items and stamps lng_visits.visit_end_reason +
-          visit_end_note. Reverse restores the lines exactly. */}
+          end the visit on a non-clinical reason. Submit calls
+          endVisitEarly once (single lng_end_visit_early RPC); the
+          server soft-deletes the cart lines, stamps visit_end_reason
+          + visit_end_note, and writes the timeline events in one
+          transaction. Reverse restores only the lines this action
+          removed (unsuitable + visit_ended_early reasons); manual
+          pre-end-visit removals stay removed. */}
       <BottomSheet
         open={unsuitOpen}
         onClose={() => !unsuitBusy && setUnsuitOpen(false)}
@@ -2233,7 +2234,7 @@ export function VisitDetail() {
         title="End visit early"
         description={
           sheetWillEndVisit
-            ? 'The visit ends here. Soft-deleted lines come back if you Reverse later. Only an admin can reverse outside the app.'
+            ? 'The visit ends here. Lines removed by this action come back if you Reverse later. Lines you removed earlier in the visit stay removed (any refunds already issued for them stay applied). Only an admin can reverse outside the app.'
             : 'Records on the patient timeline that the patient was unsuitable for the picked products. The visit stays open for any product you don’t tick.'
         }
         footer={

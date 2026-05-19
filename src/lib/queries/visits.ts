@@ -932,79 +932,63 @@ export type VisitEndReason =
   | 'wrong_booking'
   | 'other';
 
+// One picked line in the unsuitable end-visit flow. Sent as the
+// `picks` array on the RPC so each soft-delete + unsuitability
+// record write lands in the same transaction as the visit status
+// flip — no half-state if the client tab closes mid-loop, which
+// was the failure mode before this change.
+export interface EndVisitEarlyPick {
+  cart_item_id: string;
+  catalogue_id: string;
+}
+
 export interface EndVisitEarlyInput {
   patient_id: string;
   visit_id: string;
-  reason: Exclude<VisitEndReason, 'unsuitable'>;
+  reason: VisitEndReason;
   note: string;
+  // Required when reason='unsuitable'; ignored for the other
+  // categories (those soft-delete every active cart line).
+  picks?: EndVisitEarlyPick[];
 }
 
-// End an active visit for a non-clinical reason. Soft-deletes every
-// active cart line with reason='changed_mind' (as a generic
-// "removed because the visit ended" marker, since changed_mind is
-// the closest existing category that doesn't require clinical
-// records). Stamps lng_visits.status='ended_early' plus
-// visit_end_reason / visit_end_note so the audit row is
-// self-contained. Reverse restores the lines exactly as it does
-// for unsuitable.
+// End an active visit. Thin wrapper around lng_end_visit_early,
+// which owns the multi-write transaction (cart soft-deletes,
+// unsuitability records, visit status flip, timeline events).
+//
+// Two branches inside the RPC:
+//
+//   • reason='unsuitable': p_picks identifies which catalogue-
+//     backed lines to remove. Soft-deletes them with
+//     removed_reason='unsuitable', writes one
+//     lng_unsuitability_records row per pick, and one
+//     'cart_line_removed' patient_events row per pick so the
+//     timeline keeps its per-item rows. Visit flips to 'unsuitable'.
+//
+//   • reason ∈ ('patient_declined','patient_walked_out',
+//     'wrong_booking','other'): soft-deletes every active cart line
+//     with removed_reason='visit_ended_early' — a distinct value
+//     from manual 'changed_mind' removals so reverse can restore
+//     them cleanly. Visit flips to 'ended_early'.
+//
+// In both branches the RPC writes one visit-level
+// 'visit_ended_early' patient_events row that visitTimeline.ts
+// already renders as "Visit ended early — <reason>".
 export async function endVisitEarly(input: EndVisitEarlyInput): Promise<void> {
   const note = input.note.trim();
   if (note.length === 0) throw new Error('A reason is required to end the visit early');
-
-  const { data: accountId } = await supabase.rpc('auth_account_id');
-  const removedBy = (accountId as string | null) ?? null;
-
-  // Find the active cart for this visit so we can soft-delete its
-  // remaining lines. Empty-cart visits skip this step.
-  const { data: cartRow, error: cartErr } = await supabase
-    .from('lng_carts')
-    .select('id')
-    .eq('visit_id', input.visit_id)
-    .maybeSingle();
-  if (cartErr) throw new Error(cartErr.message);
-
-  if (cartRow?.id) {
-    const { error: removeErr } = await supabase
-      .from('lng_cart_items')
-      .update({
-        removed_at: new Date().toISOString(),
-        removed_reason: 'changed_mind',
-        removed_by: removedBy,
-        removed_note: note,
-      })
-      .eq('cart_id', cartRow.id)
-      .is('removed_at', null);
-    if (removeErr) throw new Error(removeErr.message);
+  if (input.reason === 'unsuitable' && (!input.picks || input.picks.length === 0)) {
+    throw new Error('Pick at least one product the patient was unsuitable for.');
   }
 
-  // Flip the visit status. ended_early is distinct from unsuitable
-  // — same lock-state UX, but no clinical records attached.
-  const { error: visitErr } = await supabase
-    .from('lng_visits')
-    .update({
-      status: 'ended_early',
-      closed_at: new Date().toISOString(),
-      visit_end_reason: input.reason,
-      visit_end_note: note,
-    })
-    .eq('id', input.visit_id);
-  if (visitErr) throw new Error(visitErr.message);
-
-  // Timeline event. The reason category lets the timeline render
-  // the right copy ("Visit ended — Patient walked out") without a
-  // join back to lng_visits.
-  await supabase.from('patient_events').insert({
-    patient_id: input.patient_id,
-    event_type: 'visit_ended_early',
-    actor_account_id: removedBy,
-    notes: note,
-    payload: {
-      visit_id: input.visit_id,
-      reason: input.reason,
-      note,
-      staff_account_id: removedBy,
-    },
+  const { error } = await supabase.rpc('lng_end_visit_early', {
+    p_visit_id: input.visit_id,
+    p_patient_id: input.patient_id,
+    p_reason: input.reason,
+    p_note: note,
+    p_picks: input.reason === 'unsuitable' ? (input.picks ?? []) : [],
   });
+  if (error) throw new Error(error.message);
 }
 
 export interface ReverseUnsuitabilityInput {
@@ -1277,183 +1261,45 @@ export interface RemoveCartLineWithReasonInput {
 export async function removeCartLineWithReason(
   input: RemoveCartLineWithReasonInput
 ): Promise<{ visit_terminated: boolean }> {
-  const note = input.note?.trim() ?? '';
-  if (input.reason === 'unsuitable' && note.length === 0) {
-    throw new Error('A reason is required for unsuitable removals');
-  }
-  if (input.reason === 'unsuitable' && !input.catalogue_id) {
-    throw new Error('Unsuitable removal requires a catalogue-backed line');
-  }
-
-  const { data: accountId } = await supabase.rpc('auth_account_id');
-
-  // Read the line's display name BEFORE soft-deleting so the
-  // patient_events row can carry "Removed [name]" without a join
-  // back to lng_cart_items at read time. The frozen catalogue
-  // snapshot on the cart row is the source of truth (matches what
-  // staff saw in the cart at removal time).
-  const { data: lineRow, error: lineErr } = await supabase
-    .from('lng_cart_items')
-    .select('name')
-    .eq('id', input.cart_item_id)
-    .maybeSingle();
-  if (lineErr) throw new Error(lineErr.message);
-  const lineName = (lineRow as { name: string } | null)?.name ?? null;
-
-  // 1. Soft-delete the cart line. Writes the cart-item-level audit.
-  const { error: removeErr } = await supabase
-    .from('lng_cart_items')
-    .update({
-      removed_at: new Date().toISOString(),
-      removed_reason: input.reason,
-      removed_by: (accountId as string | null) ?? null,
-      removed_note: note.length > 0 ? note : null,
-    })
-    .eq('id', input.cart_item_id);
-  if (removeErr) throw new Error(removeErr.message);
-
-  // 2. Reason-specific audit:
-  if (input.reason === 'unsuitable' && input.catalogue_id) {
-    // Immutable per-product unsuitability record. Used by the
-    // header to render "By [name]" and by future "this patient was
-    // previously unsuitable for this product" warnings.
-    const { error: recErr } = await supabase.from('lng_unsuitability_records').insert({
-      patient_id: input.patient_id,
-      visit_id: input.visit_id,
-      catalogue_id: input.catalogue_id,
-      reason: note,
-      recorded_by: (accountId as string | null) ?? null,
-    });
-    if (recErr) throw new Error(recErr.message);
-  }
-
-  // Timeline event for every removal regardless of reason. The
-  // event_type carries the category so a downstream consumer can
-  // bucket without re-reading the cart row.
-  await supabase.from('patient_events').insert({
-    patient_id: input.patient_id,
-    event_type: 'cart_line_removed',
-    actor_account_id: (accountId as string | null) ?? null,
-    notes: note.length > 0 ? note : null,
-    payload: {
-      visit_id: input.visit_id,
-      cart_item_id: input.cart_item_id,
-      catalogue_id: input.catalogue_id,
-      // Line's display name at removal time. Lets the timeline
-      // render "Removed [name]" without joining back to cart_items.
-      line_name: lineName,
-      reason: input.reason,
-      note: note.length > 0 ? note : null,
-    },
+  const { data, error } = await supabase.rpc('lng_remove_cart_line', {
+    p_cart_item_id: input.cart_item_id,
+    p_visit_id: input.visit_id,
+    p_patient_id: input.patient_id,
+    p_reason: input.reason,
+    p_note: input.note ?? '',
+    p_catalogue_id: input.catalogue_id,
   });
-
-  // 3. Termination check. Visit flips to 'unsuitable' when the cart
-  //    is empty AND at least one unsuitability record exists on the
-  //    visit. Cart-empty-by-mistake-only visits stay active.
-  const { data: cartRow } = await supabase
-    .from('lng_carts')
-    .select('id')
-    .eq('visit_id', input.visit_id)
-    .maybeSingle();
-  if (!cartRow?.id) return { visit_terminated: false };
-
-  const { count: activeCount, error: countErr } = await supabase
-    .from('lng_cart_items')
-    .select('id', { count: 'exact', head: true })
-    .eq('cart_id', cartRow.id)
-    .is('removed_at', null);
-  if (countErr) throw new Error(countErr.message);
-
-  if ((activeCount ?? 0) > 0) return { visit_terminated: false };
-
-  const { count: unsuitableCount, error: unsErr } = await supabase
-    .from('lng_unsuitability_records')
-    .select('id', { count: 'exact', head: true })
-    .eq('visit_id', input.visit_id);
-  if (unsErr) throw new Error(unsErr.message);
-  if ((unsuitableCount ?? 0) === 0) return { visit_terminated: false };
-
-  // Stamp the visit-level end reason/note alongside the status flip
-  // so the new constraint (status='unsuitable' requires reason+note)
-  // holds. The triggering removal's note becomes the visit-level
-  // note — it's the most recent staff input and the one that ended
-  // the visit.
-  const { error: visitErr } = await supabase
-    .from('lng_visits')
-    .update({
-      status: 'unsuitable',
-      closed_at: new Date().toISOString(),
-      visit_end_reason: 'unsuitable',
-      visit_end_note: note,
-    })
-    .eq('id', input.visit_id);
-  if (visitErr) throw new Error(visitErr.message);
-
-  return { visit_terminated: true };
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? (data[0] as { visit_terminated: boolean } | undefined) : null;
+  return { visit_terminated: row?.visit_terminated === true };
 }
 
-// Reverses either visit-level terminus ('unsuitable' OR
-// 'ended_early') AND restores every soft-deleted cart line on this
-// visit (regardless of removal reason). lng_unsuitability_records
-// rows stay as audit — we never mutate signed-off records — but the
-// cart-item soft-delete is un-flagged so the cart returns exactly
-// as it was before the removal sequence began. visit_end_reason
-// and visit_end_note also clear so the constraint stays satisfied.
+// Reverse a visit that terminated as 'unsuitable' or 'ended_early'.
+// Thin wrapper around lng_reverse_visit_end, which owns the atomic
+// reverse transaction: restore the lines whose removed_reason
+// signals they were taken by the visit-end action (unsuitable or
+// visit_ended_early), reopen the visit, and write the timeline
+// event.
 //
-// "Restore everything" is deliberate per Dylan's call: a "wrong
-// product" mistake reappears alongside the unsuitable lines, and
-// staff has to re-remove it. The trade-off buys a clean mental
-// model — Reverse really resets this visit, no surprises about
-// which lines come back.
+// The reverse contract — only lines that were removed BY the
+// visit-end action come back. Mid-visit 'mistake' and
+// 'changed_mind' removals stay removed so the refunds already
+// issued against those removals stay reconciled. (Earlier
+// behaviour was "restore everything", which broke the cart vs
+// refund accounting when a mid-visit refund pre-dated the visit-
+// end action — see 20260519000006 migration header for the
+// reasoning.)
+//
+// lng_unsuitability_records are immutable clinical audit and are
+// never deleted by reverse — only the cart-item soft-delete is
+// un-flagged.
 export async function reverseUnsuitability(input: ReverseUnsuitabilityInput): Promise<void> {
-  const { data: accountId } = await supabase.rpc('auth_account_id');
-
-  // Find the visit's cart so we can target its lines for un-flag.
-  const { data: cartRow, error: cartErr } = await supabase
-    .from('lng_carts')
-    .select('id')
-    .eq('visit_id', input.visit_id)
-    .maybeSingle();
-  if (cartErr) throw new Error(cartErr.message);
-
-  // Un-flag every soft-deleted line on this cart. Belt-and-braces
-  // null-out of the trio so a future direct read can't see a
-  // half-restored row. No-op when the visit has no cart yet (rare;
-  // would mean a visit was marked unsuitable before any items were
-  // ever added).
-  if (cartRow?.id) {
-    const { error: restoreErr } = await supabase
-      .from('lng_cart_items')
-      .update({ removed_at: null, removed_reason: null, removed_by: null, removed_note: null })
-      .eq('cart_id', cartRow.id)
-      .not('removed_at', 'is', null);
-    if (restoreErr) throw new Error(restoreErr.message);
-  }
-
-  const { error: visitErr } = await supabase
-    .from('lng_visits')
-    .update({
-      // Reversing an unsuitability puts the visit back into the
-      // pre-termination state. The lifecycle is now booked → arrived
-      // → complete (no in_chair); 'arrived' is the only live state we
-      // ever return to.
-      status: 'arrived',
-      closed_at: null,
-      visit_end_reason: null,
-      visit_end_note: null,
-    })
-    .eq('id', input.visit_id);
-  if (visitErr) throw new Error(visitErr.message);
-
-  await supabase.from('patient_events').insert({
-    patient_id: input.patient_id,
-    event_type: 'patient_unsuitable_reversed',
-    actor_account_id: (accountId as string | null) ?? null,
-    payload: {
-      visit_id: input.visit_id,
-      staff_account_id: (accountId as string | null) ?? null,
-    },
+  const { error } = await supabase.rpc('lng_reverse_visit_end', {
+    p_visit_id: input.visit_id,
+    p_patient_id: input.patient_id,
+    p_note: null,
   });
+  if (error) throw new Error(error.message);
 }
 
 // Latest end-of-visit details (either path: 'unsuitable' or
