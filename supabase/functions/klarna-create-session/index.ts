@@ -70,9 +70,18 @@ interface KlarnaCreateSessionResponse {
   };
 }
 
+// Real Klarna response shape from the result_url GET (verified on
+// live response 2026-05-19):
+//   { "status": "DISTRIBUTED",
+//     "qr": "https://pay.klarna.com/eu/iss/distributions/<id>/qr/<short>",
+//     "payment_link": "https://pay.klarna.com/eu/hpp/payments/<short>" }
+//
+// Note: the QR field is `qr`, NOT `qr_code` — older docs / search
+// results referred to it as `qr_code` which is wrong. Same value
+// is a hosted image URL we can drop into <img src=…>.
 interface KlarnaResultResponse {
   status?: string;
-  qr_code?: string;
+  qr?: string;
   payment_link?: string;
   retry_url?: string;
   error?: { message?: string };
@@ -380,15 +389,15 @@ Deno.serve(async (req) => {
   // Pull the QR + payment_link. Klarna's result endpoint:
   //   • Accepts GET with no body (POST returns
   //     BAD_REQUEST: "Request method 'POST' is not supported")
-  //   • Initially returns { status: "WAITING" } with no qr_code /
+  //   • Initially returns { status: "WAITING" } with no qr /
   //     payment_link — Klarna prepares the distribution async.
-  //   • Once Klarna has prepared the QR, the same GET returns
-  //     { status: "...", qr_code: "https://...", payment_link: "..." }
+  //   • Once ready, the same GET returns
+  //     { status: "DISTRIBUTED", qr: "https://...", payment_link: "https://..." }
   //
   // Polling: up to 8 attempts at 400ms intervals (~3.2 seconds
   // wall-clock budget — within the 10s Supabase function timeout
   // and short enough that staff doesn't see a long spinner).
-  // Stops the moment qr_code AND payment_link are populated.
+  // Stops the moment qr AND payment_link are populated.
   let resultRes: { ok: boolean; status: number; body: unknown } = {
     ok: false,
     status: 0,
@@ -399,8 +408,8 @@ Deno.serve(async (req) => {
   while (attempt < maxAttempts) {
     resultRes = await klarnaFetch('GET', stripBase(created.distribution.result_url));
     if (resultRes.ok && resultRes.body && typeof resultRes.body === 'object') {
-      const probe = resultRes.body as { qr_code?: unknown; payment_link?: unknown };
-      if (typeof probe.qr_code === 'string' && typeof probe.payment_link === 'string') break;
+      const probe = resultRes.body as { qr?: unknown; payment_link?: unknown };
+      if (typeof probe.qr === 'string' && typeof probe.payment_link === 'string') break;
     } else if (!resultRes.ok) {
       // Hard error from Klarna — bail immediately, no point polling.
       break;
@@ -432,7 +441,7 @@ Deno.serve(async (req) => {
   }
 
   const result = resultRes.body as KlarnaResultResponse;
-  const qrUrl = result.qr_code ?? null;
+  const qrUrl = result.qr ?? null;
   const paymentLink = result.payment_link ?? null;
 
   await supabase
