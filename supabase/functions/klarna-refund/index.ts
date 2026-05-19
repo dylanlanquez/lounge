@@ -265,6 +265,38 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Fire-and-forget the refund receipt email. Klarna refunds
+  // settle synchronously inside this function (the status flip
+  // above is final), so we trigger send-refund-receipt directly
+  // here rather than waiting on a webhook. Mirrors the cash path
+  // in terminal-refund (which also dispatches immediately because
+  // the refund is already 'succeeded'). Logged but otherwise
+  // best-effort — a network blip on Resend mustn't roll back the
+  // refund itself.
+  try {
+    await fetch(
+      `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/send-refund-receipt`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refundId }),
+      },
+    );
+  } catch (e) {
+    await supabase.from('lng_system_failures').insert({
+      source: 'klarna-refund',
+      severity: 'warning',
+      message: 'refund_receipt_invoke_failed',
+      context: {
+        refund_id: refundId,
+        error: e instanceof Error ? e.message : String(e),
+      },
+    });
+  }
+
   return jsonOk({ refund_id: refundId, is_full_refund: isFullRefund });
 });
 
