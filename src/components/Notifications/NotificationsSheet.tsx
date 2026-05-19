@@ -212,7 +212,21 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
             </button>
           </div>
 
-          {view === 'list' ? (
+          {/* Search row. Kept in the DOM in both views so the
+              header doesn't snap when switching panes — animates
+              maxHeight + opacity instead, matching the body
+              cross-fade timing. aria-hidden + pointer-events
+              cleanly inert it on the settings view. */}
+          <div
+            aria-hidden={view !== 'list'}
+            style={{
+              maxHeight: view === 'list' ? 48 : 0,
+              opacity: view === 'list' ? 1 : 0,
+              pointerEvents: view === 'list' ? 'auto' : 'none',
+              overflow: 'hidden',
+              transition: `max-height 240ms cubic-bezier(0.25, 1, 0.3, 1), opacity 200ms ease-out`,
+            }}
+          >
             <div
               style={{
                 display: 'flex',
@@ -243,6 +257,7 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
                 }}
                 autoCorrect="off"
                 spellCheck={false}
+                tabIndex={view === 'list' ? 0 : -1}
               />
               {search.length > 0 ? (
                 <button
@@ -262,105 +277,158 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
                 </button>
               ) : null}
             </div>
-          ) : null}
+          </div>
         </header>
 
-        {/* Body. */}
+        {/* Body. Both views are mounted simultaneously, stacked
+            absolutely in the same scroll-clipped container. View
+            switches translate the active view in from a small
+            offset while cross-fading opacity, which gives an
+            iOS-like push transition rather than the previous
+            instant content swap. pointer-events on the hidden
+            view stops phantom clicks landing on it during the
+            fade. The fixed 88dvh sheet height means the layout
+            doesn't reflow when settings (shorter) takes over. */}
         <div
           style={{
             flex: 1,
-            overflowY: 'auto',
+            position: 'relative',
+            overflow: 'hidden',
             background: theme.color.bg,
           }}
         >
-          {view === 'settings' ? (
+          <ViewPane visible={view === 'list'} direction="left">
+            {notifications.loading && !hasAnyRows ? (
+              <Status text="Loading notifications…" />
+            ) : notifications.error ? (
+              <Status text={notifications.error} tone="alert" />
+            ) : !hasAnyRows ? (
+              <EmptyState
+                title="You're all caught up"
+                description="New bookings, reschedules, cancellations, and ended visits show up here. Pick which types you want in Settings."
+              />
+            ) : !hasResults ? (
+              <Status text={`No notifications match "${search.trim()}".`} />
+            ) : (
+              <div>
+                {sections.map((section) => (
+                  <section key={section.label}>
+                    <div
+                      style={{
+                        padding: `${theme.space[4]}px ${theme.space[6]}px ${theme.space[2]}px`,
+                        fontSize: theme.type.size.xs,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.inkMuted,
+                        letterSpacing: theme.type.tracking.wide,
+                        textTransform: 'uppercase',
+                        background: theme.color.bg,
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 1,
+                      }}
+                    >
+                      {section.label}
+                    </div>
+                    <div style={{ background: theme.color.surface }}>
+                      {section.rows.map((row) => (
+                        <NotificationRow
+                          key={row.id}
+                          row={row}
+                          unseen={unseenCutoff ? row.created_at > unseenCutoff : true}
+                          highlight={search}
+                          onActivate={handleRowActivate}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+          </ViewPane>
+          <ViewPane visible={view === 'settings'} direction="right">
             <div style={{ padding: `${theme.space[5]}px ${theme.space[6]}px` }}>
               <NotificationsSettings />
             </div>
-          ) : notifications.loading && !hasAnyRows ? (
-            <Status text="Loading notifications…" />
-          ) : notifications.error ? (
-            <Status text={notifications.error} tone="alert" />
-          ) : !hasAnyRows ? (
-            <EmptyState
-              title="You're all caught up"
-              description="New bookings, reschedules, cancellations, and ended visits show up here. Pick which types you want in Settings."
-            />
-          ) : !hasResults ? (
-            <Status text={`No notifications match "${search.trim()}".`} />
-          ) : (
-            <div>
-              {sections.map((section) => (
-                <section key={section.label}>
-                  <div
-                    style={{
-                      padding: `${theme.space[4]}px ${theme.space[6]}px ${theme.space[2]}px`,
-                      fontSize: theme.type.size.xs,
-                      fontWeight: theme.type.weight.semibold,
-                      color: theme.color.inkMuted,
-                      letterSpacing: theme.type.tracking.wide,
-                      textTransform: 'uppercase',
-                      background: theme.color.bg,
-                      position: 'sticky',
-                      top: 0,
-                      zIndex: 1,
-                    }}
-                  >
-                    {section.label}
-                  </div>
-                  <div style={{ background: theme.color.surface }}>
-                    {section.rows.map((row) => (
-                      <NotificationRow
-                        key={row.id}
-                        row={row}
-                        unseen={unseenCutoff ? row.created_at > unseenCutoff : true}
-                        highlight={search}
-                        onActivate={handleRowActivate}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
+          </ViewPane>
         </div>
 
-        {/* Footer — list view only. Mark-all-as-read is the only
-            action; rendered as a tertiary button so it sits quietly. */}
-        {view === 'list' && hasAnyRows ? (
-          <footer
+        {/* Footer. Always mounted so its appearance/disappearance
+            fades in lockstep with the body transition instead of
+            popping the layout. Tertiary "Mark all as read" is the
+            only action; the entire row sits quietly when there's
+            nothing to act on. */}
+        <footer
+          aria-hidden={view !== 'list' || !hasAnyRows}
+          style={{
+            flexShrink: 0,
+            borderTop: `1px solid ${theme.color.border}`,
+            padding: `${theme.space[3]}px ${theme.space[6]}px`,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            background: theme.color.surface,
+            opacity: view === 'list' && hasAnyRows ? 1 : 0,
+            pointerEvents: view === 'list' && hasAnyRows ? 'auto' : 'none',
+            transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          }}
+        >
+          <span
             style={{
-              flexShrink: 0,
-              borderTop: `1px solid ${theme.color.border}`,
-              padding: `${theme.space[3]}px ${theme.space[6]}px`,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: theme.color.surface,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkSubtle,
             }}
           >
-            <span
-              style={{
-                fontSize: theme.type.size.xs,
-                color: theme.color.inkSubtle,
-              }}
-            >
-              {notifications.unseenCount > 0
-                ? `${notifications.unseenCount} new`
-                : 'All read'}
-            </span>
-            <Button
-              variant="tertiary"
-              onClick={() => void handleMarkAllRead()}
-              disabled={notifications.unseenCount === 0}
-            >
-              Mark all as read
-            </Button>
-          </footer>
-        ) : null}
+            {notifications.unseenCount > 0
+              ? `${notifications.unseenCount} new`
+              : 'All read'}
+          </span>
+          <Button
+            variant="tertiary"
+            onClick={() => void handleMarkAllRead()}
+            disabled={notifications.unseenCount === 0}
+          >
+            Mark all as read
+          </Button>
+        </footer>
       </div>
     </div>,
     document.body,
+  );
+}
+
+// Absolute-stacked scroll container used to host the list and the
+// settings pane in the same body slot. Drives the push transition
+// when the active view flips. `direction` defines which side the
+// pane slides in from when it becomes visible — `left` for the
+// notifications list (entered via the back chevron from settings),
+// `right` for the settings pane (entered via the cog from the list).
+// Hidden panes keep their last-rendered DOM in place so back-navigation
+// doesn't trigger a remount + scroll-jump.
+function ViewPane({
+  visible,
+  direction,
+  children,
+}: {
+  visible: boolean;
+  direction: 'left' | 'right';
+  children: React.ReactNode;
+}) {
+  const offset = direction === 'right' ? 24 : -24;
+  return (
+    <div
+      aria-hidden={!visible}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        overflowY: 'auto',
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateX(0)' : `translateX(${offset}px)`,
+        pointerEvents: visible ? 'auto' : 'none',
+        transition: `opacity 220ms ease-out, transform 280ms cubic-bezier(0.25, 1, 0.3, 1)`,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 

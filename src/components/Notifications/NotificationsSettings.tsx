@@ -1,3 +1,4 @@
+import { Bell } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { Checkbox } from '../Checkbox/Checkbox.tsx';
 import {
@@ -28,27 +29,55 @@ export function NotificationsSettings(_: NotificationsSettingsProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <div>
-        <h3
+      {/* Header. Bell disc on the leading edge picks up the pastel
+          accent (theme.color.accentBg + theme.color.accent) so the
+          settings view reads as a sibling of the patient-comms /
+          notify-ready section headers elsewhere in the app, not a
+          plain text wall. The per-account scope note sits inside
+          the same block so it lands in the first read pass. */}
+      <header style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+        <span
+          aria-hidden
           style={{
-            margin: 0,
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 40,
+            height: 40,
+            borderRadius: theme.radius.pill,
+            background: theme.color.accentBg,
+            color: theme.color.accent,
+            flexShrink: 0,
           }}
         >
-          Notify me about
-        </h3>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-          }}
-        >
-          Pick the event types that appear in your bell. Changes save automatically.
-        </p>
-      </div>
+          <Bell size={18} aria-hidden />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            Notify me about
+          </h3>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            Pick the event types that appear in your bell. These settings are
+            yours alone, turning one off only affects this account, no one else.
+            Changes save automatically.
+          </p>
+        </div>
+      </header>
 
       {loading ? (
         <p style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Loading…</p>
