@@ -248,6 +248,9 @@ async function handle(req: Request): Promise<Response> {
   const clinicName = (location?.name ?? '').trim() || 'the clinic';
   const clinicPhone = (location?.phone ?? '').trim();
   const clinicAddress = formatClinicAddress(location);
+  const clinicStreet = (location?.address ?? '').trim();
+  const clinicCity = (location?.city ?? '').trim();
+  const clinicPostcode = (location?.postcode ?? '').trim();
   const apptDate = formatApptDate(appt?.start_at);
   const apptTime = formatApptTime(appt?.start_at);
   const websiteUrl = stripScheme(String(settings['clinic.website_url'] ?? ''));
@@ -256,16 +259,19 @@ async function handle(req: Request): Promise<Response> {
   const variables: Record<string, string> = {
     patientFirstName: properCase((patient.first_name ?? '').trim()) || 'there',
     clinicName,
-    locationName: clinicName, // legacy alias
+    locationName: clinicName, // legacy alias for templates still using {{locationName}}
     clinicPhone,
     clinicAddress,
+    clinicStreet,
+    clinicCity,
+    clinicPostcode,
     websiteUrl,
     bookingLink,
     apptDate,
     apptTime,
     staffFirstName: staffFirstName || 'your clinician',
-    appointmentRef: appointmentRef || '—',
-    lwoRef: (patient.lwo_ref ?? '').trim() || '—',
+    appointmentRef: appointmentRef || '-',
+    lwoRef: (patient.lwo_ref ?? '').trim() || '-',
     itemLabel: resolveItemLabel(appt),
   };
   const renderedBody = substituteVariables(tpl.body, variables);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Mail } from 'lucide-react';
-import { Button, Card, Skeleton, Toast } from '../components/index.ts';
+import { Button, Card, Input, Skeleton, Toast } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import {
   type SmsTemplateRow,
@@ -10,6 +10,7 @@ import {
   resetSmsTemplateToDefault,
   renderSmsPreview,
   saveSmsTemplate,
+  smsDisplayName,
   summariseSmsBody,
   useSmsTemplates,
 } from '../lib/queries/smsTemplates.ts';
@@ -254,7 +255,7 @@ function SmsInheritedRow({
             color: theme.color.ink,
           }}
         >
-          {humaniseSmsKey(templateKey)}
+          {smsDisplayName(generalRow)}
         </p>
         <p
           style={{
@@ -301,19 +302,27 @@ function SmsTemplateRowComponent({
   onToast: (t: ToastMsg) => void;
 }) {
   const [body, setBody] = useState(row.body);
+  const [displayName, setDisplayName] = useState(row.display_name ?? '');
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [removing, setRemoving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Re-seed the textarea on open / external version bump so the
-  // editor doesn't strand stale edits if the row is refetched.
+  // Re-seed the editors on open / external version bump so they
+  // don't strand stale edits if the row is refetched.
   useEffect(() => {
     if (!isOpen) return;
     setBody(row.body);
-  }, [isOpen, row.body, row.version]);
+    setDisplayName(row.display_name ?? '');
+  }, [isOpen, row.body, row.version, row.display_name]);
 
-  const dirty = body !== row.body;
+  // Name is only edited from the General pill. Service-typed rows
+  // inherit the General row's name, so showing a Name input there
+  // would imply per-service rename which is not supported.
+  const showNameEditor = serviceType === null;
+  const dirty =
+    body !== row.body ||
+    (showNameEditor && (displayName.trim() || null) !== (row.display_name ?? null));
   const preview = useMemo(() => renderSmsPreview(body), [body]);
   const summary = useMemo(() => summariseSmsBody(preview), [preview]);
 
@@ -338,7 +347,14 @@ function SmsTemplateRowComponent({
     if (!dirty || saving) return;
     setSaving(true);
     try {
-      await saveSmsTemplate({ key: row.key, service_type: serviceType, body });
+      await saveSmsTemplate({
+        key: row.key,
+        service_type: serviceType,
+        body,
+        // Name is only writable on the General pill. Forwarding
+        // undefined for service-typed rows leaves the column alone.
+        display_name: showNameEditor ? displayName : undefined,
+      });
       onRefresh();
       onToast({ tone: 'success', title: 'SMS template saved' });
     } catch (e) {
@@ -447,7 +463,7 @@ function SmsTemplateRowComponent({
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          aria-label={isOpen ? `Collapse ${humaniseSmsKey(row.key)}` : `Expand ${humaniseSmsKey(row.key)}`}
+          aria-label={isOpen ? `Collapse ${smsDisplayName(row)}` : `Expand ${smsDisplayName(row)}`}
           style={{
             appearance: 'none',
             flex: 1,
@@ -489,7 +505,7 @@ function SmsTemplateRowComponent({
                 letterSpacing: theme.type.tracking.tight,
               }}
             >
-              {humaniseSmsKey(row.key)}
+              {smsDisplayName(row)}
             </span>
             <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
               {row.description ?? 'SMS template.'}
@@ -541,6 +557,19 @@ function SmsTemplateRowComponent({
             gap: theme.space[4],
           }}
         >
+          {/* Name editor. General pill only, since service-typed rows
+              inherit the General name in the receptionist's picker.
+              Leave blank to fall back to the built-in humanised label. */}
+          {showNameEditor ? (
+            <Input
+              label="Name in the picker"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={humaniseSmsKey(row.key)}
+              helper="Shown as the title of this row and as the option label in the Send-an-SMS dropdown on the Visit page. Leave blank to use the default."
+            />
+          ) : null}
+
           {/* Editor */}
           <label
             style={{

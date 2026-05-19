@@ -15,6 +15,11 @@ export interface SmsTemplateRow {
   id: string;
   key: string;
   service_type: string | null;
+  /** Admin-editable name shown in the row title and in the
+   *  receptionist's Send-an-SMS dropdown. Null falls back to the
+   *  humanised key. Edited from the General pill; per-service rows
+   *  inherit the General row's name (the picker uses it directly). */
+  display_name: string | null;
   body: string;
   default_body: string;
   description: string | null;
@@ -58,10 +63,31 @@ export const SMS_TEMPLATE_VARIABLES: ReadonlyArray<SmsTemplateVariable> = [
   },
   {
     name: 'clinicAddress',
-    label: 'Clinic address',
+    label: 'Clinic address (full, one line)',
     description:
-      'Street address from Admin → Branding → Clinic info, formatted on one line. Empty when no address is on file.',
-    sample: '123 High Street, ML1 5UH',
+      'Street + city + postcode joined with commas, sourced from Admin > Branding > Clinic info. Empty when no address is on file.',
+    sample: '123 High Street, Glasgow, ML1 5UH',
+  },
+  {
+    name: 'clinicStreet',
+    label: 'Clinic street address',
+    description:
+      'Just the street line from Admin > Branding > Clinic info (no city, no postcode). Empty when not set.',
+    sample: '123 High Street',
+  },
+  {
+    name: 'clinicCity',
+    label: 'Clinic city',
+    description:
+      'The city from Admin > Branding > Clinic info. Empty when not set.',
+    sample: 'Glasgow',
+  },
+  {
+    name: 'clinicPostcode',
+    label: 'Clinic postcode',
+    description:
+      'The postcode from Admin > Branding > Clinic info, rendered uppercase as stored. Empty when not set.',
+    sample: 'ML1 5UH',
   },
   {
     name: 'websiteUrl',
@@ -109,14 +135,14 @@ export const SMS_TEMPLATE_VARIABLES: ReadonlyArray<SmsTemplateVariable> = [
     name: 'locationName',
     label: 'Location name (legacy alias of clinicName)',
     description:
-      'Same value as {{clinicName}} — kept so older templates that already reference {{locationName}} keep rendering. Prefer {{clinicName}} in new copy.',
+      'Same value as {{clinicName}}, kept so older templates that already reference {{locationName}} keep rendering. Prefer {{clinicName}} in new copy.',
     sample: 'Venneir Lounge',
   },
   {
     name: 'appointmentRef',
     label: 'Appointment reference (LAP-xxxxx)',
     description:
-      'The booking reference the patient already saw in their confirmation email — what they are most likely to quote when they walk in. Recommended default for the "Reference" line. Falls back to a dash when the visit has no linked appointment.',
+      'The booking reference the patient already saw in their confirmation email. This is what they are most likely to quote when they walk in, so it is the recommended default for the "Reference" line. Falls back to a dash when the visit has no linked appointment.',
     sample: 'LAP-12345',
   },
   {
@@ -146,7 +172,7 @@ export function useSmsTemplates(): ListResult {
       setError(null);
       const { data: rows, error: err } = await supabase
         .from('lng_sms_templates')
-        .select('id, key, service_type, body, default_body, description, version, enabled, updated_at')
+        .select('id, key, service_type, display_name, body, default_body, description, version, enabled, updated_at')
         .order('key', { ascending: true })
         .order('service_type', { ascending: true, nullsFirst: true });
       if (cancelled) return;
@@ -167,12 +193,17 @@ export function useSmsTemplates(): ListResult {
 
 // Save an existing (key, service_type) row. Creates the row when an
 // override doesn't exist yet so admins can write per-service copy
-// without a separate "Add override" affordance — same UX as emails.
+// without a separate "Add override" affordance, same UX as emails.
+// display_name is a separate axis from body (only the body bumps
+// version + writes a history row, since the name is metadata).
 export async function saveSmsTemplate(input: {
   key: string;
   service_type: string | null;
   body: string;
   enabled?: boolean;
+  /** Optional rename for the row. Pass an empty string to clear it
+   *  back to the humanised default. */
+  display_name?: string | null;
 }): Promise<{ ok: true; version: number }> {
   // Look up the row by (key, service_type). nulls aren't "equal" to
   // each other via .eq, so .is() is used for the General lookup.
@@ -240,6 +271,13 @@ export async function saveSmsTemplate(input: {
     updated_at: new Date().toISOString(),
   };
   if (input.enabled !== undefined) patch.enabled = input.enabled;
+  if (input.display_name !== undefined) {
+    // Empty string clears the override so the picker falls back to
+    // the humanised default. Trim so trailing whitespace doesn't
+    // shadow the empty case.
+    const trimmed = (input.display_name ?? '').trim();
+    patch.display_name = trimmed.length === 0 ? null : trimmed;
+  }
 
   const { error: updErr } = await supabase
     .from('lng_sms_templates')
@@ -324,6 +362,8 @@ export function summariseSmsBody(rendered: string): {
 // Friendly, sentence-case labels for each template_key. Used by the
 // admin row header and by the send-side template picker so the
 // receptionist sees readable names instead of snake_case keys.
+// Admins can override this per template via display_name on the
+// General row, see smsDisplayName().
 export function humaniseSmsKey(key: string): string {
   const map: Record<string, string> = {
     visit_ready: 'Visit ready, your work is ready to collect',
@@ -333,4 +373,16 @@ export function humaniseSmsKey(key: string): string {
     reminder_to_attend: 'Reminder to attend',
   };
   return map[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Returns the admin-set display_name on the row when non-blank,
+ *  otherwise falls back to the humanised key. Accepts either a
+ *  SmsTemplateRow or just a (key, display_name) pair so callers
+ *  that already filtered to (key → general-row name) maps don't
+ *  have to materialise the full row. */
+export function smsDisplayName(
+  row: { key: string; display_name?: string | null } | { key: string },
+): string {
+  const named = 'display_name' in row ? (row.display_name ?? '').trim() : '';
+  return named.length > 0 ? named : humaniseSmsKey(row.key);
 }

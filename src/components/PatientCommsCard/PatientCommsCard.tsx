@@ -20,7 +20,7 @@ import {
   explainSmsError,
   useLatestSmsForVisit,
 } from '../../lib/queries/visitReadySms.ts';
-import { humaniseSmsKey, useSmsTemplates } from '../../lib/queries/smsTemplates.ts';
+import { humaniseSmsKey, smsDisplayName, useSmsTemplates } from '../../lib/queries/smsTemplates.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
 
 // Canonical order for the template picker. Matches the admin's
@@ -80,14 +80,22 @@ export function PatientCommsCard({
   // card isn't blank.
   const smsTemplates = useSmsTemplates();
   const templateOptions = useMemo(() => {
-    const enabledByKey = new Map<string, boolean>();
+    // Build a key → General row map; the General row carries both
+    // the enabled flag (gates the dropdown) and the display_name
+    // (overrides the humanised label).
+    const generalByKey = new Map<string, { enabled: boolean; display_name: string | null }>();
     for (const t of smsTemplates.data) {
       if (t.service_type !== null) continue;
-      enabledByKey.set(t.key, t.enabled);
+      generalByKey.set(t.key, { enabled: t.enabled, display_name: t.display_name });
     }
-    const filtered = SMS_PICKER_ORDER.filter((k) => enabledByKey.get(k));
-    if (filtered.length === 0) return [{ value: 'visit_ready', label: humaniseSmsKey('visit_ready') }];
-    return filtered.map((k) => ({ value: k, label: humaniseSmsKey(k) }));
+    const filtered = SMS_PICKER_ORDER.filter((k) => generalByKey.get(k)?.enabled);
+    if (filtered.length === 0) {
+      return [{ value: 'visit_ready', label: humaniseSmsKey('visit_ready') }];
+    }
+    return filtered.map((k) => ({
+      value: k,
+      label: smsDisplayName({ key: k, display_name: generalByKey.get(k)?.display_name ?? null }),
+    }));
   }, [smsTemplates.data]);
 
   return (
@@ -857,7 +865,7 @@ function NotifyReadySheet({
                   fontSize: theme.type.size.sm,
                 }}
               >
-                —
+                No preview to show.
               </span>
             )}
           </div>
