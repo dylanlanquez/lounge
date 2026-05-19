@@ -13,9 +13,11 @@ import {
   ExternalLink,
   FileText,
   MapPin,
+  MoreHorizontal,
   Package,
   Plus,
   Printer,
+  Receipt,
   RotateCcw,
   ShoppingCart,
   StickyNote,
@@ -77,6 +79,8 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
+import { SendReceiptSheet } from '../components/SendReceiptSheet/SendReceiptSheet.tsx';
+import { ActionMenu, type ActionMenuItem } from '../components/ActionMenu/ActionMenu.tsx';
 import { recordOwedToPatient, type OwedTrigger } from '../lib/queries/owedToPatient.ts';
 import {
   configFor,
@@ -317,6 +321,9 @@ export function VisitDetail() {
   const [refundDefaultCategory, setRefundDefaultCategory] = useState<
     'item_removed' | 'visit_cancelled' | 'visit_ended_early' | 'cart_correction'
   >('item_removed');
+  // Send-receipt sheet — opens from the More menu's "Send receipt"
+  // option (only shown when at least one payment has succeeded).
+  const [sendReceiptOpen, setSendReceiptOpen] = useState(false);
   // Last-seen "owed back" amount + the trigger context staged by the
   // most recent cart mutation. The effect below fires a single
   // patient_events 'owed_to_patient' row whenever the derived owed
@@ -1742,14 +1749,6 @@ export function VisitDetail() {
                 flexWrap: 'wrap',
               }}
             >
-              {canEndEarly ? (
-                <Button variant="tertiary" onClick={openEndEarly}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <Ban size={16} aria-hidden />
-                    End visit early
-                  </span>
-                </Button>
-              ) : null}
               {items.length > 0 ? (
                 <span style={isUnsuitable ? { opacity: 0.55 } : undefined}>
                   <Button variant="secondary" onClick={openNoteEditor} disabled={productiveLocked}>
@@ -1779,34 +1778,67 @@ export function VisitDetail() {
                   </Button>
                 </span>
               ) : null}
-              {/* Always-on Refund affordance. The owed-back banner
-                  covers the auto-prompted case (owed > 0); this
-                  button covers the goodwill / disputed / post-
-                  completion refunds where the books look balanced
-                  but staff still needs to send money back. Gated on
-                  there being any captured payment OR deposit to
-                  refund against — otherwise RefundSheet would just
-                  show its empty state. */}
-              {amountPaidPence > 0 ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    // The dropdown inside RefundSheet has the full
-                    // set of categories — staff picks the right
-                    // one for an ad-hoc refund. Default to
-                    // cart_correction since that's the most
-                    // common "money came back" reason outside the
-                    // owed-banner case.
-                    setRefundDefaultCategory('cart_correction');
-                    setRefundOpen(true);
-                  }}
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                    <RotateCcw size={16} aria-hidden />
-                    Refund
-                  </span>
-                </Button>
-              ) : null}
+              {/* More menu — folds the secondary destructive /
+                  irreversible affordances behind one dropdown so
+                  the primary action row stays focused on the cart
+                  + the primary CTA. Each item only renders when
+                  its preconditions are met (same gates the inline
+                  buttons used to have):
+                    • End visit early — when canEndEarly
+                    • Refund         — when any payment captured
+                    • Send receipt   — when any payment captured
+                  When none of the three apply, the More button
+                  doesn't render at all. */}
+              {(() => {
+                const moreItems: ActionMenuItem[] = [];
+                if (canEndEarly) {
+                  moreItems.push({
+                    key: 'end_visit_early',
+                    label: 'End visit early',
+                    hint: 'Mark this visit unsuitable or stopped before completion. Cart lines are removed.',
+                    icon: <Ban size={16} aria-hidden />,
+                    tone: 'alert',
+                    onClick: () => openEndEarly(),
+                  });
+                }
+                if (amountPaidPence > 0) {
+                  moreItems.push({
+                    key: 'refund',
+                    label: 'Refund',
+                    hint: 'Send money back against a captured payment or deposit.',
+                    icon: <RotateCcw size={16} aria-hidden />,
+                    onClick: () => {
+                      // Default to cart_correction — the most
+                      // common ad-hoc refund reason outside the
+                      // owed-back banner flow.
+                      setRefundDefaultCategory('cart_correction');
+                      setRefundOpen(true);
+                    },
+                  });
+                  moreItems.push({
+                    key: 'send_receipt',
+                    label: 'Send receipt',
+                    hint: 'Resend the receipt for the most recent payment, email or SMS.',
+                    icon: <Receipt size={16} aria-hidden />,
+                    onClick: () => setSendReceiptOpen(true),
+                  });
+                }
+                if (moreItems.length === 0) return null;
+                return (
+                  <ActionMenu
+                    ariaLabel="More visit actions"
+                    items={moreItems}
+                    trigger={
+                      <Button variant="secondary">
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                          <MoreHorizontal size={16} aria-hidden />
+                          More
+                        </span>
+                      </Button>
+                    }
+                  />
+                );
+              })()}
               {visit.status === 'complete' && visit.fulfilment_method === 'shipping' && !visit.dispatch_ref ? (
                 // Visit completed with shipping method but dispatch not yet
                 // processed (e.g. sheet was closed before submitting).
@@ -2031,6 +2063,19 @@ export function VisitDetail() {
           refreshPaid();
           setRefundsTick((t) => t + 1);
         }}
+      />
+
+      {/* Send-receipt sheet. Attaches to the most recent
+          succeeded payment so a resend lands on the same Stripe /
+          cash row the original receipt would have referenced.
+          Gated by the More menu — it's only invocable when at
+          least one payment exists, so paidPayments[0] is safe. */}
+      <SendReceiptSheet
+        open={sendReceiptOpen}
+        onClose={() => setSendReceiptOpen(false)}
+        paymentId={paidPayments[0]?.id ?? null}
+        patientEmail={patient?.email ?? null}
+        patientPhone={patient?.phone ?? null}
       />
 
       {visit && patient ? (
