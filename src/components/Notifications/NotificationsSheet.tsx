@@ -120,7 +120,17 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
           background: theme.color.surface,
           borderTopLeftRadius: 24,
           borderTopRightRadius: 24,
-          maxHeight: '92dvh',
+          // Pinned to a single height across both views. The
+          // notifications list and the settings panel have very
+          // different content lengths, and the previous maxHeight
+          // approach let the sheet collapse when settings was
+          // active — the toggling jump read as glitchy. A fixed
+          // 88dvh keeps the surface stationary; the inner body
+          // scrolls within when content overflows, and a
+          // shorter view (settings) just has trailing whitespace
+          // — the same pattern Linear / Notion use for panels
+          // that have multiple sub-views.
+          height: '88dvh',
           display: 'flex',
           flexDirection: 'column',
           paddingBottom: `env(safe-area-inset-bottom, 0px)`,
