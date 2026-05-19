@@ -776,21 +776,21 @@ export function Pay() {
               <ReceiptOption
                 value="email"
                 label="Email"
-                hint="To the address on file or one you enter below."
+                hint="Sent from clinic@notifications.venneir.com, using the patient's email on file or one you enter below."
                 selected={receiptChannel === 'email'}
                 onClick={() => setReceiptChannel('email')}
               />
               <ReceiptOption
                 value="sms"
                 label="SMS"
-                hint="Slice 13b — provider not wired yet. Logs only."
+                hint="Texted from Venneir, using the patient's number on file or one you enter below."
                 selected={receiptChannel === 'sms'}
                 onClick={() => setReceiptChannel('sms')}
               />
               <ReceiptOption
                 value="none"
                 label="No receipt"
-                hint="Customer doesn't want one."
+                hint="Skip the receipt. The payment is still recorded on the visit."
                 selected={receiptChannel === 'none'}
                 onClick={() => setReceiptChannel('none')}
               />
