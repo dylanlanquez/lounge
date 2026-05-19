@@ -377,13 +377,39 @@ Deno.serve(async (req) => {
     return jsonError(502, 'Klarna session response invalid');
   }
 
-  // Pull the QR + payment_link. Klarna's result endpoint accepts
-  // GET with no body — POST returns
-  //   { error_code: 'BAD_REQUEST', error_messages: ["Request
-  //     method 'POST' is not supported"] }
-  // (earlier docs read described it as "send an empty body", which
-  // we interpreted as POST. It's actually GET with no body.)
-  const resultRes = await klarnaFetch('GET', stripBase(created.distribution.result_url));
+  // Pull the QR + payment_link. Klarna's result endpoint:
+  //   • Accepts GET with no body (POST returns
+  //     BAD_REQUEST: "Request method 'POST' is not supported")
+  //   • Initially returns { status: "WAITING" } with no qr_code /
+  //     payment_link — Klarna prepares the distribution async.
+  //   • Once Klarna has prepared the QR, the same GET returns
+  //     { status: "...", qr_code: "https://...", payment_link: "..." }
+  //
+  // Polling: up to 8 attempts at 400ms intervals (~3.2 seconds
+  // wall-clock budget — within the 10s Supabase function timeout
+  // and short enough that staff doesn't see a long spinner).
+  // Stops the moment qr_code AND payment_link are populated.
+  let resultRes: { ok: boolean; status: number; body: unknown } = {
+    ok: false,
+    status: 0,
+    body: {},
+  };
+  let attempt = 0;
+  const maxAttempts = 8;
+  while (attempt < maxAttempts) {
+    resultRes = await klarnaFetch('GET', stripBase(created.distribution.result_url));
+    if (resultRes.ok && resultRes.body && typeof resultRes.body === 'object') {
+      const probe = resultRes.body as { qr_code?: unknown; payment_link?: unknown };
+      if (typeof probe.qr_code === 'string' && typeof probe.payment_link === 'string') break;
+    } else if (!resultRes.ok) {
+      // Hard error from Klarna — bail immediately, no point polling.
+      break;
+    }
+    attempt += 1;
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
   if (!resultRes.ok) {
     await supabase
       .from('lng_klarna_sessions')
