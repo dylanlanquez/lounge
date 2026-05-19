@@ -7,6 +7,7 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
+import { KlarnaInStoreModal } from '../components/KlarnaInStoreModal/KlarnaInStoreModal.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
@@ -84,6 +85,10 @@ export function Pay() {
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [bnplOpen, setBnplOpen] = useState(false);
+  // Klarna goes through the native In-Store API now (its own QR +
+  // payment_link modal) rather than the virtual-Visa-via-S700 path
+  // BNPLHelper drives. Clearpay still uses BNPLHelper.
+  const [klarnaOpen, setKlarnaOpen] = useState(false);
   const [journey, setJourney] = useState<Journey>('standard');
   const { data: readers } = useTerminalReaders();
   const reader = readers[0] ?? null;
@@ -100,6 +105,17 @@ export function Pay() {
   };
 
   const openBnpl = (provider: BnplProvider) => {
+    // Klarna routes to the native In-Store API modal (QR + payment
+    // link). The S700 reader is irrelevant for Klarna in this path
+    // — the customer pays in their own app, no terminal involved —
+    // so we don't gate Klarna on a connected reader. Clearpay
+    // still uses the virtual-Visa-via-S700 path and DOES need a
+    // reader, so the guard stays in place for that branch.
+    if (provider === 'klarna') {
+      setJourney('klarna');
+      setKlarnaOpen(true);
+      return;
+    }
     if (!reader) {
       setError('No card reader registered. BNPL needs the same reader.');
       return;
@@ -714,7 +730,12 @@ export function Pay() {
               }
             }}
           />
-          {(journey === 'klarna' || journey === 'clearpay') ? (
+          {/* Clearpay still rides the virtual-Visa-via-S700 path
+              that BNPLHelper drives. Klarna moved off it onto the
+              native In-Store API (KlarnaInStoreModal below) where
+              the customer scans a QR and pays in their own app —
+              no S700 tap, no fumbling with Apple/Google Pay. */}
+          {journey === 'clearpay' ? (
             <BNPLHelper
               open={bnplOpen}
               onClose={() => setBnplOpen(false)}
@@ -739,6 +760,32 @@ export function Pay() {
             />
           ) : null}
         </>
+      ) : null}
+
+      {/* Klarna In-Store API modal. Rendered OUTSIDE the reader
+          guard above because Klarna doesn't need the S700 — the
+          customer pays in their own Klarna app via the QR. cart is
+          still required (we need the cart_id for the session). */}
+      {cart ? (
+        <KlarnaInStoreModal
+          open={klarnaOpen}
+          onClose={() => setKlarnaOpen(false)}
+          visitId={visit?.id ?? ''}
+          cartId={cart.id}
+          amountPence={chargeAmountPence}
+          onSucceeded={(pid) => {
+            setPaymentId(pid);
+            setKlarnaOpen(false);
+            refreshPaid();
+            if (willClearBill) {
+              setStage('success');
+            } else {
+              setPaymentMode('full');
+              setSplitAmountText('');
+              setStage('choose');
+            }
+          }}
+        />
       ) : null}
 
       {error ? (

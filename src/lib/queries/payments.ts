@@ -592,11 +592,28 @@ export async function refundPartial(input: RefundPartialInput): Promise<RefundPa
     payload.deposit_appointment_id = input.depositAppointmentId;
   }
 
+  // Route based on the underlying payment's method. Klarna refunds
+  // go through Klarna's Order Management API (klarna-refund edge
+  // function); everything else (card_terminal, cash, deposits)
+  // stays on terminal-refund which talks to Stripe. We resolve the
+  // method here so RefundSheet doesn't have to know about the
+  // routing — it always calls refundPartial with the same shape.
+  let endpoint = 'terminal-refund';
+  if (input.paymentId) {
+    const { data: payment } = await supabase
+      .from('lng_payments')
+      .select('method')
+      .eq('id', input.paymentId)
+      .maybeSingle();
+    const method = (payment as { method: string } | null)?.method;
+    if (method === 'klarna') endpoint = 'klarna-refund';
+  }
+
   const url = new URL(import.meta.env.VITE_SUPABASE_URL);
   const projectRef = url.hostname.split('.')[0];
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
-  const r = await fetch(`https://${projectRef}.functions.supabase.co/terminal-refund`, {
+  const r = await fetch(`https://${projectRef}.functions.supabase.co/${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token ?? ''}`,
