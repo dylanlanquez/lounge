@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  CheckCircle2,
-  Clock,
+  ChevronRight,
+  Loader2,
   MessageCircleWarning,
   MessageSquare,
-  MessageSquareWarning,
   RefreshCw,
   Send,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import { theme } from '../../theme/index.ts';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
@@ -40,12 +41,14 @@ import { properCase } from '../../lib/queries/appointments.ts';
 
 export interface PatientCommsCardProps {
   visitId: string;
+  patientId: string | null;
   patientPhone: string | null;
   patientFirstName: string | null;
 }
 
 export function PatientCommsCard({
   visitId,
+  patientId,
   patientPhone,
   patientFirstName,
 }: PatientCommsCardProps) {
@@ -53,11 +56,12 @@ export function PatientCommsCard({
   const phoneOk = !!patientPhone && patientPhone.trim().length > 0;
   const latest = useLatestVisitReadySms(visitId);
   const row = latest.data;
+  const properFirstName = properCase(patientFirstName ?? '') || 'the patient';
 
   return (
     <>
       <Card padding="lg" style={{ marginBottom: theme.space[6] }}>
-        <header style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: theme.space[3] }}>
+        <header style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: theme.space[4] }}>
           <h3
             style={{
               margin: 0,
@@ -70,16 +74,18 @@ export function PatientCommsCard({
             Notify the patient
           </h3>
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            Send{' '}
+            Text{' '}
             <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
-              {properCase(patientFirstName ?? '') || 'the patient'}
+              {properFirstName}
             </strong>{' '}
-            a text when their order is ready to collect.
+            when their work is ready to collect.
           </p>
         </header>
 
         <NotifyReadyRow
           row={row}
+          patientId={patientId}
+          patientPhone={patientPhone}
           phoneOk={phoneOk}
           onOpen={() => setOpen(true)}
         />
@@ -97,257 +103,412 @@ export function PatientCommsCard({
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Action row variants
+// Status row — the body of the Notify card. Status-first display:
+// a tinted dot + label on the leading edge, the destination phone
+// underneath, and a single contextual action (medium accent pill
+// on desktop, full-width tertiary 44pt-tall button on mobile) on
+// the trailing edge.
+//
+// Design rationale: the earlier shape rendered a big tinted icon
+// pill, a duplicate headline ("Text message: ready to collect")
+// that repeated the card title, a multi-line subtitle, and then a
+// full-width black slab button. That violated three things at once:
+//
+//   1. Two headers competing for the same scan — the card header
+//      already says "Notify the patient" with a subtitle naming
+//      the action. A second header inside the action surface adds
+//      no information.
+//   2. The slab button is a primary-affordance pattern reserved
+//      for full-page CTAs (Pay / Sign in / Submit form). Inside a
+//      card with other content, a medium pill is the convention
+//      (Linear / Stripe / Notion). Apple HIG: 44pt min touch
+//      target — met by 36pt button height + 8pt of padding.
+//   3. The destination phone was buried in a long sentence, even
+//      though it's the most important fact in the whole card —
+//      "is the SMS going to the right number?"
 // ─────────────────────────────────────────────────────────────────
+
+type RowTone = 'neutral' | 'pending' | 'success' | 'alert';
 
 function NotifyReadyRow({
   row,
+  patientId,
+  patientPhone,
   phoneOk,
   onOpen,
 }: {
   row: VisitReadySmsRow | null;
+  patientId: string | null;
+  patientPhone: string | null;
   phoneOk: boolean;
   onOpen: () => void;
 }) {
-  // No prior SMS — initial state. Copy explicitly says SMS (not the
-  // ambiguous "Notify ready") + the CTA carries the chat-bubble icon
-  // + an explicit "Preview & send" label so a passerby can tell at
-  // a glance (a) what this is, (b) what tapping the button will
-  // actually do (it opens a preview, not an instant send — the
-  // previous "Send SMS" label oversold by implying one-tap fire).
+  // Compose the (tone, status text, CTA shape) tuple per state. The
+  // body of the row is rendered by a single StatusRow below so layout
+  // is consistent across every state — only the colour, label and
+  // action change.
+  const formattedPhone = formatUkPhone(row?.to_phone ?? patientPhone ?? '');
   if (!row) {
     return (
-      <ActionRow
+      <StatusRow
         tone="neutral"
-        icon={<MessageSquare size={16} aria-hidden />}
-        title="Text message: ready to collect"
-        subtitle="Send the patient a text saying their work is ready. We'll show you a preview first."
-        ctaLabel="Preview & send"
-        ctaIcon={<MessageSquare size={14} aria-hidden />}
-        ctaDisabled={!phoneOk}
-        ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
-        onClick={onOpen}
+        label="Not sent yet"
+        formattedPhone={formattedPhone}
+        patientId={patientId}
+        action={
+          <PrimaryAction
+            label="Preview & send"
+            icon={<MessageSquare size={14} aria-hidden />}
+            onClick={onOpen}
+            disabled={!phoneOk}
+            disabledHint={!phoneOk ? 'No phone number on file' : undefined}
+          />
+        }
       />
     );
   }
 
   if (row.send_status === 'pending') {
     return (
-      <ActionRow
+      <StatusRow
         tone="pending"
-        icon={<Clock size={16} aria-hidden />}
-        title="Text message sending"
-        subtitle={`Handed to the phone network for ${row.to_phone}. Waiting on delivery confirmation. This panel updates by itself.`}
-        ctaLabel={null}
+        label={`Sending to the network${row.to_phone ? '' : '…'}`}
+        formattedPhone={formattedPhone}
+        patientId={patientId}
+        helperText="Waiting on delivery confirmation. This panel updates by itself."
+        action={
+          <span
+            aria-label="Sending"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
+              padding: '8px 14px',
+            }}
+          >
+            <Loader2
+              size={14}
+              aria-hidden
+              style={{ animation: 'lng-spin 600ms linear infinite' }}
+            />
+            Sending…
+          </span>
+        }
       />
     );
   }
 
   if (row.send_status === 'sent') {
     return (
-      <ActionRow
+      <StatusRow
         tone="success"
-        icon={<CheckCircle2 size={16} aria-hidden />}
-        title={`Text message delivered ${formatRelative(row.sent_at)}`}
-        subtitle={`Patient was notified on ${row.to_phone}. Tap below to preview and send another one if needed.`}
-        ctaLabel="Preview & send again"
-        ctaIcon={<RefreshCw size={14} aria-hidden />}
-        ctaDisabled={!phoneOk}
-        ctaDisabledHint={!phoneOk ? 'No phone number on file' : undefined}
-        onClick={onOpen}
+        label={`Delivered ${formatRelative(row.sent_at)}`}
+        formattedPhone={formattedPhone}
+        patientId={patientId}
+        action={
+          <PrimaryAction
+            label="Send again"
+            icon={<RefreshCw size={14} aria-hidden />}
+            variant="secondary"
+            onClick={onOpen}
+            disabled={!phoneOk}
+            disabledHint={!phoneOk ? 'No phone number on file' : undefined}
+          />
+        }
       />
     );
   }
 
-  // send_status === 'failed' — show the carrier reason + a Resend
-  // button so a corrected phone number takes one tap.
+  // send_status === 'failed' — alert tone, carrier reason inline, a
+  // Retry pill on the trailing edge, and an Edit-on-profile link
+  // beneath so a wrong number is one tap from being fixed.
   const explained = explainSmsError(row.send_error);
-  const headline = explained?.what ?? 'The phone network reported the text as undelivered.';
-  const followup = explained?.fix ?? 'Try again; if it keeps failing, call the patient instead.';
+  const headline = explained?.what ?? 'The carrier reported the text as undelivered.';
+  const followup = explained?.fix ?? null;
+  return (
+    <StatusRow
+      tone="alert"
+      label="Didn't reach the patient"
+      formattedPhone={formattedPhone}
+      patientId={patientId}
+      helperText={headline}
+      secondaryHelperText={followup}
+      action={
+        <PrimaryAction
+          label="Try again"
+          icon={<RefreshCw size={14} aria-hidden />}
+          onClick={onOpen}
+          disabled={!phoneOk}
+          disabledHint={!phoneOk ? 'No phone number on file' : undefined}
+        />
+      }
+    />
+  );
+}
+
+// Single source of truth for the action-row shape. Status dot on the
+// left, label + phone + helper text in the middle column, action on
+// the right. On mobile (<640px) the action wraps below as a full-
+// width 44pt button (Apple HIG primary-action target).
+function StatusRow({
+  tone,
+  label,
+  formattedPhone,
+  patientId,
+  helperText,
+  secondaryHelperText,
+  action,
+}: {
+  tone: RowTone;
+  label: string;
+  formattedPhone: string;
+  patientId: string | null;
+  helperText?: string;
+  secondaryHelperText?: string | null;
+  action: React.ReactNode;
+}) {
+  const isMobile = useIsMobile(640);
+  const palette = TONE_PALETTE[tone];
+  const showEditLink = tone === 'alert' && patientId;
+
   return (
     <div
       style={{
         display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        flexDirection: isMobile ? 'column' : 'row',
+        alignItems: isMobile ? 'stretch' : 'center',
+        gap: theme.space[4],
+        padding: `${theme.space[4]}px ${theme.space[4]}px`,
         borderRadius: theme.radius.card,
-        background: '#FDECEC',
-        border: '1px solid #F1BFBF',
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 32,
-            height: 32,
-            borderRadius: theme.radius.pill,
-            background: 'rgba(220, 38, 38, 0.12)',
-            color: '#B91C1C',
-            flexShrink: 0,
-          }}
-        >
-          <MessageSquareWarning size={16} />
-        </span>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3], flex: 1, minWidth: 0 }}>
+        <StatusDot tone={tone} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
           <span
             style={{
               fontSize: theme.type.size.base,
               fontWeight: theme.type.weight.semibold,
-              color: '#7C1D1D',
+              color: palette.textStrong,
               letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1.3,
             }}
           >
-            Text message didn't reach {row.to_phone}
+            {label}
           </span>
-          <span style={{ fontSize: theme.type.size.sm, color: '#7C1D1D', lineHeight: theme.type.leading.snug }}>
-            {headline}
-          </span>
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              color: '#7C1D1D',
-              lineHeight: theme.type.leading.snug,
-              marginTop: 4,
-            }}
-          >
-            {followup}
-          </span>
-          {row.send_error ? (
-            <code
+          {formattedPhone ? (
+            <span
               style={{
-                marginTop: 8,
-                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
-                fontSize: 11,
-                color: 'rgba(124, 29, 29, 0.7)',
+                fontSize: theme.type.size.sm,
+                color: palette.textMuted,
+                fontVariantNumeric: 'tabular-nums',
+                lineHeight: 1.4,
               }}
             >
-              {row.send_error}
-            </code>
+              {formattedPhone}
+            </span>
+          ) : null}
+          {helperText ? (
+            <span
+              style={{
+                marginTop: 6,
+                fontSize: theme.type.size.sm,
+                color: palette.textMuted,
+                lineHeight: 1.4,
+              }}
+            >
+              {helperText}
+            </span>
+          ) : null}
+          {secondaryHelperText ? (
+            <span
+              style={{
+                marginTop: 4,
+                fontSize: theme.type.size.sm,
+                color: palette.textMuted,
+                lineHeight: 1.4,
+              }}
+            >
+              {secondaryHelperText}
+            </span>
+          ) : null}
+          {showEditLink ? (
+            <Link
+              to={`/patient/${patientId}`}
+              style={{
+                marginTop: 8,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+                color: palette.textStrong,
+                textDecoration: 'none',
+              }}
+            >
+              Update phone on profile
+              <ChevronRight size={14} aria-hidden />
+            </Link>
           ) : null}
         </div>
       </div>
-      <Button
-        variant="primary"
-        onClick={onOpen}
-        disabled={!phoneOk}
-        title={!phoneOk ? 'No phone number on file' : undefined}
-        fullWidth
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: isMobile ? 'stretch' : 'flex-end',
+          flexShrink: 0,
+        }}
       >
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-          <RefreshCw size={14} aria-hidden />
-          Preview & try again
-        </span>
-      </Button>
+        {action}
+      </div>
     </div>
   );
 }
 
-function ActionRow({
-  tone,
+// Trailing pill button. Defaults to accent (primary intent — fire
+// the SMS), with a secondary variant for the "Delivered → Send
+// again" path where the SMS is already in the wild and re-sending
+// is a quieter re-action, not a primary call to act.
+function PrimaryAction({
+  label,
   icon,
-  title,
-  subtitle,
-  ctaLabel,
-  ctaIcon,
-  ctaDisabled,
-  ctaDisabledHint,
   onClick,
+  disabled,
+  disabledHint,
+  variant = 'primary',
 }: {
-  tone: 'neutral' | 'pending' | 'success';
+  label: string;
   icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-  ctaLabel: string | null;
-  ctaIcon?: React.ReactNode;
-  ctaDisabled?: boolean;
-  ctaDisabledHint?: string;
-  onClick?: () => void;
+  onClick: () => void;
+  disabled?: boolean;
+  disabledHint?: string;
+  variant?: 'primary' | 'secondary';
 }) {
-  const pillColors = {
-    neutral: { bg: theme.color.accentBg, fg: theme.color.accent },
-    pending: { bg: '#FEF3C7', fg: '#92400E' },
-    success: { bg: '#E8F5EC', fg: '#13502B' },
-  }[tone];
-  // Layout: icon + headline + subtitle stacked at the top, CTA on
-  // its own row beneath. The earlier inline shape (button on the
-  // right) was squeezing the headline column to a few characters
-  // on narrow phones — words wrapped one-per-line ("Text / message:
-  // / ready / to / collect"). Stacking guarantees the headline
-  // gets the full card width every time, and the CTA below reads
-  // as the next step the receptionist should take.
+  const isMobile = useIsMobile(640);
+  const primary = variant === 'primary';
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={disabledHint}
+      aria-label={label}
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.card,
-        background: theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
+        appearance: 'none',
+        border: primary ? 'none' : `1px solid ${theme.color.border}`,
+        background: primary ? theme.color.accent : theme.color.surface,
+        color: primary ? '#FFFFFF' : theme.color.ink,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        letterSpacing: theme.type.tracking.tight,
+        height: isMobile ? 44 : 36,
+        padding: `0 ${theme.space[4]}px`,
+        borderRadius: theme.radius.pill,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: theme.space[2],
+        width: isMobile ? '100%' : undefined,
+        whiteSpace: 'nowrap',
+        transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 36,
-            height: 36,
-            borderRadius: theme.radius.pill,
-            background: pillColors.bg,
-            color: pillColors.fg,
-            flexShrink: 0,
-          }}
-        >
-          {icon}
-        </span>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span
-            style={{
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-              letterSpacing: theme.type.tracking.tight,
-              lineHeight: theme.type.leading.snug,
-            }}
-          >
-            {title}
-          </span>
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.snug,
-            }}
-          >
-            {subtitle}
-          </span>
-        </div>
-      </div>
-      {ctaLabel && onClick ? (
-        <Button
-          variant="primary"
-          onClick={onClick}
-          disabled={ctaDisabled}
-          title={ctaDisabledHint}
-          fullWidth
-        >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-            {ctaIcon}
-            {ctaLabel}
-          </span>
-        </Button>
-      ) : null}
-    </div>
+      {icon}
+      {label}
+    </button>
   );
+}
+
+// Tonal palette per state. Backgrounds are very lightly tinted so
+// the row sits inside the white card without competing with the
+// card header. Border picks a slightly stronger shade so the row
+// reads as a delimited surface, not a floating block.
+const TONE_PALETTE: Record<RowTone, {
+  bg: string;
+  border: string;
+  dot: string;
+  textStrong: string;
+  textMuted: string;
+}> = {
+  neutral: {
+    bg: theme.color.bg,
+    border: theme.color.border,
+    dot: theme.color.accent,
+    textStrong: theme.color.ink,
+    textMuted: theme.color.inkMuted,
+  },
+  pending: {
+    bg: '#FFFBEB',
+    border: '#FCE7BD',
+    dot: '#B36815',
+    textStrong: '#7A4A0F',
+    textMuted: '#8A5A1A',
+  },
+  success: {
+    bg: '#F0F8F2',
+    border: '#C7E2CD',
+    dot: '#1B6E3A',
+    textStrong: '#13502B',
+    textMuted: '#43775A',
+  },
+  alert: {
+    bg: '#FDECEC',
+    border: '#F1BFBF',
+    dot: '#B91C1C',
+    textStrong: '#7C1D1D',
+    textMuted: '#9F3434',
+  },
+};
+
+function StatusDot({ tone }: { tone: RowTone }) {
+  const palette = TONE_PALETTE[tone];
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 10,
+        height: 10,
+        borderRadius: '50%',
+        background: palette.dot,
+        flexShrink: 0,
+        marginTop: 8,
+        boxShadow: `0 0 0 4px ${palette.bg}`,
+      }}
+    />
+  );
+}
+
+// Format a UK mobile number into the conventional spaced shape
+// "+44 7878 023 449". Falls through unchanged for non-UK inputs or
+// numbers we can't confidently parse.
+function formatUkPhone(raw: string): string {
+  const digits = (raw ?? '').replace(/[^\d+]/g, '');
+  if (!digits) return '';
+  // E.164 UK mobile: +447XXXXXXXXX
+  const m = digits.match(/^\+44(7\d{9})$/);
+  if (m && m[1]) {
+    const rest = m[1];
+    return `+44 ${rest.slice(0, 4)} ${rest.slice(4, 7)} ${rest.slice(7)}`;
+  }
+  // National UK mobile: 07XXXXXXXXX
+  const nat = digits.match(/^(07\d{9})$/);
+  if (nat && nat[1]) {
+    const r = nat[1];
+    return `${r.slice(0, 5)} ${r.slice(5, 8)} ${r.slice(8)}`;
+  }
+  return raw;
 }
 
 // ─────────────────────────────────────────────────────────────────

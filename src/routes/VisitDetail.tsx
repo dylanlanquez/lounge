@@ -1491,6 +1491,7 @@ export function VisitDetail() {
             {visit.status === 'arrived' && !isCsOnly ? (
               <PatientCommsCard
                 visitId={visit.id}
+                patientId={patient?.id ?? null}
                 patientPhone={patient?.phone ?? null}
                 patientFirstName={patient?.first_name ?? null}
               />
