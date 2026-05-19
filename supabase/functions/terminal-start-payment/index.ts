@@ -170,36 +170,27 @@ Deno.serve(async (req) => {
 
   // Create PaymentIntent. payment_method_types branches on journey:
   //
-  //   • klarna → ['card_present', 'klarna']. Stripe Terminal
-  //     requires the PI to accept an in-person method (otherwise
-  //     /process_payment_intent rejects with
-  //     payment_method_unsupported_type → "PaymentIntent must accept
-  //     an in-person payment method."). With card_present + klarna
-  //     both listed, the reader's UI lets the customer pick — and
-  //     when they pick Klarna, Stripe returns
-  //     next_action.klarna_display_qr_code and the S700 renders the
-  //     QR for them to scan with the Klarna app (changelog
-  //     2026-04-22). Confirmation flows through the same
+  //   • klarna → 'klarna'. Stripe's Klarna+Terminal integration
+  //     (changelog 2026-04-22) returns a klarna_display_qr_code
+  //     next_action and the S700 reader displays the QR for the
+  //     customer to scan. Confirmation flows through the same
   //     payment_intent.succeeded webhook as card payments.
   //
-  //   • standard / clearpay → ['card_present']. Card taps and
-  //     Clearpay's virtual Visa both ride the card_present rail
-  //     on its own.
+  //   • standard / clearpay → 'card_present'. Card taps and
+  //     Clearpay's virtual Visa both ride the card_present rail.
   //
   // Reader stage (process_payment_intent) below stays the same —
   // Stripe routes the PI to the reader regardless of method.
-  const piParams = new URLSearchParams();
-  piParams.append('amount', String(body.amount_pence));
-  piParams.append('currency', 'gbp');
-  piParams.append('payment_method_types[]', 'card_present');
-  if (journey === 'klarna') {
-    piParams.append('payment_method_types[]', 'klarna');
-  }
-  piParams.append('capture_method', 'automatic');
-  piParams.append('metadata[visit_id]', body.visit_id);
-  piParams.append('metadata[cart_id]', cart.id);
-  piParams.append('metadata[payment_journey]', journey);
-  const piRes = await stripeFetch('POST', '/payment_intents', piParams, idemKey);
+  const paymentMethodType = journey === 'klarna' ? 'klarna' : 'card_present';
+  const piRes = await stripeFetch('POST', '/payment_intents', {
+    amount: String(body.amount_pence),
+    currency: 'gbp',
+    'payment_method_types[]': paymentMethodType,
+    capture_method: 'automatic',
+    'metadata[visit_id]': body.visit_id,
+    'metadata[cart_id]': cart.id,
+    'metadata[payment_journey]': journey,
+  }, idemKey);
   if (!piRes.ok) {
     await logFailure('payment_intent_create_failed', { error: piRes.body });
     return jsonError(502, 'PaymentIntent failed');
@@ -303,13 +294,7 @@ function jsonError(status: number, message: string): Response {
 async function stripeFetch(
   method: 'GET' | 'POST',
   path: string,
-  // Body accepts either a flat Record<string, string> (Stripe's
-  // typical bracket-encoded shape) OR a URLSearchParams the caller
-  // built directly when repeated keys are required (e.g.
-  // payment_method_types[]=card_present + payment_method_types[]=
-  // klarna on a single PaymentIntent — URLSearchParams from a
-  // Record can't carry repeats because it would coalesce on key).
-  body?: Record<string, string> | URLSearchParams,
+  body?: Record<string, string>,
   idempotencyKey?: string
 ): Promise<{ ok: boolean; body: unknown }> {
   const headers: Record<string, string> = {
@@ -322,11 +307,7 @@ async function stripeFetch(
   const r = await fetch(`${STRIPE_BASE}${path}`, {
     method,
     headers,
-    body: body
-      ? body instanceof URLSearchParams
-        ? body.toString()
-        : new URLSearchParams(body).toString()
-      : undefined,
+    body: body ? new URLSearchParams(body).toString() : undefined,
   });
   let parsed: unknown = {};
   try {
