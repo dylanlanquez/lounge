@@ -42,6 +42,8 @@ import { useClinicSettings } from '../lib/queries/clinicSettings.ts';
 import {
   type SmsTemplateRow,
   SMS_TEMPLATE_VARIABLES,
+  humaniseSmsKey,
+  removeSmsTemplateOverride,
   resetSmsTemplateToDefault,
   renderSmsPreview,
   saveSmsTemplate,
@@ -2088,13 +2090,39 @@ function SendTestDialog({
 // ─────────────────────────────────────────────────────────────────────────────
 // SMS section
 //
-// Renders below the email-template list. Each SMS template is its own
-// accordion row with a simple body textarea + variable picker + live
-// preview + Twilio-aware character / segment counter. No subject (SMS
-// doesn't have one), no rich formatting (Twilio is plain text), no
-// history viewer (we still write history rows server-side; a later
-// pass can surface them — for now editors stay focused on the body).
+// Renders below the email-template list. Booking-type pills sit at
+// the top, mirroring the email side — except virtual + in-person
+// impression appointments don't merit SMS (those flows are remote
+// / scheduled), so the SMS pill list is the shorter set: General,
+// Click-in veneers, Same-day appliance, Denture repair.
+//
+// Each template_key shows once per pill: the General row in the
+// General pill, the override row (if it exists) in the service-typed
+// pill, otherwise an InheritedSmsRow placeholder offering a "Customise"
+// affordance that creates the override seeded from General.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Pills for SMS. Shorter than the email pill list — the two
+// impression services don't merit SMS so they're omitted to keep
+// the surface focused on services that actually fire texts.
+const SMS_SERVICE_PILLS: ReadonlyArray<{ label: string; value: string | null }> = [
+  { label: 'General', value: null },
+  { label: 'Click-in veneers', value: 'click_in_veneers' },
+  { label: 'Same-day appliance', value: 'same_day_appliance' },
+  { label: 'Denture repair', value: 'denture_repair' },
+];
+
+// Canonical row order for the SMS list, matching the order admins
+// will most often reach for. Visit-ready is the primary template;
+// the four below it are the manually-sent secondary keys added
+// alongside the per-service migration.
+const SMS_TEMPLATE_KEYS: ReadonlyArray<string> = [
+  'visit_ready',
+  'please_return',
+  'please_call',
+  'running_late',
+  'reminder_to_attend',
+];
 
 function SmsTemplatesSection({
   onToast,
@@ -2103,6 +2131,24 @@ function SmsTemplatesSection({
 }) {
   const templates = useSmsTemplates();
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [selectedServiceType, setSelectedServiceType] = useState<string | null>(null);
+
+  // Close any open row when the pill switches — the open key may
+  // not have an override on the new tab, and re-opening picks up
+  // the right context cleanly. Same pattern as the email side.
+  useEffect(() => {
+    setOpenKey(null);
+  }, [selectedServiceType]);
+
+  // Index by (key, service_type) for O(1) per-pill lookup.
+  const rowByKeyAndService = useMemo(() => {
+    const map = new Map<string, SmsTemplateRow>();
+    for (const r of templates.data) {
+      map.set(`${r.key}|${r.service_type ?? '__general__'}`, r);
+    }
+    return map;
+  }, [templates.data]);
+
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3], marginTop: theme.space[6] }}>
       <header style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
@@ -2126,9 +2172,17 @@ function SmsTemplatesSection({
           }}
         >
           Plain-text messages Lounge fires via Twilio. Use {'{{variable}}'} placeholders the same way as
-          emails. Keep the body tight — every 160 characters becomes another paid SMS segment.
+          emails. Keep the body tight, every 160 characters becomes another paid SMS segment. Pick a
+          booking type to customise its copy; if no override is set the booking falls back to General.
         </p>
       </header>
+
+      <ServicePills
+        pills={SMS_SERVICE_PILLS}
+        selected={selectedServiceType}
+        onSelect={setSelectedServiceType}
+      />
+
       {templates.loading ? (
         <Card padding="md">
           <Skeleton height={48} />
@@ -2139,26 +2193,53 @@ function SmsTemplatesSection({
             Couldn't load SMS templates: {templates.error}
           </p>
         </Card>
-      ) : templates.data.length === 0 ? (
-        <Card padding="md">
-          <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-            No SMS templates configured.
-          </p>
-        </Card>
       ) : (
         <Card padding="none">
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {templates.data.map((row, idx) => (
-              <SmsTemplateRowComponent
-                key={row.key}
-                row={row}
-                isFirst={idx === 0}
-                isOpen={openKey === row.key}
-                onToggle={() => setOpenKey((prev) => (prev === row.key ? null : row.key))}
-                onRefresh={() => templates.refresh()}
-                onToast={onToast}
-              />
-            ))}
+            {SMS_TEMPLATE_KEYS.map((key, idx) => {
+              const variantKey = `${key}|${selectedServiceType ?? '__general__'}`;
+              const tpl = rowByKeyAndService.get(variantKey) ?? null;
+              const generalRow = rowByKeyAndService.get(`${key}|__general__`) ?? null;
+
+              // Inherited placeholder for a service-typed pill where
+              // no override exists yet.
+              if (selectedServiceType !== null && !tpl) {
+                if (!generalRow) return null;
+                return (
+                  <SmsInheritedRow
+                    key={key}
+                    templateKey={key}
+                    serviceType={selectedServiceType}
+                    serviceLabel={
+                      SMS_SERVICE_PILLS.find((p) => p.value === selectedServiceType)
+                        ?.label ?? 'this service'
+                    }
+                    generalRow={generalRow}
+                    isFirst={idx === 0}
+                    onCustomised={() => templates.refresh()}
+                    onToast={onToast}
+                  />
+                );
+              }
+
+              if (!tpl) return null;
+              return (
+                <SmsTemplateRowComponent
+                  key={key}
+                  row={tpl}
+                  serviceType={selectedServiceType}
+                  serviceLabel={
+                    SMS_SERVICE_PILLS.find((p) => p.value === selectedServiceType)
+                      ?.label ?? null
+                  }
+                  isFirst={idx === 0}
+                  isOpen={openKey === key}
+                  onToggle={() => setOpenKey((prev) => (prev === key ? null : key))}
+                  onRefresh={() => templates.refresh()}
+                  onToast={onToast}
+                />
+              );
+            })}
           </ul>
         </Card>
       )}
@@ -2166,8 +2247,102 @@ function SmsTemplatesSection({
   );
 }
 
+// Placeholder row for a service-typed pill where no override exists
+// yet — same shape as InheritedTemplateRow on the email side. "Customise"
+// creates the override row seeded from General and opens the editor.
+function SmsInheritedRow({
+  templateKey,
+  serviceType,
+  serviceLabel,
+  generalRow,
+  isFirst,
+  onCustomised,
+  onToast,
+}: {
+  templateKey: string;
+  serviceType: string;
+  serviceLabel: string;
+  generalRow: SmsTemplateRow;
+  isFirst: boolean;
+  onCustomised: () => void;
+  onToast: (t: { tone: 'success' | 'error' | 'info'; title: string; description?: string }) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const handleCustomise = async () => {
+    if (creating) return;
+    setCreating(true);
+    try {
+      await saveSmsTemplate({
+        key: templateKey,
+        service_type: serviceType,
+        body: generalRow.body,
+        enabled: true,
+      });
+      onToast({
+        tone: 'success',
+        title: `Customised for ${serviceLabel}`,
+        description: humaniseSmsKey(templateKey),
+      });
+      onCustomised();
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not create override',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <li
+      style={{
+        borderTop: isFirst ? 'none' : `1px solid ${theme.color.border}`,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <Mail size={16} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          {humaniseSmsKey(templateKey)}
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Inherits the General copy. Customise to write {serviceLabel}-specific wording.
+        </p>
+      </div>
+      <Button
+        variant="tertiary"
+        size="sm"
+        onClick={handleCustomise}
+        loading={creating}
+      >
+        Customise
+      </Button>
+    </li>
+  );
+}
+
 function SmsTemplateRowComponent({
   row,
+  serviceType,
+  serviceLabel,
   isFirst,
   isOpen,
   onToggle,
@@ -2175,6 +2350,10 @@ function SmsTemplateRowComponent({
   onToast,
 }: {
   row: SmsTemplateRow;
+  /** null when on the General pill, non-null when on a service-typed pill. */
+  serviceType: string | null;
+  /** Human label for the active pill, e.g. "Click-in veneers". */
+  serviceLabel: string | null;
   isFirst: boolean;
   isOpen: boolean;
   onToggle: () => void;
@@ -2184,6 +2363,7 @@ function SmsTemplateRowComponent({
   const [body, setBody] = useState(row.body);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Re-seed the textarea on open / external version bump so the
@@ -2219,7 +2399,7 @@ function SmsTemplateRowComponent({
     if (!dirty || saving) return;
     setSaving(true);
     try {
-      await saveSmsTemplate({ key: row.key, body });
+      await saveSmsTemplate({ key: row.key, service_type: serviceType, body });
       onRefresh();
       onToast({ tone: 'success', title: 'SMS template saved' });
     } catch (e) {
@@ -2237,7 +2417,7 @@ function SmsTemplateRowComponent({
     if (resetting) return;
     setResetting(true);
     try {
-      await resetSmsTemplateToDefault(row.key);
+      await resetSmsTemplateToDefault({ key: row.key, service_type: serviceType });
       onRefresh();
       onToast({ tone: 'success', title: 'Reset to default' });
     } catch (e) {
@@ -2248,6 +2428,31 @@ function SmsTemplateRowComponent({
       });
     } finally {
       setResetting(false);
+    }
+  };
+
+  // Remove a service-typed override so the booking falls back to
+  // General. Only available on service-typed pills — the General
+  // row has no fallback, so removing it isn't allowed.
+  const handleRemoveOverride = async () => {
+    if (removing || !serviceType) return;
+    setRemoving(true);
+    try {
+      await removeSmsTemplateOverride({ key: row.key, service_type: serviceType });
+      onRefresh();
+      onToast({
+        tone: 'success',
+        title: 'Override removed',
+        description: `Now using the General copy for ${serviceLabel ?? 'this service'}.`,
+      });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not remove override',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -2480,15 +2685,27 @@ function SmsTemplateRowComponent({
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: theme.space[2],
+              flexWrap: 'wrap',
             }}
           >
-            <Button
-              variant="tertiary"
-              onClick={handleReset}
-              disabled={resetting || saving || body === row.default_body}
-            >
-              {resetting ? 'Resetting…' : 'Reset to default'}
-            </Button>
+            <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+              <Button
+                variant="tertiary"
+                onClick={handleReset}
+                disabled={resetting || saving || body === row.default_body}
+              >
+                {resetting ? 'Resetting…' : 'Reset to default'}
+              </Button>
+              {serviceType ? (
+                <Button
+                  variant="tertiary"
+                  onClick={handleRemoveOverride}
+                  disabled={removing || saving}
+                >
+                  {removing ? 'Removing…' : `Remove ${serviceLabel ?? 'override'} override`}
+                </Button>
+              ) : null}
+            </div>
             <div style={{ display: 'flex', gap: theme.space[2] }}>
               <Button
                 variant="tertiary"
@@ -2506,12 +2723,4 @@ function SmsTemplateRowComponent({
       ) : null}
     </li>
   );
-}
-
-function humaniseSmsKey(key: string): string {
-  if (key === 'visit_ready') return 'Visit ready — your work is ready to collect';
-  // Fallback: replace underscores with spaces + title case.
-  return key
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }

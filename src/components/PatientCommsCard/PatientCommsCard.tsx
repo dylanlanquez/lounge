@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ChevronRight,
@@ -14,11 +14,13 @@ import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
+import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 import {
   type VisitReadySmsRow,
   explainSmsError,
   useLatestVisitReadySms,
 } from '../../lib/queries/visitReadySms.ts';
+import { humaniseSmsKey, useSmsTemplates } from '../../lib/queries/smsTemplates.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
 
 // PatientCommsCard — receptionist-side "Notify patient" affordance
@@ -551,6 +553,29 @@ function NotifyReadySheet({
     | { kind: 'sent'; to: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
+  // Which template the receptionist wants to fire. Defaults to
+  // visit_ready (the card's primary purpose). Changing this triggers
+  // a preview refetch so the receptionist sees the right body before
+  // committing.
+  const [templateKey, setTemplateKey] = useState<string>('visit_ready');
+
+  // Available SMS templates — pulled from the per-pill General rows
+  // (admins editing service-typed overrides keep their own rows,
+  // but the dropdown only lists the canonical template keys, not
+  // every (key, service_type) variant). Disabled templates are
+  // dropped so the receptionist can't pick a paused one.
+  const smsTemplates = useSmsTemplates();
+  const templateOptions = useMemo(() => {
+    const byKey = new Map<string, { enabled: boolean }>();
+    for (const row of smsTemplates.data) {
+      if (row.service_type !== null) continue; // only list General rows
+      byKey.set(row.key, { enabled: row.enabled });
+    }
+    const order = ['visit_ready', 'please_return', 'please_call', 'running_late', 'reminder_to_attend'];
+    return order
+      .filter((k) => byKey.get(k)?.enabled)
+      .map((k) => ({ value: k, label: humaniseSmsKey(k) }));
+  }, [smsTemplates.data]);
 
   const isResend = !!previousRow;
   const resendOfFailed = !!previousRow && previousRow.send_status === 'failed';
@@ -560,6 +585,13 @@ function NotifyReadySheet({
   // else. Re-sending a failed delivery gets a louder title so the
   // failure context carries into the sheet.
 
+  // Reset the picker to visit_ready every time the sheet opens so
+  // the receptionist always starts from the primary template, not
+  // whatever they picked last time.
+  useEffect(() => {
+    if (open) setTemplateKey('visit_ready');
+  }, [open]);
+
   useEffect(() => {
     if (!open) {
       setPreview(INITIAL_PREVIEW);
@@ -568,6 +600,10 @@ function NotifyReadySheet({
     }
     let cancelled = false;
     setPreview({ status: 'loading', body: '', to: '', reason: null, message: null });
+    // Clear any prior send result so flipping the template after a
+    // failure (or a quick successive send) doesn't leave a stale
+    // banner pinned to the bottom of the sheet.
+    setSendResult({ kind: 'idle' });
     (async () => {
       const { data, error } = await supabase.functions.invoke<{
         ok: boolean;
@@ -576,7 +612,9 @@ function NotifyReadySheet({
         to?: string;
         error?: string;
         reason?: string;
-      }>('send-visit-ready-sms', { body: { visit_id: visitId, preview: true } });
+      }>('send-visit-ready-sms', {
+        body: { visit_id: visitId, template_key: templateKey, preview: true },
+      });
       if (cancelled) return;
       if (error) {
         setPreview({
@@ -609,7 +647,7 @@ function NotifyReadySheet({
     return () => {
       cancelled = true;
     };
-  }, [open, visitId]);
+  }, [open, visitId, templateKey]);
 
   const handleSend = useCallback(async () => {
     setSending(true);
@@ -621,7 +659,9 @@ function NotifyReadySheet({
         to?: string;
         twilioSid?: string;
         error?: string;
-      }>('send-visit-ready-sms', { body: { visit_id: visitId } });
+      }>('send-visit-ready-sms', {
+        body: { visit_id: visitId, template_key: templateKey },
+      });
       if (error) {
         setSendResult({ kind: 'error', message: error.message });
         return;
@@ -641,7 +681,7 @@ function NotifyReadySheet({
     } finally {
       setSending(false);
     }
-  }, [visitId, preview.to, onClose, onSent]);
+  }, [visitId, templateKey, preview.to, onClose, onSent]);
 
   const charCount = preview.body.length;
   const sheetTitle = resendOfFailed
@@ -656,6 +696,22 @@ function NotifyReadySheet({
         {/* Optional context strip about a previous failure */}
         {resendOfFailed && previousRow ? (
           <PreviousFailurePanel row={previousRow} />
+        ) : null}
+
+        {/* Template picker — defaults to visit_ready, lets the
+            receptionist swap to a different text (please return,
+            please call, running late, reminder) without leaving
+            the sheet. Hidden when only one template is enabled so
+            the surface stays quiet in setups that haven't seeded
+            the secondary templates yet. */}
+        {templateOptions.length > 1 ? (
+          <DropdownSelect<string>
+            label="Which text"
+            value={templateKey}
+            options={templateOptions}
+            onChange={setTemplateKey}
+            disabled={sending || sendResult.kind === 'sent'}
+          />
         ) : null}
 
         {/* Body preview */}

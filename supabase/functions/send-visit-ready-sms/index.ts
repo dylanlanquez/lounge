@@ -1,13 +1,18 @@
 // send-visit-ready-sms
 //
-// One-shot "your appliance / repair is ready to collect" text fired by
-// a receptionist from the Visit page after the patient's been marked
-// arrived. Two-step contract with the UI:
+// Manually-fired SMS for a visit. Originally only sent the
+// `visit_ready` template; now accepts any of the keys defined under
+// lng_sms_templates so the receptionist can fire any of the
+// admin-editable SMS templates from the Visit page (please pop back
+// to clinic, please call us, clinician running late, reminder to
+// attend, etc).
+//
+// Two-step contract with the UI:
 //
 //   • Preview pass: ?preview=1 (or { preview: true }) — renders the
 //     template body with the visit's variables and returns the text
-//     without sending anything. Lets the receptionist read the SMS
-//     before committing.
+//     without sending. Lets the receptionist read the SMS before
+//     committing.
 //   • Send pass: default — same render + Twilio send + audit row in
 //     lng_sms_messages so the timeline can show "SMS sent · last4
 //     07…".
@@ -16,7 +21,11 @@
 // invoked from a browser session (the Visit page button).
 //
 // Body shape:
-//   { visit_id: string, preview?: boolean }
+//   { visit_id: string, template_key?: string, preview?: boolean }
+//
+//   template_key defaults to 'visit_ready' for back-compat with
+//   existing callers (the PatientCommsCard "Notify ready" button)
+//   that don't pass one.
 //
 // Returns
 //   preview: { ok: true, body: string, to: string }
@@ -37,7 +46,14 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
 };
 
-const TEMPLATE_KEY = 'visit_ready';
+const DEFAULT_TEMPLATE_KEY = 'visit_ready';
+const ALLOWED_TEMPLATE_KEYS = new Set([
+  'visit_ready',
+  'please_return',
+  'please_call',
+  'running_late',
+  'reminder_to_attend',
+]);
 
 Deno.serve(async (req) => {
   try {
@@ -64,7 +80,7 @@ async function handle(req: Request): Promise<Response> {
   if (!who?.user) return jsonResponse(200, { ok: false, error: 'Not signed in.' });
 
   // ── Parse body ──────────────────────────────────────────────────
-  let body: { visit_id?: string; preview?: boolean } = {};
+  let body: { visit_id?: string; template_key?: string; preview?: boolean } = {};
   try {
     body = await req.json();
   } catch {
@@ -72,6 +88,14 @@ async function handle(req: Request): Promise<Response> {
   }
   if (!body.visit_id) return jsonResponse(200, { ok: false, error: 'visit_id required' });
   const preview = body.preview === true;
+  const templateKey = (body.template_key ?? DEFAULT_TEMPLATE_KEY).trim();
+  if (!ALLOWED_TEMPLATE_KEYS.has(templateKey)) {
+    return jsonResponse(200, {
+      ok: false,
+      error: `Unknown template "${templateKey}".`,
+      reason: 'template_not_allowed',
+    });
+  }
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -95,9 +119,12 @@ async function handle(req: Request): Promise<Response> {
 
   // Resolver order:
   //   1. patients — first_name, lwo_ref, phone (the SMS destination)
-  //   2. locations — name (for the human "ready to collect at X" line)
-  //   3. lng_appointments — service_type + product_key for itemLabel
-  const [patientRes, locationRes, apptRes] = await Promise.all([
+  //   2. locations — name, phone, address, postcode, city (clinic contact strings)
+  //   3. lng_appointments — service_type + product_key for itemLabel,
+  //      start_at for date/time, clinician_id for staff first name
+  //   4. lng_settings — websiteUrl, bookingUrl, publicEmail (used when
+  //      a location row's own field is empty)
+  const [patientRes, locationRes, apptRes, settingsRes] = await Promise.all([
     admin
       .from('patients')
       .select('first_name, lwo_ref, phone')
@@ -106,22 +133,34 @@ async function handle(req: Request): Promise<Response> {
     visit.location_id
       ? admin
           .from('locations')
-          .select('name')
+          .select('name, phone, address, postcode, city')
           .eq('id', visit.location_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     visit.appointment_id
       ? admin
           .from('lng_appointments')
-          .select('service_type, product_key, arch, appointment_ref, walk_in_id')
+          .select('service_type, product_key, arch, appointment_ref, walk_in_id, start_at, staff_account_id')
           .eq('id', visit.appointment_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    admin
+      .from('lng_settings')
+      .select('key, value')
+      .in('key', ['clinic.website_url', 'clinic.booking_url', 'clinic.public_email']),
   ]);
   const patient = patientRes.data as
     | { first_name: string | null; lwo_ref: string | null; phone: string | null }
     | null;
-  const location = locationRes.data as { name: string | null } | null;
+  const location = locationRes.data as
+    | {
+        name: string | null;
+        phone: string | null;
+        address: string | null;
+        postcode: string | null;
+        city: string | null;
+      }
+    | null;
   const appt = apptRes.data as
     | {
         service_type: string | null;
@@ -129,16 +168,21 @@ async function handle(req: Request): Promise<Response> {
         arch: string | null;
         appointment_ref: string | null;
         walk_in_id: string | null;
+        start_at: string | null;
+        staff_account_id: string | null;
       }
     | null;
+  // lng_settings.value is jsonb — for clinic.* string fields the stored
+  // value is the JSON string, so we cast through unknown and coerce.
+  const settingsRows = (settingsRes.data ?? []) as Array<{ key: string; value: unknown }>;
+  const settings = Object.fromEntries(
+    settingsRows.map((r) => [r.key, typeof r.value === 'string' ? r.value : String(r.value ?? '')]),
+  );
 
   // Walk-in fallback: by design lng_appointments.appointment_ref is
-  // NULL on walk-in marker rows (per the
-  // 20260518000007_lng_auto_ref_walk_in_discriminator migration —
-  // the trigger gates on walk_in_id IS NULL). The LAP for walk-ins
-  // lives on lng_walk_ins.appointment_ref instead. Without this
-  // fallback every walk-in visit would render "Reference -." in
-  // the SMS even though a LAP exists on a sibling row.
+  // NULL on walk-in marker rows. The LAP for walk-ins lives on
+  // lng_walk_ins.appointment_ref. Without this fallback every walk-in
+  // visit would render "Reference -." in the SMS.
   let appointmentRef = (appt?.appointment_ref ?? '').trim();
   if (!appointmentRef && appt?.walk_in_id) {
     const { data: walkInRow } = await admin
@@ -148,6 +192,19 @@ async function handle(req: Request): Promise<Response> {
       .maybeSingle();
     appointmentRef =
       ((walkInRow as { appointment_ref: string | null } | null)?.appointment_ref ?? '').trim();
+  }
+
+  // Clinician first name (optional — appointment may have no clinician set).
+  let staffFirstName = '';
+  if (appt?.staff_account_id) {
+    const { data: staffRow } = await admin
+      .from('accounts')
+      .select('first_name')
+      .eq('id', appt.staff_account_id)
+      .maybeSingle();
+    const staff = staffRow as { first_name: string | null } | null;
+    const first = (staff?.first_name ?? '').trim();
+    if (first) staffFirstName = properCase(first);
   }
 
   if (!patient) {
@@ -161,29 +218,24 @@ async function handle(req: Request): Promise<Response> {
       reason: 'no_phone',
     });
   }
-  // Auto-format whatever's on the patient record into E.164 before
-  // it hits Twilio. UK clinics enter phones every which way (07…,
-  // 07878 023 449, +44 7878 023449, 00447…), all of which Twilio
-  // would reject with 21211. normalisePhone handles the common
-  // shapes; the cleaned value flows into both the audit row and
-  // the UI preview so what the receptionist sees is what Twilio
-  // gets.
   const toPhone = normalisePhone(rawPhone);
 
-  // ── Load the template ─────────────────────────────────────────
-  const { data: tplRaw, error: tplErr } = await admin
-    .from('lng_sms_templates')
-    .select('body, enabled')
-    .eq('key', TEMPLATE_KEY)
-    .maybeSingle();
-  if (tplErr || !tplRaw) {
+  // ── Load the template via the per-service resolver ──────────────
+  // RPC returns the service-typed override if one exists for this
+  // booking's service_type, else the General default. Both shapes
+  // get the same downstream rendering.
+  const { data: tplRpc, error: tplErr } = await admin.rpc('lng_resolve_sms_template', {
+    p_key: templateKey,
+    p_service_type: appt?.service_type ?? null,
+  });
+  if (tplErr || !tplRpc || (Array.isArray(tplRpc) && tplRpc.length === 0)) {
     return jsonResponse(200, {
       ok: false,
-      error: `SMS template "${TEMPLATE_KEY}" not configured. Seed it from Admin → Emails & SMS.`,
+      error: `SMS template "${templateKey}" not configured. Seed it from Admin → Emails & SMS.`,
       reason: 'template_not_found',
     });
   }
-  const tpl = tplRaw as { body: string; enabled: boolean };
+  const tpl = (Array.isArray(tplRpc) ? tplRpc[0] : tplRpc) as { body: string; enabled: boolean };
   if (!tpl.enabled) {
     return jsonResponse(200, {
       ok: false,
@@ -192,24 +244,28 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
-  // ── Substitute variables ─────────────────────────────────────
-  // Proper-case at the boundary so a row stored as "DARREN" or
-  // "darren" renders as "Darren" in the patient-facing SMS.
+  // ── Resolve placeholders ─────────────────────────────────────────
+  const clinicName = (location?.name ?? '').trim() || 'the clinic';
+  const clinicPhone = (location?.phone ?? '').trim();
+  const clinicAddress = formatClinicAddress(location);
+  const apptDate = formatApptDate(appt?.start_at);
+  const apptTime = formatApptTime(appt?.start_at);
+  const websiteUrl = stripScheme(String(settings['clinic.website_url'] ?? ''));
+  const bookingLink = stripScheme(String(settings['clinic.booking_url'] ?? ''));
+
   const variables: Record<string, string> = {
     patientFirstName: properCase((patient.first_name ?? '').trim()) || 'there',
-    // appointmentRef is what the patient saw in their original
-    // confirmation email ("Booking Reference: LAP-00042"). That's
-    // the string they actually remember to quote when they walk
-    // into the clinic to collect, so it's the natural primary
-    // reference for the ready-to-collect SMS. lwoRef stays
-    // available as a separate variable for admins who want the
-    // internal lab reference (it's patient-level + immutable per
-    // CLAUDE.md), but it's NOT in the default template body because
-    // many older patient rows don't have one on file and the
-    // resulting "Reference -." looks broken to the patient.
+    clinicName,
+    locationName: clinicName, // legacy alias
+    clinicPhone,
+    clinicAddress,
+    websiteUrl,
+    bookingLink,
+    apptDate,
+    apptTime,
+    staffFirstName: staffFirstName || 'your clinician',
     appointmentRef: appointmentRef || '—',
     lwoRef: (patient.lwo_ref ?? '').trim() || '—',
-    locationName: (location?.name ?? '').trim() || 'the clinic',
     itemLabel: resolveItemLabel(appt),
   };
   const renderedBody = substituteVariables(tpl.body, variables);
@@ -228,8 +284,6 @@ async function handle(req: Request): Promise<Response> {
   const result = await sendSms({ to: toPhone, body: renderedBody });
 
   // ── Audit row regardless of outcome ───────────────────────────
-  // Resolve the actor (Lounge account id) so the timeline can read
-  // "sent by Sarah Henderson" without joining auth.users.
   const { data: actorRow } = await admin
     .from('accounts')
     .select('id')
@@ -238,39 +292,24 @@ async function handle(req: Request): Promise<Response> {
   const sentBy = (actorRow as { id: string } | null)?.id ?? null;
 
   if (result.ok) {
-    // Initial state is 'pending' — Twilio has ACCEPTED the message
-    // for delivery but the carrier hasn't reported back yet. The
-    // twilio-sms-status webhook flips this to 'sent' on delivered
-    // or 'failed' on undelivered/failed/canceled, usually within a
-    // few seconds for UK numbers. Without the in-flight state the
-    // UI would tell the receptionist "sent" when really we're still
-    // waiting on the carrier — and a 30005 ten seconds later would
-    // arrive after the receptionist had walked away.
     await admin.from('lng_sms_messages').insert({
       patient_id: visit.patient_id,
       visit_id: visit.id,
       appointment_id: visit.appointment_id,
       location_id: visit.location_id,
-      template_key: TEMPLATE_KEY,
+      template_key: templateKey,
       to_phone: toPhone,
       body: renderedBody,
       send_status: 'pending',
       twilio_message_sid: result.sid,
       sent_by: sentBy,
     });
-    // Patient-axis event row mirrors the email-send pattern so the
-    // appointment / visit timeline picks it up alongside other
-    // touchpoints. 'sms_queued' captures the actual state: we've
-    // handed it to Twilio, but the carrier's verdict is still
-    // pending. A future migration / patient-event consumer can
-    // listen for the webhook's 'delivered'/'failed' events when we
-    // wire them; for now the audit row's status is the truth.
     await admin.from('patient_events').insert({
       patient_id: visit.patient_id,
       event_type: 'sms_queued',
       actor_account_id: sentBy,
       payload: {
-        template_key: TEMPLATE_KEY,
+        template_key: templateKey,
         visit_id: visit.id,
         appointment_id: visit.appointment_id,
         to_phone: toPhone,
@@ -290,7 +329,7 @@ async function handle(req: Request): Promise<Response> {
     visit_id: visit.id,
     appointment_id: visit.appointment_id,
     location_id: visit.location_id,
-    template_key: TEMPLATE_KEY,
+    template_key: templateKey,
     to_phone: toPhone,
     body: renderedBody,
     send_status: 'failed',
@@ -308,19 +347,12 @@ async function handle(req: Request): Promise<Response> {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Format the {{itemLabel}} variable from the visit's appointment row.
- *  Falls back to "appliance" for any service type whose label we
- *  haven't pinned, since "your appliance is ready" reads naturally
- *  for almost everything. */
 function resolveItemLabel(
   appt: { service_type: string | null; product_key: string | null; arch: string | null } | null,
 ): string {
   if (!appt) return 'appliance';
   if (appt.service_type === 'denture_repair') return 'denture repair';
   if (appt.service_type === 'click_in_veneers') return 'click-in veneers';
-  // same_day_appliance + impression_appointment + virtual_impression_appointment
-  // all map to the product the patient ordered. Product key takes
-  // precedence over a bare "appliance".
   const productMap: Record<string, string> = {
     retainer: 'retainer',
     aligner: 'aligner',
@@ -335,6 +367,56 @@ function resolveItemLabel(
     return productMap[appt.product_key];
   }
   return 'appliance';
+}
+
+// Format the appointment start_at into a UK-style short date,
+// e.g. "Mon 25 May". Empty string when no start_at is available.
+function formatApptDate(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Europe/London',
+  }).format(d);
+}
+
+// Format the appointment start_at into a 24h UK time, e.g. "14:30".
+// Empty string when no start_at is available.
+function formatApptTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Europe/London',
+  }).format(d);
+}
+
+// Single-line address built from the locations row's parts. Skips
+// any empty parts so a clinic with only street + postcode reads
+// "123 High Street, ML1 5UH" rather than "123 High Street, , ML1 5UH".
+function formatClinicAddress(
+  loc: { address: string | null; city: string | null; postcode: string | null } | null,
+): string {
+  if (!loc) return '';
+  const parts = [
+    (loc.address ?? '').trim(),
+    (loc.city ?? '').trim(),
+    (loc.postcode ?? '').trim(),
+  ].filter((p) => p.length > 0);
+  return parts.join(', ');
+}
+
+// Strip "https://" / "http://" so a URL renders compactly inside an
+// SMS bubble. Patients tap the bare host and the OS still routes
+// to the right scheme.
+function stripScheme(url: string): string {
+  return url.replace(/^https?:\/\//i, '').trim();
 }
 
 function substituteVariables(template: string, variables: Record<string, string>): string {
