@@ -329,6 +329,15 @@ export function VisitDetail() {
     reason: string;
     context?: Record<string, unknown>;
   } | null>(null);
+  // Flag set by submitEndEarly so the refund sheet auto-opens on
+  // the NEXT render once owedToPatientPence has settled to its
+  // post-end-visit value. The previous shape checked owed at
+  // submit time, but that reads the value from BEFORE the refresh
+  // applies — typical case (paid-in-full booking, end early on an
+  // intact cart) had owed=0 before submit and £X after, so the
+  // check missed. Flag is cleared in the same effect that opens
+  // the sheet (or by manual user interaction).
+  const refundPromptOnEndVisitRef = useRef(false);
   const [shipToast, setShipToast] = useState<{ dispatch_ref: string; tracking_number: string | null } | null>(null);
 
   // Change-fulfilment sheet — opens post-completion when staff need
@@ -739,6 +748,21 @@ export function VisitDetail() {
       },
     });
   }, [owedToPatientPence, patient, visit, amountPaidPence, subtotalAfterDiscount]);
+
+  // Refund-sheet auto-open after End-visit-early. The submit
+  // handler stages the flag because the imperative check at
+  // submit-time reads the PRE-refresh value of owedToPatientPence
+  // (always 0 on a paid-in-full visit that's mid-action). This
+  // effect waits for owedToPatientPence to actually settle and
+  // then opens the sheet so staff doesn't have to hunt for the
+  // Refund button on the cart card.
+  useEffect(() => {
+    if (!refundPromptOnEndVisitRef.current) return;
+    if (owedToPatientPence <= 0) return;
+    refundPromptOnEndVisitRef.current = false;
+    setRefundOpen(true);
+  }, [owedToPatientPence]);
+
   // Pence collected at the till today, separate from the deposit and
   // any Shopify pre-paid credit. Used in the Totals card breakdown
   // so we can show "Deposit -£X · Collected -£Y" without overlap.
@@ -819,6 +843,19 @@ export function VisitDetail() {
 
   const openCompleteVisit = async () => {
     if (!visit || !patient) return;
+    // Block finish when there's money owed back to the patient.
+    // The visit can't be properly closed out while the books say
+    // the customer is overpaid — letting it through would leave
+    // the owed amount unrefunded and orphaned on a closed visit
+    // the receptionist might never reopen. Open the RefundSheet
+    // instead with the canonical owed-money category. Once the
+    // refund settles, owedToPatientPence drops to 0 and Finish
+    // visit becomes available again.
+    if (owedToPatientPence > 0) {
+      setRefundDefaultCategory('item_removed');
+      setRefundOpen(true);
+      return;
+    }
     setCompleteError(null);
     setCompleteMethod('in_person');
     // Skip the in-person / shipping sheet entirely when the cart's
@@ -1212,18 +1249,11 @@ export function VisitDetail() {
       setUnsuitOpen(false);
       refresh();
       refreshPaid();
-      // Pre-set the category for whenever the sheet does open — the
-      // banner's Refund button reads this state. Don't auto-open
-      // unless there's already an owed balance to refund; ending
-      // early on a balanced visit (paid = cart) has nothing to
-      // refund and the sheet's "Nothing refundable" empty state
-      // would just be noise. The post-refresh effect will surface
-      // the banner if the new state IS owed, and staff can click
-      // Refund there.
+      // Pre-set the category so the sheet opens on the right
+      // option once it does open. The auto-open effect below
+      // watches owedToPatientPence after the refresh applies.
       setRefundDefaultCategory('visit_ended_early');
-      if (owedToPatientPence > 0) {
-        setRefundOpen(true);
-      }
+      refundPromptOnEndVisitRef.current = true;
     } catch (e) {
       setUnsuitError(e instanceof Error ? e.message : 'Could not save');
     } finally {
@@ -3824,10 +3854,19 @@ function Totals({
           </>
         );
       })()}
-      {hideTotalRow ? null : owedToPatientPence > 0 ? (
+      {owedToPatientPence > 0 ? (
         // Overpaid state. The bottom row now folds the standalone
         // "We owe X" banner into itself so the explanation + Refund
         // button live alongside the amount. One alert block, not two.
+        //
+        // NOT gated on hideTotalRow — even when the cart is 'paid'
+        // (PaidHeader rendering above), an owed-back amount must
+        // still surface. Concrete case: visit ends early after a
+        // paid-in-full booking, cart.status stays 'paid' but
+        // subtotal drops to £0, so the patient is owed back what
+        // they already paid. Without this row the staff has no
+        // affordance to issue the refund and the "Resume visit"
+        // button reads as the only action.
         <div
           style={{
             display: 'flex',
@@ -3897,7 +3936,7 @@ function Totals({
             Refund {formatPence(owedToPatientPence)}
           </button>
         </div>
-      ) : (
+      ) : hideTotalRow ? null : (
         <div
           style={{
             display: 'flex',
