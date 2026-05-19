@@ -681,6 +681,59 @@ const RECEIPT_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   },
 ];
 
+// Variable vocabulary the send-refund-receipt edge function
+// resolves at send time. Keep this list in lockstep with the
+// `variables` map in supabase/functions/send-refund-receipt —
+// adding one here without resolving it server-side leaves a
+// literal `{{name}}` sitting in the patient's inbox.
+const REFUND_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'patientFirstName',
+    label: 'Patient first name',
+    description: 'The patient\'s first name. Falls back to "there" if empty.',
+    sample: 'Sarah',
+  },
+  {
+    name: 'refundAmount',
+    label: 'Refund amount',
+    description: 'Formatted refund total, e.g. "£24.00".',
+    sample: '£24.00',
+  },
+  {
+    name: 'refundMethod',
+    label: 'Refund method',
+    description:
+      'How the refund was returned: "Card (Stripe)", "Cash", "Klarna", "Account credit". Reflects the original payment method.',
+    sample: 'Card (Stripe)',
+  },
+  {
+    name: 'refundDate',
+    label: 'Refund date',
+    description: 'The date the refund was issued, e.g. "5 May 2026".',
+    sample: '5 May 2026',
+  },
+  {
+    name: 'reasonNote',
+    label: 'Refund reason',
+    description:
+      'The reason recorded against the refund (the free-text note when staff wrote one, otherwise the humanised category label).',
+    sample: 'Visit ended early',
+  },
+  {
+    name: 'reference',
+    label: 'Refund reference',
+    description: 'Short 8-character refund reference. Patient can quote this if they call about the refund.',
+    sample: 'A1B2C3D4',
+  },
+  {
+    name: 'settlementNote',
+    label: 'Settlement timing copy',
+    description:
+      'Method-specific timing line: card refunds get the "5 to 10 working days" reminder, cash refunds the in-hand note, others blank. Drop it next to the amount so the patient knows when to expect the money.',
+    sample: 'Card refunds usually appear within 5 to 10 working days, depending on your bank.',
+  },
+];
+
 const SHIPPING_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   {
     name: 'patientFirstName',
@@ -792,6 +845,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent to the patient immediately after a payment is taken at the Lounge. Includes a line-item list, total, payment method, and reference.',
     variables: RECEIPT_VARIABLES,
+  },
+  {
+    key: 'refund_receipt',
+    label: 'Refund notification',
+    group: 'Payments',
+    description:
+      'Sent to the patient when a refund is issued against a payment or deposit. Confirms the amount, the original method the refund is returning to, and the timing the patient should expect (5-10 working days on cards, immediate on cash). One General template, no per-service variants.',
+    variables: REFUND_VARIABLES,
   },
 ];
 
