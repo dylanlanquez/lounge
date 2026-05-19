@@ -220,7 +220,54 @@ async function handleCompleted(
     return new Response('ok', { headers: CORS_HEADERS });
   }
 
+  // Flip cart.status='paid' when the new succeeded total meets the
+  // cart total. Mirrors what terminal-webhook does on a successful
+  // card payment — without this, a Klarna capture that fully covers
+  // a cart leaves cart.status='open' and the VisitDetail surface
+  // doesn't lock the cart (items still editable, Apply Discount
+  // still visible, no PaidHeader). Reuses the canonical
+  // lng_visit_paid_status view as the single source of truth so the
+  // sum nets out refunds + counts the deposit alongside till payments.
+  await maybeFlipCartPaid(supabase, session.payment_id);
+
   return new Response('ok', { headers: CORS_HEADERS });
+}
+
+async function maybeFlipCartPaid(
+  supabase: ReturnType<typeof createClient>,
+  paymentId: string,
+): Promise<void> {
+  const { data: pay } = await supabase
+    .from('lng_payments')
+    .select('cart_id')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (!pay) return;
+  const cartId = (pay as { cart_id: string }).cart_id;
+
+  const { data: cart } = await supabase
+    .from('lng_carts')
+    .select('total_pence, status, visit_id')
+    .eq('id', cartId)
+    .maybeSingle();
+  if (!cart) return;
+  const c = cart as { total_pence: number | null; status: string; visit_id: string };
+  if (c.status === 'paid' || c.status === 'voided') return;
+  if (c.total_pence == null || c.total_pence <= 0) return;
+
+  const { data: paidRow } = await supabase
+    .from('lng_visit_paid_status')
+    .select('amount_paid_pence')
+    .eq('visit_id', c.visit_id)
+    .maybeSingle();
+  const amountPaid = (paidRow as { amount_paid_pence: number } | null)?.amount_paid_pence ?? 0;
+
+  if (amountPaid < c.total_pence) return;
+
+  await supabase
+    .from('lng_carts')
+    .update({ status: 'paid', closed_at: new Date().toISOString() })
+    .eq('id', cartId);
 }
 
 async function handleNegativeTerminal(

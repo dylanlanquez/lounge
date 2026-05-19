@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -31,7 +31,7 @@ import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
 import { formatDepositSourceSuffix } from '../lib/queries/visits.ts';
 
-type Stage = 'choose' | 'cash' | 'card' | 'bnpl' | 'success';
+type Stage = 'choose' | 'cash' | 'card' | 'success';
 type Journey = 'standard' | 'klarna' | 'clearpay';
 // Two top-level modes on the choose stage. 'full' is the default and
 // charges the entire outstanding on the picked method. 'split' reveals
@@ -155,6 +155,59 @@ export function Pay() {
   // picker sees the new balance.
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
+
+  // Refund totals split by source so the header credit line can show
+  // the NET-of-refunds deposit + an audit sub-line ("£X paid · £Y
+  // refunded back to {name}") that matches the cart rollup exactly.
+  // Previously the header just showed gross deposit, which read as
+  // "paid in full −£500" alongside "outstanding £460" — i.e. the
+  // patient had paid more than the cart total yet we were still
+  // collecting. The math underneath is correct (amountPaidPence is
+  // net of refunds) but the credit line wasn't showing the refund.
+  const [refundedAgainstDepositPence, setRefundedAgainstDepositPence] = useState(0);
+  const [refundedAgainstTillPence, setRefundedAgainstTillPence] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let tillRefund = 0;
+      let depositRefund = 0;
+      if (cart?.id) {
+        const { data: paymentRefunds } = await supabase
+          .from('lng_payment_refunds')
+          .select('amount_pence, payment:lng_payments!payment_id ( cart_id )')
+          .eq('status', 'succeeded')
+          .not('payment_id', 'is', null);
+        if (cancelled) return;
+        for (const r of (paymentRefunds ?? []) as Array<{
+          amount_pence: number;
+          payment:
+            | { cart_id: string | null }
+            | { cart_id: string | null }[]
+            | null;
+        }>) {
+          const p = Array.isArray(r.payment) ? r.payment[0] ?? null : r.payment ?? null;
+          if (p?.cart_id === cart.id) tillRefund += r.amount_pence ?? 0;
+        }
+      }
+      if (visit?.appointment_id) {
+        const { data: depositRefunds } = await supabase
+          .from('lng_payment_refunds')
+          .select('amount_pence')
+          .eq('deposit_appointment_id', visit.appointment_id)
+          .eq('status', 'succeeded');
+        if (cancelled) return;
+        for (const r of (depositRefunds ?? []) as Array<{ amount_pence: number }>) {
+          depositRefund += r.amount_pence ?? 0;
+        }
+      }
+      if (!cancelled) {
+        setRefundedAgainstDepositPence(depositRefund);
+        setRefundedAgainstTillPence(tillRefund);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [cart?.id, visit?.appointment_id, paidStatus?.amount_paid_pence]);
+  const patientFirstName = patient?.first_name ?? null;
   const outstandingPence = computeCartOutstanding(subtotalAfterDiscount, amountPaidPence);
   // Pence collected at the till today, separate from the deposit and
   // any Shopify pre-paid credit. Used in the visible breakdown so we
@@ -435,46 +488,125 @@ export function Pay() {
             {tillCollectedPence > 0 ? 'outstanding' : depositPence > 0 ? 'to collect' : ''}
           </span>
         </h1>
-        {cartDiscount > 0 || depositPence > 0 || tillCollectedPence > 0 ? (
-          <p
-            style={{
-              margin: `0 0 ${theme.space[3]}px`,
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            <span>Subtotal {formatPence(subtotal)}</span>
-            {cartDiscount > 0 ? (
-              <>
-                <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
-                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
-                  Discount −{formatPence(cartDiscount)}
-                </span>
-              </>
-            ) : null}
-            {depositPence > 0 ? (
-              <>
-                <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
-                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
-                  {deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} −{formatPence(depositPence)}
-                </span>
-                <span style={{ color: theme.color.inkSubtle }}>
-                  {' '}
-                  ({formatDepositSourceSuffix(deposit)})
-                </span>
-              </>
-            ) : null}
-            {tillCollectedPence > 0 ? (
-              <>
-                <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
-                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
-                  Collected −{formatPence(tillCollectedPence)}
-                </span>
-              </>
-            ) : null}
-          </p>
-        ) : null}
+        {(() => {
+          // Per-source breakdown with refund netting. Each money
+          // source gets ONE chip showing its NET-of-refunds value,
+          // plus a sub-line below the chips listing the gross +
+          // refund detail when a refund exists. Matches the cart
+          // Totals card's per-source pattern so both surfaces tell
+          // the same story.
+          //
+          // Sources:
+          //   • Deposit / Paid-in-full (Stripe at booking)
+          //   • Till (Klarna / cash / card terminal lng_payments)
+          //   • Shopify pre-paid online order
+          //
+          // Gross till is back-calculated from amountPaidPence (the
+          // canonical net-of-everything number from
+          // lng_visit_paid_status) plus the refunds we just queried.
+          // See refundedAgainstDepositPence / refundedAgainstTillPence
+          // above.
+          // Gross till = (net amount paid) + (all refunds) - (gross
+          // deposit). Back-calculated from the canonical
+          // lng_visit_paid_status view so the till and deposit chips
+          // always sum to amount_paid_pence + refunds_total, which
+          // is the true gross money-in for the visit.
+          const tillGrossPence = Math.max(
+            0,
+            amountPaidPence +
+              refundedAgainstDepositPence +
+              refundedAgainstTillPence -
+              depositPence,
+          );
+          const depositNetPence = Math.max(0, depositPence - refundedAgainstDepositPence);
+          const tillNetPence = Math.max(0, tillGrossPence - refundedAgainstTillPence);
+          const refundedAwayCopy = patientFirstName
+            ? `refunded back to ${patientFirstName}`
+            : 'refunded back to patient';
+          const hasAnyChip =
+            cartDiscount > 0 ||
+            depositPence > 0 ||
+            tillGrossPence > 0;
+          if (!hasAnyChip) return null;
+
+          return (
+            <div
+              style={{
+                margin: `0 0 ${theme.space[3]}px`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[1],
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                <span>Subtotal {formatPence(subtotal)}</span>
+                {cartDiscount > 0 ? (
+                  <>
+                    <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+                    <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+                      Discount −{formatPence(cartDiscount)}
+                    </span>
+                  </>
+                ) : null}
+                {depositPence > 0 ? (
+                  <>
+                    <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+                    <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+                      {deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'} −{formatPence(depositNetPence)}
+                    </span>
+                    <span style={{ color: theme.color.inkSubtle }}>
+                      {' '}
+                      ({formatDepositSourceSuffix(deposit)})
+                    </span>
+                  </>
+                ) : null}
+                {tillGrossPence > 0 ? (
+                  <>
+                    <span style={{ margin: `0 ${theme.space[2]}px` }}>·</span>
+                    <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.semibold }}>
+                      Collected −{formatPence(tillNetPence)}
+                    </span>
+                  </>
+                ) : null}
+              </p>
+              {/* Audit sub-lines — only render when there's a refund
+                  to disclose. Without these, the chip above looks
+                  like a simple "we already collected £X" credit even
+                  when the patient was refunded the lot. */}
+              {depositPence > 0 && refundedAgainstDepositPence > 0 ? (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkSubtle,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {deposit?.paidInFullAtBooking ? 'Paid in full' : 'Deposit'}: {formatPence(depositPence)} paid · {formatPence(refundedAgainstDepositPence)} {refundedAwayCopy}
+                </p>
+              ) : null}
+              {tillGrossPence > 0 && refundedAgainstTillPence > 0 ? (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.inkSubtle,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  Collected at till: {formatPence(tillGrossPence)} paid · {formatPence(refundedAgainstTillPence)} {refundedAwayCopy}
+                </p>
+              ) : null}
+            </div>
+          );
+        })()}
         <p style={{ margin: `0 0 ${theme.space[6]}px`, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
           {stage === 'choose' &&
             (succeededPayments.length > 0
@@ -482,7 +614,6 @@ export function Pay() {
               : 'Take the full amount in one go, or split across more than one method.')}
           {stage === 'cash' && 'Tap what the customer hands you. Change is calculated for you.'}
           {stage === 'card' && 'Card terminal flow ships in slice 8.'}
-          {stage === 'bnpl' && 'Klarna shows a QR for the customer to scan in their app. Clearpay still uses the card reader.'}
           {stage === 'success' && 'Choose how to send the receipt.'}
         </p>
 
@@ -548,52 +679,36 @@ export function Pay() {
                 onClick={() => setStage('cash')}
                 disabled={chargeAmountPence <= 0}
               />
-              <MethodCard
-                icon={<ShoppingBag size={20} />}
-                title="Buy now, pay later"
-                description={
-                  paymentMode === 'split' && parsedSplitAmount === 0
-                    ? 'Set a split amount above first'
-                    : !reader
-                      ? `Klarna available (QR). Clearpay needs the card reader.`
-                      : `Charge ${formatPence(chargeAmountPence)} via Klarna or Clearpay`
-                }
-                onClick={() => setStage('bnpl')}
-                disabled={chargeAmountPence <= 0}
-              />
-            </div>
-          </div>
-        ) : stage === 'bnpl' ? (
-          <Card padding="lg">
-            <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-              Pick a provider
-            </h2>
-            <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-              Klarna and Clearpay work differently now. Pick the one the customer asks for.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              {/* Klarna and Clearpay sit as peers to Card and Cash
+                  on the picker now. Less drilling — staff picks the
+                  exact provider in one tap instead of going via a
+                  generic "Buy now, pay later" intermediate sheet. */}
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Klarna"
-                description="Customer scans a QR with their phone. Pays in the Klarna app. No card reader needed."
+                description={
+                  paymentMode === 'split' && parsedSplitAmount === 0
+                    ? 'Set a split amount above first'
+                    : `Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`
+                }
                 onClick={() => openBnpl('klarna')}
+                disabled={chargeAmountPence <= 0}
               />
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Clearpay"
                 description={
-                  reader
-                    ? `Customer taps phone on ${reader.friendly_name}. Receipt says Visa contactless.`
-                    : 'Needs a registered card reader. Customer taps phone on the reader.'
+                  paymentMode === 'split' && parsedSplitAmount === 0
+                    ? 'Set a split amount above first'
+                    : !reader
+                      ? 'Needs a registered card reader. Customer taps phone on the reader.'
+                      : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
                 }
                 onClick={() => openBnpl('clearpay')}
-                disabled={!reader}
+                disabled={!reader || chargeAmountPence <= 0}
               />
             </div>
-            <Button variant="tertiary" onClick={() => setStage('choose')} style={{ marginTop: theme.space[4] }}>
-              Back to methods
-            </Button>
-          </Card>
+          </div>
         ) : stage === 'cash' ? (
           <Card padding="lg">
             <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold, letterSpacing: theme.type.tracking.tight }}>
