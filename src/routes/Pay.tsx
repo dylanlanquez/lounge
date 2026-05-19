@@ -10,7 +10,6 @@ import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelp
 import { KlarnaInStoreModal } from '../components/KlarnaInStoreModal/KlarnaInStoreModal.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
 import {
   useCart,
@@ -65,7 +64,6 @@ interface PayEntryState {
 export function Pay() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
-  const { account: currentAccount } = useCurrentAccount();
   const { visit, patient, deposit, loading: visitLoading } = useVisitDetail(id);
   const { cart, items, loading: cartLoading } = useCart(id);
   const navigate = useNavigate();
@@ -863,36 +861,22 @@ export function Pay() {
                 Pick the manager who approved this void. Their email lands on the audit row.
               </p>
             </div>
-            {(() => {
-              // Strip the current user — same approver-distinct
-              // rule as cart discounts and refunds; voiding your
-              // own payment isn't allowed at the DB layer.
-              const me = currentAccount?.account_id ?? null;
-              const eligible = me
-                ? voidManagers.filter((m) => m.id !== me)
-                : voidManagers;
-              const onlyMe = me && voidManagers.length > 0 && eligible.length === 0;
-              return (
-                <DropdownSelect<string>
-                  label="Approving manager"
-                  required
-                  value={voidManagerId}
-                  options={eligible.map((m) => ({
-                    value: m.id,
-                    label: `${m.name} (${m.login_email})`,
-                  }))}
-                  onChange={(v) => setVoidManagerId(v)}
-                  placeholder={
-                    voidManagers.length === 0
-                      ? 'No managers configured. Add one in Admin > Staff.'
-                      : onlyMe
-                        ? 'You cannot approve your own void. Ask another manager to sign in on a second device.'
-                        : 'Pick the manager who approved this'
-                  }
-                  disabled={eligible.length === 0}
-                />
-              );
-            })()}
+            <DropdownSelect<string>
+              label="Approving manager"
+              required
+              value={voidManagerId}
+              options={voidManagers.map((m) => ({
+                value: m.id,
+                label: `${m.name} (${m.login_email})`,
+              }))}
+              onChange={(v) => setVoidManagerId(v)}
+              placeholder={
+                voidManagers.length === 0
+                  ? 'No managers configured. Add one in Admin > Staff.'
+                  : 'Pick the manager who approved this'
+              }
+              disabled={voidManagers.length === 0}
+            />
           </div>
           {voidError ? (
             <p

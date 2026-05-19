@@ -2673,43 +2673,22 @@ export function VisitDetail() {
             >
               Manager sign-off
             </h3>
-            {(() => {
-              // Filter out the current staff member — the
-              // lng_cart_discounts_approver_distinct check constraint
-              // rejects rows where applied_by = approved_by, so the
-              // person submitting can't sign off on their own
-              // discount. Previously the dropdown listed everyone
-              // including the current user, the user selected
-              // themselves, and submission failed at the DB layer
-              // with "new row violates check constraint
-              // lng_cart_discounts_approver_distinct". Now we
-              // surface the rule in the UI instead.
-              const me = currentAccount?.account_id ?? null;
-              const eligible = me
-                ? discountManagers.filter((m) => m.id !== me)
-                : discountManagers;
-              const onlyMe = me && discountManagers.length > 0 && eligible.length === 0;
-              return (
-                <DropdownSelect<string>
-                  label="Approving manager"
-                  required
-                  value={discountManagerId}
-                  options={eligible.map((m) => ({
-                    value: m.id,
-                    label: `${m.name} (${m.login_email})`,
-                  }))}
-                  onChange={(v) => setDiscountManagerId(v)}
-                  placeholder={
-                    discountManagers.length === 0
-                      ? 'No managers configured. Add one in Admin > Staff.'
-                      : onlyMe
-                        ? 'You cannot approve your own discount. Ask another manager to sign in on a second device.'
-                        : 'Pick the manager who approved this'
-                  }
-                  disabled={eligible.length === 0}
-                />
-              );
-            })()}
+            <DropdownSelect<string>
+              label="Approving manager"
+              required
+              value={discountManagerId}
+              options={discountManagers.map((m) => ({
+                value: m.id,
+                label: `${m.name} (${m.login_email})`,
+              }))}
+              onChange={(v) => setDiscountManagerId(v)}
+              placeholder={
+                discountManagers.length === 0
+                  ? 'No managers configured. Add one in Admin > Staff.'
+                  : 'Pick the manager who approved this'
+              }
+              disabled={discountManagers.length === 0}
+            />
           </div>
           {discountError ? (
             <p
