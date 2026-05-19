@@ -1622,36 +1622,32 @@ function BootScreen({ error }: { error: string | null }) {
           Couldn't reach the booking system. Please refresh the page.
         </p>
       ) : (
-        <>
-          <div style={{ width: 120, maxWidth: '70%' }}>
-            <svg
-              viewBox="0 0 959.12 574.05"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden
-              style={{ width: '100%', height: 'auto' }}
-            >
-              <defs>
-                <clipPath id="vlounge-bootscreen-fill">
-                  <rect
-                    x="0"
-                    y="0"
-                    width="0"
-                    height="574.05"
-                    style={{ animation: 'vlounge-vfill 1.4s ease-in-out infinite alternate' }}
-                  />
-                </clipPath>
-              </defs>
-              <path d={VENNEIR_PATH} fill={OUTLINE} />
-              <path d={VENNEIR_PATH} fill={ACCENT} clipPath="url(#vlounge-bootscreen-fill)" />
-            </svg>
-          </div>
-          <p
-            aria-live="polite"
-            style={{ margin: 0, lineHeight: 1.4, color: '#5A6266', letterSpacing: '0.01em' }}
+        // V mark only, no label — the breathing fill reads as the
+        // loading signal on its own. 1.2s each direction so the V
+        // glints fully before draining (per Dylan: at least one
+        // complete glisten, ~1s, before anything else happens).
+        <div style={{ width: 120, maxWidth: '70%' }} role="status" aria-label="Loading">
+          <svg
+            viewBox="0 0 959.12 574.05"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden
+            style={{ width: '100%', height: 'auto' }}
           >
-            Loading booking…
-          </p>
-        </>
+            <defs>
+              <clipPath id="vlounge-bootscreen-fill">
+                <rect
+                  x="0"
+                  y="0"
+                  width="0"
+                  height="574.05"
+                  style={{ animation: 'vlounge-vfill 1.2s ease-in-out infinite alternate' }}
+                />
+              </clipPath>
+            </defs>
+            <path d={VENNEIR_PATH} fill={OUTLINE} />
+            <path d={VENNEIR_PATH} fill={ACCENT} clipPath="url(#vlounge-bootscreen-fill)" />
+          </svg>
+        </div>
       )}
     </div>
   );

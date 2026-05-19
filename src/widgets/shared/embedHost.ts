@@ -570,8 +570,11 @@ function buildLoadingSpinner(): HTMLElement {
   rect.setAttribute('y', '0');
   rect.setAttribute('width', '0');
   rect.setAttribute('height', '574.05');
+  // 1.2s each direction so the V fills fully before draining. Per
+  // Dylan: at least one complete glisten of the logo before anything
+  // else happens, no quick flicker / half-fill / abrupt restart.
   (rect as unknown as HTMLElement).style.animation =
-    'vlounge-vfill 1.4s ease-in-out infinite alternate';
+    'vlounge-vfill 1.2s ease-in-out infinite alternate';
   clipPath.appendChild(rect);
   defs.appendChild(clipPath);
   svg.appendChild(defs);
@@ -590,17 +593,8 @@ function buildLoadingSpinner(): HTMLElement {
   inner.appendChild(svg);
   wrap.appendChild(inner);
 
-  const label = document.createElement('p');
-  label.textContent = 'Loading booking…';
-  Object.assign(label.style, {
-    margin: '0',
-    fontSize: '14px',
-    lineHeight: '1.4',
-    color: '#5A6266',
-    fontFamily: 'inherit',
-    letterSpacing: '0.01em',
-  } as Partial<CSSStyleDeclaration>);
-  wrap.appendChild(label);
+  // No "Loading…" label — the breathing V mark on its own does the
+  // job and reads cleaner on a high-end surface.
 
   return wrap;
 }
