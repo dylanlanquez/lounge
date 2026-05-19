@@ -781,26 +781,6 @@ function NotifyReadySheet({
               >
                 {formatUkPhone(preview.to)}
               </span>
-              <span
-                style={{
-                  marginTop: 4,
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                }}
-              >
-                Edit the wording in{' '}
-                <Link
-                  to="/admin"
-                  style={{
-                    color: theme.color.accent,
-                    fontWeight: theme.type.weight.medium,
-                    textDecoration: 'none',
-                  }}
-                >
-                  Admin → Emails &amp; SMS
-                </Link>
-                .
-              </span>
             </div>
           ) : null}
         </section>

@@ -26,6 +26,7 @@ import {
   rescheduleAppointment,
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
+import { properCase } from '../../lib/queries/appointments.ts';
 import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
@@ -795,8 +796,8 @@ function humaniseService(s: string): string {
 }
 
 function composePatientName(first: string | null, last: string | null): string | null {
-  const f = first?.trim();
-  const l = last?.trim();
+  const f = properCase(first ?? '').trim();
+  const l = properCase(last ?? '').trim();
   if (!f && !l) return null;
   return [f, l].filter(Boolean).join(' ');
 }
