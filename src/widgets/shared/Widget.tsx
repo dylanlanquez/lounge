@@ -135,7 +135,21 @@ export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
   const { copy, loading: copyLoading } = useWidgetCopy();
   const productConfigResult = useWidgetProductConfig();
 
+  // Minimum hold for the BootScreen so the patient always sees at
+  // least one complete V fill before the booking UI takes over.
+  // Without this gate, when the Supabase data is in cache (return
+  // visit) the BootScreen flashes for ~50ms and the V doesn't have
+  // time to draw — the patient just sees a stutter. 1.1s is the
+  // 1s fill animation plus a 100ms beat at the "fully filled" state
+  // so the eye registers completion.
+  const [minHoldElapsed, setMinHoldElapsed] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setMinHoldElapsed(true), 1100);
+    return () => window.clearTimeout(t);
+  }, []);
+
   if (
+    !minHoldElapsed ||
     locationsResult.loading ||
     bookingTypesResult.loading ||
     copyLoading ||
@@ -1622,11 +1636,20 @@ function BootScreen({ error }: { error: string | null }) {
           Couldn't reach the booking system. Please refresh the page.
         </p>
       ) : (
-        // V mark only, no label — the breathing fill reads as the
-        // loading signal on its own. 1.2s each direction so the V
-        // glints fully before draining (per Dylan: at least one
-        // complete glisten, ~1s, before anything else happens).
-        <div style={{ width: 120, maxWidth: '70%' }} role="status" aria-label="Loading">
+        // V mark only. One-shot fill 0→100% in 1s ease-out (the
+        // `forwards` fill mode holds the V completely filled
+        // afterwards), then the wrapper gently breathes so the
+        // loader stays alive while data finishes. Identical to the
+        // storefront's build-your-bundle behaviour.
+        <div
+          role="status"
+          aria-label="Loading"
+          style={{
+            width: 120,
+            maxWidth: '70%',
+            animation: 'vlounge-vbreath 2s ease-in-out 1s infinite',
+          }}
+        >
           <svg
             viewBox="0 0 959.12 574.05"
             xmlns="http://www.w3.org/2000/svg"
@@ -1640,7 +1663,7 @@ function BootScreen({ error }: { error: string | null }) {
                   y="0"
                   width="0"
                   height="574.05"
-                  style={{ animation: 'vlounge-vfill 1.2s ease-in-out infinite alternate' }}
+                  style={{ animation: 'vlounge-vfill 1s ease-out forwards' }}
                 />
               </clipPath>
             </defs>

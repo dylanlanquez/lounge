@@ -327,21 +327,27 @@ function ensureKeyframes() {
   style.id = SPIN_STYLE_ID;
   // vlounge-spin — legacy rotating ring, kept for any caller still
   //                referencing it.
-  // vlounge-vfill — left-to-right fill on the Venneir mark used by
-  //                 the modal's initial loader. Animates the
-  //                 clipPath's rect width from 0 to 959.12 (the
-  //                 SVG's intrinsic width) and back so the wordmark
-  //                 reads as a wave breathing in and out. Single
-  //                 source of truth so the React BootScreen + the
-  //                 vanilla embed spinner share one animation.
+  // vlounge-vfill — one-shot left-to-right fill on the Venneir mark.
+  //                 0→100% in 1s ease-out, then HOLDS at 100% via
+  //                 animation-fill-mode: forwards on the caller.
+  //                 Matches the storefront's build-your-bundle loader
+  //                 (1.5s JS-driven fill that stops at full).
+  // vlounge-vbreath — once the V is full, the wrapper gently breathes
+  //                   so the patient sees the loader is still alive
+  //                   while data finishes resolving. Starts after a
+  //                   1s delay so it doesn't fight the fill animation.
   style.textContent = `
     @keyframes vlounge-spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
     @keyframes vlounge-vfill {
-      0%   { width: 0; }
-      100% { width: 959.12px; }
+      from { width: 0; }
+      to   { width: 959.12px; }
+    }
+    @keyframes vlounge-vbreath {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.78; }
     }
   `;
   document.head.appendChild(style);
@@ -551,6 +557,11 @@ function buildLoadingSpinner(): HTMLElement {
   Object.assign(inner.style, {
     width: '120px',
     maxWidth: '70%',
+    // Breathing pulse on the wrapper kicks in after the fill is
+    // complete (1s delay) so the loader keeps a heartbeat while
+    // the React bundle finishes downloading. The fill itself
+    // (rect width) one-shots; this is the "still alive" signal.
+    animation: 'vlounge-vbreath 2s ease-in-out 1s infinite',
   } as Partial<CSSStyleDeclaration>);
 
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -570,11 +581,13 @@ function buildLoadingSpinner(): HTMLElement {
   rect.setAttribute('y', '0');
   rect.setAttribute('width', '0');
   rect.setAttribute('height', '574.05');
-  // 1.2s each direction so the V fills fully before draining. Per
-  // Dylan: at least one complete glisten of the logo before anything
-  // else happens, no quick flicker / half-fill / abrupt restart.
+  // One-shot fill: 1s ease-out, 0→100%, stays at 100% via
+  // animation-fill-mode: forwards. No looping, no draining —
+  // matches the storefront's build-your-bundle behaviour exactly.
+  // Once the V is full the wrapper breathes (see inner.style.animation
+  // above) so the loader keeps a visible heartbeat.
   (rect as unknown as HTMLElement).style.animation =
-    'vlounge-vfill 1.2s ease-in-out infinite alternate';
+    'vlounge-vfill 1s ease-out forwards';
   clipPath.appendChild(rect);
   defs.appendChild(clipPath);
   svg.appendChild(defs);
