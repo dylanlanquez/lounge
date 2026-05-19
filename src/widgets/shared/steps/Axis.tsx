@@ -15,6 +15,7 @@ import {
   type ArchKey,
   type ArchTileOption,
 } from '../ArchTilePicker.tsx';
+import { useWidgetBookingTypes } from '../data.ts';
 
 // AxisStep — one axis question at a time (arch, product, repair
 // variant). Same option-card visual pattern as Location and Service
@@ -30,7 +31,7 @@ const AXIS_HELPER: Record<AxisKey, string> = {
   // below keeps the title → grid spacing consistent.
   repair_variant: '',
   product_key:
-    "Pick the option that fits — we'll confirm any details when you arrive.",
+    "Pick the option that fits, we'll confirm any details when you arrive.",
   // Arch step also skips the helper — title is descriptive enough
   // and the option cards carry no sub-copy.
   arch: '',
@@ -172,9 +173,55 @@ function AxisOptions({
               </OptionCard>
             );
           })}
+          {/* Cross-service option appended to the same-day-appliance
+              product picker so a patient who picked "Same-day
+              appliance" at the service step can still pivot to
+              click-in veneers without back-navigating. Picking it
+              calls setService, which resets axes / repair lines /
+              upgrades, and the booking flow continues into the
+              click-in-veneers shape on the next Next tap. Only
+              rendered when click-in veneers is enabled in the live
+              booking-types config (no widget surface for it = don't
+              offer it here). */}
+          {api.state.service?.serviceType === 'same_day_appliance' ? (
+            <CrossServiceClickInOption api={api} accent={accent} />
+          ) : null}
         </OptionGrid>
       )}
     </div>
+  );
+}
+
+// Renders an extra "Click-in veneers" option card inside the
+// same-day-appliance product picker. Looks up the live
+// click-in-veneers booking type from useWidgetBookingTypes so
+// admin toggles (enabled / display_label / etc) flow through
+// without a code change, and so picking the card hands the
+// canonical WidgetBookingType row to setService — same shape
+// the dedicated Service step uses.
+function CrossServiceClickInOption({
+  api,
+  accent,
+}: {
+  api: BookingStateApi;
+  accent: string;
+}) {
+  const { data } = useWidgetBookingTypes();
+  const clickIn = (data ?? []).find((b) => b.serviceType === 'click_in_veneers');
+  if (!clickIn) return null;
+  return (
+    <OptionCard
+      key={`cross-${clickIn.id}`}
+      selected={false}
+      anySelected={!!api.state.axes.product_key}
+      onSelect={() => api.setService(clickIn)}
+      accent={accent}
+      ariaLabel={clickIn.label.replace(/<[^>]*>/g, '')}
+    >
+      <OptionTitle>
+        <span dangerouslySetInnerHTML={{ __html: clickIn.label }} />
+      </OptionTitle>
+    </OptionCard>
   );
 }
 

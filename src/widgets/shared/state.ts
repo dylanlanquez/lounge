@@ -904,7 +904,7 @@ export function stepTitle(
  *  asks plain-English questions instead. */
 export const AXIS_QUESTION: Record<AxisKey, string> = {
   repair_variant: 'What needs fixing?',
-  product_key: 'Which retainer do you need?',
+  product_key: 'Which appliance do you need?',
   arch: 'Which teeth?',
 };
 

@@ -93,7 +93,7 @@ export const DEFAULT_COPY: WidgetCopy = {
 
   axisRepairVariantHelper: "We'll match you to the right specialist.",
   axisProductKeyHelper:
-    "Pick the option that fits — we'll confirm any details when you arrive.",
+    "Pick the option that fits, we'll confirm any details when you arrive.",
   axisArchHelper: 'The top teeth, the bottom teeth, or both. Pick whichever applies.',
 
   upgradesTitle: 'Optional extras',
