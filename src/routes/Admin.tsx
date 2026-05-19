@@ -141,6 +141,7 @@ import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
+import { AdminSmsTemplatesTab } from './AdminSmsTemplatesTab.tsx';
 import { AdminBrandingTab } from './AdminBrandingTab.tsx';
 import { AdminWidgetTab } from './AdminWidgetTab.tsx';
 import {
@@ -161,7 +162,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
 
 // Canonical list of every Admin tab. Drives the SegmentedControl in
 // the Admin header, the per-staff "Admin pages" toggle list in the
@@ -183,7 +184,8 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'products', label: 'Products', description: 'Add-on product catalogue, pricing, archiving.' },
   { key: 'booking_types', label: 'Booking types', description: 'Calendly mapping, deposits, services-per-type policy.' },
   { key: 'conflicts', label: 'Resources', description: 'Resource conflict rules so two appointments never share a chair or surgeon.' },
-  { key: 'emails', label: 'Emails & SMS', description: 'Editable transactional email + SMS templates with version history.' },
+  { key: 'emails', label: 'Emails', description: 'Editable transactional email templates with version history.' },
+  { key: 'sms', label: 'SMS', description: 'Editable manually-sent SMS templates per booking type.' },
   { key: 'branding', label: 'Branding', description: 'Logo, colour, footer copy applied across emails and receipts.' },
   { key: 'widget', label: 'Widget', description: 'Public-facing booking widget configuration and embed snippet.' },
   { key: 'waivers', label: 'Waivers', description: 'Waiver section authoring + per-service requirement matrix.' },
@@ -300,6 +302,8 @@ export function Admin() {
           <AdminConflictsTab />
         ) : tab === 'emails' ? (
           <AdminEmailTemplatesTab />
+        ) : tab === 'sms' ? (
+          <AdminSmsTemplatesTab />
         ) : tab === 'branding' ? (
           <AdminBrandingTab />
         ) : tab === 'widget' ? (

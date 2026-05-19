@@ -1487,15 +1487,12 @@ export function VisitDetail() {
                 would be misleading. Hidden from CS-only staff — they
                 handle pre/post-visit comms through a different
                 channel and shouldn't be able to fire a "ready to
-                collect" SMS on a live in-clinic visit. */}
-            {visit.status === 'arrived' && !isCsOnly ? (
-              <PatientCommsCard
-                visitId={visit.id}
-                patientId={patient?.id ?? null}
-                patientPhone={patient?.phone ?? null}
-                patientFirstName={patient?.first_name ?? null}
-              />
-            ) : null}
+                collect" SMS on a live in-clinic visit.
+
+                The card itself now renders further down the column,
+                directly under RescheduleAfterArrivalNote, so the
+                primary in-clinic surface stays focused on the
+                appointment / waiver / cart. */}
 
             {/* Whole banner dims when the visit is unsuitable so it
                 reads as terminated alongside the cart. The View
@@ -1796,6 +1793,20 @@ export function VisitDetail() {
                   {patient ? (
                     <>
                       <RescheduleAfterArrivalNote />
+                      {/* Send-an-SMS card sits directly under the
+                          reschedule note, gated on arrival + non-CS
+                          staff for the same reasons as before:
+                          terminal statuses or CS-only staff would
+                          either fire a misleading SMS or use a
+                          different channel. */}
+                      {visit.status === 'arrived' && !isCsOnly ? (
+                        <PatientCommsCard
+                          visitId={visit.id}
+                          patientId={patient.id}
+                          patientPhone={patient.phone ?? null}
+                          patientFirstName={patient.first_name ?? null}
+                        />
+                      ) : null}
                       <VisitActionStack
                         onPatientProfile={() =>
                           navigate(`/patient/${patient.id}`, {

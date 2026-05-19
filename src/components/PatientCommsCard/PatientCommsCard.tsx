@@ -92,7 +92,7 @@ export function PatientCommsCard({
 
   return (
     <>
-      <Card padding="lg" style={{ marginBottom: theme.space[6] }}>
+      <Card padding="lg">
         <SmsHeroHeader patientFirstName={properFirstName} />
 
         <div
@@ -134,11 +134,11 @@ export function PatientCommsCard({
   );
 }
 
-// Hero header for the Send-an-SMS card. The leading icon disc + bold
-// title gives the card a clear sender-of-text identity, replacing the
-// quieter "Notify the patient" treatment. MessageSquare is Lucide's
-// most SMS-shaped glyph — closer to a phone's text-app icon than the
-// generic chat bubbles.
+// Section header for the Send-an-SMS card. Mirrors the visual
+// rhythm of RescheduleAfterArrivalNote / DropdownSelect labels on
+// the visit page — 32px icon disc + sm title — so the card sits in
+// the column without claiming hero presence. MessageSquare is
+// Lucide's most SMS-shaped glyph.
 function SmsHeroHeader({ patientFirstName }: { patientFirstName: string }) {
   return (
     <header
@@ -154,33 +154,31 @@ function SmsHeroHeader({ patientFirstName }: { patientFirstName: string }) {
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 44,
-          height: 44,
+          width: 32,
+          height: 32,
           borderRadius: theme.radius.pill,
           background: theme.color.accentBg,
           color: theme.color.accent,
-          border: `1px solid ${theme.color.border}`,
           flexShrink: 0,
         }}
       >
-        <MessageSquare size={20} aria-hidden />
+        <MessageSquare size={16} aria-hidden />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <h3
+        <p
           style={{
             margin: 0,
-            fontSize: theme.type.size.lg,
+            fontSize: theme.type.size.sm,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
             letterSpacing: theme.type.tracking.tight,
-            lineHeight: 1.25,
           }}
         >
           Send an SMS
-        </h3>
+        </p>
         <p
           style={{
-            margin: `${theme.space[1]}px 0 0`,
+            margin: 0,
             fontSize: theme.type.size.sm,
             color: theme.color.inkMuted,
             lineHeight: theme.type.leading.snug,
