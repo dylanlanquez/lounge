@@ -139,7 +139,7 @@ async function handle(req: Request): Promise<Response> {
   // original send failed on. The persisted from is informational
   // audit, not a routing instruction.
   const envFrom = Deno.env.get('RESEND_FROM_BOOKING')
-    ?? 'Venneir Lounge <lounge@notifications.venneir.com>';
+    ?? 'Venneir Appointments <lounge@notifications.venneir.com>';
   const envReplyTo = Deno.env.get('RESEND_REPLY_TO_BOOKING')
     ?? 'lounge@notifications.venneir.com';
   const resendBody: Record<string, unknown> = {

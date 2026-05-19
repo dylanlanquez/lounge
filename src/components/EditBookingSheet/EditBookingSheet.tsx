@@ -13,6 +13,7 @@ import {
 import { theme } from '../../theme/index.ts';
 import { editAppointment } from '../../lib/queries/editAppointment.ts';
 import { useStaff } from '../../lib/queries/staff.ts';
+import { properCase } from '../../lib/queries/appointments.ts';
 
 // EditBookingSheet — in-place edit for a native (manual / native-
 // source) Lounge appointment. The two non-time fields the staff
@@ -318,8 +319,8 @@ function formatTime(d: Date): string {
 }
 
 function composePatientName(first: string | null, last: string | null): string | null {
-  const f = first?.trim();
-  const l = last?.trim();
+  const f = properCase(first ?? '').trim();
+  const l = properCase(last ?? '').trim();
   if (!f && !l) return null;
   return [f, l].filter(Boolean).join(' ');
 }

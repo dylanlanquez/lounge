@@ -24,7 +24,7 @@ const SUPABASE_SERVICE_ROLE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const CHECKPOINT_SUPABASE_URL    = Deno.env.get('CHECKPOINT_SUPABASE_URL') ?? '';
 const CHECKPOINT_SERVICE_ROLE_KEY = Deno.env.get('CHECKPOINT_SERVICE_ROLE_KEY') ?? '';
 const RESEND_API_KEY             = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM                = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
+const RESEND_FROM                = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',

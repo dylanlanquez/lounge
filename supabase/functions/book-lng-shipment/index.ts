@@ -40,7 +40,7 @@ const ANON_KEY                 = Deno.env.get('SUPABASE_ANON_KEY')!;
 // egress IP are rejected by DPD's IP allowlist.
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
-const RESEND_FROM    = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
+const RESEND_FROM    = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
 
 const CHECKPOINT_SUPABASE_URL        = Deno.env.get('CHECKPOINT_SUPABASE_URL') ?? '';
 const CHECKPOINT_SERVICE_ROLE_KEY    = Deno.env.get('CHECKPOINT_SERVICE_ROLE_KEY') ?? '';

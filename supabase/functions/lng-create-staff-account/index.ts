@@ -51,7 +51,7 @@ const RESEND_FROM =
   Deno.env.get('LNG_AUTH_FROM') ??
   Deno.env.get('LNG_INVITE_FROM') ??
   Deno.env.get('RESEND_FROM_BOOKING') ??
-  'Venneir Lounge <lounge@venneir.com>';
+  'Venneir Appointments <lounge@venneir.com>';
 const RESEND_REPLY_TO =
   Deno.env.get('LNG_AUTH_REPLY_TO') ??
   Deno.env.get('LNG_INVITE_REPLY_TO') ??

@@ -48,7 +48,7 @@ const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
 // lounge@ address per the working agreement; can be overridden via
 // the RESEND_FROM_BOOKING env var if we ever want to test on a
 // dev sender without redeploying.
-const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Lounge <lounge@venneir.com>';
+const RESEND_FROM = Deno.env.get('RESEND_FROM_BOOKING') ?? 'Venneir Appointments <lounge@venneir.com>';
 const RESEND_REPLY_TO = Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@venneir.com';
 // Used to build the {{manageUrl}} variable. Defaults to the
 // customer-facing book.venneir.com domain so links land on the
@@ -209,7 +209,7 @@ async function handle(req: Request): Promise<Response> {
       startAt: apt.start_at,
       endAt: apt.end_at,
       organizerEmail: RESEND_REPLY_TO,
-      organizerName: 'Venneir Lounge',
+      organizerName: 'Venneir Appointments',
       attendeeEmail: patient.email,
       attendeeName: fullName(patient),
       url: apt.join_url ?? null,
@@ -227,7 +227,7 @@ async function handle(req: Request): Promise<Response> {
       startAt: apt.start_at,
       endAt: apt.end_at,
       organizerEmail: RESEND_REPLY_TO,
-      organizerName: 'Venneir Lounge',
+      organizerName: 'Venneir Appointments',
       attendeeEmail: patient.email,
       attendeeName: fullName(patient),
       url: apt.join_url ?? null,
@@ -244,7 +244,7 @@ async function handle(req: Request): Promise<Response> {
         startAt: oldApt.start_at,
         endAt: oldApt.end_at,
         organizerEmail: RESEND_REPLY_TO,
-        organizerName: 'Venneir Lounge',
+        organizerName: 'Venneir Appointments',
         attendeeEmail: patient.email,
         attendeeName: fullName(patient),
         url: oldApt.join_url ?? null,

@@ -27,7 +27,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
 const RESEND_FROM =
   Deno.env.get('RESEND_FROM_BOOKING') ??
-  'Venneir Lounge <lounge@notifications.venneir.com>';
+  'Venneir Appointments <lounge@notifications.venneir.com>';
 const RESEND_REPLY_TO =
   Deno.env.get('RESEND_REPLY_TO_BOOKING') ?? 'lounge@notifications.venneir.com';
 

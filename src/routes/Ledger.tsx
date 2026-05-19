@@ -587,7 +587,9 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
   // Source label + glyph honour created_via — Checkpoint bookings
   // are stored as source='native' but should read as Checkpoint
   // with the sparkles glyph, matching the AppointmentDetail hero.
-  const sourceLabel = humaniseLedgerSource(row.source, row.created_via);
+  // brand_id picks the right storefront name ("venneir.com" /
+  // "denture-services.co.uk") for native widget bookings.
+  const sourceLabel = humaniseLedgerSource(row.source, row.created_via, row.brand_id);
   // Resolved glyph key. Walk-in rows render no glyph (existing
   // behaviour); everything else maps to one of the four supported
   // values (calendly / native / checkpoint / manual). The cast is
