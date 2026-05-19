@@ -3,6 +3,7 @@ import { ArrowLeft, BarChart3, LogOut, Settings, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { Button } from '../Button/Button.tsx';
+import { NotificationBell } from '../Notifications/NotificationBell.tsx';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { useAuth } from '../../lib/auth.tsx';
@@ -80,6 +81,13 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
       <img src="/lounge-logo.png" alt="Lounge" style={{ height: isMobile ? 26 : 32, width: 'auto' }} />
       <div style={{ flex: 1 }} />
       {user ? <Avatar name={user.email ?? 'You'} size={isMobile ? 'sm' : 'md'} badge="online" /> : null}
+      {/* Notifications bell. Sits between the avatar and the
+          action cluster so it reads as a personal affordance
+          (mine, like the avatar) rather than a destination
+          (like Reports / Admin). Icon-only in both breakpoints
+          — universally recognised glyph, no need for a text
+          variant on desktop. */}
+      {user ? <NotificationBell size={isMobile ? 18 : 22} /> : null}
       {isMobile ? (
         <>
           {showCashCountsButton ? (
