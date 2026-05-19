@@ -482,7 +482,7 @@ export function Pay() {
               : 'Take the full amount in one go, or split across more than one method.')}
           {stage === 'cash' && 'Tap what the customer hands you. Change is calculated for you.'}
           {stage === 'card' && 'Card terminal flow ships in slice 8.'}
-          {stage === 'bnpl' && 'Customer pays via Klarna or Clearpay through the same reader.'}
+          {stage === 'bnpl' && 'Klarna shows a QR for the customer to scan in their app. Clearpay still uses the card reader.'}
           {stage === 'success' && 'Choose how to send the receipt.'}
         </p>
 
@@ -552,14 +552,14 @@ export function Pay() {
                 icon={<ShoppingBag size={20} />}
                 title="Buy now, pay later"
                 description={
-                  !reader
-                    ? 'Needs a registered reader'
-                    : paymentMode === 'split' && parsedSplitAmount === 0
-                      ? 'Set a split amount above first'
+                  paymentMode === 'split' && parsedSplitAmount === 0
+                    ? 'Set a split amount above first'
+                    : !reader
+                      ? `Klarna available (QR). Clearpay needs the card reader.`
                       : `Charge ${formatPence(chargeAmountPence)} via Klarna or Clearpay`
                 }
                 onClick={() => setStage('bnpl')}
-                disabled={!reader || chargeAmountPence <= 0}
+                disabled={chargeAmountPence <= 0}
               />
             </div>
           </div>
@@ -569,20 +569,23 @@ export function Pay() {
               Pick a provider
             </h2>
             <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-              Both work the same way: customer opens their app, taps phone on the reader. Receipt says Visa contactless.
+              Klarna and Clearpay work differently now. Pick the one the customer asks for.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Klarna"
-                description={`£30 minimum, £2,000 max. Reader: ${reader?.friendly_name ?? '—'}`}
+                description="Customer scans a QR with their phone. Pays in the Klarna app. No card reader needed."
                 onClick={() => openBnpl('klarna')}
-                disabled={!reader}
               />
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Clearpay"
-                description={`Customer's app caps the limit. Reader: ${reader?.friendly_name ?? '—'}`}
+                description={
+                  reader
+                    ? `Customer taps phone on ${reader.friendly_name}. Receipt says Visa contactless.`
+                    : 'Needs a registered card reader. Customer taps phone on the reader.'
+                }
                 onClick={() => openBnpl('clearpay')}
                 disabled={!reader}
               />
