@@ -119,6 +119,28 @@ import {
 type Mode = 'appointment' | 'walk_in';
 type Step = 'service' | 'customer' | 'consent' | 'start';
 
+// Versioned draft snapshot that sessionStorage holds across tab-
+// discards and accidental reloads. Bump SCHEMA when the shape
+// changes so a stale draft from an older deploy can't crash the
+// restore path — mismatched versions are silently dropped.
+const ARRIVAL_DRAFT_SCHEMA = 1;
+
+interface ArrivalDraftV1 {
+  v: 1;
+  step: Step;
+  form: FormState;
+  stagedItems: StagedItem[];
+  notes: string;
+  jbRef: string;
+  itemsConfirmed: boolean;
+  editingFields: string[];
+}
+
+function arrivalDraftStorageKey(mode: Mode, id: string | null | undefined): string | null {
+  if (!id) return null;
+  return `lounge:arrival:${mode}:${id}`;
+}
+
 interface AppointmentContext {
   id: string;
   patient_id: string;
@@ -504,6 +526,110 @@ export function Arrival() {
       cancelled = true;
     };
   }, [id, mode]);
+
+  // ── Draft persistence ─────────────────────────────────────────────
+  // Without this, switching Chrome tabs (which can discard inactive
+  // tabs under memory pressure) or accidentally reloading wiped the
+  // whole wizard back to Step 1. All step state lives in useState, so
+  // any remount = total loss. We back the wizard with sessionStorage
+  // keyed on `lounge:arrival:${mode}:${id}` so a reload after Step 3
+  // brings you back to Step 3 with every field intact.
+  //
+  // Sequencing:
+  //   1. Load effect fetches + hydrates the form from the snapshot.
+  //   2. Restore effect (below, gated on loading=false) overrides
+  //      with any saved draft — the user's last-typed state wins
+  //      over the read-only snapshot hydration.
+  //   3. Save effect (below) writes the current state to
+  //      sessionStorage on every meaningful change. Gated on the
+  //      restore having already run, so it can't stomp a draft
+  //      before we've had a chance to read it.
+  //   4. Successful submit clears the key (see handler).
+  //
+  // sessionStorage (not localStorage) is intentional: drafts shouldn't
+  // outlive the browser tab. Clears on tab close, doesn't leak between
+  // tabs, doesn't survive sign-out.
+  const draftStorageKey = arrivalDraftStorageKey(mode, id);
+  const draftRestoredRef = useRef(false);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!draftStorageKey) return;
+    if (draftRestoredRef.current) return;
+    // Mark restored BEFORE any setState so the save effect below
+    // (which depends on the same state slices) reads the up-to-date
+    // ref when it fires on the next render.
+    draftRestoredRef.current = true;
+    try {
+      const raw = sessionStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Partial<ArrivalDraftV1>;
+      if (saved.v !== ARRIVAL_DRAFT_SCHEMA) {
+        // Schema mismatch from an older deploy. Drop it rather than
+        // risk crashing on a missing field.
+        sessionStorage.removeItem(draftStorageKey);
+        return;
+      }
+      if (saved.form) setForm(saved.form);
+      if (Array.isArray(saved.stagedItems)) {
+        setStagedItems(saved.stagedItems);
+        // Block the widget pre-population effect from re-staging on
+        // top of the restored basket — the user's last-known basket
+        // is the source of truth, even if it diverges from what the
+        // widget would have prefilled.
+        prePopulatedRef.current = true;
+      }
+      if (typeof saved.notes === 'string') setNotes(saved.notes);
+      if (typeof saved.jbRef === 'string') setJbRef(saved.jbRef);
+      if (typeof saved.itemsConfirmed === 'boolean') setItemsConfirmed(saved.itemsConfirmed);
+      if (Array.isArray(saved.editingFields)) {
+        setEditingFields(new Set(saved.editingFields as (keyof FormState)[]));
+      }
+      // setStep last so the page lands on the user's saved step
+      // AFTER the field values have been queued — avoids a flash
+      // of Step N with Step 1's empty values mid-restore.
+      if (saved.step) setStep(saved.step);
+    } catch (e) {
+      // sessionStorage may be unavailable (private mode, disabled,
+      // quota exceeded). Restore is best-effort; falling through to
+      // a fresh form is the safe default.
+      console.warn('[Arrival] could not restore draft', e);
+    }
+  }, [loading, draftStorageKey]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!draftStorageKey) return;
+    if (!draftRestoredRef.current) return;
+    try {
+      const draft: ArrivalDraftV1 = {
+        v: ARRIVAL_DRAFT_SCHEMA,
+        step,
+        form,
+        stagedItems,
+        notes,
+        jbRef,
+        itemsConfirmed,
+        editingFields: Array.from(editingFields),
+      };
+      sessionStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    } catch (e) {
+      // Quota / private-mode failures are non-fatal — the wizard
+      // still runs out of useState, the user just loses the
+      // tab-discard safety net.
+      console.warn('[Arrival] could not save draft', e);
+    }
+  }, [
+    loading,
+    draftStorageKey,
+    step,
+    form,
+    stagedItems,
+    notes,
+    jbRef,
+    itemsConfirmed,
+    editingFields,
+  ]);
 
   // Pre-populate the basket from the appointment's booking data.
   // Runs once when both the appointment context and the catalogue are
@@ -929,7 +1055,15 @@ export function Arrival() {
       let visitId: string;
       let visitOpenedAt: string;
       if (mode === 'appointment') {
-        const r = await markAppointmentArrived(appointment!.id);
+        const r = await markAppointmentArrived({
+          appointment_id: appointment!.id,
+          // Step 1's Notes textarea has to land on lng_visits.notes
+          // so VisitDetail's "Edit tech note" reads the receptionist's
+          // intake note instead of showing "Add tech note" on a visit
+          // that already has one. Walk-ins already wrote this; the
+          // appointment branch dropped it.
+          notes: notes.trim() || undefined,
+        });
         visitId = r.visit_id;
         visitOpenedAt = r.opened_at;
       } else {
@@ -956,6 +1090,15 @@ export function Arrival() {
         for (const item of stagedItems) {
           await addCatalogueItemsToCart(cartRow.id, item.catalogue, item.qty, item.options);
         }
+      }
+
+      // Wizard succeeded — clear the sessionStorage draft so a
+      // future arrival for the same id doesn't restore stale
+      // state. Defensive try/catch because sessionStorage can
+      // throw in private mode and we've already committed the
+      // visit row at this point.
+      if (draftStorageKey) {
+        try { sessionStorage.removeItem(draftStorageKey); } catch { /* ignore */ }
       }
 
       // Pass the visit's opened_at and the patient's name through

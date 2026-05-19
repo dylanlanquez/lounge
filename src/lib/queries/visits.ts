@@ -418,13 +418,27 @@ export async function logVirtualMeetingRejoin(appointmentId: string, patientId: 
   if (error) throw new Error(error.message);
 }
 
+export interface MarkAppointmentArrivedInput {
+  appointment_id: string;
+  // Tech note typed on the arrival form's Step 1 (Service). Carries
+  // straight to lng_visits.notes so VisitDetail's "Edit tech note"
+  // button reads what the receptionist captured at arrival rather
+  // than showing "Add tech note" on a visit that already has one.
+  // Pre-RPC, only the walk-in path wrote this; appointment arrivals
+  // silently dropped the textarea on the floor.
+  notes?: string;
+}
+
 export async function markAppointmentArrived(
-  appointmentId: string
+  input: MarkAppointmentArrivedInput
 ): Promise<{ visit_id: string; opened_at: string }> {
+  const trimmedNotes = input.notes?.trim();
+  const notesToWrite = trimmedNotes && trimmedNotes.length > 0 ? trimmedNotes : null;
+
   const { data: appt, error: apptErr } = await supabase
     .from('lng_appointments')
     .update({ status: 'arrived' })
-    .eq('id', appointmentId)
+    .eq('id', input.appointment_id)
     .select('id, patient_id, location_id')
     .single();
   if (apptErr || !appt) throw new Error(apptErr?.message ?? 'Could not mark arrived');
@@ -449,6 +463,7 @@ export async function markAppointmentArrived(
       arrival_type: 'scheduled',
       status: 'arrived',
       receptionist_id: receptionistId,
+      notes: notesToWrite,
     })
     .select('id, opened_at')
     .single();
