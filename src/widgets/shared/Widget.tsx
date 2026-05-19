@@ -1229,10 +1229,29 @@ function Footer({
           disabled={nextDisabled}
           onClick={onNext}
           accent={accent}
-          shimmer={(summaryFree || isPaymentStep) && !submitting}
+          shimmer={(summaryFree || isPaymentStep) && !submitting && !paymentPaying}
+          processing={submitting || paymentPaying}
         >
-          {submitting ? (
-            nextLabel
+          {submitting || paymentPaying ? (
+            // "Processing" without the trailing "…" — the three
+            // animated dots that follow do the same visual job but
+            // moving, so the static ellipsis would have been a
+            // redundant ghost.
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'baseline',
+                justifyContent: 'center',
+                gap: 0,
+              }}
+            >
+              {(nextLabel || 'Processing').replace(/…+$/, '')}
+              <span aria-hidden style={{ display: 'inline-flex', alignItems: 'flex-end', marginLeft: 6 }}>
+                <span className="vlounge-processing-dot" />
+                <span className="vlounge-processing-dot" />
+                <span className="vlounge-processing-dot" />
+              </span>
+            </span>
           ) : isPaymentStep || summaryFree || (isReviewStep && api.state.paymentChoice === 'pay_on_the_day') ? (
             <span
               style={{
@@ -1500,6 +1519,7 @@ function NextButton({
   accent,
   children,
   shimmer = false,
+  processing = false,
 }: {
   disabled: boolean;
   onClick: () => void;
@@ -1509,10 +1529,16 @@ function NextButton({
    *  button so the conversion moment feels inviting; the rest of
    *  the flow's Continue buttons stay still. */
   shimmer?: boolean;
+  /** Faster sweep + breathing pulse — applied while a payment is
+   *  confirming or the booking submit RPC is in flight, so the
+   *  button visibly stays alive instead of going dead while the
+   *  patient waits. Mutually exclusive with shimmer (shimmer is
+   *  the "press me" hint; processing is the "I'm working" cue). */
+  processing?: boolean;
 }) {
   const className = [
     'vlounge-next-btn',
-    shimmer && !disabled ? 'vlounge-pay-shimmer' : null,
+    processing ? 'vlounge-processing' : shimmer && !disabled ? 'vlounge-pay-shimmer' : null,
   ]
     .filter(Boolean)
     .join(' ');
@@ -1556,14 +1582,17 @@ function NextButton({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BootScreen({ error }: { error: string | null }) {
-  // Visually identical to embedHost.ts buildLoadingSpinner() — same
-  // #F4F4F4 background, same spinner geometry, same "Loading
-  // booking…" label. The embed shows that spinner immediately on
-  // click (vanilla DOM, before React downloads); React then mounts
-  // and lands on this BootScreen while data is in flight. Matching
-  // the two states means there's no visible swap between them, so
-  // the modal reads as one continuous loading frame rather than
-  // the brief flash Dylan flagged on the high-end venneir.com surface.
+  // Pixel-identical to embedHost.ts buildLoadingSpinner(): same
+  // Venneir V mark on a #F4F4F4 background with the same 1.4s
+  // vlounge-vfill animation. The embed paints the SVG version the
+  // instant the modal mounts (vanilla DOM, pre-React); React then
+  // lands on this BootScreen while data is in flight. Because the
+  // two states are visually identical, the handoff is invisible —
+  // no flash on the high-end venneir.com surface.
+  const VENNEIR_PATH =
+    'M523.54,88.68c-146.36,132.26-235.2,317.9-235.2,317.9L152.26,11.23H0l205.24,562.82h223.17s7.01-209.3,167.95-396.14C757.3-8.92,959.12,11.23,959.12,11.23c0,0-289.14-54.74-435.58,77.44h0Z';
+  const ACCENT = '#083758';
+  const OUTLINE = '#E5E5E5';
   return (
     <div
       style={{
@@ -1577,7 +1606,7 @@ function BootScreen({ error }: { error: string | null }) {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 12,
+        gap: 20,
         padding: 20,
       }}
     >
@@ -1594,20 +1623,31 @@ function BootScreen({ error }: { error: string | null }) {
         </p>
       ) : (
         <>
-          <div
-            aria-hidden
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: '50%',
-              border: '3px solid rgba(14, 20, 20, 0.08)',
-              borderTopColor: 'rgba(14, 20, 20, 0.55)',
-              animation: 'vlounge-spin 0.9s linear infinite',
-            }}
-          />
+          <div style={{ width: 120, maxWidth: '70%' }}>
+            <svg
+              viewBox="0 0 959.12 574.05"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden
+              style={{ width: '100%', height: 'auto' }}
+            >
+              <defs>
+                <clipPath id="vlounge-bootscreen-fill">
+                  <rect
+                    x="0"
+                    y="0"
+                    width="0"
+                    height="574.05"
+                    style={{ animation: 'vlounge-vfill 1.4s ease-in-out infinite alternate' }}
+                  />
+                </clipPath>
+              </defs>
+              <path d={VENNEIR_PATH} fill={OUTLINE} />
+              <path d={VENNEIR_PATH} fill={ACCENT} clipPath="url(#vlounge-bootscreen-fill)" />
+            </svg>
+          </div>
           <p
             aria-live="polite"
-            style={{ margin: 0, lineHeight: 1.4, color: '#5A6266' }}
+            style={{ margin: 0, lineHeight: 1.4, color: '#5A6266', letterSpacing: '0.01em' }}
           >
             Loading booking…
           </p>

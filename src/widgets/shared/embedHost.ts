@@ -325,7 +325,25 @@ function ensureKeyframes() {
   if (document.getElementById(SPIN_STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = SPIN_STYLE_ID;
-  style.textContent = `@keyframes vlounge-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+  // vlounge-spin — legacy rotating ring, kept for any caller still
+  //                referencing it.
+  // vlounge-vfill — left-to-right fill on the Venneir mark used by
+  //                 the modal's initial loader. Animates the
+  //                 clipPath's rect width from 0 to 959.12 (the
+  //                 SVG's intrinsic width) and back so the wordmark
+  //                 reads as a wave breathing in and out. Single
+  //                 source of truth so the React BootScreen + the
+  //                 vanilla embed spinner share one animation.
+  style.textContent = `
+    @keyframes vlounge-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes vlounge-vfill {
+      0%   { width: 0; }
+      100% { width: 959.12px; }
+    }
+  `;
   document.head.appendChild(style);
 }
 
@@ -500,6 +518,23 @@ function ensureResetStyles() {
 }
 
 function buildLoadingSpinner(): HTMLElement {
+  // Lifted from the venneir.com build-your-bundle loader so the
+  // booking modal opens on the same on-brand mark the storefront
+  // already uses for its first paint. CSS-animated fill (no JS
+  // loop) — the clipPath's rect width sweeps 0 → 959.12 and back,
+  // creating a "V breathing in and out" wave that lasts 1.4s per
+  // round. SVG_NS is required because the modal is plain DOM, not
+  // React.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const VENNEIR_PATH =
+    'M523.54,88.68c-146.36,132.26-235.2,317.9-235.2,317.9L152.26,11.23H0l205.24,562.82h223.17s7.01-209.3,167.95-396.14C757.3-8.92,959.12,11.23,959.12,11.23c0,0-289.14-54.74-435.58,77.44h0Z';
+  const ACCENT = '#083758';
+  const OUTLINE = '#E5E5E5';
+  // Unique clip-path id so multiple opens in the same session (or
+  // multiple loaders on the same DOM via prefers-reduced-motion
+  // fallbacks) don't collide on `url(#fillClip)`.
+  const clipId = `vlounge-fill-clip-${Math.random().toString(36).slice(2, 8)}`;
+
   const wrap = document.createElement('div');
   Object.assign(wrap.style, {
     display: 'flex',
@@ -508,19 +543,52 @@ function buildLoadingSpinner(): HTMLElement {
     height: '100%',
     width: '100%',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '20px',
     color: '#5A6266',
   } as Partial<CSSStyleDeclaration>);
 
-  const spinner = document.createElement('div');
-  Object.assign(spinner.style, {
-    width: '32px',
-    height: '32px',
-    borderRadius: '50%',
-    border: '3px solid rgba(14, 20, 20, 0.08)',
-    borderTopColor: 'rgba(14, 20, 20, 0.55)',
-    animation: 'vlounge-spin 0.9s linear infinite',
+  const inner = document.createElement('div');
+  Object.assign(inner.style, {
+    width: '120px',
+    maxWidth: '70%',
   } as Partial<CSSStyleDeclaration>);
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 959.12 574.05');
+  svg.setAttribute('xmlns', SVG_NS);
+  svg.setAttribute('aria-hidden', 'true');
+  Object.assign((svg as unknown as HTMLElement).style, {
+    width: '100%',
+    height: 'auto',
+  } as Partial<CSSStyleDeclaration>);
+
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  const clipPath = document.createElementNS(SVG_NS, 'clipPath');
+  clipPath.setAttribute('id', clipId);
+  const rect = document.createElementNS(SVG_NS, 'rect');
+  rect.setAttribute('x', '0');
+  rect.setAttribute('y', '0');
+  rect.setAttribute('width', '0');
+  rect.setAttribute('height', '574.05');
+  (rect as unknown as HTMLElement).style.animation =
+    'vlounge-vfill 1.4s ease-in-out infinite alternate';
+  clipPath.appendChild(rect);
+  defs.appendChild(clipPath);
+  svg.appendChild(defs);
+
+  const outline = document.createElementNS(SVG_NS, 'path');
+  outline.setAttribute('d', VENNEIR_PATH);
+  outline.setAttribute('fill', OUTLINE);
+  svg.appendChild(outline);
+
+  const fill = document.createElementNS(SVG_NS, 'path');
+  fill.setAttribute('d', VENNEIR_PATH);
+  fill.setAttribute('fill', ACCENT);
+  fill.setAttribute('clip-path', `url(#${clipId})`);
+  svg.appendChild(fill);
+
+  inner.appendChild(svg);
+  wrap.appendChild(inner);
 
   const label = document.createElement('p');
   label.textContent = 'Loading booking…';
@@ -530,10 +598,10 @@ function buildLoadingSpinner(): HTMLElement {
     lineHeight: '1.4',
     color: '#5A6266',
     fontFamily: 'inherit',
+    letterSpacing: '0.01em',
   } as Partial<CSSStyleDeclaration>);
-
-  wrap.appendChild(spinner);
   wrap.appendChild(label);
+
   return wrap;
 }
 

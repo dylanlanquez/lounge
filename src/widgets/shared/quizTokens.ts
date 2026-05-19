@@ -256,6 +256,66 @@ export function ensureQuizKeyframes(): void {
       opacity: 0;
     }
 
+    /* Processing state — while Stripe is confirming the
+       PaymentIntent or the booking submit RPC is in flight, the
+       button needs to *visibly* still be doing something so the
+       patient doesn't suspect it froze. A faster sheen sweep (1.4s
+       per cycle, continuous, no rest beat) plus an animated three-
+       dot ellipsis after the label gives two independent motion
+       cues — even if one is overlooked the other lands. The
+       container also gently breathes (opacity 0.9 ↔ 1.0) so the
+       motion isn't just inside the button but on its edges too.
+       Faster than the inviting "pay shimmer" on purpose: this is
+       a "we're working on it" signal, not a "press me" hint. */
+    @keyframes vlounge-processing-sweep {
+      0%   { transform: translateX(-130%) skewX(-18deg); opacity: 0.9; }
+      50%  { transform: translateX(180%) skewX(-18deg); opacity: 0.9; }
+      51%  { transform: translateX(-130%) skewX(-18deg); opacity: 0; }
+      100% { transform: translateX(-130%) skewX(-18deg); opacity: 0.9; }
+    }
+    @keyframes vlounge-processing-breath {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.92; }
+    }
+    @keyframes vlounge-processing-dot {
+      0%, 80%, 100% { opacity: 0.15; transform: translateY(0); }
+      40%           { opacity: 1; transform: translateY(-2px); }
+    }
+    .vlounge-processing {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+      animation: vlounge-processing-breath 1.8s ease-in-out infinite;
+    }
+    .vlounge-processing::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.28) 50%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      animation: vlounge-processing-sweep 1.4s linear infinite;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .vlounge-processing-dot {
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      margin-left: 3px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: vlounge-processing-dot 1.2s ease-in-out infinite;
+    }
+    .vlounge-processing-dot:nth-child(2) { animation-delay: 0.16s; }
+    .vlounge-processing-dot:nth-child(3) { animation-delay: 0.32s; }
+
     /* Footer button hover/active treatment.
        Previously the Next + Back buttons set their hover transform
        inline via onMouseEnter / onMouseLeave React handlers. On iOS
