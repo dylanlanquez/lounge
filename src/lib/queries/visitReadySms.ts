@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 
-// useLatestVisitReadySms — resolves the most recent visit_ready SMS
-// row for a visit so the Patient Comms card can show the actual
-// delivery state instead of forgetting after the receptionist
-// dismisses the success toast.
+// useLatestSmsForVisit — resolves the most recent SMS row for a
+// (visit, template_key) pair so the Patient Comms card can show the
+// actual delivery state for whichever template the receptionist has
+// selected. Replaces the old visit_ready-only hook; the card now
+// switches templates inline.
 //
 // Realtime subscription on lng_sms_messages keeps the row fresh
 // the moment Twilio's status callback flips 'pending' → 'sent' /
@@ -14,8 +15,9 @@ import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 // receipt — which is exactly the friction that lets a "bad number"
 // situation walk in the door.
 
-export interface VisitReadySmsRow {
+export interface VisitSmsRow {
   id: string;
+  template_key: string | null;
   to_phone: string;
   body: string;
   send_status: 'pending' | 'sent' | 'failed';
@@ -24,20 +26,31 @@ export interface VisitReadySmsRow {
   sent_at: string;
 }
 
+// Legacy alias kept so existing import sites don't have to update
+// in this same diff. Prefer VisitSmsRow in new code.
+export type VisitReadySmsRow = VisitSmsRow;
+
 interface State {
-  data: VisitReadySmsRow | null;
+  data: VisitSmsRow | null;
   loading: boolean;
   error: string | null;
 }
 
-export function useLatestVisitReadySms(visitId: string | null): State & {
+export function useLatestSmsForVisit(
+  visitId: string | null,
+  templateKey: string | null,
+): State & {
   refresh: () => void;
 } {
-  const [state, setState] = useState<State>({ data: null, loading: !!visitId, error: null });
+  const [state, setState] = useState<State>({
+    data: null,
+    loading: !!(visitId && templateKey),
+    error: null,
+  });
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    if (!visitId) {
+    if (!visitId || !templateKey) {
       setState({ data: null, loading: false, error: null });
       return;
     }
@@ -46,9 +59,9 @@ export function useLatestVisitReadySms(visitId: string | null): State & {
     (async () => {
       const { data, error } = await supabase
         .from('lng_sms_messages')
-        .select('id, to_phone, body, send_status, send_error, twilio_message_sid, sent_at')
+        .select('id, template_key, to_phone, body, send_status, send_error, twilio_message_sid, sent_at')
         .eq('visit_id', visitId)
-        .eq('template_key', 'visit_ready')
+        .eq('template_key', templateKey)
         .order('sent_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -57,21 +70,20 @@ export function useLatestVisitReadySms(visitId: string | null): State & {
         setState({ data: null, loading: false, error: error.message });
         return;
       }
-      setState({ data: (data as VisitReadySmsRow | null) ?? null, loading: false, error: null });
+      setState({ data: (data as VisitSmsRow | null) ?? null, loading: false, error: null });
     })();
     return () => {
       cancelled = true;
     };
-  }, [visitId, tick]);
+  }, [visitId, templateKey, tick]);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
-  // Realtime: any change on the latest lng_sms_messages row for
-  // this visit triggers a refetch. Filter is broad (any row whose
-  // visit_id matches) — the SELECT above narrows to the most recent
-  // visit_ready row, so an unrelated SMS template firing on the
-  // same visit would also bump this hook, which is fine; refetch
-  // is cheap and the result is identical.
+  // Realtime: any change on lng_sms_messages for this visit triggers
+  // a refetch. Filter is broad (any row whose visit_id matches) — the
+  // SELECT above narrows to the most recent row for the selected
+  // template, so an unrelated SMS firing on the same visit will also
+  // bump this hook, which is fine; refetch is cheap and idempotent.
   useRealtimeRefresh(
     visitId ? [{ table: 'lng_sms_messages', filter: `visit_id=eq.${visitId}` }] : [],
     refresh,

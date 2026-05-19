@@ -16,12 +16,24 @@ import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
 import { DropdownSelect } from '../DropdownSelect/DropdownSelect.tsx';
 import {
-  type VisitReadySmsRow,
+  type VisitSmsRow,
   explainSmsError,
-  useLatestVisitReadySms,
+  useLatestSmsForVisit,
 } from '../../lib/queries/visitReadySms.ts';
 import { humaniseSmsKey, useSmsTemplates } from '../../lib/queries/smsTemplates.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
+
+// Canonical order for the template picker. Matches the admin's
+// SMS_TEMPLATE_KEYS list — visit_ready first because it's the
+// primary affordance, then the four secondary manually-sent
+// templates in the order admins are most likely to reach for.
+const SMS_PICKER_ORDER: ReadonlyArray<string> = [
+  'visit_ready',
+  'please_return',
+  'please_call',
+  'running_late',
+  'reminder_to_attend',
+];
 
 // PatientCommsCard — receptionist-side "Notify patient" affordance
 // for the Visit page. Surfaces the patient's most recent
@@ -55,52 +67,133 @@ export function PatientCommsCard({
   patientFirstName,
 }: PatientCommsCardProps) {
   const [open, setOpen] = useState(false);
+  const [templateKey, setTemplateKey] = useState<string>('visit_ready');
   const phoneOk = !!patientPhone && patientPhone.trim().length > 0;
-  const latest = useLatestVisitReadySms(visitId);
+  const latest = useLatestSmsForVisit(visitId, templateKey);
   const row = latest.data;
   const properFirstName = properCase(patientFirstName ?? '') || 'the patient';
+
+  // Build the dropdown options from the General SMS template rows.
+  // Disabled templates are dropped so the receptionist can't pick
+  // a paused one. Falls back to a visit_ready-only list while
+  // useSmsTemplates is still loading so the first paint of the
+  // card isn't blank.
+  const smsTemplates = useSmsTemplates();
+  const templateOptions = useMemo(() => {
+    const enabledByKey = new Map<string, boolean>();
+    for (const t of smsTemplates.data) {
+      if (t.service_type !== null) continue;
+      enabledByKey.set(t.key, t.enabled);
+    }
+    const filtered = SMS_PICKER_ORDER.filter((k) => enabledByKey.get(k));
+    if (filtered.length === 0) return [{ value: 'visit_ready', label: humaniseSmsKey('visit_ready') }];
+    return filtered.map((k) => ({ value: k, label: humaniseSmsKey(k) }));
+  }, [smsTemplates.data]);
 
   return (
     <>
       <Card padding="lg" style={{ marginBottom: theme.space[6] }}>
-        <header style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: theme.space[4] }}>
-          <h3
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.md,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-              letterSpacing: theme.type.tracking.tight,
-            }}
-          >
-            Notify the patient
-          </h3>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            Text{' '}
-            <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
-              {properFirstName}
-            </strong>{' '}
-            when their work is ready to collect.
-          </p>
-        </header>
+        <SmsHeroHeader patientFirstName={properFirstName} />
 
-        <NotifyReadyRow
-          row={row}
-          patientId={patientId}
-          patientPhone={patientPhone}
-          phoneOk={phoneOk}
-          onOpen={() => setOpen(true)}
-        />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[3],
+            marginTop: theme.space[4],
+          }}
+        >
+          <DropdownSelect<string>
+            label="Which text"
+            value={templateKey}
+            options={templateOptions}
+            onChange={setTemplateKey}
+            disabled={smsTemplates.loading || templateOptions.length <= 1}
+          />
+
+          <NotifyReadyRow
+            row={row}
+            templateKey={templateKey}
+            patientId={patientId}
+            patientPhone={patientPhone}
+            phoneOk={phoneOk}
+            onOpen={() => setOpen(true)}
+          />
+        </div>
       </Card>
 
       <NotifyReadySheet
         open={open}
         onClose={() => setOpen(false)}
         visitId={visitId}
+        templateKey={templateKey}
         previousRow={row}
         onSent={() => latest.refresh()}
       />
     </>
+  );
+}
+
+// Hero header for the Send-an-SMS card. The leading icon disc + bold
+// title gives the card a clear sender-of-text identity, replacing the
+// quieter "Notify the patient" treatment. MessageSquare is Lucide's
+// most SMS-shaped glyph — closer to a phone's text-app icon than the
+// generic chat bubbles.
+function SmsHeroHeader({ patientFirstName }: { patientFirstName: string }) {
+  return (
+    <header
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 44,
+          height: 44,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          border: `1px solid ${theme.color.border}`,
+          flexShrink: 0,
+        }}
+      >
+        <MessageSquare size={20} aria-hidden />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: 1.25,
+          }}
+        >
+          Send an SMS
+        </h3>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Text{' '}
+          <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
+            {patientFirstName}
+          </strong>{' '}
+          from the clinic. Pick which text below.
+        </p>
+      </div>
+    </header>
   );
 }
 
@@ -134,12 +227,14 @@ type RowTone = 'neutral' | 'pending' | 'success' | 'alert';
 
 function NotifyReadyRow({
   row,
+  templateKey,
   patientId,
   patientPhone,
   phoneOk,
   onOpen,
 }: {
-  row: VisitReadySmsRow | null;
+  row: VisitSmsRow | null;
+  templateKey: string;
   patientId: string | null;
   patientPhone: string | null;
   phoneOk: boolean;
@@ -148,7 +243,9 @@ function NotifyReadyRow({
   // Compose the (tone, status text, CTA shape) tuple per state. The
   // body of the row is rendered by a single StatusRow below so layout
   // is consistent across every state — only the colour, label and
-  // action change.
+  // action change. When the user has switched to a template they
+  // have never sent before, the row defaults to the neutral
+  // "Not sent yet" state.
   const formattedPhone = formatUkPhone(row?.to_phone ?? patientPhone ?? '');
   if (!row) {
     return (
@@ -230,6 +327,10 @@ function NotifyReadyRow({
   const explained = explainSmsError(row.send_error);
   const headline = explained?.what ?? 'The carrier reported the text as undelivered.';
   const followup = explained?.fix ?? null;
+  // Keep templateKey referenced so future per-template error copy
+  // can lean on it. Today the headline applies regardless of which
+  // template fired — the carrier reason is template-agnostic.
+  void templateKey;
   return (
     <StatusRow
       tone="alert"
@@ -537,13 +638,16 @@ function NotifyReadySheet({
   open,
   onClose,
   visitId,
+  templateKey,
   previousRow,
   onSent,
 }: {
   open: boolean;
   onClose: () => void;
   visitId: string;
-  previousRow: VisitReadySmsRow | null;
+  /** Picked on the card itself before the sheet opens. */
+  templateKey: string;
+  previousRow: VisitSmsRow | null;
   onSent: () => void;
 }) {
   const [preview, setPreview] = useState<PreviewState>(INITIAL_PREVIEW);
@@ -553,29 +657,6 @@ function NotifyReadySheet({
     | { kind: 'sent'; to: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
-  // Which template the receptionist wants to fire. Defaults to
-  // visit_ready (the card's primary purpose). Changing this triggers
-  // a preview refetch so the receptionist sees the right body before
-  // committing.
-  const [templateKey, setTemplateKey] = useState<string>('visit_ready');
-
-  // Available SMS templates — pulled from the per-pill General rows
-  // (admins editing service-typed overrides keep their own rows,
-  // but the dropdown only lists the canonical template keys, not
-  // every (key, service_type) variant). Disabled templates are
-  // dropped so the receptionist can't pick a paused one.
-  const smsTemplates = useSmsTemplates();
-  const templateOptions = useMemo(() => {
-    const byKey = new Map<string, { enabled: boolean }>();
-    for (const row of smsTemplates.data) {
-      if (row.service_type !== null) continue; // only list General rows
-      byKey.set(row.key, { enabled: row.enabled });
-    }
-    const order = ['visit_ready', 'please_return', 'please_call', 'running_late', 'reminder_to_attend'];
-    return order
-      .filter((k) => byKey.get(k)?.enabled)
-      .map((k) => ({ value: k, label: humaniseSmsKey(k) }));
-  }, [smsTemplates.data]);
 
   const isResend = !!previousRow;
   const resendOfFailed = !!previousRow && previousRow.send_status === 'failed';
@@ -584,13 +665,6 @@ function NotifyReadySheet({
   // they're being asked to confirm a SEND, not "save" or anything
   // else. Re-sending a failed delivery gets a louder title so the
   // failure context carries into the sheet.
-
-  // Reset the picker to visit_ready every time the sheet opens so
-  // the receptionist always starts from the primary template, not
-  // whatever they picked last time.
-  useEffect(() => {
-    if (open) setTemplateKey('visit_ready');
-  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -696,22 +770,6 @@ function NotifyReadySheet({
         {/* Optional context strip about a previous failure */}
         {resendOfFailed && previousRow ? (
           <PreviousFailurePanel row={previousRow} />
-        ) : null}
-
-        {/* Template picker — defaults to visit_ready, lets the
-            receptionist swap to a different text (please return,
-            please call, running late, reminder) without leaving
-            the sheet. Hidden when only one template is enabled so
-            the surface stays quiet in setups that haven't seeded
-            the secondary templates yet. */}
-        {templateOptions.length > 1 ? (
-          <DropdownSelect<string>
-            label="Which text"
-            value={templateKey}
-            options={templateOptions}
-            onChange={setTemplateKey}
-            disabled={sending || sendResult.kind === 'sent'}
-          />
         ) : null}
 
         {/* Body preview */}
@@ -909,7 +967,7 @@ function NotifyReadySheet({
   );
 }
 
-function PreviousFailurePanel({ row }: { row: VisitReadySmsRow }) {
+function PreviousFailurePanel({ row }: { row: VisitSmsRow }) {
   const explained = explainSmsError(row.send_error);
   return (
     <div
@@ -939,9 +997,9 @@ function ErrorPanel({ reason, message }: { reason: string | null; message: strin
     reason === 'no_phone'
       ? 'Add a number to the patient profile and try again.'
       : reason === 'template_disabled'
-        ? 'Re-enable the visit_ready template under Admin → Emails & SMS.'
+        ? 'Re-enable the template under Admin → Emails & SMS.'
         : reason === 'template_not_found'
-          ? 'Seed the visit_ready template from Admin → Emails & SMS.'
+          ? 'Seed the template from Admin → Emails & SMS.'
           : null;
   return (
     <span style={{ color: '#7C1D1D' }}>
