@@ -18,6 +18,7 @@ import {
   explainSmsError,
   useLatestVisitReadySms,
 } from '../../lib/queries/visitReadySms.ts';
+import { properCase } from '../../lib/queries/appointments.ts';
 
 // PatientCommsCard — receptionist-side "Notify patient" affordance
 // for the Visit page. Surfaces the patient's most recent
@@ -71,7 +72,7 @@ export function PatientCommsCard({
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
             Send{' '}
             <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
-              {patientFirstName ?? 'the patient'}
+              {properCase(patientFirstName ?? '') || 'the patient'}
             </strong>{' '}
             a text when their order is ready to collect.
           </p>

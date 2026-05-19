@@ -25,6 +25,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { normalisePhone, sendSms } from '../_shared/twilioSms.ts';
+import { properCase } from '../_shared/properCase.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -192,8 +193,10 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // ── Substitute variables ─────────────────────────────────────
+  // Proper-case at the boundary so a row stored as "DARREN" or
+  // "darren" renders as "Darren" in the patient-facing SMS.
   const variables: Record<string, string> = {
-    patientFirstName: (patient.first_name ?? '').trim() || 'there',
+    patientFirstName: properCase((patient.first_name ?? '').trim()) || 'there',
     // appointmentRef is what the patient saw in their original
     // confirmation email ("Booking Reference: LAP-00042"). That's
     // the string they actually remember to quote when they walk

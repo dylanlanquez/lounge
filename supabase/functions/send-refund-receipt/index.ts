@@ -19,6 +19,7 @@ import {
   renderAndSend,
 } from '../_shared/emailRenderer.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { properCase } from '../_shared/properCase.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -151,7 +152,7 @@ Deno.serve(async (req) => {
         ? 'The refund has been handed back to you at the till, so there’s no bank delay.'
         : '';
   const variables: Record<string, string> = {
-    patientFirstName: patient.first_name?.trim() || 'there',
+    patientFirstName: properCase(patient.first_name?.trim() ?? '') || 'there',
     refundAmount: formatGbp(refund.amount_pence, refund.currency),
     refundMethod: humaniseMethod(refund.method, isDeposit),
     refundDate: formatDate(refund.refunded_at),

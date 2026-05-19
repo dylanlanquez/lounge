@@ -34,6 +34,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { LNG_INTERNAL_TOKEN_HEADER } from '../_shared/invokeAppointmentConfirmation.ts';
+import { properCase } from '../_shared/properCase.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
 import { resolveLivePhasesForAppointment } from '../_shared/livePhaseResolver.ts';
 
@@ -1366,7 +1367,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
   const brandName = brandId === 'denture' ? 'Denture Services' : 'Venneir';
 
   const vars: Record<string, string> = {
-    patientFirstName: patient.first_name?.trim() || 'there',
+    patientFirstName: properCase(patient.first_name?.trim() ?? '') || 'there',
     patientLastName: patient.last_name?.trim() || '',
     serviceLabel: labelForService(apt),
     appointmentDateTime: dateTime(apt.start_at),
@@ -1869,7 +1870,7 @@ function labelForService(apt: AppointmentRow): string {
 }
 
 function fullName(p: PatientRow): string {
-  const n = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim();
+  const n = `${properCase(p.first_name ?? '')} ${properCase(p.last_name ?? '')}`.trim();
   return n || 'Patient';
 }
 

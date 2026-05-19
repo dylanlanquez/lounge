@@ -18,6 +18,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
+import { properCase } from '../_shared/properCase.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -164,7 +165,7 @@ Deno.serve(async (req) => {
       ? new Date(payment.succeeded_at).toLocaleDateString('en-GB', dateOpts)
       : new Date().toLocaleDateString('en-GB', dateOpts);
     const variables: Record<string, string> = {
-      patientFirstName: patient?.first_name ?? 'there',
+      patientFirstName: properCase(patient?.first_name ?? '') || 'there',
       totalAmount:      formatPence(totalPence),
       paidBy,
       itemsList:        itemsListText,
@@ -387,7 +388,9 @@ interface ReceiptContext {
 }
 
 function renderHtml({ items, totalPence, subjectMethod, payment, patient }: ReceiptContext): string {
-  const name = patient ? `${patient.first_name ?? ''} ${patient.last_name ?? ''}`.trim() : '';
+  const name = patient
+    ? `${properCase(patient.first_name ?? '')} ${properCase(patient.last_name ?? '')}`.trim()
+    : '';
   const greeting = name ? `Hi ${name},` : 'Hi,';
   const lineRows = items
     .map(
@@ -425,7 +428,9 @@ function renderHtml({ items, totalPence, subjectMethod, payment, patient }: Rece
 }
 
 function renderText({ items, totalPence, subjectMethod, payment, patient }: ReceiptContext): string {
-  const name = patient ? `${patient.first_name ?? ''} ${patient.last_name ?? ''}`.trim() : '';
+  const name = patient
+    ? `${properCase(patient.first_name ?? '')} ${properCase(patient.last_name ?? '')}`.trim()
+    : '';
   const lines = items
     .map((i) => `${i.name}${i.quantity > 1 ? ` x${i.quantity}` : ''}  ${formatPence(i.line_total_pence)}`)
     .join('\n');

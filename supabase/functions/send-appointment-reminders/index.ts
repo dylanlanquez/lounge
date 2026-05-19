@@ -31,6 +31,7 @@ import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
 import { resolveLivePhasesForAppointment } from '../_shared/livePhaseResolver.ts';
+import { properCase } from '../_shared/properCase.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -537,7 +538,7 @@ function buildVariables(
     year: 'numeric',
   });
   return {
-    patientFirstName: patient.first_name?.trim() || 'there',
+    patientFirstName: properCase(patient.first_name?.trim() ?? '') || 'there',
     patientLastName: patient.last_name?.trim() || '',
     appointmentTime: time,
     appointmentDate: dayShort,
