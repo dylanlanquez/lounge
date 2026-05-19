@@ -38,7 +38,6 @@ type Journey = 'standard' | 'klarna' | 'clearpay';
 // charges the entire outstanding on the picked method. 'split' reveals
 // an explicit "Take £X now" panel so staff can collect part of the
 // balance and finish on a different method on the next round.
-type PaymentMode = 'full' | 'split';
 
 // Router state read by PayBreadcrumbs to render the right trail. The
 // "Take payment" button on VisitDetail forwards a `from: 'visit'`
@@ -281,33 +280,34 @@ export function Pay() {
     }
   };
 
-  // Pay-in-full vs split mode. 'full' is the default — picking a
-  // method charges the full outstanding. 'split' reveals an explicit
-  // "Take £X now" panel and the method cards reflect the partial
-  // amount. We default back to 'full' whenever the outstanding hits
-  // zero or the user comes back from a successful charge.
-  const [paymentMode, setPaymentMode] = useState<PaymentMode>('full');
-  // splitAmountText: typed amount for the "Take £X now" field in
-  // split mode. Stored as text so half-typed values like "20." don't
-  // snap back. Only consulted when paymentMode === 'split'.
-  const [splitAmountText, setSplitAmountText] = useState('');
-  const parsedSplitAmount = (() => {
-    const trimmed = splitAmountText.trim();
-    if (trimmed === '') return 0;
+  // Charge amount — single source of truth for how much this leg of
+  // the bill will take. Held as text so a half-typed value like
+  // "20." doesn't snap back while the operator is typing. Empty
+  // string means "full outstanding" — the most common path, and the
+  // one that maps to the previous Pay-in-full default.
+  //
+  // The previous shape used a Pay-in-full / Split mode toggle plus a
+  // separate splitAmountText state. That created an unnecessary
+  // mental model swap (mode pick → amount pick) when the user
+  // really just answers one question: "how much to take on this
+  // method?" Collapsing both pieces of state into one matches
+  // Stripe Terminal / Square / Toast and removes a fork in the UI.
+  const [chargeAmountText, setChargeAmountText] = useState('');
+  const chargeAmountPence = ((): number => {
+    const trimmed = chargeAmountText.trim();
+    if (trimmed === '') return outstandingPence;
     const n = Number(trimmed.replace(/[^\d.]/g, ''));
     if (!Number.isFinite(n) || n <= 0) return 0;
     return Math.min(Math.round(n * 100), outstandingPence);
   })();
-  // The amount the chosen method will actually charge.
-  //   - full mode: the full outstanding
-  //   - split mode with an amount typed: that amount
-  //   - split mode with nothing typed: zero, which disables the
-  //     method cards so an accidental tap can't push the whole bill
-  //     through when the intent was a partial.
-  const chargeAmountPence =
-    paymentMode === 'split' ? parsedSplitAmount : outstandingPence;
-  // Boolean: is this charge going to clear the bill?
+  // Whether this charge will clear the bill in one shot. Used to
+  // pick the post-charge stage transition (success vs back to
+  // choose for the next leg).
   const willClearBill = chargeAmountPence > 0 && chargeAmountPence >= outstandingPence;
+  // True when the operator has explicitly set this leg below the
+  // outstanding total — drives the "Still due after this method"
+  // line and labels the partial state in the audit cash note.
+  const isPartialPayment = chargeAmountPence > 0 && chargeAmountPence < outstandingPence;
   // Variable kept around for receipt copy (the "£X paid" headline).
   const total = chargeAmountPence;
 
@@ -353,10 +353,9 @@ export function Pay() {
     setError(null);
     try {
       const change = tenderedPence - chargeAmountPence;
-      const splitBit =
-        chargeAmountPence < outstandingPence
-          ? ` Split payment, outstanding ${formatPence(outstandingPence - chargeAmountPence)} after this.`
-          : '';
+      const splitBit = isPartialPayment
+        ? ` Split payment, outstanding ${formatPence(outstandingPence - chargeAmountPence)} after this.`
+        : '';
       const note =
         depositPence > 0
           ? `Tendered ${formatPence(tenderedPence)}, change ${formatPence(change)}. Deposit ${formatPence(depositPence)} via ${deposit?.provider ?? 'paypal'} already collected at booking.${splitBit}`
@@ -372,11 +371,11 @@ export function Pay() {
         setStage('success');
       } else {
         setTendered('');
-        // Reset split state so the next leg defaults to "pay full
-        // remaining" — staff can opt back into split mode if they
-        // need to break the remainder up further.
-        setPaymentMode('full');
-        setSplitAmountText('');
+        // Clear the typed charge amount so the next leg defaults to
+        // the new (smaller) outstanding. Staff can still type a
+        // partial again from the choose stage if they want to break
+        // the remainder up further.
+        setChargeAmountText('');
         setStage('choose');
       }
     } catch (e: unknown) {
@@ -654,7 +653,7 @@ export function Pay() {
           {stage === 'choose' &&
             (succeededPayments.length > 0
               ? 'Take the rest of the payment, or void a leg above to start over.'
-              : 'Take the full amount in one go, or split across more than one method.')}
+              : 'Set how much to charge on this method, then pick how to take it.')}
           {stage === 'cash' && 'Tap what the customer hands you. Change is calculated for you.'}
           {stage === 'card' && 'Card terminal flow ships in slice 8.'}
           {stage === 'success' && 'Choose how to send the receipt.'}
@@ -674,29 +673,18 @@ export function Pay() {
               />
             ) : null}
 
-            <PaymentModeToggle
-              mode={paymentMode}
+            <ChargeAmountControl
               outstandingPence={outstandingPence}
-              splitAmountPence={parsedSplitAmount}
-              onChange={(next) => {
-                setPaymentMode(next);
-                if (next === 'full') setSplitAmountText('');
-              }}
+              chargeAmountText={chargeAmountText}
+              onChange={setChargeAmountText}
             />
 
-            {paymentMode === 'split' ? (
-              <SplitAmountPanel
-                outstandingPence={outstandingPence}
-                splitAmountText={splitAmountText}
-                onChangeAmount={setSplitAmountText}
-              />
-            ) : null}
-
-            {/* Method picker. Each card shows what it will actually
-                charge (mode + amount); under split mode the cards
-                are disabled until the staff has set a split amount,
-                so an accidental tap can't push the full balance
-                through when the intent was a partial. */}
+            {/* Method picker. Each card's label reflects the live
+                chargeAmountPence so the operator can see in plain
+                text exactly what the next tap will charge. Cards
+                are disabled if the operator has zeroed the amount
+                so an accidental tap can't push something unexpected
+                through. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
               <MethodCard
                 icon={<CreditCard size={20} />}
@@ -704,9 +692,7 @@ export function Pay() {
                 description={
                   !reader
                     ? 'No reader registered yet'
-                    : paymentMode === 'split' && parsedSplitAmount === 0
-                      ? 'Set a split amount above first'
-                      : `Charge ${formatPence(chargeAmountPence)} on ${reader.friendly_name}`
+                    : `Charge ${formatPence(chargeAmountPence)} on ${reader.friendly_name}`
                 }
                 onClick={() => openTerminal('standard')}
                 disabled={!reader || chargeAmountPence <= 0}
@@ -714,11 +700,7 @@ export function Pay() {
               <MethodCard
                 icon={<Banknote size={20} />}
                 title="Cash"
-                description={
-                  paymentMode === 'split' && parsedSplitAmount === 0
-                    ? 'Set a split amount above first'
-                    : `Take ${formatPence(chargeAmountPence)} in cash, change calculated for you`
-                }
+                description={`Take ${formatPence(chargeAmountPence)} in cash, change calculated for you`}
                 onClick={() => setStage('cash')}
                 disabled={chargeAmountPence <= 0}
               />
@@ -729,11 +711,7 @@ export function Pay() {
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Klarna"
-                description={
-                  paymentMode === 'split' && parsedSplitAmount === 0
-                    ? 'Set a split amount above first'
-                    : `Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`
-                }
+                description={`Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`}
                 onClick={() => openBnpl('klarna')}
                 disabled={chargeAmountPence <= 0}
               />
@@ -741,11 +719,9 @@ export function Pay() {
                 icon={<ShoppingBag size={20} />}
                 title="Clearpay"
                 description={
-                  paymentMode === 'split' && parsedSplitAmount === 0
-                    ? 'Set a split amount above first'
-                    : !reader
-                      ? 'Needs a registered card reader. Customer taps phone on the reader.'
-                      : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
+                  !reader
+                    ? 'Needs a registered card reader. Customer taps phone on the reader.'
+                    : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
                 }
                 onClick={() => openBnpl('clearpay')}
                 disabled={!reader || chargeAmountPence <= 0}
@@ -774,16 +750,11 @@ export function Pay() {
               tendered={tendered}
               onSelect={setTendered}
             />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginTop: theme.space[5] }}>
-              <Input
-                label="Or type an exact amount (£)"
-                numericFormat="currency"
-                placeholder={`min ${formatPence(chargeAmountPence)}`}
-                value={tendered}
-                onChange={(e) => setTendered(e.target.value)}
-              />
-            </div>
-            <ChangeRow tendered={tendered} totalPence={chargeAmountPence} />
+            <CustomTenderDisclosure
+              chargeAmountPence={chargeAmountPence}
+              tendered={tendered}
+              onSelect={setTendered}
+            />
             <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', marginTop: theme.space[5] }}>
               <Button variant="tertiary" onClick={() => setStage('choose')}>
                 Back
@@ -885,8 +856,7 @@ export function Pay() {
               if (willClearBill) {
                 setStage('success');
               } else {
-                setPaymentMode('full');
-                setSplitAmountText('');
+                setChargeAmountText('');
                 setStage('choose');
               }
             }}
@@ -913,8 +883,7 @@ export function Pay() {
                 if (willClearBill) {
                   setStage('success');
                 } else {
-                  setPaymentMode('full');
-                  setSplitAmountText('');
+                  setChargeAmountText('');
                   setStage('choose');
                 }
               }}
@@ -941,8 +910,7 @@ export function Pay() {
             if (willClearBill) {
               setStage('success');
             } else {
-              setPaymentMode('full');
-              setSplitAmountText('');
+              setChargeAmountText('');
               setStage('choose');
             }
           }}
@@ -1274,110 +1242,49 @@ function QuickAmountButtons({
   );
 }
 
-// Pay-in-full / Split toggle. Two large pill buttons sit side by
-// side; "Pay in full" is highlighted by default so the common path
-// is the one staff sees first. Picking Split flips the panel below
-// to reveal the amount-to-take-now field.
-function PaymentModeToggle({
-  mode,
+// ChargeAmountControl — single, always-visible amount control for
+// the choose-payment stage.
+//
+// Replaces the previous Pay-in-full / Split mode toggle plus
+// SplitAmountPanel pair: the cashier no longer has to make a mode
+// decision before thinking about the amount. There's one input
+// pre-filled with the full outstanding; two quick chips below fill
+// it with the full amount or half; and a "Still due after this
+// method" row only appears when the typed amount is less than the
+// outstanding. The method cards below this control re-label live
+// to reflect chargeAmountPence so the next tap reads exactly what
+// it will charge.
+//
+// Storage shape lives in the parent (chargeAmountText). Empty
+// string == "use the full outstanding" — the most common path.
+// That keeps the input from looking pre-touched on first paint
+// and lets the parent default cleanly after a successful leg.
+function ChargeAmountControl({
   outstandingPence,
-  splitAmountPence,
+  chargeAmountText,
   onChange,
 }: {
-  mode: PaymentMode;
   outstandingPence: number;
-  splitAmountPence: number;
-  onChange: (next: PaymentMode) => void;
+  chargeAmountText: string;
+  onChange: (next: string) => void;
 }) {
-  const splitLabel =
-    mode === 'split' && splitAmountPence > 0
-      ? `Split · ${formatPence(splitAmountPence)} now`
-      : 'Split payment';
-  return (
-    <div
-      role="tablist"
-      aria-label="Payment mode"
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: theme.space[2],
-        padding: theme.space[1],
-        background: theme.color.bg,
-        borderRadius: theme.radius.pill,
-        border: `1px solid ${theme.color.border}`,
-      }}
-    >
-      <ModeTab
-        selected={mode === 'full'}
-        label={`Pay in full · ${formatPence(outstandingPence)}`}
-        onClick={() => onChange('full')}
-      />
-      <ModeTab
-        selected={mode === 'split'}
-        label={splitLabel}
-        onClick={() => onChange('split')}
-      />
-    </div>
-  );
-}
-
-function ModeTab({
-  selected,
-  label,
-  onClick,
-}: {
-  selected: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={selected}
-      onClick={onClick}
-      style={{
-        appearance: 'none',
-        border: 'none',
-        background: selected ? theme.color.surface : 'transparent',
-        boxShadow: selected ? theme.shadow.card : 'none',
-        borderRadius: theme.radius.pill,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.sm,
-        fontWeight: theme.type.weight.semibold,
-        color: selected ? theme.color.ink : theme.color.inkMuted,
-        cursor: 'pointer',
-        minHeight: 44,
-        letterSpacing: theme.type.tracking.tight,
-        fontVariantNumeric: 'tabular-nums',
-        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-// "Take £X now" panel revealed when split mode is on. Quick chips
-// suggest natural splits (50%, 25%, half rounded down to £50) so
-// staff can set a sensible amount in one tap; manual entry is right
-// underneath for any custom amount. A live "£Y still due" line at
-// the bottom makes the consequence of the split obvious.
-function SplitAmountPanel({
-  outstandingPence,
-  splitAmountText,
-  onChangeAmount,
-}: {
-  outstandingPence: number;
-  splitAmountText: string;
-  onChangeAmount: (next: string) => void;
-}) {
-  const splitChips = splitChipAmounts(outstandingPence);
-  const trimmed = splitAmountText.trim();
-  const parsed = trimmed === '' ? 0 : Math.round(Number(trimmed.replace(/[^\d.]/g, '')) * 100);
-  const safeParsed = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, outstandingPence) : 0;
-  const remainingPence = Math.max(0, outstandingPence - safeParsed);
+  // Parse the typed text into pence the same way the parent does
+  // so the control's UI state (chip selected / still-due figure)
+  // stays in lockstep with what the method cards will actually
+  // charge.
+  const trimmed = chargeAmountText.trim();
+  const parsedPence = ((): number => {
+    if (trimmed === '') return outstandingPence;
+    const n = Number(trimmed.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.min(Math.round(n * 100), outstandingPence);
+  })();
+  const isFullSelected = trimmed === '' || parsedPence === outstandingPence;
+  const halfPence = Math.round(outstandingPence / 2);
+  const halfSelectable = halfPence >= 100 && halfPence < outstandingPence;
+  const isHalfSelected = !isFullSelected && parsedPence === halfPence;
+  const remainingPence = Math.max(0, outstandingPence - parsedPence);
+  const showStillDue = parsedPence > 0 && parsedPence < outstandingPence;
   return (
     <div
       style={{
@@ -1401,112 +1308,122 @@ function SplitAmountPanel({
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          Take part of the bill now
+          Charge on this method
         </h3>
-        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
-          Pick how much to charge on this method. The rest stays on the bill so you can finish on a different method next.
-        </p>
-      </div>
-      {splitChips.length > 0 ? (
-        <div
+        <p
           style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${splitChips.length}, 1fr)`,
-            gap: theme.space[2],
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.normal,
           }}
         >
-          {splitChips.map((pence) => {
-            const isSelected = safeParsed === pence;
-            return (
-              <button
-                key={pence}
-                type="button"
-                onClick={() => onChangeAmount((pence / 100).toFixed(2))}
-                style={{
-                  appearance: 'none',
-                  border: `1.5px solid ${isSelected ? theme.color.ink : theme.color.border}`,
-                  background: isSelected ? 'rgba(14, 20, 20, 0.04)' : theme.color.bg,
-                  borderRadius: theme.radius.input,
-                  padding: `${theme.space[3]}px ${theme.space[2]}px`,
-                  fontFamily: 'inherit',
-                  fontSize: theme.type.size.base,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  cursor: 'pointer',
-                  minHeight: 52,
-                  fontVariantNumeric: 'tabular-nums',
-                  letterSpacing: theme.type.tracking.tight,
-                  transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-                }}
-              >
-                {formatPence(pence)}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+          The full amount is set for you. Type a smaller number to take part of the bill now and
+          finish the rest on a different method.
+        </p>
+      </div>
       <Input
-        label="Or type the amount (£)"
+        label="Amount (£)"
         numericFormat="currency"
-        placeholder={`up to ${(outstandingPence / 100).toFixed(2)}`}
-        value={splitAmountText}
-        onChange={(e) => onChangeAmount(e.target.value)}
+        placeholder={(outstandingPence / 100).toFixed(2)}
+        value={trimmed === '' ? (outstandingPence / 100).toFixed(2) : chargeAmountText}
+        onChange={(e) => {
+          // Treat the placeholder-equivalent value as "leave on
+          // full" — clearing the input or typing the full amount
+          // both map to the same canonical empty string so the
+          // parent's chargeAmountPence stays at the outstanding.
+          onChange(e.target.value);
+        }}
       />
       <div
         style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
-          borderRadius: theme.radius.input,
-          background: theme.color.bg,
+          display: 'grid',
+          gridTemplateColumns: halfSelectable ? '1fr 1fr' : '1fr',
+          gap: theme.space[2],
         }}
       >
-        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-          Still due after this leg
-        </span>
-        <span
+        <ChargeChip
+          selected={isFullSelected}
+          label={`Full · ${formatPence(outstandingPence)}`}
+          onClick={() => onChange('')}
+        />
+        {halfSelectable ? (
+          <ChargeChip
+            selected={isHalfSelected}
+            label={`Half · ${formatPence(halfPence)}`}
+            onClick={() => onChange((halfPence / 100).toFixed(2))}
+          />
+        ) : null}
+      </div>
+      {showStillDue ? (
+        <div
           style={{
-            fontSize: theme.type.size.lg,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: theme.type.tracking.tight,
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            padding: `${theme.space[3]}px ${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            background: theme.color.bg,
           }}
         >
-          {formatPence(remainingPence)}
-        </span>
-      </div>
+          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Still due after this method
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: theme.type.tracking.tight,
+            }}
+          >
+            {formatPence(remainingPence)}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// Suggest 3 natural split points for the outstanding balance. Picks
-// from a pool of "obvious" cuts (half, quarter, half rounded to the
-// nearest cash-friendly £50) and keeps only the ones strictly
-// between £0 and the outstanding so they're useful as a partial.
-function splitChipAmounts(outstandingPence: number): number[] {
-  if (outstandingPence < 1000) return [];
-  const candidates = new Set<number>();
-  // Half — works for any bill.
-  candidates.add(Math.round(outstandingPence / 2));
-  // Round half down to the nearest £50 chunk for clinic-sized bills.
-  if (outstandingPence >= 10000) {
-    candidates.add(Math.floor(outstandingPence / 2 / 5000) * 5000);
-  }
-  // Quarter — useful for breaking bigger bills into "deposit then
-  // three more" patterns.
-  if (outstandingPence >= 8000) {
-    candidates.add(Math.round(outstandingPence / 4));
-  }
-  // Round £100 just below half — common round-number ask.
-  const halfRound100 = Math.floor(outstandingPence / 2 / 10000) * 10000;
-  if (halfRound100 > 0 && outstandingPence >= 20000) candidates.add(halfRound100);
-  // Strip any zero or full-balance entries — those aren't splits.
-  const valid = Array.from(candidates)
-    .filter((p) => p > 0 && p < outstandingPence)
-    .sort((a, b) => a - b);
-  return valid.slice(0, 3);
+// Single chip used by ChargeAmountControl. Selected state mirrors
+// the parent's parsed amount so the chip and the input agree at all
+// times — tapping a chip simply pushes its value back through the
+// shared onChange.
+function ChargeChip({
+  selected,
+  label,
+  onClick,
+}: {
+  selected: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      style={{
+        appearance: 'none',
+        border: `1.5px solid ${selected ? theme.color.ink : theme.color.border}`,
+        background: selected ? 'rgba(14, 20, 20, 0.04)' : theme.color.bg,
+        borderRadius: theme.radius.input,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.base,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.ink,
+        cursor: 'pointer',
+        minHeight: 52,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: theme.type.tracking.tight,
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      {label}
+    </button>
+  );
 }
 
 // "Already collected" panel. Bold heading + per-payment row with a
@@ -1613,34 +1530,152 @@ function CollectedSoFarCard({
   );
 }
 
-function ChangeRow({ tendered, totalPence }: { tendered: string; totalPence: number }) {
-  const tFloat = Number(tendered.replace(/[^\d.]/g, ''));
-  const tPence = Math.round(tFloat * 100);
-  const change = Number.isFinite(tPence) ? tPence - totalPence : null;
+// CustomTenderDisclosure — collapsed-by-default link that opens an
+// inline numeric input for the rare case when the customer hands
+// over a non-preset amount (e.g. a £100 note for a £45 bill).
+//
+// The quick-amount chip grid above already covers the four common
+// denominations the algorithm derives from the charge (exact + the
+// three next round-up steps). Most cash transactions end on a chip
+// tap, so the input shouldn't sit visible at all — its presence
+// just made every customer look like a "type the number" task.
+// Hide it; reveal it only when staff explicitly asks for it.
+//
+// While open, the input lives inline with a calm change-due line
+// next to it so the operator sees the same chip-style annotation
+// they'd get from the preset cards. Closing the disclosure clears
+// the tendered amount so a stale figure can't sneak into submit.
+function CustomTenderDisclosure({
+  chargeAmountPence,
+  tendered,
+  onSelect,
+}: {
+  chargeAmountPence: number;
+  tendered: string;
+  onSelect: (value: string) => void;
+}) {
+  // The disclosure stays open whenever the tendered amount doesn't
+  // match any of the chip presets — that way refreshing the page
+  // mid-typing or returning to the cash screen with a stored typed
+  // amount doesn't silently hide the input. Pre-set values from
+  // chips don't keep the disclosure open.
+  const tenderedPence = Math.round(Number(tendered.replace(/[^\d.]/g, '')) * 100);
+  const chipPences = new Set(quickAmounts(chargeAmountPence).map((c) => c.pence));
+  const looksLikeChip = chipPences.has(tenderedPence);
+  const hasTendered = tendered.trim() !== '';
+  const [open, setOpen] = useState<boolean>(hasTendered && !looksLikeChip);
+  const change = hasTendered && Number.isFinite(tenderedPence)
+    ? tenderedPence - chargeAmountPence
+    : null;
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          appearance: 'none',
+          border: `1px dashed ${theme.color.border}`,
+          background: 'transparent',
+          borderRadius: theme.radius.input,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          marginTop: theme.space[4],
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkMuted,
+          cursor: 'pointer',
+          alignSelf: 'flex-start',
+          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = theme.color.ink;
+          e.currentTarget.style.color = theme.color.ink;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = theme.color.border;
+          e.currentTarget.style.color = theme.color.inkMuted;
+        }}
+      >
+        + Enter a different amount
+      </button>
+    );
+  }
   return (
     <div
       style={{
         marginTop: theme.space[4],
-        padding: theme.space[3],
-        background: theme.color.bg,
-        borderRadius: 12,
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'baseline',
+        flexDirection: 'column',
+        gap: theme.space[3],
+        padding: theme.space[4],
+        background: theme.color.bg,
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
       }}
     >
-      <span style={{ color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>Change due</span>
-      <span
+      <Input
+        label="Amount handed over (£)"
+        numericFormat="currency"
+        placeholder={`min ${(chargeAmountPence / 100).toFixed(2)}`}
+        value={tendered}
+        onChange={(e) => onSelect(e.target.value)}
+        autoFocus
+      />
+      <div
         style={{
-          fontSize: theme.type.size.lg,
-          fontWeight: theme.type.weight.semibold,
-          color: change !== null && change >= 0 ? theme.color.ink : theme.color.alert,
-          fontVariantNumeric: 'tabular-nums',
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
         }}
       >
-        {change === null ? '—' : formatPence(Math.max(0, change))}
-        {change !== null && change < 0 ? ' short' : ''}
-      </span>
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          {change === null
+            ? 'Type the amount the customer handed over'
+            : change < 0
+              ? 'Short of the amount due'
+              : change === 0
+                ? 'Exact, no change to give'
+                : 'Change to give back'}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            color: change !== null && change < 0 ? theme.color.alert : theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          {change === null
+            ? '—'
+            : change < 0
+              ? `${formatPence(Math.abs(change))} short`
+              : formatPence(change)}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          onSelect('');
+          setOpen(false);
+        }}
+        style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          padding: 0,
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkMuted,
+          textDecoration: 'underline',
+          textUnderlineOffset: 3,
+          cursor: 'pointer',
+          alignSelf: 'flex-start',
+        }}
+      >
+        Use a preset instead
+      </button>
     </div>
   );
 }
