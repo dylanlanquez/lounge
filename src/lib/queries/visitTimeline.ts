@@ -454,11 +454,21 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           }
         }
         if (visit.closed_at) {
+          // Title reflects the closure type, not a blanket "Visit
+          // complete". An unsuitable / ended-early visit reads
+          // confusingly when the timeline says it "completed" —
+          // these are aborted closures, not successful hand-offs.
+          const closedTitle =
+            visit.status === 'unsuitable'
+              ? 'Visit ended (unsuitable)'
+              : visit.status === 'ended_early'
+                ? 'Visit ended early'
+                : 'Visit complete';
           visitOwnEvents.push({
             id: `visit-${visit.id}-closed`,
             type: 'visit_closed',
             timestamp: visit.closed_at,
-            title: 'Visit complete',
+            title: closedTitle,
             detail: buildVisitCompleteDetail({
               visitStatus: visit.status,
               fulfilment: visit.fulfilment_method,
@@ -849,21 +859,28 @@ function pickVisitCloseAudit(
   return null;
 }
 
-// Detail line for the synth "Visit complete" event. Reads in plain
+// Detail line for the synth visit-closed event. Reads in plain
 // English so an onlooker who didn't run the visit understands what
 // finished and how:
 //
 //   • status = 'complete' → "Visit complete · Passed to patient · £198.00 paid"
 //   • status = 'complete', no method (older visits) → "Visit complete · £198.00 paid"
-//   • status = 'unsuitable' → "Case marked unsuitable" (no fulfilment)
-//   • status = 'ended_early' → "Visit ended early" (no fulfilment)
+//   • status = 'unsuitable' → "Cart lines removed by the unsuitable verdict"
+//   • status = 'ended_early' → "Cart lines removed by the end-visit action"
+//
+// We deliberately avoid "without a charge" copy on the aborted
+// closures — many of these visits HAD a payment (web-widget paid in
+// full, deposit at booking) before they ended, and the prior copy
+// read as if no money had ever moved. The financial state lives
+// in the cart's Totals + the timeline's payment / refund rows; the
+// closure detail's job is just to say what closed and why.
 function buildVisitCompleteDetail(args: {
   visitStatus: VisitRow['status'];
   fulfilment: VisitRow['fulfilment_method'];
   totalPence: number | null;
 }): string {
-  if (args.visitStatus === 'unsuitable') return 'Case marked unsuitable; cart was closed without a charge';
-  if (args.visitStatus === 'ended_early') return 'Visit ended early; cart was closed without a charge';
+  if (args.visitStatus === 'unsuitable') return 'Cart lines removed by the unsuitable verdict';
+  if (args.visitStatus === 'ended_early') return 'Cart lines removed by the end-visit action';
   const parts: string[] = [];
   if (args.fulfilment === 'in_person') parts.push('Passed to patient on the day');
   else if (args.fulfilment === 'shipping') parts.push('Marked for dispatch by post');

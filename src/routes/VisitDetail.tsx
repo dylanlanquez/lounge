@@ -1519,20 +1519,18 @@ export function VisitDetail() {
               />
             </div>
 
-            {/* Owed-back banner. Appears whenever the patient has
-                paid more than the current cart owes — the canonical
-                case: customer paid in full via the widget, arrived,
-                staff removed an item from the cart so the cart total
-                dropped. Persists until either the cart math goes
-                back to balanced (item re-added) or a refund is
-                issued. CS-only staff don't see the Refund button
-                (they can't act on the till) but DO see the banner so
-                they know to alert someone. */}
-            {/* Whole Cart card dims when the visit is unsuitable —
-                title, items, subtotal, totals all go quiet. The
-                action row below stays at full opacity so the
-                Reverse affordance reads as the only live thing. */}
-            <div style={isUnsuitable ? { opacity: 0.55 } : undefined}>
+            {/* Whole Cart card dims when the visit is unsuitable
+                AND there's no outstanding financial action — title,
+                items, subtotal, totals all go quiet. The action row
+                below stays at full opacity so the Reverse affordance
+                reads as the only live thing.
+
+                When the patient is owed money back, we DON'T dim:
+                staff still needs to read the owed amount and click
+                Refund. Dimming the alert at 55% opacity would defeat
+                the whole point of surfacing it. Once the refund is
+                issued (owed drops to 0) the dim returns. */}
+            <div style={isUnsuitable && owedToPatientPence === 0 ? { opacity: 0.55 } : undefined}>
             <Card padding="lg">
               {cart?.status === 'paid' ? (
                 <PaidHeader
@@ -1558,20 +1556,41 @@ export function VisitDetail() {
               {cartLoading ? (
                 <p style={{ color: theme.color.inkMuted }}>Loading cart…</p>
               ) : items.length === 0 ? (
-                <EmptyState
-                  icon={<ShoppingCart size={20} />}
-                  title="No items yet"
-                  description="Pick from the shared catalogue. Suggestions populate based on the booking type and intake answers."
-                  action={
-                    isCsOnly ? null : (
-                      <Button variant="primary" onClick={openPicker} disabled={productiveLocked}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                          <Plus size={16} /> Add item
-                        </span>
-                      </Button>
-                    )
-                  }
-                />
+                isVisitEnded ? (
+                  // Terminal-state empty cart. The "No items yet" /
+                  // "Add item" prompt is misleading here because (a)
+                  // the cart isn't editable and (b) lines were just
+                  // soft-deleted by the end-visit action, not "never
+                  // added". The Totals block below still renders any
+                  // financial state (owed-back banner, payments
+                  // taken) so staff can see what they need to refund
+                  // before the visit can be wrapped up.
+                  <EmptyState
+                    icon={<ShoppingCart size={20} />}
+                    title="Cart closed"
+                    description={
+                      visit?.status === 'unsuitable'
+                        ? 'Lines that were in the cart were removed when the visit was marked unsuitable. Resume the visit to bring them back.'
+                        : 'Lines that were in the cart were removed when the visit ended early. Resume the visit to bring them back.'
+                    }
+                    action={null}
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<ShoppingCart size={20} />}
+                    title="No items yet"
+                    description="Pick from the shared catalogue. Suggestions populate based on the booking type and intake answers."
+                    action={
+                      isCsOnly ? null : (
+                        <Button variant="primary" onClick={openPicker} disabled={productiveLocked}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <Plus size={16} /> Add item
+                          </span>
+                        </Button>
+                      )
+                    }
+                  />
+                )
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
                   {items.map((it) => {
@@ -1597,7 +1616,19 @@ export function VisitDetail() {
                 </div>
               )}
 
-              {items.length > 0 ? (
+              {/* Render Totals when there's anything financial to
+                  show — even with an empty cart. For an ended visit
+                  the active items are zero but the payment + refund
+                  + deposit + owed-back state still needs to drive
+                  staff to action (issue the refund before wrapping
+                  up). Without this branch the only place the owed
+                  amount appeared was buried in the timeline, which
+                  Dylan reported as "we ended visit but owe the
+                  customer money, so it won't show?". */}
+              {items.length > 0
+                || amountPaidPence > 0
+                || refundedToDatePence > 0
+                || depositPence > 0 ? (
                 <Totals
                   subtotal={subtotal}
                   discount={discount}
@@ -1611,7 +1642,13 @@ export function VisitDetail() {
                   refundedToDatePence={refundedToDatePence}
                   patientFirstName={patient?.first_name ?? null}
                   onOpenRefund={() => {
-                    setRefundDefaultCategory('item_removed');
+                    setRefundDefaultCategory(
+                      // On a terminal-state visit the canonical
+                      // refund reason is the visit ending, not a
+                      // single line removal — the prefilled
+                      // category reflects that.
+                      isVisitEnded ? 'visit_ended_early' : 'item_removed'
+                    );
                     setRefundOpen(true);
                   }}
                   // Suppress the giant "Outstanding £X.XX" row when the
