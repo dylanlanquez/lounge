@@ -11,6 +11,7 @@ import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { NotificationBell } from '../Notifications/NotificationBell.tsx';
 
 // Reserved height pages add as paddingTop so content doesn't slip
 // underneath the fixed bar.
@@ -133,6 +134,16 @@ export function KioskStatusBar() {
           downlink={network.downlink}
           supported={network.supported}
         />
+        {/* Notifications bell. Sits in the system-tray cluster
+            right beside the battery indicator (per Dylan's spec
+            "next to the battery etc."). Icon size matches the
+            other 15px glyphs on this bar; the bell's internal
+            padding scales so the tap target stays comfortable on
+            tablet, and the unseen-dot halo blends into the bar's
+            surface colour so the dot reads as part of the chrome
+            rather than a sticker on top. */}
+        {!isMobile ? <Divider /> : null}
+        <NotificationBell size={15} haloColor={theme.color.surface} />
         {batterySupported && percent !== null ? (
           <>
             {!isMobile ? <Divider /> : null}
