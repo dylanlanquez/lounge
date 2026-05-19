@@ -1,5 +1,5 @@
 import { type CSSProperties } from 'react';
-import { AlertTriangle, Ban, Footprints, MousePointerClick, RotateCcw, Sparkles } from 'lucide-react';
+import { AlertTriangle, Ban, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
 import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
@@ -390,14 +390,12 @@ export function SourceGlyph({
     );
   }
   if (source === 'checkpoint') {
-    return (
-      <Sparkles
-        size={size + 2}
-        color={theme.color.inkSubtle}
-        aria-label="Booked via Checkpoint"
-        style={{ flexShrink: 0 }}
-      />
-    );
+    // No glyph for Checkpoint — the "Checkpoint" text label by
+    // itself is already the at-a-glance signal, and the receptionist
+    // team found the sparkles glyph noisy. Returning null here keeps
+    // the icon slot empty so the row's text aligns with all the
+    // other source-less rows (walk-in, manual).
+    return null;
   }
   if (source === 'manual') {
     return (
