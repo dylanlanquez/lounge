@@ -1556,17 +1556,28 @@ function NextButton({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BootScreen({ error }: { error: string | null }) {
+  // Visually identical to embedHost.ts buildLoadingSpinner() — same
+  // #F4F4F4 background, same spinner geometry, same "Loading
+  // booking…" label. The embed shows that spinner immediately on
+  // click (vanilla DOM, before React downloads); React then mounts
+  // and lands on this BootScreen while data is in flight. Matching
+  // the two states means there's no visible swap between them, so
+  // the modal reads as one continuous loading frame rather than
+  // the brief flash Dylan flagged on the high-end venneir.com surface.
   return (
     <div
       style={{
-        minHeight: '100dvh',
-        background: QUIZ.BG,
-        color: QUIZ.MUTED,
-        fontFamily: QUIZ.FONT_STACK,
+        height: '100%',
+        width: '100%',
+        background: '#F4F4F4',
+        color: '#5A6266',
+        fontFamily: 'inherit',
         fontSize: 14,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 12,
         padding: 20,
       }}
     >
@@ -1576,12 +1587,31 @@ function BootScreen({ error }: { error: string | null }) {
             margin: 0,
             color: QUIZ.ALERT,
             fontWeight: 600,
+            textAlign: 'center',
           }}
         >
           Couldn't reach the booking system. Please refresh the page.
         </p>
       ) : (
-        <span aria-live="polite">Loading…</span>
+        <>
+          <div
+            aria-hidden
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: '50%',
+              border: '3px solid rgba(14, 20, 20, 0.08)',
+              borderTopColor: 'rgba(14, 20, 20, 0.55)',
+              animation: 'vlounge-spin 0.9s linear infinite',
+            }}
+          />
+          <p
+            aria-live="polite"
+            style={{ margin: 0, lineHeight: 1.4, color: '#5A6266' }}
+          >
+            Loading booking…
+          </p>
+        </>
       )}
     </div>
   );
