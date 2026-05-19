@@ -219,6 +219,17 @@ interface AppointmentReadRow {
   start_at: string | null;
 }
 
+interface VisitReadRow {
+  id: string;
+  appointment_id: string | null;
+  walk_in_id: string | null;
+}
+
+interface WalkInReadRow {
+  id: string;
+  service_type: string | null;
+}
+
 // Default look-back. 30 days is plenty for a bell that resets on
 // click — anything older is unlikely to be actionable.
 const DEFAULT_LOOKBACK_DAYS = 30;
@@ -312,33 +323,84 @@ export function useNotifications(): UseNotificationsResult {
         if (eventErr) throw new Error(eventErr.message);
         const events = (eventRows ?? []) as unknown as PatientEventReadRow[];
 
-        // Collect appointment ids we need event_type_label for. The
-        // payload already carries service_type / product_key /
-        // start_at, so this is purely to surface the Calendly
-        // label for events whose service_type is "other".
-        const appointmentIds = Array.from(
-          new Set(
-            events
-              .map((e) => {
-                const p = e.payload ?? {};
-                return typeof p.appointment_id === 'string' ? p.appointment_id : null;
-              })
-              .filter((id): id is string => !!id),
-          ),
-        );
+        // Each event type stores the relevant appointment id under a
+        // different key in payload, plus visit_ended_early carries
+        // only a visit_id (which can be joined to an appointment OR a
+        // walk-in for the booking-type label). The collector below
+        // walks every event once and partitions the ids by lookup
+        // target — direct appointment ids, indirect via visit, and
+        // visit ids we need to resolve before we can do the
+        // appointment fetch.
+        const directAppointmentIds = new Set<string>();
+        const visitIds = new Set<string>();
+        for (const e of events) {
+          const p = e.payload ?? {};
+          if (e.event_type === 'appointment_rescheduled') {
+            // Rescheduled events point at the NEW row, which has the
+            // updated start_at + service_type. The old appointment
+            // would render a date that no longer matches reality.
+            if (typeof p.new_appointment_id === 'string') {
+              directAppointmentIds.add(p.new_appointment_id);
+            }
+          } else if (e.event_type === 'visit_ended_early') {
+            if (typeof p.visit_id === 'string') visitIds.add(p.visit_id);
+          } else {
+            // appointment_booked / appointment_cancelled.
+            if (typeof p.appointment_id === 'string') {
+              directAppointmentIds.add(p.appointment_id);
+            }
+          }
+        }
+
+        // First pass: resolve visit_ids → { appointment_id, walk_in_id }
+        // so a visit_ended_early row can pick up its booking type.
+        let visitsById = new Map<string, VisitReadRow>();
+        if (visitIds.size > 0) {
+          const { data: visitRows } = await supabase
+            .from('lng_visits')
+            .select('id, appointment_id, walk_in_id')
+            .in('id', Array.from(visitIds));
+          visitsById = new Map(
+            ((visitRows ?? []) as VisitReadRow[]).map((v) => [v.id, v]),
+          );
+        }
+
+        // Fold visit→appointment ids into the appointment fetch.
+        for (const v of visitsById.values()) {
+          if (v.appointment_id) directAppointmentIds.add(v.appointment_id);
+        }
+
+        // Walk-in ids for visits without an appointment (the visit
+        // was opened ad-hoc on the day — booking type is on the
+        // walk_in row instead).
+        const walkInIds = Array.from(visitsById.values())
+          .map((v) => v.walk_in_id)
+          .filter((id): id is string => !!id);
+
         let appointmentsById = new Map<string, AppointmentReadRow>();
-        if (appointmentIds.length > 0) {
+        if (directAppointmentIds.size > 0) {
           const { data: apptRows } = await supabase
             .from('lng_appointments')
             .select('id, event_type_label, service_type, product_key, start_at')
-            .in('id', appointmentIds);
+            .in('id', Array.from(directAppointmentIds));
           appointmentsById = new Map(
             ((apptRows ?? []) as AppointmentReadRow[]).map((a) => [a.id, a]),
           );
         }
 
+        let walkInsById = new Map<string, WalkInReadRow>();
+        if (walkInIds.length > 0) {
+          const { data: walkInRows } = await supabase
+            .from('lng_walk_ins')
+            .select('id, service_type')
+            .in('id', walkInIds);
+          walkInsById = new Map(
+            ((walkInRows ?? []) as WalkInReadRow[]).map((w) => [w.id, w]),
+          );
+        }
+
         const rows: NotificationRow[] = events
-          .map((e) => mapEventToRow(e, appointmentsById))
+          .map((e) => mapEventToRow(e, appointmentsById, visitsById, walkInsById))
           .filter((r): r is NotificationRow => r !== null);
 
         const cutoff = prefs?.last_viewed_at ?? null;
@@ -431,30 +493,64 @@ export function useNotifications(): UseNotificationsResult {
 function mapEventToRow(
   event: PatientEventReadRow,
   appointmentsById: Map<string, AppointmentReadRow>,
+  visitsById: Map<string, VisitReadRow>,
+  walkInsById: Map<string, WalkInReadRow>,
 ): NotificationRow | null {
   const type = event.event_type as NotificationEventType;
   if (!(NOTIFICATION_EVENT_TYPES as readonly string[]).includes(type)) return null;
 
   const patient = event.patient;
   const patientName = patient ? patientFullName(patient) : 'Patient';
-
   const payload = event.payload ?? {};
-  const apptIdFromPayload =
-    typeof payload.appointment_id === 'string' ? payload.appointment_id : null;
-  const visitIdFromPayload =
-    typeof payload.visit_id === 'string' ? payload.visit_id : null;
 
-  // Resolve booking-type label from payload (the event row freezes
-  // the values at the moment the event happened — survives later
-  // catalogue changes), falling back to the joined appointment for
-  // event_type_label.
-  const apptRow = apptIdFromPayload ? appointmentsById.get(apptIdFromPayload) : null;
+  // Resolve the appointment + visit/walk-in references per event
+  // type — the payload key differs (appointment_id /
+  // new_appointment_id / visit_id) and visit_ended_early reaches
+  // booking type via a visit join.
+  let apptRow: AppointmentReadRow | null = null;
+  let visitId: string | null = null;
+  let appointmentIdForLink: string | null = null;
+  let walkInServiceType: string | null = null;
+
+  if (type === 'appointment_rescheduled') {
+    const newApptId =
+      typeof payload.new_appointment_id === 'string' ? payload.new_appointment_id : null;
+    appointmentIdForLink = newApptId;
+    apptRow = newApptId ? appointmentsById.get(newApptId) ?? null : null;
+  } else if (type === 'visit_ended_early') {
+    visitId = typeof payload.visit_id === 'string' ? payload.visit_id : null;
+    const visit = visitId ? visitsById.get(visitId) ?? null : null;
+    if (visit?.appointment_id) {
+      apptRow = appointmentsById.get(visit.appointment_id) ?? null;
+    }
+    if (visit?.walk_in_id) {
+      walkInServiceType = walkInsById.get(visit.walk_in_id)?.service_type ?? null;
+    }
+  } else {
+    // appointment_booked / appointment_cancelled.
+    const apptId =
+      typeof payload.appointment_id === 'string' ? payload.appointment_id : null;
+    appointmentIdForLink = apptId;
+    apptRow = apptId ? appointmentsById.get(apptId) ?? null : null;
+  }
+
+  // Booking-type resolution: payload first (frozen at event time),
+  // then the joined appointment (the rescheduled / cancelled paths
+  // hit this branch since their payloads don't carry service_type),
+  // then a walk-in fallback. If everything's null, the helper
+  // returns "Appointment" — at which point the row template treats
+  // booking_type as "missing" and switches to a shorter sentence
+  // shape so we never read "Dylan Lane had their visit ended early
+  // for Appointment." again.
   const serviceType =
     (typeof payload.service_type === 'string' ? payload.service_type : null) ??
-    apptRow?.service_type ?? null;
+    apptRow?.service_type ??
+    walkInServiceType ??
+    null;
   const productKey =
     (typeof payload.product_key === 'string' ? payload.product_key : null) ??
-    apptRow?.product_key ?? null;
+    apptRow?.product_key ??
+    null;
   const eventTypeLabel = apptRow?.event_type_label ?? null;
 
   const bookingType = formatBookingTypeForNotification({
@@ -463,21 +559,38 @@ function mapEventToRow(
     product_key: productKey,
   });
 
-  // Scheduled-at label. visit_ended_early doesn't carry a future
-  // start_at — those rows don't show the date/time line. The other
-  // three types carry start_at on the payload.
-  const startAt =
-    (typeof payload.start_at === 'string' ? payload.start_at : null) ??
-    apptRow?.start_at ?? null;
+  // Scheduled-at: for rescheduled, prefer the new start_at from
+  // payload (canonical at event time) then the new appointment's
+  // start_at; for booked/cancelled, payload.start_at then appointment
+  // start_at; for visit_ended_early, no scheduled-at line — the
+  // event's own "12m ago" carries when.
+  let startAt: string | null = null;
+  if (type === 'appointment_rescheduled') {
+    startAt =
+      (typeof payload.new_start_at === 'string' ? payload.new_start_at : null) ??
+      apptRow?.start_at ??
+      null;
+  } else if (type === 'visit_ended_early') {
+    startAt = null;
+  } else {
+    startAt =
+      (typeof payload.start_at === 'string' ? payload.start_at : null) ??
+      apptRow?.start_at ??
+      null;
+  }
   const scheduledAtLabel = startAt ? formatNotificationDateTime(startAt) : null;
 
   // Link path:
-  //   • appointment_* events → /appointment/<id>  (pre-visit)
-  //   • visit_ended_early    → /visit/<id>        (after arrival)
+  //   • visit_ended_early → /visit/<id>        (after arrival)
+  //   • everything else   → /appointment/<id>  (pre-visit)
   const linkPath =
     type === 'visit_ended_early'
-      ? visitIdFromPayload ? `/visit/${visitIdFromPayload}` : null
-      : apptIdFromPayload ? `/appointment/${apptIdFromPayload}` : null;
+      ? visitId
+        ? `/visit/${visitId}`
+        : null
+      : appointmentIdForLink
+        ? `/appointment/${appointmentIdForLink}`
+        : null;
 
   return {
     id: event.id,

@@ -1,11 +1,20 @@
+import type { CSSProperties } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import {
   formatRelativeShort,
   NOTIFICATION_TYPE_LABELS,
   type NotificationRow as NotificationRowData,
+  type NotificationEventType,
 } from '../../lib/queries/notifications.ts';
 import { NotificationIcon } from './NotificationIcon.tsx';
+
+// formatBookingTypeForNotification returns "Appointment" as the
+// fallback when service_type / event_type_label / product_key are
+// all unresolved. Treat that as "type unknown" so the sentence
+// template can pivot to a shorter shape instead of reading
+// "rescheduled their Appointment." — which carries no information.
+const FALLBACK_BOOKING_TYPE = 'Appointment';
 
 interface NotificationRowProps {
   row: NotificationRowData;
@@ -47,7 +56,7 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
       <article
         style={{
           display: 'flex',
-          gap: theme.space[3],
+          gap: theme.space[4],
           padding: `${theme.space[4]}px ${theme.space[5]}px`,
           borderBottom: `1px solid ${theme.color.border}`,
           position: 'relative',
@@ -60,8 +69,14 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
         }}
       >
         <NotificationIcon type={row.event_type} />
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-          {/* Top row: short event-type label + relative timestamp */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {/* Top row: sentence-case event label + relative timestamp.
+              Previous treatment used uppercase + wide tracking which
+              Dylan flagged as "messy and hard to read" — the eyebrow
+              competed visually with the body sentence. Switching to
+              title case + medium weight + muted ink lets the
+              hierarchy read as: subtle label → bold sentence → quiet
+              action link. */}
           <div
             style={{
               display: 'flex',
@@ -72,11 +87,10 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
           >
             <span
               style={{
-                fontSize: theme.type.size.xs,
-                fontWeight: theme.type.weight.semibold,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
                 color: theme.color.inkMuted,
-                letterSpacing: theme.type.tracking.wide,
-                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.normal,
               }}
             >
               {labels.short}
@@ -86,49 +100,26 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
                 fontSize: theme.type.size.xs,
                 color: theme.color.inkSubtle,
                 whiteSpace: 'nowrap',
+                fontVariantNumeric: 'tabular-nums',
               }}
             >
               {relative}
             </span>
           </div>
 
-          {/* Middle row: the sentence. "[Name] [verb] [type] on [datetime]" */}
+          {/* Middle row: per-event sentence. Phrased to read
+              naturally for each event type — see NotificationSentence
+              below. */}
           <p
             style={{
               margin: 0,
               fontSize: theme.type.size.base,
               color: theme.color.ink,
               lineHeight: theme.type.leading.snug,
-              // Wrap natural sentences — no clamp so long booking
-              // types stay readable.
               wordBreak: 'break-word',
             }}
           >
-            <HighlightedText
-              text={row.patient_name}
-              highlight={highlight}
-              weight={theme.type.weight.semibold}
-            />{' '}
-            <span style={{ color: theme.color.inkMuted }}>{labels.verb}</span>{' '}
-            <HighlightedText
-              text={row.booking_type}
-              highlight={highlight}
-              weight={theme.type.weight.semibold}
-            />
-            {row.scheduled_at_label ? (
-              <>
-                {' '}
-                <span style={{ color: theme.color.inkMuted }}>on</span>{' '}
-                <HighlightedText
-                  text={row.scheduled_at_label}
-                  highlight={highlight}
-                  weight={theme.type.weight.medium}
-                />
-                .
-              </>
-            ) : (
-              '.'
-            )}
+            <NotificationSentence row={row} highlight={highlight} />
           </p>
 
           {/* Bottom row: action affordance. Only shown when there's
@@ -143,16 +134,152 @@ export function NotificationRow({ row, unseen, highlight, onActivate }: Notifica
                 fontSize: theme.type.size.sm,
                 fontWeight: theme.type.weight.medium,
                 color: theme.color.accent,
-                marginTop: theme.space[1],
               }}
             >
-              View appointment <ArrowRight size={14} />
+              {row.event_type === 'visit_ended_early' ? 'View visit' : 'View appointment'}
+              <ArrowRight size={14} />
             </span>
           ) : null}
         </div>
       </article>
     </button>
   );
+}
+
+// Per-event-type sentence template. Each type reads naturally in
+// English and degrades gracefully when the booking type is
+// unresolved (falls back to a shorter shape rather than the
+// uninformative "for Appointment" fallback Dylan flagged).
+function NotificationSentence({
+  row,
+  highlight,
+}: {
+  row: NotificationRowData;
+  highlight?: string;
+}) {
+  const typeKnown = row.booking_type && row.booking_type !== FALLBACK_BOOKING_TYPE;
+
+  // Helpers for the inline run. Bold = key noun (patient / booking
+  // type / date); plain muted = connective tissue ("booked for",
+  // "on", etc).
+  const Name = (
+    <HighlightedText
+      text={row.patient_name}
+      highlight={highlight}
+      weight={theme.type.weight.semibold}
+    />
+  );
+  const Type = typeKnown ? (
+    <HighlightedText
+      text={row.booking_type}
+      highlight={highlight}
+      weight={theme.type.weight.semibold}
+    />
+  ) : null;
+  const Date = row.scheduled_at_label ? (
+    <HighlightedText
+      text={row.scheduled_at_label}
+      highlight={highlight}
+      weight={theme.type.weight.medium}
+    />
+  ) : null;
+
+  switch (row.event_type as NotificationEventType) {
+    case 'appointment_booked':
+      // "Dylan Lane booked for Denture Repair on Tuesday, 19 May 2026 at 11:30 BST."
+      // Type-unknown fallback: "Dylan Lane booked a new appointment for Tuesday, 19 May 2026 at 11:30 BST."
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted> booked for </Muted>
+          {Type}
+          {Date ? (
+            <>
+              <Muted> on </Muted>
+              {Date}
+            </>
+          ) : null}
+          .
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted> booked a new appointment{Date ? ' for ' : ''}</Muted>
+          {Date}.
+        </>
+      );
+
+    case 'appointment_rescheduled':
+      // "Michael Liddle rescheduled their Denture Repair to Monday, 25 May 2026 at 13:00 BST."
+      // Type-unknown: "Michael Liddle rescheduled their appointment to Monday, 25 May 2026 at 13:00 BST."
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted> rescheduled their </Muted>
+          {Type}
+          {Date ? (
+            <>
+              <Muted> to </Muted>
+              {Date}
+            </>
+          ) : null}
+          .
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted> rescheduled their appointment{Date ? ' to ' : ''}</Muted>
+          {Date}.
+        </>
+      );
+
+    case 'appointment_cancelled':
+      // "Dylan Lane cancelled their Denture Repair scheduled for Tuesday, 19 May 2026 at 11:30 BST."
+      // Type-unknown: "Dylan Lane cancelled their appointment scheduled for Tuesday, 19 May 2026 at 11:30 BST."
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted> cancelled their </Muted>
+          {Type}
+          {Date ? (
+            <>
+              <Muted> scheduled for </Muted>
+              {Date}
+            </>
+          ) : null}
+          .
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted> cancelled their appointment{Date ? ' scheduled for ' : ''}</Muted>
+          {Date}.
+        </>
+      );
+
+    case 'visit_ended_early':
+      // "Dylan Lane's Denture Repair visit ended early."
+      // Type-unknown: "Dylan Lane's visit ended early." — covers walk-ins
+      // and appointments where the lookup couldn't resolve a type.
+      return typeKnown ? (
+        <>
+          {Name}
+          <Muted>{`’s `}</Muted>
+          {Type}
+          <Muted> visit ended early</Muted>.
+        </>
+      ) : (
+        <>
+          {Name}
+          <Muted>{`’s visit ended early`}</Muted>.
+        </>
+      );
+  }
+}
+
+function Muted({ children }: { children: React.ReactNode }) {
+  const style: CSSProperties = { color: theme.color.inkMuted };
+  return <span style={style}>{children}</span>;
 }
 
 // Highlights substrings of `text` matching `highlight` (case-
