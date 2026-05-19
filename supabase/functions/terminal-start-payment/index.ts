@@ -168,24 +168,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Create PaymentIntent. payment_method_types branches on journey:
-  //
-  //   • klarna → 'klarna'. Stripe's Klarna+Terminal integration
-  //     (changelog 2026-04-22) returns a klarna_display_qr_code
-  //     next_action and the S700 reader displays the QR for the
-  //     customer to scan. Confirmation flows through the same
-  //     payment_intent.succeeded webhook as card payments.
-  //
-  //   • standard / clearpay → 'card_present'. Card taps and
-  //     Clearpay's virtual Visa both ride the card_present rail.
-  //
-  // Reader stage (process_payment_intent) below stays the same —
-  // Stripe routes the PI to the reader regardless of method.
-  const paymentMethodType = journey === 'klarna' ? 'klarna' : 'card_present';
+  // Create PaymentIntent
   const piRes = await stripeFetch('POST', '/payment_intents', {
     amount: String(body.amount_pence),
     currency: 'gbp',
-    'payment_method_types[]': paymentMethodType,
+    'payment_method_types[]': 'card_present',
     capture_method: 'automatic',
     'metadata[visit_id]': body.visit_id,
     'metadata[cart_id]': cart.id,

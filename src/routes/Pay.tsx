@@ -7,6 +7,7 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
+import { KlarnaInStoreModal } from '../components/KlarnaInStoreModal/KlarnaInStoreModal.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
@@ -84,6 +85,10 @@ export function Pay() {
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [bnplOpen, setBnplOpen] = useState(false);
+  // Klarna goes through the native In-Store API now (its own QR +
+  // payment_link modal) rather than the virtual-Visa-via-S700 path
+  // BNPLHelper drives. Clearpay still uses BNPLHelper.
+  const [klarnaOpen, setKlarnaOpen] = useState(false);
   const [journey, setJourney] = useState<Journey>('standard');
   const { data: readers } = useTerminalReaders();
   const reader = readers[0] ?? null;
@@ -100,21 +105,22 @@ export function Pay() {
   };
 
   const openBnpl = (provider: BnplProvider) => {
+    // Klarna routes to the native In-Store API modal (QR + payment
+    // link). The S700 reader is irrelevant for Klarna in this path
+    // — the customer pays in their own app, no terminal involved —
+    // so we don't gate Klarna on a connected reader. Clearpay
+    // still uses the virtual-Visa-via-S700 path and DOES need a
+    // reader, so the guard stays in place for that branch.
+    if (provider === 'klarna') {
+      setJourney('klarna');
+      setKlarnaOpen(true);
+      return;
+    }
     if (!reader) {
       setError('No card reader registered. BNPL needs the same reader.');
       return;
     }
     setJourney(provider);
-    // Klarna now routes straight to TerminalPaymentModal: Stripe's
-    // Klarna+Terminal QR feature (changelog 2026-04-22) displays
-    // the QR on the S700 screen, so the helper walkthrough is no
-    // longer needed for Klarna. Clearpay still uses BNPLHelper
-    // (preflight + steps) because its virtual-Visa flow still
-    // requires "open the app, tap on the reader".
-    if (provider === 'klarna') {
-      setTerminalOpen(true);
-      return;
-    }
     setBnplOpen(true);
   };
 
@@ -476,7 +482,7 @@ export function Pay() {
               : 'Take the full amount in one go, or split across more than one method.')}
           {stage === 'cash' && 'Tap what the customer hands you. Change is calculated for you.'}
           {stage === 'card' && 'Card terminal flow ships in slice 8.'}
-          {stage === 'bnpl' && 'Klarna: reader shows a QR for the customer to scan. Clearpay: customer taps phone on the reader.'}
+          {stage === 'bnpl' && 'Klarna shows a QR for the customer to scan in their app. Clearpay still uses the card reader.'}
           {stage === 'success' && 'Choose how to send the receipt.'}
         </p>
 
@@ -546,14 +552,14 @@ export function Pay() {
                 icon={<ShoppingBag size={20} />}
                 title="Buy now, pay later"
                 description={
-                  !reader
-                    ? 'Needs a registered reader'
-                    : paymentMode === 'split' && parsedSplitAmount === 0
-                      ? 'Set a split amount above first'
+                  paymentMode === 'split' && parsedSplitAmount === 0
+                    ? 'Set a split amount above first'
+                    : !reader
+                      ? `Klarna available (QR). Clearpay needs the card reader.`
                       : `Charge ${formatPence(chargeAmountPence)} via Klarna or Clearpay`
                 }
                 onClick={() => setStage('bnpl')}
-                disabled={!reader || chargeAmountPence <= 0}
+                disabled={chargeAmountPence <= 0}
               />
             </div>
           </div>
@@ -569,13 +575,8 @@ export function Pay() {
               <MethodCard
                 icon={<ShoppingBag size={20} />}
                 title="Klarna"
-                description={
-                  reader
-                    ? `Reader shows a QR. Customer scans it with their phone, pays in the Klarna app.`
-                    : 'Needs a registered card reader. The reader displays the Klarna QR.'
-                }
+                description="Customer scans a QR with their phone. Pays in the Klarna app. No card reader needed."
                 onClick={() => openBnpl('klarna')}
-                disabled={!reader}
               />
               <MethodCard
                 icon={<ShoppingBag size={20} />}
@@ -762,6 +763,32 @@ export function Pay() {
             />
           ) : null}
         </>
+      ) : null}
+
+      {/* Klarna In-Store API modal. Rendered OUTSIDE the reader
+          guard above because Klarna doesn't need the S700 — the
+          customer pays in their own Klarna app via the QR. cart is
+          still required (we need the cart_id for the session). */}
+      {cart ? (
+        <KlarnaInStoreModal
+          open={klarnaOpen}
+          onClose={() => setKlarnaOpen(false)}
+          visitId={visit?.id ?? ''}
+          cartId={cart.id}
+          amountPence={chargeAmountPence}
+          onSucceeded={(pid) => {
+            setPaymentId(pid);
+            setKlarnaOpen(false);
+            refreshPaid();
+            if (willClearBill) {
+              setStage('success');
+            } else {
+              setPaymentMode('full');
+              setSplitAmountText('');
+              setStage('choose');
+            }
+          }}
+        />
       ) : null}
 
       {error ? (
