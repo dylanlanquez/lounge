@@ -176,8 +176,6 @@ export function CashCounts() {
               <RecentActivityCard
                 lines={position.data.lines}
                 baselinePence={position.data.baseline_pence}
-                paymentCount={position.data.payment_count}
-                withdrawalCount={position.data.withdrawal_count}
               />
             ) : null}
             <HistoryCard
@@ -392,13 +390,9 @@ function RightNowCard({
 function RecentActivityCard({
   lines,
   baselinePence,
-  paymentCount,
-  withdrawalCount,
 }: {
   lines: CashPosition['lines'];
   baselinePence: number;
-  paymentCount: number;
-  withdrawalCount: number;
 }) {
   const navigate = useNavigate();
   const paymentTotal = useMemo(
@@ -409,7 +403,6 @@ function RecentActivityCard({
     () => lines.reduce((sum, l) => (l.kind === 'withdrawal' ? sum + l.amount_pence : sum), 0),
     [lines],
   );
-  const netDelta = paymentTotal - withdrawalTotal;
   const handleOpenPayment = (line: CashPositionPaymentLine) => {
     if (!line.visit_id) return;
     navigate(`/visit/${line.visit_id}`);
@@ -445,7 +438,7 @@ function RecentActivityCard({
               lineHeight: theme.type.leading.snug,
             }}
           >
-            Opening {formatPence(baselinePence)}. {formatNumber(paymentCount)} payment{paymentCount === 1 ? '' : 's'} in, {formatNumber(withdrawalCount)} withdrawal{withdrawalCount === 1 ? '' : 's'} out. Tap a payment row to open the visit.
+            Opening {formatPence(baselinePence)}. Every payment in and every withdrawal out since. Tap a payment row to open the visit.
           </span>
         </div>
       </div>
@@ -536,9 +529,8 @@ function RecentActivityCard({
                       fontSize: theme.type.size.xs,
                       color: theme.color.inkMuted,
                       fontVariantNumeric: 'tabular-nums',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      lineHeight: theme.type.leading.snug,
+                      wordBreak: 'break-word',
                     }}
                   >
                     {subParts.join(' · ')}
@@ -570,9 +562,11 @@ function RecentActivityCard({
         })}
       </ul>
 
-      {/* Footer total — opening + net = closing. Reconciles to the
-          RightNowCard's expected_in_safe_pence so staff can double-
-          check the table's sum equals the headline. */}
+      {/* Footer — two neutral stats. Cash in and cash out shown side
+          by side so daily banking doesn't render as one big red
+          "deficit" headline. The Right-now card above already owns
+          the running-balance number; this card is purely the
+          breakdown that sums to it. */}
       <div
         style={{
           marginTop: theme.space[3],
@@ -582,27 +576,55 @@ function RecentActivityCard({
           justifyContent: 'space-between',
           alignItems: 'baseline',
           gap: theme.space[3],
+          flexWrap: 'wrap',
         }}
       >
-        <span
-          style={{
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-            fontWeight: theme.type.weight.semibold,
-          }}
-        >
-          Net since opening
-        </span>
-        <span
-          style={{
-            fontSize: theme.type.size.lg,
-            fontWeight: theme.type.weight.semibold,
-            color: netDelta < 0 ? theme.color.alert : theme.color.ink,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {netDelta < 0 ? '−' : '+'}{formatPence(Math.abs(netDelta))}
-        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Cash in
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {formatPence(paymentTotal)}
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'right' }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Cash out
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {formatPence(withdrawalTotal)}
+          </span>
+        </div>
       </div>
     </Card>
   );
