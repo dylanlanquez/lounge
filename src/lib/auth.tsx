@@ -23,8 +23,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session);
       setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
+      // Record every successful sign-in so Admin > Staff can show
+      // "Last active". Fire-and-forget — a network blip here must
+      // never block sign-in. The RPC is SECURITY DEFINER and
+      // self-scoped (writes only the caller's lng_staff_members
+      // row), so there's no privilege surface to worry about.
+      if (event === 'SIGNED_IN' && s?.user?.id) {
+        void (async () => {
+          try {
+            await supabase.rpc('lng_record_staff_sign_in');
+          } catch {
+            /* never block sign-in on an admin-side write */
+          }
+        })();
+      }
     });
     return () => {
       mounted = false;

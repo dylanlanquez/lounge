@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Toast } from '../components/index.ts';
@@ -36,6 +36,23 @@ function readHashMode(): Mode {
   return 'unknown';
 }
 
+// Read ?invite=<uuid> from the URL. This is the Lounge-side custom
+// invite token the email contains — distinct from the Supabase
+// session that lives in the hash fragment.
+function readInviteToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const t = (params.get('invite') ?? '').trim();
+  return t.length > 0 ? t : null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type InviteExchangeState =
+  | { kind: 'idle' }
+  | { kind: 'exchanging' }
+  | { kind: 'error'; message: string };
+
 export function Welcome() {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
@@ -45,6 +62,86 @@ export function Welcome() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const inviteToken = useMemo(() => readInviteToken(), []);
+  const [exchange, setExchange] = useState<InviteExchangeState>(() =>
+    inviteToken ? { kind: 'exchanging' } : { kind: 'idle' },
+  );
+
+  // ── Custom-token exchange ──────────────────────────────────────
+  // When the URL has ?invite=<uuid> AND we don't already have a
+  // session (the user might already be signed in if they followed
+  // through and reloaded), call lng-accept-invite. It validates the
+  // token, mints a fresh Supabase magic-link, and we redirect the
+  // browser to it. Supabase then verifies, signs the user in, and
+  // bounces back to /welcome with a session in the URL hash —
+  // which the supabase-js client picks up automatically and feeds
+  // into AuthProvider.
+  useEffect(() => {
+    if (!inviteToken) return;
+    if (user) {
+      // Already signed in — the invite was already exchanged in a
+      // previous tab or a previous click. Just drop the ?invite=
+      // from the URL and let the password-set UI render.
+      const next = new URL(window.location.href);
+      next.searchParams.delete('invite');
+      window.history.replaceState({}, '', next.toString());
+      setExchange({ kind: 'idle' });
+      return;
+    }
+    if (!UUID_RE.test(inviteToken)) {
+      setExchange({ kind: 'error', message: 'The invite link is malformed.' });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error: invokeErr } = await supabase.functions.invoke<unknown>(
+          'lng-accept-invite',
+          { body: { invite_token: inviteToken } },
+        );
+        if (cancelled) return;
+        if (invokeErr) {
+          setExchange({
+            kind: 'error',
+            message:
+              'We could not validate your invite. Ask your administrator to resend it from the Staff tab.',
+          });
+          return;
+        }
+        const payload = (data ?? {}) as {
+          ok?: boolean;
+          action_link?: string;
+          message?: string;
+          reason?: string;
+        };
+        if (!payload.ok || !payload.action_link) {
+          setExchange({
+            kind: 'error',
+            message:
+              payload.message ??
+              'This invite is no longer valid. Ask your administrator to resend it from the Staff tab.',
+          });
+          return;
+        }
+        // Hand the browser off to the Supabase magic-link. The page
+        // will navigate away from this tab, so no further state
+        // updates are needed.
+        window.location.assign(payload.action_link);
+      } catch (e) {
+        if (cancelled) return;
+        setExchange({
+          kind: 'error',
+          message:
+            e instanceof Error
+              ? e.message
+              : 'Could not validate your invite. Please ask your administrator to resend it.',
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken, user]);
 
   // After a successful update, give the auth context a moment to
   // settle, then bounce to the app shell. The router does the
@@ -55,17 +152,39 @@ export function Welcome() {
     return () => clearTimeout(t);
   }, [done, navigate]);
 
-  if (loading) {
+  if (loading || exchange.kind === 'exchanging') {
     return (
       <Shell>
-        <p style={{ color: theme.color.inkMuted, margin: 0 }}>Checking your invite…</p>
+        <p style={{ color: theme.color.inkMuted, margin: 0 }}>
+          {exchange.kind === 'exchanging' ? 'Signing you in…' : 'Checking your invite…'}
+        </p>
       </Shell>
     );
   }
 
-  // No session means the link was opened but no token attached, or
-  // the token already expired and Supabase rejected it. Either way
-  // the user can't proceed from here without a fresh invite.
+  // Custom-token exchange failed before we ever got a session. We
+  // know what went wrong (expired / consumed / inactive) so the
+  // copy here is specific instead of the generic "expired" page.
+  if (exchange.kind === 'error') {
+    return (
+      <Shell>
+        <Card padding="lg">
+          <h1 style={titleStyle}>We could not sign you in</h1>
+          <p style={subtitleStyle}>{exchange.message}</p>
+          <div style={{ marginTop: theme.space[6] }}>
+            <Button variant="secondary" fullWidth onClick={() => navigate('/sign-in', { replace: true })}>
+              Go to sign in
+            </Button>
+          </div>
+        </Card>
+      </Shell>
+    );
+  }
+
+  // No session AND no invite token in the URL means the link was
+  // opened with neither the Supabase session hash NOR our custom
+  // invite token. Either way the user can't proceed without a
+  // fresh invite.
   if (!user) {
     return (
       <Shell>

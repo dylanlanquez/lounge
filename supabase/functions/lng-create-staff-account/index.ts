@@ -2,31 +2,36 @@
 //
 // Provisions a brand-new Lounge staff identity end-to-end:
 //
-//   1. Mints an auth.users row + invite token via
-//      auth.admin.generateLink({ type: 'invite' }). Critically, this
-//      DOES NOT trigger Supabase's per-project auth invite email —
-//      Supabase only sends if you call inviteUserByEmail. We want to
-//      send our own.
+//   1. Mints an auth.users row WITHOUT putting any Supabase token
+//      into a public email. We use auth.admin.createUser so we get
+//      the auth_user_id; the sign-in link itself is minted later by
+//      lng-accept-invite when the staff member actually clicks
+//      through to /welcome.
 //   2. Inserts a public.accounts row (account_type=internal,
 //      internal_sub_type=customer_service) so the new identity is
 //      tagged as clinic-only and won't be surfaced in Meridian's
 //      lab/practice views.
 //   3. Inserts a public.lng_staff_members row with the supplied
-//      role flags (is_admin / is_manager).
+//      role flags (is_admin / is_manager) AND a freshly-minted
+//      Lounge-side invite_token (UUID) + invite_expires_at (now +
+//      7 days). The token is the credential we embed in the email.
 //   4. Renders the staff_invite template from public.lng_email_templates
 //      via the shared renderer (_shared/emailRenderer.ts) and
-//      delivers the email through Resend.
+//      delivers the email through Resend. inviteUrl points at
+//      /welcome?invite=<token> — NOT a Supabase action_link.
 //
-// Why we don't use auth.admin.inviteUserByEmail: that primitive
-// triggers Supabase to send the project-global invite template. The
-// Supabase project (npuvhxakffxqoszytkxw) is shared with Meridian
-// per ADR-001, so re-branding the project's invite template to
-// Lounge would also re-brand Meridian's invite emails. Instead, every
-// Lounge transactional email is rendered from lng_email_templates
-// and shipped via Resend — same architecture as send-appointment-
-// reminders / send-appointment-confirmation / lng-send-password-
-// reset / lng-send-magic-link. That gives one editing surface
-// (Admin → Emails) for every Lounge customer- or staff-facing email.
+// Why we don't use auth.admin.inviteUserByEmail OR
+// auth.admin.generateLink({type:'invite'}) at create time: those
+// produce a Supabase-hosted action_link that mutates state on every
+// GET. Corporate mail scanners (Outlook ATP, Gmail Safe Links,
+// generic security gateways) issue a GET on every URL in every
+// email to sandbox-scan it for malware. That GET consumes the
+// single-use Supabase token before the real human ever clicks,
+// and the human lands on an "expired" page. The custom token
+// pattern dodges this entirely: the email link points at a
+// Lounge-hosted HTML page that does nothing without a follow-up
+// POST to lng-accept-invite; scanner pre-fetches walk through the
+// HTML and get nothing.
 //
 // Auth: Bearer JWT (anon key). Caller must be an active Lounge admin.
 // Granting is_admin to the new account is super-admin-only.
@@ -160,25 +165,35 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Step 1 — mint the auth user + invite token. generateLink does
-  // NOT trigger Supabase's project-global invite email; we render
-  // and send our own below.
-  const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
-    type: 'invite',
+  // Step 1 — mint the auth user. We do NOT generate a Supabase
+  // action_link at create time. Email scanners pre-fetch every link
+  // they see and consume one-shot tokens; the human lands on
+  // "expired". Instead we use createUser to provision the
+  // auth.users row + email_confirmed_at (so a future magic-link
+  // doesn't trigger a confirmation flow), and mint the actual
+  // sign-in URL at click-time via lng-accept-invite.
+  const { data: createData, error: createErr } = await admin.auth.admin.createUser({
     email,
-    options: {
-      redirectTo: REDIRECT_TO,
-      data: { first_name: firstName, last_name: lastName, source: 'lounge' },
-    },
+    email_confirm: true,
+    user_metadata: { first_name: firstName, last_name: lastName, source: 'lounge' },
   });
-  if (linkErr || !linkData?.user || !linkData.properties?.action_link) {
+  if (createErr || !createData?.user) {
     return jsonResponse(400, {
       ok: false,
-      error: `Invite link generation failed: ${linkErr?.message ?? 'no link returned'}`,
+      error: `Auth user creation failed: ${createErr?.message ?? 'no user returned'}`,
     });
   }
-  const newAuthUserId = linkData.user.id;
-  const inviteUrl = linkData.properties.action_link;
+  const newAuthUserId = createData.user.id;
+
+  // Mint a custom Lounge-side invite token. The UUID is the
+  // credential embedded in the email; expires_at is 7 days out so a
+  // staff member who opens the mail next morning still has a
+  // working link. The Supabase magic-link minted by lng-accept-
+  // invite at click-time keeps its standard short TTL.
+  const inviteToken = crypto.randomUUID();
+  const inviteSentAt = new Date();
+  const inviteExpiresAt = new Date(inviteSentAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const inviteUrl = `${LOUNGE_PUBLIC_URL}/welcome?invite=${inviteToken}`;
 
   // Step 2 — accounts row.
   const composedName = `${firstName} ${lastName}`.trim();
@@ -205,13 +220,19 @@ Deno.serve(async (req) => {
   }
   const accountId = (insertedAccount as { id: string }).id;
 
-  // Step 3 — lng_staff_members row.
+  // Step 3 — lng_staff_members row. invite_token + invite_sent_at +
+  // invite_expires_at land here so lng-accept-invite can validate
+  // the click later, and so Admin > Staff can show
+  // "invited / accepted / last active" timestamps.
   const { data: staffRow, error: staffErr } = await admin
     .from('lng_staff_members')
     .insert({
       account_id: accountId,
       is_admin: isAdminFlag,
       is_manager: isManagerFlag,
+      invite_token: inviteToken,
+      invite_sent_at: inviteSentAt.toISOString(),
+      invite_expires_at: inviteExpiresAt.toISOString(),
     })
     .select('id')
     .single();

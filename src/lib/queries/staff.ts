@@ -50,6 +50,18 @@ export interface StaffRow {
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
+  // Staff-invite lifecycle (Phase: post-pre-launch). All four are
+  // nullable: invite_sent_at + invite_expires_at + invite_accepted_at
+  // are written by lng-create-staff-account / lng-accept-invite /
+  // lng-resend-staff-invite. last_sign_in_at is bumped by the
+  // lng_record_staff_sign_in RPC fired from AuthProvider on every
+  // SIGNED_IN event. Existing pre-feature staff have invite_accepted_at
+  // backfilled to hired_at so the Admin UI doesn't read "never
+  // accepted" for everyone with a working account.
+  invite_sent_at: string | null;
+  invite_expires_at: string | null;
+  invite_accepted_at: string | null;
+  last_sign_in_at: string | null;
   // accounts columns (joined for display)
   account_id: string;
   first_name: string | null;
@@ -93,6 +105,10 @@ interface RawJoinedRow {
   status: 'active' | 'inactive';
   hired_at: string;
   deactivated_at: string | null;
+  invite_sent_at: string | null;
+  invite_expires_at: string | null;
+  invite_accepted_at: string | null;
+  last_sign_in_at: string | null;
   account: {
     id: string;
     first_name: string | null;
@@ -143,6 +159,10 @@ function mapRow(r: RawJoinedRow): StaffRow {
     status: r.status,
     hired_at: r.hired_at,
     deactivated_at: r.deactivated_at,
+    invite_sent_at: r.invite_sent_at,
+    invite_expires_at: r.invite_expires_at,
+    invite_accepted_at: r.invite_accepted_at,
+    last_sign_in_at: r.last_sign_in_at,
     account_id: r.account_id,
     first_name: fn,
     last_name: ln,
@@ -156,7 +176,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -509,6 +529,32 @@ export async function sendPasswordReset(staffMemberId: string): Promise<SendLink
 
 export async function sendMagicLink(staffMemberId: string): Promise<SendLinkResult> {
   return invokeAndUnpackLink('lng-send-magic-link', staffMemberId);
+}
+
+// Re-sends the staff_invite email with a freshly-minted Lounge
+// invite_token + 7-day expiry. Used by the Manage staff sheet when
+// a staff member never accepted (token expired, or scanner ate the
+// previous link). Refuses if the staff already accepted — admins
+// should send a password reset in that case instead.
+export async function resendStaffInvite(staffMemberId: string): Promise<SendLinkResult> {
+  const { data, error } = await supabase.functions.invoke<{
+    ok: boolean;
+    error?: string;
+    email_sent?: boolean;
+    email_error?: string;
+    manual_invite_link?: string;
+  }>('lng-resend-staff-invite', {
+    body: { staff_member_id: staffMemberId },
+  });
+  if (error) throw new Error(error.message);
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error ?? 'Could not resend the invite.');
+  }
+  return {
+    emailSent: data.email_sent === true,
+    manualLink: data.manual_invite_link,
+    emailError: data.email_error,
+  };
 }
 
 export interface Reset2faResult {

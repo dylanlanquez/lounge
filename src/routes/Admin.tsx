@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
 import {
@@ -39,6 +39,7 @@ import {
   archiveStaffRole,
   createStaffRole,
   resetTwoFactor,
+  resendStaffInvite,
   sendMagicLink,
   sendPasswordReset,
   setAdminPageAccess,
@@ -2348,7 +2349,9 @@ function StaffTab() {
   const [nameBusy, setNameBusy] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
-  const [actionBusy, setActionBusy] = useState<null | 'password_reset' | 'magic_link' | 'reset_2fa' | 'toggle_2fa'>(null);
+  const [actionBusy, setActionBusy] = useState<
+    null | 'password_reset' | 'magic_link' | 'reset_2fa' | 'toggle_2fa' | 'resend_invite'
+  >(null);
   const [actionFeedback, setActionFeedback] = useState<{
     tone: 'success' | 'error';
     title: string;
@@ -2590,6 +2593,38 @@ function StaffTab() {
       setActionFeedback({
         tone: 'error',
         title: 'Could not send password reset.',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const handleResendInvite = async () => {
+    if (!managing) return;
+    setActionBusy('resend_invite');
+    setActionFeedback(null);
+    try {
+      const r = await resendStaffInvite(managing.staff_member_id);
+      if (r.emailSent) {
+        setActionFeedback({
+          tone: 'success',
+          title: 'Invite re-sent.',
+          description: `A fresh invite landed in ${managing.login_email}. The link is valid for 7 days; previous invite links are now invalid.`,
+        });
+        staff.refresh();
+      } else {
+        setActionFeedback({
+          tone: 'error',
+          title: 'Invite generated, but email could not be delivered.',
+          description: r.emailError ?? 'Copy the link below and send it manually.',
+          manualLink: r.manualLink,
+        });
+      }
+    } catch (e) {
+      setActionFeedback({
+        tone: 'error',
+        title: 'Could not resend invite.',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
@@ -3283,10 +3318,34 @@ function StaffTab() {
             </ManageSection>
 
             <ManageSection
+              title="Invite & sign-in"
+              description="When their invite was sent, when they accepted it, and the last time they signed in."
+            >
+              <InviteStatusPanel
+                inviteSentAt={managing.invite_sent_at}
+                inviteExpiresAt={managing.invite_expires_at}
+                inviteAcceptedAt={managing.invite_accepted_at}
+                lastSignInAt={managing.last_sign_in_at}
+                hiredAt={managing.hired_at}
+              />
+            </ManageSection>
+
+            <ManageSection
               title="Account actions"
               description="Send sign-in help or remove their authenticator. Every action is delivered to their email on file."
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+                {!managing.invite_accepted_at ? (
+                  <ActionRow
+                    icon={<Mail size={16} aria-hidden />}
+                    title="Resend invite"
+                    description="Re-sends the staff_invite email with a fresh 7-day link. The previous invite (if any) is voided so older emails can't be used. Hidden once the staff member has accepted; use Send password reset after that."
+                    cta="Resend invite"
+                    loading={actionBusy === 'resend_invite'}
+                    disabled={!!actionBusy}
+                    onClick={handleResendInvite}
+                  />
+                ) : null}
                 <ActionRow
                   icon={<KeyRound size={16} aria-hidden />}
                   title="Send password reset link"
@@ -3885,6 +3944,111 @@ function RolePill({ tone, children }: { tone: 'accent' | 'accent-soft' | 'neutra
       {children}
     </span>
   );
+}
+
+// Read-only summary of the staff member's invite + sign-in
+// lifecycle. Three rows:
+//   - Invite sent → expires (when never accepted) OR Invite
+//     accepted (when accepted)
+//   - Last signed in (when present)
+//   - Joined Lounge (always — derived from hired_at)
+// Renders inline as a tight key/value grid; the ManageSection
+// header above carries the "Invite & sign-in" title so the panel
+// itself stays compact.
+function InviteStatusPanel({
+  inviteSentAt,
+  inviteExpiresAt,
+  inviteAcceptedAt,
+  lastSignInAt,
+  hiredAt,
+}: {
+  inviteSentAt: string | null;
+  inviteExpiresAt: string | null;
+  inviteAcceptedAt: string | null;
+  lastSignInAt: string | null;
+  hiredAt: string;
+}) {
+  const rows: Array<{ label: string; value: string; tone?: 'muted' | 'alert' }> = [];
+  if (inviteAcceptedAt) {
+    rows.push({ label: 'Invite accepted', value: formatLifecycleStamp(inviteAcceptedAt) });
+  } else if (inviteSentAt) {
+    rows.push({ label: 'Invite sent', value: formatLifecycleStamp(inviteSentAt) });
+    if (inviteExpiresAt) {
+      const expiresMs = new Date(inviteExpiresAt).getTime();
+      const expired = Number.isFinite(expiresMs) && expiresMs < Date.now();
+      rows.push({
+        label: expired ? 'Invite expired' : 'Invite expires',
+        value: formatLifecycleStamp(inviteExpiresAt),
+        tone: expired ? 'alert' : 'muted',
+      });
+    }
+  } else {
+    rows.push({
+      label: 'Invite',
+      value: 'Never sent (pre-feature account)',
+      tone: 'muted',
+    });
+  }
+  rows.push({
+    label: 'Last signed in',
+    value: lastSignInAt ? formatLifecycleStamp(lastSignInAt) : 'Not yet',
+    tone: lastSignInAt ? undefined : 'muted',
+  });
+  rows.push({
+    label: 'Joined Lounge',
+    value: formatLifecycleStamp(hiredAt),
+  });
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'max-content 1fr',
+        columnGap: theme.space[5],
+        rowGap: theme.space[2],
+        padding: theme.space[4],
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.input,
+      }}
+    >
+      {rows.map((r, i) => (
+        <Fragment key={`${r.label}|${i}`}>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              alignSelf: 'baseline',
+            }}
+          >
+            {r.label}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: r.tone === 'alert' ? theme.color.alert : theme.color.ink,
+              fontWeight: theme.type.weight.medium,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {r.value}
+          </span>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function formatLifecycleStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 // Vertical layout for one section inside the Manage sheet. Title +
