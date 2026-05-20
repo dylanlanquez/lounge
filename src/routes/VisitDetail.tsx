@@ -21,6 +21,7 @@ import {
   RotateCcw,
   ShoppingCart,
   StickyNote,
+  Truck,
   User as UserIcon,
   UserCheck,
   X,
@@ -4680,7 +4681,30 @@ function ShippedItemsCard({
 
   return (
     <CollapsibleCard
-      icon={<Package size={20} color={theme.color.accent} aria-hidden />}
+      icon={
+        // Same 30px accent-tinted chip the Patient profile and the
+        // RescheduleAfterArrivalNote headers use on this page —
+        // without it the Shipped-items section read as a different
+        // visual family from the rest of the page chrome. Truck
+        // reads as shipping more directly than the generic Package
+        // glyph the section used to carry.
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 30,
+            height: 30,
+            borderRadius: theme.radius.pill,
+            background: theme.color.accentBg,
+            color: theme.color.accent,
+            flexShrink: 0,
+          }}
+        >
+          <Truck size={15} aria-hidden />
+        </span>
+      }
       title="Shipped items"
       defaultOpen
     >
