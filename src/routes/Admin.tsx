@@ -3161,7 +3161,7 @@ function StaffTab() {
 
             <ManageSection
               title="Permissions"
-              description="Admin opens the /admin tab and unlocks every page below by default. Manager is required to sign off discounts, voids, and refunds at the till."
+              description="Admin opens the /admin tab and unlocks every page below by default. Manager picks who gets notified when a cashier applies a discount, issues a refund, or voids a payment at the till."
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
                 <PermissionRow
@@ -3180,7 +3180,7 @@ function StaffTab() {
                 />
                 <PermissionRow
                   title="Manager"
-                  description="Required to sign off discounts, voided sales, and refunds at the till. Distinct from Admin: a manager doesn't see /admin unless they're also an admin."
+                  description="Eligible to be ticked as a notification recipient in Admin, Emails, Manager notifications. Each ticked manager gets an email whenever a cashier applies a discount, issues a refund, or voids a payment. Distinct from Admin: a manager doesn't see /admin unless they're also an admin."
                   checked={managing.is_manager}
                   onChange={(v) => toggleManager(managing.staff_member_id, v)}
                 />
