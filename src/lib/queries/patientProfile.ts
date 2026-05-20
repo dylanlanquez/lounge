@@ -714,6 +714,11 @@ export interface PatientScheduledAppointmentRow {
   arch: string | null;
   appointment_ref: string | null;
   jb_ref: string | null;
+  /** Free-text reason carried on cancelled / no-show rows. Surfaced so
+   *  ApptStatusPill can detect pre-launch backfill via
+   *  isPreLaunchBackfillNoShow() and skip the loud red pill on legacy
+   *  rows. */
+  cancel_reason: string | null;
   // Set on rows that are calendar markers for a walk-in arrival —
   // points to the lng_walk_ins row. The patient profile timeline uses
   // it to dedup the marker against the visit it shadows. NULL for
@@ -750,7 +755,7 @@ export function usePatientScheduledAppointments(
       // visit, so the duplicate is a known degraded state on
       // pre-migration deploys.
       const fullSel =
-        'id, start_at, end_at, status, source, event_type_label, service_type, product_key, arch, appointment_ref, jb_ref, walk_in_id';
+        'id, start_at, end_at, status, source, event_type_label, service_type, product_key, arch, appointment_ref, jb_ref, walk_in_id, cancel_reason';
       const slimSel = 'id, start_at, end_at, status, source, event_type_label';
       const first = await supabase
         .from('lng_appointments')
@@ -792,6 +797,7 @@ export function usePatientScheduledAppointments(
         arch: (r.arch as string | null) ?? null,
         appointment_ref: (r.appointment_ref as string | null) ?? null,
         jb_ref: (r.jb_ref as string | null) ?? null,
+        cancel_reason: (r.cancel_reason as string | null) ?? null,
         walk_in_id: (r.walk_in_id as string | null) ?? null,
       }));
       setData(mapped);

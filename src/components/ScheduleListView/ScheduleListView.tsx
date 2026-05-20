@@ -15,6 +15,7 @@ import {
   patientDisplayName,
   staffDisplayName,
 } from '../../lib/queries/appointments.ts';
+import { isPreLaunchBackfillNoShow } from '../../lib/queries/visits.ts';
 import { useNow } from '../../lib/useNow.ts';
 
 export interface ScheduleListViewProps {
@@ -220,9 +221,11 @@ export function ScheduleListRow({
             {formatLateDuration(lateMin)} late
           </span>
         ) : null}
-        <StatusPill tone={tone} size="sm">
-          {humaniseStatus(row.status)}
-        </StatusPill>
+        {isPreLaunchBackfillNoShow(row) ? null : (
+          <StatusPill tone={tone} size="sm">
+            {humaniseStatus(row.status)}
+          </StatusPill>
+        )}
         <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
         </div>
       </button>

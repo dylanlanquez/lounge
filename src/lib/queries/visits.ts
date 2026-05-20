@@ -250,6 +250,23 @@ export const NO_SHOW_REASONS: { value: NoShowReason; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
+// Sentinel cancel_reason stamped by lng_pre_launch_no_show_backfill()
+// (see supabase/migrations/20260517000001_lng_pre_launch_no_show_backfill.sql).
+// The DB row stays status='no_show' so reports keep ignoring it, but
+// staff-facing surfaces use isPreLaunchBackfillNoShow() below to skip
+// the loud red pill / "did not turn up" ribbon. Must match the SQL
+// function's string verbatim.
+export const PRE_LAUNCH_NO_SHOW_REASON =
+  'Pre-Lounge launch backfill, not a real no-show';
+
+export function isPreLaunchBackfillNoShow(row: {
+  status: string;
+  cancel_reason: string | null | undefined;
+}): boolean {
+  return row.status === 'no_show'
+    && row.cancel_reason === PRE_LAUNCH_NO_SHOW_REASON;
+}
+
 // Humanise lng_appointments.cancel_reason. Handles:
 //   • NoShowReason enum values — the four reasons the receptionist
 //     picks from when marking a no-show (see NO_SHOW_REASONS).
