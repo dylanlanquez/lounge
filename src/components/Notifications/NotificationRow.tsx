@@ -192,15 +192,84 @@ function NotificationSentence({
     />
   ) : null;
 
+  // Actor handle — only renders when actor_role='staff' AND we
+  // resolved a name. Customer / system rows leave this null and the
+  // sentence falls back to patient-as-subject or passive voice.
+  const Actor =
+    row.actor_role === 'staff' && row.actor_name ? (
+      <HighlightedText
+        text={row.actor_name}
+        highlight={highlight}
+        weight={theme.type.weight.semibold}
+      />
+    ) : null;
+
   switch (row.event_type as NotificationEventType) {
     case 'appointment_booked':
-      // "Dylan Lane booked for Denture Repair on Tuesday, 19 May 2026 at 11:30 BST."
-      // Type-unknown fallback: "Dylan Lane booked a new appointment for Tuesday, 19 May 2026 at 11:30 BST."
+      // Three voicings depending on who actually did the booking:
+      //   staff:    "Dylan Lane booked Kerry MacPhee in for Click-in veneers on …"
+      //   customer: "Kerry MacPhee booked Click-in veneers on …"
+      //   system:   "A new Click-in veneers booking was made for Kerry MacPhee on …"
+      // Type-unknown collapses each to a tighter form.
+      if (Actor) {
+        return typeKnown ? (
+          <>
+            {Actor}
+            <Muted> booked </Muted>
+            {Name}
+            <Muted> in for </Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> on </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Actor}
+            <Muted> booked an appointment for </Muted>
+            {Name}
+            {Date ? (
+              <>
+                <Muted> on </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        );
+      }
+      if (row.actor_role === 'customer') {
+        return typeKnown ? (
+          <>
+            {Name}
+            <Muted> booked </Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> on </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Name}
+            <Muted> booked a new appointment{Date ? ' for ' : ''}</Muted>
+            {Date}.
+          </>
+        );
+      }
       return typeKnown ? (
         <>
-          {Name}
-          <Muted> booked for </Muted>
+          <Muted>A new </Muted>
           {Type}
+          <Muted> booking was made for </Muted>
+          {Name}
           {Date ? (
             <>
               <Muted> on </Muted>
@@ -211,20 +280,76 @@ function NotificationSentence({
         </>
       ) : (
         <>
+          <Muted>A new appointment was made for </Muted>
           {Name}
-          <Muted> booked a new appointment{Date ? ' for ' : ''}</Muted>
-          {Date}.
+          {Date ? (
+            <>
+              <Muted> on </Muted>
+              {Date}
+            </>
+          ) : null}
+          .
         </>
       );
 
     case 'appointment_rescheduled':
-      // "Michael Liddle rescheduled their Denture Repair to Monday, 25 May 2026 at 13:00 BST."
-      // Type-unknown: "Michael Liddle rescheduled their appointment to Monday, 25 May 2026 at 13:00 BST."
+      // staff:    "Dylan Lane rescheduled Michael Liddle's Denture Repair to …"
+      // customer: "Michael Liddle rescheduled their Denture Repair to …"
+      // system:   "Michael Liddle's Denture Repair was rescheduled to …"
+      if (Actor) {
+        return typeKnown ? (
+          <>
+            {Actor}
+            <Muted> rescheduled </Muted>
+            {Name}
+            <Muted>{`’s `}</Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> to </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Actor}
+            <Muted> rescheduled </Muted>
+            {Name}
+            <Muted>{`’s appointment${Date ? ' to ' : ''}`}</Muted>
+            {Date}.
+          </>
+        );
+      }
+      if (row.actor_role === 'customer') {
+        return typeKnown ? (
+          <>
+            {Name}
+            <Muted> rescheduled their </Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> to </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Name}
+            <Muted> rescheduled their appointment{Date ? ' to ' : ''}</Muted>
+            {Date}.
+          </>
+        );
+      }
       return typeKnown ? (
         <>
           {Name}
-          <Muted> rescheduled their </Muted>
+          <Muted>{`’s `}</Muted>
           {Type}
+          <Muted> was rescheduled</Muted>
           {Date ? (
             <>
               <Muted> to </Muted>
@@ -236,23 +361,74 @@ function NotificationSentence({
       ) : (
         <>
           {Name}
-          <Muted> rescheduled their appointment{Date ? ' to ' : ''}</Muted>
+          <Muted>{`’s appointment was rescheduled${Date ? ' to ' : ''}`}</Muted>
           {Date}.
         </>
       );
 
     case 'appointment_cancelled':
-      // "Dylan Lane cancelled their Denture Repair scheduled for Tuesday, 19 May 2026 at 11:30 BST."
-      // Type-unknown: "Dylan Lane cancelled their appointment scheduled for Tuesday, 19 May 2026 at 11:30 BST."
+      // staff:    "Dylan Lane cancelled Steve Swann's Click-in veneers scheduled for …"
+      // customer: "Steve Swann cancelled their Click-in veneers scheduled for …"
+      // system:   "Steve Swann's Click-in veneers was cancelled (scheduled for …)"
+      if (Actor) {
+        return typeKnown ? (
+          <>
+            {Actor}
+            <Muted> cancelled </Muted>
+            {Name}
+            <Muted>{`’s `}</Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> scheduled for </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Actor}
+            <Muted> cancelled </Muted>
+            {Name}
+            <Muted>{`’s appointment${Date ? ' scheduled for ' : ''}`}</Muted>
+            {Date}.
+          </>
+        );
+      }
+      if (row.actor_role === 'customer') {
+        return typeKnown ? (
+          <>
+            {Name}
+            <Muted> cancelled their </Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> scheduled for </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Name}
+            <Muted> cancelled their appointment{Date ? ' scheduled for ' : ''}</Muted>
+            {Date}.
+          </>
+        );
+      }
       return typeKnown ? (
         <>
           {Name}
-          <Muted> cancelled their </Muted>
+          <Muted>{`’s `}</Muted>
           {Type}
+          <Muted> was cancelled</Muted>
           {Date ? (
             <>
-              <Muted> scheduled for </Muted>
+              <Muted> (scheduled for </Muted>
               {Date}
+              <Muted>)</Muted>
             </>
           ) : null}
           .
@@ -260,8 +436,10 @@ function NotificationSentence({
       ) : (
         <>
           {Name}
-          <Muted> cancelled their appointment{Date ? ' scheduled for ' : ''}</Muted>
-          {Date}.
+          <Muted>{`’s appointment was cancelled${Date ? ' (scheduled for ' : ''}`}</Muted>
+          {Date}
+          {Date ? <Muted>)</Muted> : null}
+          .
         </>
       );
 
@@ -303,8 +481,34 @@ function NotificationSentence({
       );
 
     case 'no_show':
-      // "Dylan Lane was marked as no show for their Denture Repair on Tuesday, 19 May 2026 at 11:30 BST."
-      // Type-unknown: "Dylan Lane was marked as no show for their appointment on [date]."
+      // staff:  "Dylan Lane marked Nevin Peterson as no show for their Click-in veneers on …"
+      // else:   "Nevin Peterson was marked as no show for their Click-in veneers on …"
+      if (Actor) {
+        return typeKnown ? (
+          <>
+            {Actor}
+            <Muted> marked </Muted>
+            {Name}
+            <Muted> as no show for their </Muted>
+            {Type}
+            {Date ? (
+              <>
+                <Muted> on </Muted>
+                {Date}
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          <>
+            {Actor}
+            <Muted> marked </Muted>
+            {Name}
+            <Muted> as no show{Date ? ' for their appointment on ' : ''}</Muted>
+            {Date}.
+          </>
+        );
+      }
       return typeKnown ? (
         <>
           {Name}

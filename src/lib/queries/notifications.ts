@@ -133,6 +133,19 @@ export interface NotificationRow {
   // Patient handle, pre-formatted.
   patient_id: string;
   patient_name: string;
+  // Who actually did the action.
+  //   'staff'    — actor_account_id resolved to a Lounge staff member.
+  //   'customer' — done by the patient via widget / self-serve link.
+  //   'system'   — automated (cron / migration / unknown). Renders
+  //                as a passive sentence ("X was cancelled") so we
+  //                never lie about who did it.
+  // The sentence templates in NotificationRow.tsx switch shape
+  // based on this so we never falsely credit the patient for a
+  // staff action (or vice versa).
+  actor_role: 'staff' | 'customer' | 'system';
+  // Display name of the actor when actor_role='staff'. Null on
+  // customer / system rows.
+  actor_name: string | null;
   // Where to navigate when the row is clicked. Set to the
   // appointment route for appointment_* events; the visit route
   // for visit_ended_early. Null if neither id was present in the
@@ -254,6 +267,7 @@ interface PatientEventReadRow {
   event_type: string;
   created_at: string;
   patient_id: string;
+  actor_account_id: string | null;
   payload: Record<string, unknown> | null;
   patient: {
     first_name: string;
@@ -268,6 +282,18 @@ interface AppointmentReadRow {
   service_type: string | null;
   product_key: string | null;
   start_at: string | null;
+  // Used to attribute notifications correctly. source distinguishes
+  // widget vs Calendly vs in-app; cancel_reason flags self-serve
+  // cancellations when actor_account_id is null on the cancel event.
+  source: string | null;
+  cancel_reason: string | null;
+}
+
+interface AccountReadRow {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  name: string | null;
 }
 
 interface VisitReadRow {
@@ -365,7 +391,7 @@ export function useNotifications(): UseNotificationsResult {
         const { data: eventRows, error: eventErr } = await supabase
           .from('patient_events')
           .select(
-            'id, event_type, created_at, patient_id, payload, patient:patients(first_name, last_name, email)',
+            'id, event_type, created_at, patient_id, actor_account_id, payload, patient:patients(first_name, last_name, email)',
           )
           .in('event_type', enabledTypes)
           .gte('created_at', since)
@@ -449,10 +475,30 @@ export function useNotifications(): UseNotificationsResult {
         if (directAppointmentIds.size > 0) {
           const { data: apptRows } = await supabase
             .from('lng_appointments')
-            .select('id, event_type_label, service_type, product_key, start_at')
+            .select('id, event_type_label, service_type, product_key, start_at, source, cancel_reason')
             .in('id', Array.from(directAppointmentIds));
           appointmentsById = new Map(
             ((apptRows ?? []) as AppointmentReadRow[]).map((a) => [a.id, a]),
+          );
+        }
+
+        // Resolve any actor account ids → display names so the
+        // sentence templates can say "Dylan Lane booked Kerry in
+        // for ..." instead of crediting the patient. Anon-keyed
+        // events (widget bookings, self-serve cancels) have a null
+        // actor and are handled separately by the mapper.
+        const actorAccountIds = new Set<string>();
+        for (const e of events) {
+          if (e.actor_account_id) actorAccountIds.add(e.actor_account_id);
+        }
+        let actorsById = new Map<string, AccountReadRow>();
+        if (actorAccountIds.size > 0) {
+          const { data: acctRows } = await supabase
+            .from('accounts')
+            .select('id, first_name, last_name, name')
+            .in('id', Array.from(actorAccountIds));
+          actorsById = new Map(
+            ((acctRows ?? []) as AccountReadRow[]).map((a) => [a.id, a]),
           );
         }
 
@@ -468,7 +514,7 @@ export function useNotifications(): UseNotificationsResult {
         }
 
         const rows: NotificationRow[] = events
-          .map((e) => mapEventToRow(e, appointmentsById, visitsById, walkInsById))
+          .map((e) => mapEventToRow(e, appointmentsById, visitsById, walkInsById, actorsById))
           .filter((r): r is NotificationRow => r !== null);
 
         const cutoff = prefs?.last_viewed_at ?? null;
@@ -563,6 +609,7 @@ function mapEventToRow(
   appointmentsById: Map<string, AppointmentReadRow>,
   visitsById: Map<string, VisitReadRow>,
   walkInsById: Map<string, WalkInReadRow>,
+  actorsById: Map<string, AccountReadRow>,
 ): NotificationRow | null {
   const type = event.event_type as NotificationEventType;
   if (!(NOTIFICATION_EVENT_TYPES as readonly string[]).includes(type)) return null;
@@ -570,6 +617,16 @@ function mapEventToRow(
   const patient = event.patient;
   const patientName = patient ? patientFullName(patient) : 'Patient';
   const payload = event.payload ?? {};
+
+  // Walk-in markers: createWalkInVisit() writes an appointment_booked
+  // patient_events row tagged source='walk_in_marker' so the schedule
+  // surface picks the walk-in up alongside booked appointments. These
+  // shouldn't surface in the notifications drawer as "New booking" —
+  // staff just opened a walk-in, no fresh booking happened. Filter
+  // out before we even compute actor info.
+  if (type === 'appointment_booked' && payload.source === 'walk_in_marker') {
+    return null;
+  }
 
   // Resolve the appointment + visit/walk-in references per event
   // type — the payload key differs (appointment_id /
@@ -713,12 +770,45 @@ function mapEventToRow(
       ? payload.method
       : null;
 
+  // Actor attribution. Priority order:
+  //   1. actor_account_id resolves to a Lounge staff account → 'staff'.
+  //   2. payload.source / appointment.source / appointment.cancel_reason
+  //      flag a customer self-serve action → 'customer'.
+  //   3. Otherwise 'system' — the sentence falls back to passive voice
+  //      so we never falsely credit the patient.
+  let actorRole: 'staff' | 'customer' | 'system' = 'system';
+  let actorName: string | null = null;
+  const actorAccount = event.actor_account_id
+    ? actorsById.get(event.actor_account_id)
+    : null;
+  if (actorAccount) {
+    actorRole = 'staff';
+    const fn = (actorAccount.first_name ?? '').trim();
+    const ln = (actorAccount.last_name ?? '').trim();
+    actorName = [fn, ln].filter(Boolean).join(' ').trim()
+      || (actorAccount.name ?? '').trim()
+      || null;
+  } else {
+    const payloadSource = typeof payload.source === 'string' ? payload.source : null;
+    const apptSource = apptRow?.source ?? null;
+    const apptCancelReason = apptRow?.cancel_reason ?? null;
+    if (type === 'appointment_booked' && (payloadSource === 'widget' || apptSource === 'native' || apptSource === 'calendly')) {
+      actorRole = 'customer';
+    } else if (type === 'appointment_rescheduled' && (payloadSource === 'widget_self_serve' || apptCancelReason === 'patient_self_serve_reschedule')) {
+      actorRole = 'customer';
+    } else if (type === 'appointment_cancelled' && apptCancelReason === 'patient_self_serve') {
+      actorRole = 'customer';
+    }
+  }
+
   return {
     id: event.id,
     event_type: type,
     created_at: event.created_at,
     patient_id: event.patient_id,
     patient_name: patientName,
+    actor_role: actorRole,
+    actor_name: actorName,
     link_path: linkPath,
     booking_type: bookingType,
     scheduled_at_label: scheduledAtLabel,
