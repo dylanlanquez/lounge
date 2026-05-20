@@ -1009,7 +1009,11 @@ function NewCountSheet({
           label={diffNeedsNote ? 'Note (required)' : 'Note (optional)'}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="What explains the difference, if anything?"
+          placeholder={
+            isLegacyBaseline
+              ? 'Optional context, e.g. cash collected pre-launch.'
+              : 'What explains the difference, if anything?'
+          }
         />
 
         <div
