@@ -184,7 +184,14 @@ function RoutedErrorBoundary() {
           {/* Old path from before the rename — keep redirecting so any deep links staff bookmarked still land somewhere sensible. */}
           <Route path="/appointments" element={<Navigate to="/ledger" replace />} />
           <Route path="/in-clinic" element={<RequireStaff><InClinic /></RequireStaff>} />
+          {/* Admin tab lives at /admin/:tab so a refresh, a back-
+              navigation, or a shared link keeps the operator on the
+              same tab. The bare /admin URL resolves to the operator's
+              first visible tab inside Admin (depends on their grants),
+              and an unknown :tab segment falls back to the same
+              first-visible tab via the same gate. */}
           <Route path="/admin" element={<RequireStaff><Admin /></RequireStaff>} />
+          <Route path="/admin/:tab" element={<RequireStaff><Admin /></RequireStaff>} />
           <Route path="/reports" element={<RequireStaff><Reports /></RequireStaff>} />
           <Route path="/cash-counts" element={<RequireStaff><CashCounts /></RequireStaff>} />
           {/* Customer-facing widget (book + manage) lives on

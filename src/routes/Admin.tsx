@@ -1,5 +1,5 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
@@ -208,12 +208,17 @@ export function Admin() {
   const { user, loading: authLoading } = useAuth();
   const { account, loading: accountLoading } = useCurrentAccount();
   const isMobile = useIsMobile(640);
+  const navigate = useNavigate();
+  // The active tab is encoded in the URL (/admin/:tab) so a refresh,
+  // a back-navigation, or a shared link keeps the operator on the
+  // same surface. useState would have lost that on every reload.
+  const params = useParams<{ tab?: string }>();
 
   // Visible tabs depend on the operator. Super admins and full admins
   // see every tab. Limited admins (is_admin = false, but
   // admin_page_access has entries) see only the tabs they've been
-  // granted. Memoised here so the segmented control + the initial
-  // tab pick stay in sync.
+  // granted. Memoised here so the segmented control + the URL gate
+  // stay in sync.
   const visibleTabs = useMemo(() => {
     if (!account) return [];
     if (account.is_super_admin || account.is_admin) return ADMIN_TABS;
@@ -221,27 +226,38 @@ export function Admin() {
     return ADMIN_TABS.filter((t) => allowed.has(t.key));
   }, [account]);
 
-  // Pick the first available tab as the default. Lazy initialiser so
-  // the first render lands on a tab the operator actually has access
-  // to — calendly is no longer hardcoded because a limited admin may
-  // not have it granted.
-  const [tab, setTab] = useState<Tab>(() => {
-    if (!account) return 'calendly';
-    if (account.is_super_admin || account.is_admin) return 'calendly';
-    return (account.admin_page_access[0] as Tab | undefined) ?? 'calendly';
-  });
+  // Resolve the active tab from the URL, gated against visibleTabs.
+  // Bare /admin (no :tab) AND any unknown / no-longer-visible :tab
+  // both fall back to the operator's first visible tab — the canonical
+  // URL is restored via a replaceState below.
+  const urlTab = params.tab as Tab | undefined;
+  const tab: Tab = useMemo(() => {
+    const fallback: Tab = visibleTabs[0]?.key ?? 'calendly';
+    if (!urlTab) return fallback;
+    if (!visibleTabs.some((t) => t.key === urlTab)) return fallback;
+    return urlTab;
+  }, [urlTab, visibleTabs]);
 
-  // If the operator's grants shift while /admin is open (rare — would
-  // require a permission write landing mid-session) AND the active
-  // tab is no longer visible to them, jump them onto the first tab
-  // they can still see. Skipped when no tabs are visible because the
-  // gate below will redirect anyway.
+  const setTab = useCallback(
+    (next: Tab) => {
+      navigate(`/admin/${next}`, { replace: false });
+    },
+    [navigate],
+  );
+
+  // Keep the URL canonical:
+  //   • /admin (no :tab)        → /admin/<first-visible>
+  //   • /admin/<unknown-tab>    → /admin/<first-visible>
+  //   • /admin/<not-granted>    → /admin/<first-visible> (grant shift mid-session)
+  // replace:true so the canonical URL replaces the malformed one
+  // in history rather than stacking a back-step the user didn't take.
   useEffect(() => {
     if (visibleTabs.length === 0) return;
-    if (!visibleTabs.some((t) => t.key === tab)) {
-      setTab(visibleTabs[0]!.key);
+    if (!urlTab || !visibleTabs.some((t) => t.key === urlTab)) {
+      const fallback = visibleTabs[0]!.key;
+      navigate(`/admin/${fallback}`, { replace: true });
     }
-  }, [visibleTabs, tab]);
+  }, [urlTab, visibleTabs, navigate]);
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
