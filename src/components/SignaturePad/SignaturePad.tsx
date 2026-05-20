@@ -138,9 +138,43 @@ export function SignaturePad({
     onChange(path, strokesRef.current.length === 0);
   }, [buildPath, onChange]);
 
+  // While actively drawing, block touchmove at the document level
+  // with passive:false so iOS Safari's edge-swipe-back gesture can't
+  // be recognised mid-signature. touch-action: none on the canvas
+  // alone isn't enough — Apple's history-swipe is an OS-level
+  // gesture that runs in parallel with pointer events and can still
+  // fire when the user's finger starts on the canvas and drifts
+  // toward the screen edge. The listener is only attached for the
+  // duration of the stroke, so normal page scrolling outside the
+  // signature pad is unaffected.
+  const touchBlockHandlerRef = useRef<((e: TouchEvent) => void) | null>(null);
+  const installTouchBlock = useCallback(() => {
+    if (touchBlockHandlerRef.current) return;
+    const handler = (e: TouchEvent) => {
+      // The cancelable check matters: a passive listener registered
+      // higher in the tree would make this call no-op anyway, and
+      // preventDefault on a non-cancelable event throws in strict
+      // mode in some browsers.
+      if (e.cancelable) e.preventDefault();
+    };
+    document.addEventListener('touchmove', handler, { passive: false });
+    touchBlockHandlerRef.current = handler;
+  }, []);
+  const removeTouchBlock = useCallback(() => {
+    const handler = touchBlockHandlerRef.current;
+    if (!handler) return;
+    document.removeEventListener('touchmove', handler);
+    touchBlockHandlerRef.current = null;
+  }, []);
+  // Belt-and-braces: if the SignaturePad unmounts mid-stroke (the
+  // step changes, the parent sheet closes), make sure we don't
+  // leave the touchmove block attached to the document.
+  useEffect(() => removeTouchBlock, [removeTouchBlock]);
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     (e.target as Element).setPointerCapture?.(e.pointerId);
+    installTouchBlock();
     currentRef.current = [pointFromEvent(e)];
     redraw();
   };
@@ -152,6 +186,7 @@ export function SignaturePad({
   };
 
   const onPointerUp = () => {
+    removeTouchBlock();
     if (!currentRef.current || currentRef.current.length === 0) {
       currentRef.current = null;
       return;
