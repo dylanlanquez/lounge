@@ -1326,7 +1326,16 @@ function ChargeAmountControl({
         label="Amount (£)"
         numericFormat="currency"
         placeholder={(outstandingPence / 100).toFixed(2)}
-        value={trimmed === '' ? (outstandingPence / 100).toFixed(2) : chargeAmountText}
+        // Mirror the actual state — no forced fill. The previous
+        // version painted the formatted outstanding into the box
+        // whenever the typed text was empty, which made backspacing
+        // visually "snap back" to the full amount: deleting the last
+        // digit cleared chargeAmountText to '' and the value prop
+        // immediately re-displayed the outstanding. The cashier
+        // could not see "0" or an empty field to re-type from. The
+        // placeholder now does the default-amount affordance, and
+        // the value reflects only what's been typed.
+        value={chargeAmountText}
         onChange={(e) => {
           // Treat the placeholder-equivalent value as "leave on
           // full" — clearing the input or typing the full amount
