@@ -111,4 +111,55 @@ describe('availableActions', () => {
       expect(out).not.toContain('view_visit');
     });
   });
+
+  describe('virtual: reschedule is always available regardless of source', () => {
+    // Once a virtual call is in motion, staff is the only person in a
+    // position to act on a mid-call rebook request. Reschedule stays
+    // on the action list at booked + joined for every source —
+    // including Calendly, which is normally blocked from Lounge-side
+    // rescheduling for in-person bookings.
+
+    it('booked + calendly + virtual: reschedule is offered', () => {
+      const out = availableActions({
+        ...base,
+        status: 'booked',
+        source: 'calendly',
+        isVirtual: true,
+      });
+      expect(out).toContain('reschedule');
+    });
+
+    it('joined + calendly + virtual: reschedule is offered alongside rejoin', () => {
+      const out = availableActions({
+        ...base,
+        status: 'joined',
+        source: 'calendly',
+        isVirtual: true,
+      });
+      expect(out).toContain('reschedule');
+      expect(out).toContain('rejoin_meeting');
+    });
+
+    it('booked + calendly + in-person (non-virtual): reschedule still blocked', () => {
+      // Sanity check — Calendly in-person bookings keep the original
+      // gate so this change doesn't leak.
+      const out = availableActions({
+        ...base,
+        status: 'booked',
+        source: 'calendly',
+        isVirtual: false,
+      });
+      expect(out).not.toContain('reschedule');
+    });
+
+    it('joined + native + virtual: reschedule is offered (existing behaviour)', () => {
+      const out = availableActions({
+        ...base,
+        status: 'joined',
+        source: 'native',
+        isVirtual: true,
+      });
+      expect(out).toContain('reschedule');
+    });
+  });
 });

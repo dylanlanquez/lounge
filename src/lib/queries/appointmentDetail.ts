@@ -569,9 +569,9 @@ export type AppointmentAction =
   | 'join_meeting'           // booked, virtual only — first join
   | 'rejoin_meeting'         // arrived, virtual only — reconnect
   | 'mark_no_show'           // booked, past start time
-  | 'reschedule'             // booked + native source
-  | 'cancel'                 // booked + native source
-  | 'resend_confirmation'    // booked + native source + patient has email
+  | 'reschedule'             // booked / joined; native source OR virtual (any source)
+  | 'cancel'                 // booked / joined + native source
+  | 'resend_confirmation'    // booked / joined + native source + patient has email
   | 'reverse_cancellation'   // cancelled
   | 'reverse_no_show'        // no_show
   | 'view_rescheduled_to'    // rescheduled with a forward link
@@ -591,15 +591,28 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
   const { status, source, hasPatientEmail, hasVisit, hasRescheduleTarget, isVirtual } = input;
   const isCalendly = source === 'calendly';
 
+  // Reschedule is offered for every non-Calendly booking — Calendly
+  // is the source of truth for those, so the reschedule flow stays on
+  // their widget. The one exception is virtual appointments: a
+  // virtual booking originally placed via Calendly still needs to be
+  // movable from Lounge after staff has joined, because the call IS
+  // happening here and the staff is the only person in a position to
+  // act if the patient asks to be rebooked mid-call. Manual /
+  // Checkpoint / venneir.com virtual bookings have always exposed
+  // Reschedule; this also turns it on for Calendly virtuals so the
+  // affordance is consistent across every source for the same call
+  // type.
+  const canReschedule = !isCalendly || isVirtual;
+  const canCancel = !isCalendly;
+  const canResend = !isCalendly && hasPatientEmail;
+
   if (status === 'booked') {
     // Virtual: Join replaces the arrival wizard; in-person: normal arrival flow.
     out.push(isVirtual ? 'join_meeting' : 'mark_arrived');
     out.push('mark_no_show');
-    if (!isCalendly) {
-      out.push('reschedule');
-      out.push('cancel');
-      if (hasPatientEmail) out.push('resend_confirmation');
-    }
+    if (canReschedule) out.push('reschedule');
+    if (canCancel) out.push('cancel');
+    if (canResend) out.push('resend_confirmation');
   } else if (status === 'cancelled') {
     out.push('reverse_cancellation');
   } else if (status === 'no_show') {
@@ -608,18 +621,16 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
     if (hasRescheduleTarget) out.push('view_rescheduled_to');
   } else if (status === 'joined') {
     // Staff joined the meeting but the patient may not have connected —
-    // every recovery path stays open. Rejoin lets them reconnect, no_show
-    // covers a true no-show, and reschedule/cancel/resend match the
-    // booked-state options for when the call needs to be moved or the
-    // confirmation re-sent live. Calendly-sourced bookings reschedule
-    // on Calendly so those three are gated the same way as for booked.
+    // every recovery path stays open. Rejoin lets them reconnect,
+    // no_show covers a true no-show, and reschedule stays available
+    // on virtual rows regardless of source so the operator can move
+    // the call live (per Dylan's call — once a virtual is in
+    // progress, staff is the only one who can act on it).
     out.push('rejoin_meeting');
     out.push('mark_no_show');
-    if (!isCalendly) {
-      out.push('reschedule');
-      out.push('cancel');
-      if (hasPatientEmail) out.push('resend_confirmation');
-    }
+    if (canReschedule) out.push('reschedule');
+    if (canCancel) out.push('cancel');
+    if (canResend) out.push('resend_confirmation');
   } else if (status === 'arrived' || status === 'complete') {
     // Virtual appointments never produce a visit row, so offer Rejoin instead.
     if (isVirtual) out.push('rejoin_meeting');
