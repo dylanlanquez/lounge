@@ -64,7 +64,7 @@ export function MeetingJoinBlockSheet({
       description={
         isDevice
           ? `Virtual impression appointments need a full keyboard, camera, and screen-sharing. ${verbCapitalised} the meeting from a laptop or desktop, not from this tablet.`
-          : `Customer Service is not set up to ${verb} virtual meetings. A clinician or manager handles the call; you can still help with reschedules, cancellations, and resending the confirmation.`
+          : `Customer Service is not set up to ${verb} virtual meetings. An impression clinician handles the call; you can still help with reschedules, cancellations, and resending the confirmation.`
       }
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -131,7 +131,7 @@ export function MeetingJoinBlockSheet({
           >
             {isDevice
               ? `Open the appointment in Lounge on a laptop or desktop with a mouse or trackpad. The ${verbCapitalised} meeting button there opens Google Meet directly so the patient sees you full-screen.`
-              : `Ask a clinician or manager on the floor to ${verb} the call from their station. If you think this should be part of your role, talk to an admin and they will adjust your permissions.`}
+              : `Ask an impression clinician to ${verb} the call from their station. If you think this should be part of your role, talk to an admin and they will adjust your permissions.`}
           </p>
         </div>
       </div>

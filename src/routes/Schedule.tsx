@@ -52,6 +52,10 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
+import {
+  MeetingJoinBlockSheet,
+  type MeetingJoinBlockReason,
+} from '../components/MeetingJoinBlockSheet/MeetingJoinBlockSheet.tsx';
 import { useNow } from '../lib/useNow.ts';
 import {
   addDaysIso,
@@ -171,6 +175,15 @@ export function Schedule() {
     { tone: 'success' | 'error' | 'info'; title: string; description?: string } | null
   >(null);
   const [resendingConfirmationId, setResendingConfirmationId] = useState<string | null>(null);
+  // Meeting-join gating. Tapping Join / Re-join in the schedule
+  // popup never opens Google Meet directly any more — it routes
+  // through the same block-sheet AppointmentDetail uses, so a CS
+  // staff member or a non-desktop device gets a clear reason
+  // instead of either a degraded call or a silent no-op.
+  const [meetingBlock, setMeetingBlock] = useState<
+    | { reason: MeetingJoinBlockReason; action: 'join' | 'rejoin' }
+    | null
+  >(null);
   // ISO datetime of the empty slot the operator just tapped. When
   // non-null the NewBookingSheet renders pre-filled with this time.
   const [newBookingSlot, setNewBookingSlot] = useState<string | null>(null);
@@ -764,9 +777,17 @@ export function Schedule() {
                     !isVirtualOnNonDesktop &&
                     !isCsOnly &&
                     (status === 'booked' || (isVirtual && (status === 'arrived' || status === 'joined')));
+                  // Join button is always visible on virtual rows at
+                  // join-eligible statuses, regardless of device or
+                  // role. Tapping it routes through the block-sheet
+                  // gate below, which gives the operator an explicit
+                  // reason ("open on a laptop", "Customer Service
+                  // cannot run meetings") rather than silently
+                  // hiding the affordance — staff can SEE the
+                  // expected workflow even when they personally
+                  // can't run it.
                   const showVirtualJoin =
                     isVirtual &&
-                    isDesktop &&
                     (status === 'booked' || status === 'arrived' || status === 'joined' || status === 'no_show');
                   const showMarkArrived = !isVirtual && status === 'booked' && !isCsOnly;
                   const showCloseOnly =
@@ -831,8 +852,28 @@ export function Schedule() {
                           loading={busy}
                           onClick={async () => {
                             if (!selected || !selected.join_url) return;
+                            const action: 'join' | 'rejoin' =
+                              status === 'arrived' || status === 'joined' || status === 'no_show'
+                                ? 'rejoin'
+                                : 'join';
+                            // Role check first: a CS member on a
+                            // desktop is still blocked. Device check
+                            // second: a clinician on an iPad gets
+                            // the device prompt. Only a clinician on
+                            // desktop falls through to open the
+                            // meeting URL + record the join. Matches
+                            // the gate on AppointmentDetail so both
+                            // surfaces enforce the same rules.
+                            if (isCsOnly) {
+                              setMeetingBlock({ reason: 'role', action });
+                              return;
+                            }
+                            if (!isDesktop) {
+                              setMeetingBlock({ reason: 'device', action });
+                              return;
+                            }
                             window.open(selected.join_url, '_blank', 'noopener,noreferrer');
-                            if (status === 'arrived' || status === 'joined' || status === 'no_show') return;
+                            if (action === 'rejoin') return;
                             setBusy(true);
                             try {
                               await markVirtualMeetingJoined(selected.id);
@@ -1250,6 +1291,12 @@ export function Schedule() {
         />
       ) : null}
 
+      <MeetingJoinBlockSheet
+        open={meetingBlock !== null}
+        reason={meetingBlock?.reason ?? 'device'}
+        action={meetingBlock?.action ?? 'join'}
+        onClose={() => setMeetingBlock(null)}
+      />
 
       {cancellingRow ? (
         <CancelAppointmentDialog
