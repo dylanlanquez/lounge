@@ -142,10 +142,25 @@ export function Widget({ brand, prefill, onClose }: WidgetProps = {}) {
   // time to draw — the patient just sees a stutter. 1.1s is the
   // 1s fill animation plus a 100ms beat at the "fully filled" state
   // so the eye registers completion.
-  const [minHoldElapsed, setMinHoldElapsed] = useState(false);
+  //
+  // EXCEPTION: when the customer is deep-linking with a service or
+  // product prefill (One Click portal, email CTAs, etc.) they have
+  // already chosen and expect the widget to land directly in the
+  // relevant step. The brand moment becomes friction in that flow,
+  // so we skip the hold and rely on the data-load gate alone.
+  const hasPrefillIntent = !!(
+    prefill?.serviceKey ||
+    prefill?.productKey ||
+    (typeof window !== 'undefined' &&
+      (new URLSearchParams(window.location.search).get('service') ||
+       new URLSearchParams(window.location.search).get('product')))
+  );
+  const [minHoldElapsed, setMinHoldElapsed] = useState(hasPrefillIntent);
   useEffect(() => {
+    if (hasPrefillIntent) return;
     const t = window.setTimeout(() => setMinHoldElapsed(true), 1100);
     return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (
