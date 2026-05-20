@@ -409,6 +409,14 @@ function EmailFrame({ html, subject }: { html: string; subject: string }) {
         style={{
           width: '100%',
           height,
+          // Defensive floor so iPad/Safari always renders something
+          // even when the ResizeObserver-driven measure() never fires
+          // (which has been reported as a blank-white preview on
+          // tablet). On iOS, iframes inside scroll-locked BottomSheets
+          // have historically had layout-collapse quirks; pinning a
+          // visible minimum gives the user a usable preview even in
+          // that degenerate path.
+          minHeight: 600,
           border: 'none',
           background: theme.color.bg,
           display: 'block',

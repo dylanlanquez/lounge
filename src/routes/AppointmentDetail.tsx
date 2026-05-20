@@ -577,6 +577,15 @@ function Loaded({
     <>
       <Hero appt={appt} fullName={fullName} tone={tone} />
 
+      {/* Customer service note sits between the patient Hero and the
+          detail cards so anyone opening this booking notices it
+          before scrolling. Hero mode (amber callout) when there's
+          actual content; quiet "Add note" fallback inside the
+          section grid below when the note is empty + still editable.
+          Hidden entirely on non-editable empty rows so cancelled /
+          complete bookings don't carry visual noise. */}
+      <NotesCard appt={appt} onChanged={onChanged} />
+
       <section
         style={{
           display: 'grid',
@@ -629,7 +638,11 @@ function Loaded({
             pence={appt.shopify_order_total_pence ?? 0}
           />
         ) : null}
-        <NotesCard appt={appt} onChanged={onChanged} />
+        {/* NotesCard was previously rendered here. Lifted above the
+            section so the customer-service note sits in a hero
+            position right after the patient Hero, where the clinic
+            floor can't miss it. The empty + editable fallback also
+            lives in the lifted placement. */}
         {appt.status === 'cancelled' && appt.cancel_reason ? (
           <ReasonCard
             tone="cancelled"
@@ -2268,16 +2281,29 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   );
 }
 
-// Notes card with inline edit. Replaces the old "Edit appointment"
-// action (which was only ever used to change notes anyway). Shows
-// the pencil affordance when:
-//   • status allows edits (booked / arrived) AND
-//   • source isn't Calendly (Calendly is the source of truth for
-//     those bookings — editing here would silently diverge).
+// Customer-service note for the clinic team. Lives on
+// lng_appointments.notes so it carries through every reschedule
+// (rescheduleAppointment.ts line 337 copies it onto the new row) and
+// stays attached as the visit moves booked → arrived → joined.
 //
-// On click the body swaps to a textarea + Save / Cancel buttons. Save
-// pipes through editAppointment, which already audits to
-// patient_events so the timeline picks the change up automatically.
+// Two visual modes:
+//   • HERO — when notes have content. Amber-tinted banner with a
+//     megaphone icon, large readable body. Sits directly under the
+//     appointment Hero so anyone opening this booking sees it before
+//     any other detail card. Use case: customer service flags a
+//     constraint ("Patient is hearing-impaired, please face camera",
+//     "Wheelchair access via lab door") and the clinic floor needs
+//     to NOTICE on the day of the appointment, not later.
+//   • EMPTY (editable only) — small inline "Add note" prompt so
+//     customer service can leave a fresh note. Hides entirely when
+//     not editable (cancelled / complete / Calendly-sourced) AND
+//     empty.
+//
+// Edit gating: status must be booked / arrived / joined AND the
+// source must not be Calendly (Calendly is the source of truth for
+// those bookings — editing here would silently diverge). Save pipes
+// through editAppointment, which already audits to patient_events
+// so the timeline picks the change up automatically.
 function NotesCard({
   appt,
   onChanged,
@@ -2375,68 +2401,129 @@ function NotesCard({
       </button>
     ) : null;
 
+  // Hero mode kicks in only when there is something to flag. An
+  // empty editable card falls back to the muted "add note" prompt
+  // styling so the receptionist isn't reading orange chrome for an
+  // absent note.
+  const isHero = trimmed.length > 0;
+
+  const editingBody = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        disabled={saving}
+        autoFocus
+        rows={4}
+        placeholder="Customer service: anything the clinic floor must notice on the day — accessibility, behavioural cues, special requests."
+        style={{
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          padding: theme.space[3],
+          color: theme.color.ink,
+          background: theme.color.surface,
+          outline: 'none',
+          resize: 'vertical',
+          lineHeight: theme.type.leading.relaxed,
+        }}
+      />
+      {error ? (
+        <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.alert }}>{error}</p>
+      ) : null}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+        <Button variant="tertiary" size="sm" onClick={handleCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button variant="primary" size="sm" onClick={handleSave} loading={saving} disabled={saving}>
+          {saving ? 'Saving…' : 'Save note'}
+        </Button>
+      </div>
+    </div>
+  );
+
+  // HERO: a tinted-orange callout that's impossible to miss. The
+  // amber tone matches the rest of the app's "warning, do not
+  // ignore" pattern (deposit-failed banner, unsuitable status pill).
+  if (isHero) {
+    return (
+      <div
+        role="note"
+        aria-label="Customer service note"
+        style={{
+          marginTop: theme.space[5],
+          padding: theme.space[5],
+          background: 'rgba(179, 104, 21, 0.10)',
+          border: '1px solid rgba(179, 104, 21, 0.30)',
+          borderLeft: `5px solid ${theme.color.warn}`,
+          borderRadius: theme.radius.card,
+          display: 'flex',
+          gap: theme.space[4],
+          alignItems: 'flex-start',
+        }}
+      >
+        <AlertTriangle
+          size={22}
+          aria-hidden
+          style={{ color: theme.color.warn, flexShrink: 0, marginTop: 2 }}
+        />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              gap: theme.space[3],
+              flexWrap: 'wrap',
+            }}
+          >
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.warn,
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}
+            >
+              Customer service note
+            </span>
+            {editButton}
+          </div>
+          {editing ? (
+            editingBody
+          ) : (
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.lg,
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.ink,
+                lineHeight: theme.type.leading.relaxed,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {trimmed}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // EMPTY + editable fallback: muted card with an "Add note" prompt
+  // so customer service has a clear affordance to leave one. Sits in
+  // the regular section grid, not above it.
   return (
     <Card padding="lg">
       <DetailSectionHeader
         icon={<StickyNote size={15} aria-hidden />}
-        title="Notes"
+        title="Customer service note"
         trailing={editButton}
       />
-
       {editing ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            disabled={saving}
-            autoFocus
-            rows={4}
-            placeholder="Add notes the next receptionist will see when they open this booking."
-            style={{
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.sm,
-              border: `1px solid ${theme.color.border}`,
-              borderRadius: theme.radius.input,
-              padding: theme.space[3],
-              color: theme.color.ink,
-              background: theme.color.surface,
-              outline: 'none',
-              resize: 'vertical',
-              lineHeight: theme.type.leading.relaxed,
-            }}
-          />
-          {error ? (
-            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.alert }}>
-              {error}
-            </p>
-          ) : null}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
-            <Button variant="tertiary" size="sm" onClick={handleCancel} disabled={saving}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleSave}
-              loading={saving}
-              disabled={saving}
-            >
-              {saving ? 'Saving…' : 'Save notes'}
-            </Button>
-          </div>
-        </div>
-      ) : trimmed.length > 0 ? (
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            lineHeight: theme.type.leading.relaxed,
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {trimmed}
-        </p>
+        editingBody
       ) : (
         <p
           style={{
@@ -2446,7 +2533,7 @@ function NotesCard({
             fontStyle: 'italic',
           }}
         >
-          No notes yet. Tap the pencil to add some.
+          No note yet. Leave one here so the clinic team notices anything they need to know about this appointment on the day.
         </p>
       )}
     </Card>
