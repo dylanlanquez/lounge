@@ -1044,6 +1044,14 @@ function NewCountSheet({
   const [managers, setManagers] = useState<ManagerRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Legacy-baseline only: optional inline withdrawal recorded
+  // immediately AFTER the count is signed. Lets the operator seed
+  // the safe and log "some of this isn't really staying in the
+  // safe, banking £400 today" in one submit instead of two.
+  const [inlineWithdrawalOpen, setInlineWithdrawalOpen] = useState(false);
+  const [inlineWithdrawalAmountText, setInlineWithdrawalAmountText] = useState('');
+  const [inlineWithdrawalReason, setInlineWithdrawalReason] = useState<WithdrawalReason>('bank_deposit');
+  const [inlineWithdrawalNote, setInlineWithdrawalNote] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -1051,6 +1059,10 @@ function NewCountSheet({
     setNotes('');
     setManagerId('');
     setError(null);
+    setInlineWithdrawalOpen(false);
+    setInlineWithdrawalAmountText('');
+    setInlineWithdrawalReason('bank_deposit');
+    setInlineWithdrawalNote('');
     // Show every active manager including the current account.
     // Self-sign-off is permitted — the signer's name lands on the
     // audit row regardless of who's logged in.
@@ -1077,6 +1089,12 @@ function NewCountSheet({
   }, [actualText]);
 
   const isLegacyBaseline = kind === 'legacy_baseline';
+  const inlineWithdrawalPence = useMemo(() => {
+    if (!isLegacyBaseline || !inlineWithdrawalOpen) return null;
+    const float = Number(inlineWithdrawalAmountText.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(float) || float <= 0) return null;
+    return Math.round(float * 100);
+  }, [isLegacyBaseline, inlineWithdrawalOpen, inlineWithdrawalAmountText]);
   const diff = actualPence === null ? null : actualPence - position.expected_in_safe_pence;
   // Variance against expected is meaningless for a baseline — the
   // whole point of a legacy_baseline count is to seed the safe with
@@ -1113,6 +1131,19 @@ function NewCountSheet({
       setError('No cash activity yet — there is nothing to count.');
       return;
     }
+    // Inline-withdrawal validation (legacy_baseline only).
+    if (isLegacyBaseline && inlineWithdrawalOpen) {
+      if (inlineWithdrawalPence === null) {
+        setError('Enter the withdrawal amount in pounds, e.g. 400.00.');
+        return;
+      }
+      if (inlineWithdrawalPence > actualPence) {
+        setError(
+          `Withdrawal can't exceed the starting balance (${formatPence(actualPence)}).`,
+        );
+        return;
+      }
+    }
 
     setBusy(true);
     try {
@@ -1128,6 +1159,28 @@ function NewCountSheet({
         count_id: created.count_id,
         signer_account_id: managerId,
       });
+      // Inline withdrawal records AFTER the count is signed, so the
+      // withdrawal's taken_at falls AFTER the count's period_end and
+      // flows into the next count's running-balance maths (rather
+      // than this one's snapshot). Manager email is fire-and-forget.
+      if (isLegacyBaseline && inlineWithdrawalOpen && inlineWithdrawalPence !== null) {
+        const { withdrawal_id } = await recordCashWithdrawal({
+          location_id: locationId,
+          amount_pence: inlineWithdrawalPence,
+          reason: inlineWithdrawalReason,
+          note: inlineWithdrawalNote,
+        });
+        void sendManagerNotification({
+          actionKind: 'cash_withdrawn',
+          amountPence: inlineWithdrawalPence,
+          reason: inlineWithdrawalReason,
+          patientId: null,
+          visitId: null,
+          staffAccountId: currentAccountId,
+          note: inlineWithdrawalNote,
+          withdrawalId: withdrawal_id,
+        });
+      }
       onSigned();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -1283,6 +1336,76 @@ function NewCountSheet({
               : 'What explains the difference, if anything?'
           }
         />
+
+        {isLegacyBaseline ? (
+          <div
+            style={{
+              padding: theme.space[5],
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.bg,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[4],
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3] }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.md,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.ink,
+                    letterSpacing: theme.type.tracking.tight,
+                  }}
+                >
+                  Also record a withdrawal
+                </h3>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.sm,
+                    color: theme.color.inkMuted,
+                    lineHeight: theme.type.leading.normal,
+                  }}
+                >
+                  Optional. If part of the starting balance is about to leave the safe (banking, float top-up, etc.), log it here in the same step. It drops off the running balance the moment this is signed.
+                </p>
+              </div>
+              <Button
+                variant={inlineWithdrawalOpen ? 'tertiary' : 'secondary'}
+                size="sm"
+                onClick={() => setInlineWithdrawalOpen((v) => !v)}
+              >
+                {inlineWithdrawalOpen ? 'Not now' : 'Add'}
+              </Button>
+            </div>
+            {inlineWithdrawalOpen ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+                <Input
+                  label="Amount taken (£)"
+                  numericFormat="currency"
+                  value={inlineWithdrawalAmountText}
+                  onChange={(e) => setInlineWithdrawalAmountText(e.target.value)}
+                  placeholder="e.g. 400.00"
+                />
+                <DropdownSelect
+                  label="Reason"
+                  value={inlineWithdrawalReason}
+                  onChange={(v) => setInlineWithdrawalReason(v as WithdrawalReason)}
+                  options={WITHDRAWAL_REASONS.map((r) => ({ value: r.value, label: r.label }))}
+                />
+                <Input
+                  label="Note (optional)"
+                  value={inlineWithdrawalNote}
+                  onChange={(e) => setInlineWithdrawalNote(e.target.value)}
+                  placeholder="e.g. Lloyds drop, slip #84."
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div
           style={{
