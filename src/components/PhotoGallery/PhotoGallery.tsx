@@ -6,6 +6,7 @@ import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { theme } from '../../theme/index.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import {
   type PatientFileEntry,
@@ -488,6 +489,11 @@ function PhotoLightbox({
     };
   }, [current]);
 
+  // Page scroll lock + scrollbar-width compensation are owned by
+  // the shared useScrollLock hook so every modal surface across
+  // the app stays in sync. See src/lib/useScrollLock.ts for the why.
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -496,14 +502,8 @@ function PhotoLightbox({
       if (e.key === 'ArrowRight' && index! < items.length - 1) onChange(index! + 1);
     };
     document.addEventListener('keydown', onKey);
-    // Lock #root (the real page-scroll container; body is pinned
-    // by globalStyles for iOS rubber-band reasons).
-    const root = document.getElementById('root');
-    const prev = root?.style.overflow ?? '';
-    if (root) root.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) root.style.overflow = prev;
     };
   }, [open, index, items.length, onChange]);
 

@@ -2,6 +2,7 @@ import { type ReactNode, type RefObject, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 import { BOTTOM_NAV_HEIGHT } from '../BottomNav/BottomNav.tsx';
 
 export interface BottomSheetProps {
@@ -52,35 +53,19 @@ export function BottomSheet({
   hideHeader = false,
   contentRef,
 }: BottomSheetProps) {
+  // Page scroll lock + scrollbar-width compensation are owned by
+  // the shared useScrollLock hook so every modal surface across the
+  // app stays in sync. See src/lib/useScrollLock.ts for the why.
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissable) onClose();
     };
     document.addEventListener('keydown', onKey);
-    // Lock the page scroll while the sheet is open. The page
-    // scrolls on #root (body is pinned for iOS rubber-band reasons,
-    // see globalStyles), so we toggle overflow there. Compensate
-    // for the disappearing scrollbar width by padding #root by the
-    // same number of pixels — otherwise a centred portal visibly
-    // shifts sideways the moment the sheet opens.
-    const root = document.getElementById('root');
-    const prevOverflow = root?.style.overflow ?? '';
-    const prevPaddingRight = root?.style.paddingRight ?? '';
-    const scrollbarWidth =
-      window.innerWidth - document.documentElement.clientWidth;
-    if (root) {
-      if (scrollbarWidth > 0) {
-        root.style.paddingRight = `${scrollbarWidth}px`;
-      }
-      root.style.overflow = 'hidden';
-    }
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) {
-        root.style.overflow = prevOverflow;
-        root.style.paddingRight = prevPaddingRight;
-      }
     };
   }, [open, onClose, dismissable]);
 

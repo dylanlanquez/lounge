@@ -13,6 +13,7 @@ import { Calendar, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-reac
 import { Button } from '../Button/Button.tsx';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 import {
   DATE_RANGE_PRESETS,
   type DateRange,
@@ -587,14 +588,14 @@ function MobileSheet({
   onApply: () => void;
   extraPresets?: ReadonlyArray<import('../../lib/dateRange.ts').DateRangePreset>;
 }) {
-  // Body scroll lock while the sheet is open (spec §5).
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
+  // Page scroll lock + scrollbar-width compensation. Originally
+  // toggled document.body.style.overflow inline, but body is pinned
+  // by globalStyles for iOS rubber-band reasons — the real scroll
+  // surface is #root, and locking the wrong element left the page
+  // visibly shifting when the sheet opened. useScrollLock locks
+  // #root and pads it by the scrollbar width to keep the layout
+  // pinned. See src/lib/useScrollLock.ts for the full rationale.
+  useScrollLock(true);
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') onClose();

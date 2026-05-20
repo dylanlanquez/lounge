@@ -2,6 +2,7 @@ import { type ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 
 export interface DialogProps {
   open: boolean;
@@ -26,20 +27,19 @@ export function Dialog({
   width = 480,
   dismissable = true,
 }: DialogProps) {
+  // Page scroll lock + scrollbar-width compensation are owned by
+  // the shared useScrollLock hook so every modal surface across
+  // the app stays in sync. See src/lib/useScrollLock.ts for the why.
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissable) onClose();
     };
     document.addEventListener('keydown', onKey);
-    // Lock the scroll on #root (page scroll lives there now — see
-    // globalStyles for the iOS rubber-band fix).
-    const root = document.getElementById('root');
-    const prev = root?.style.overflow ?? '';
-    if (root) root.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) root.style.overflow = prev;
     };
   }, [open, onClose, dismissable]);
 

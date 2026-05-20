@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Camera, Image as ImageIcon, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 
 // Shared "Add a photo" capture flow used wherever a Lounge surface
 // needs to upload a photo.
@@ -97,21 +98,11 @@ export function useCaptureFlow({
 
 // ─── Internals ──────────────────────────────────────────────────────────────
 
-// Locks the page-scroll container (#root) while a popup is open.
-// The body is pinned at all times by globalStyles to suppress the
-// iOS rubber-band; the real scroll element is #root, so that's
-// what we toggle here.
-function useLockBodyScroll(active: boolean) {
-  useEffect(() => {
-    if (!active) return;
-    const root = document.getElementById('root');
-    const original = root?.style.overflow ?? '';
-    if (root) root.style.overflow = 'hidden';
-    return () => {
-      if (root) root.style.overflow = original;
-    };
-  }, [active]);
-}
+// CapturePopup used to own its own scroll-lock hook
+// (useLockBodyScroll); both call sites below now route through the
+// shared useScrollLock hook instead so the scrollbar-width
+// compensation that BottomSheet / NotificationsSheet rely on isn't
+// missing here. See src/lib/useScrollLock.ts for the full rationale.
 
 function PhotoSourceSheet({
   label,
@@ -124,7 +115,7 @@ function PhotoSourceSheet({
   onChooseGallery: () => void;
   onClose: () => void;
 }) {
-  useLockBodyScroll(true);
+  useScrollLock(true);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -320,7 +311,7 @@ function InAppCameraModal({
   onCapture: (file: File) => void;
   onClose: () => void;
 }) {
-  useLockBodyScroll(true);
+  useScrollLock(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);

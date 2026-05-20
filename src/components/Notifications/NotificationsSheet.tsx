@@ -3,6 +3,7 @@ import { Bell, ChevronLeft, Search, Settings, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { theme } from '../../theme/index.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 import { Button } from '../Button/Button.tsx';
 import {
   filterNotifications,
@@ -49,37 +50,19 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
     }
   }, [open]);
 
-  // Lock root scroll while the sheet is open. We also pad the
-  // root by the disappearing scrollbar's width so a centred portal
-  // doesn't visibly shift sideways the moment the bell opens —
-  // the previous "tiniest glimpse" flash Dylan saw was the
-  // scrollbar collapsing and the popup recentering 7-8 px to the
-  // left in the same paint. Compensating before flipping overflow
-  // keeps the layout pinned. Identical pattern is applied in
-  // BottomSheet so every modal surface behaves the same way.
+  // Page scroll lock + scrollbar-width compensation are owned by
+  // the shared useScrollLock hook so every modal surface across
+  // the app stays in sync. See src/lib/useScrollLock.ts for the why.
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
-    const root = document.getElementById('root');
-    const prevOverflow = root?.style.overflow ?? '';
-    const prevPaddingRight = root?.style.paddingRight ?? '';
-    const scrollbarWidth =
-      window.innerWidth - document.documentElement.clientWidth;
-    if (root) {
-      if (scrollbarWidth > 0) {
-        root.style.paddingRight = `${scrollbarWidth}px`;
-      }
-      root.style.overflow = 'hidden';
-    }
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) {
-        root.style.overflow = prevOverflow;
-        root.style.paddingRight = prevPaddingRight;
-      }
     };
   }, [open, onClose]);
 

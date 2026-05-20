@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { useScrollLock } from '../../lib/useScrollLock.ts';
 
 // PhotoLightbox — shared in-app fullscreen image viewer.
 //
@@ -50,6 +51,11 @@ export function PhotoLightbox({ photos, index, onChange }: PhotoLightboxProps) {
   // Keyboard nav: Esc closes, arrows step. Same handling pattern as
   // PhotoGallery's existing lightbox so the muscle-memory matches
   // across the app.
+  // Page scroll lock + scrollbar-width compensation are owned by
+  // the shared useScrollLock hook so every modal surface across
+  // the app stays in sync. See src/lib/useScrollLock.ts for the why.
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -62,14 +68,8 @@ export function PhotoLightbox({ photos, index, onChange }: PhotoLightboxProps) {
       if (e.key === 'ArrowRight' && index! < photos.length - 1) onChange(index! + 1);
     };
     document.addEventListener('keydown', onKey);
-    // Lock #root scroll while open. body is pinned by globalStyles
-    // for iOS rubber-band reasons; the real page scroller is #root.
-    const root = document.getElementById('root');
-    const prev = root?.style.overflow ?? '';
-    if (root) root.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (root) root.style.overflow = prev;
     };
   }, [open, index, photos.length, onChange]);
 
