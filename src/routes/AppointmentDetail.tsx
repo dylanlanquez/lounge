@@ -57,7 +57,11 @@ import {
   configFor,
   useAdminProductConfig,
 } from '../lib/queries/productWidgetConfig.ts';
-import { useIsMobile } from '../lib/useIsMobile.ts';
+import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
+import {
+  MeetingJoinBlockSheet,
+  type MeetingJoinBlockReason,
+} from '../components/MeetingJoinBlockSheet/MeetingJoinBlockSheet.tsx';
 import { logFailure } from '../lib/failureLog.ts';
 import {
   formatAppointmentSummary,
@@ -354,6 +358,18 @@ function Loaded({
   const [resending, setResending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Meeting-join gating. Tapping Join / Rejoin from a tablet, phone
+  // or from a Customer-Service-only account doesn't proceed; it
+  // opens a bottom sheet explaining why instead. The check happens
+  // inside the handlers below so the buttons stay tappable on every
+  // surface — the user gets an explicit reason rather than a
+  // disabled-grey affordance with no feedback.
+  const isDesktop = useIsDesktop();
+  const [meetingBlock, setMeetingBlock] = useState<
+    | { reason: MeetingJoinBlockReason; action: 'join' | 'rejoin' }
+    | null
+  >(null);
+
   // Auto-pull Meet attendance once when the page opens on a virtual
   // appointment whose end time has passed and Google has nothing for
   // us yet (no conference_started_at on the row). Removes the
@@ -436,7 +452,22 @@ function Loaded({
   // Virtual appointments: first join records that the meeting started
   // (sets status → arrived, writes a patient event) then opens the URL.
   // Rejoin skips the status mutation — the appointment is already arrived.
+  //
+  // Both handlers gate on role + device before running the
+  // original logic. Role check is FIRST: a CS member on a desktop
+  // still can't run the call. Device check is second: a clinician
+  // on an iPad gets the device prompt. Only a clinician on a
+  // laptop / desktop falls through and opens Google Meet.
+  const isCsOnly = currentAccount?.is_cs_only === true;
   const handleJoinMeeting = async () => {
+    if (isCsOnly) {
+      setMeetingBlock({ reason: 'role', action: 'join' });
+      return;
+    }
+    if (!isDesktop) {
+      setMeetingBlock({ reason: 'device', action: 'join' });
+      return;
+    }
     try {
       await markVirtualMeetingJoined(appt.id);
     } catch (e) {
@@ -454,6 +485,14 @@ function Loaded({
   };
 
   const handleRejoinMeeting = async () => {
+    if (isCsOnly) {
+      setMeetingBlock({ reason: 'role', action: 'rejoin' });
+      return;
+    }
+    if (!isDesktop) {
+      setMeetingBlock({ reason: 'device', action: 'rejoin' });
+      return;
+    }
     if (appt.join_url) window.open(appt.join_url, '_blank', 'noopener,noreferrer');
     try {
       await logVirtualMeetingRejoin(appt.id, appt.patient_id);
@@ -797,6 +836,13 @@ function Loaded({
           onClose={() => setConfirmReverseNoShowOpen(false)}
         />
       ) : null}
+
+      <MeetingJoinBlockSheet
+        open={meetingBlock !== null}
+        reason={meetingBlock?.reason ?? 'device'}
+        action={meetingBlock?.action ?? 'join'}
+        onClose={() => setMeetingBlock(null)}
+      />
     </>
   );
 }
@@ -2721,7 +2767,15 @@ function Actions({
           first
           icon={<Video size={16} aria-hidden />}
           label="Join meeting"
-          description={appt.join_url ?? undefined}
+          // The sub-line makes the laptop / desktop requirement
+          // visible BEFORE the tap, so a staff member on an iPad
+          // doesn't even consider it the right surface for the
+          // call. The join URL was less useful to surface here —
+          // it's a 30+ character meet.google.com string that no
+          // one types or quotes, and the Booking details card
+          // above already displays the same value with copy-to-
+          // clipboard chrome.
+          description="Open on a laptop or desktop"
           onClick={onJoinMeeting}
           accent
         />
@@ -2781,7 +2835,7 @@ function Actions({
         <ActionRow
           icon={<Video size={16} aria-hidden />}
           label="Rejoin meeting"
-          description={appt.join_url ?? undefined}
+          description="Open on a laptop or desktop"
           onClick={onRejoinMeeting}
         />
       ) : null}
