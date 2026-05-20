@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
-import { Plus, Wrench } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
+import { DentureIcon } from '../Icons/DentureIcon.tsx';
 import { theme } from '../../theme/index.ts';
 import type {
   AppointmentRepairItemRow,
@@ -68,7 +69,7 @@ export function AppointmentExtras({
           }}
         >
           <ExtrasSection
-            icon={<Wrench size={15} aria-hidden />}
+            icon={<DentureIcon size={15} />}
             title="Denture repairs selected at booking"
           >
             {archOrder.map((arch) => {
