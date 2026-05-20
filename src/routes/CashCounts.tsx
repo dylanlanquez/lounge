@@ -466,13 +466,18 @@ function RecentActivityCard({
           const isOut = line.kind === 'withdrawal';
           const amountColor = isOut ? theme.color.alert : theme.color.accent;
           const amountPrefix = isOut ? '−' : '+';
-          // Payments: time / patient / ref / amount. Withdrawals:
-          // time / reason / taken-by / amount. Same 4-column grid so
-          // the eye still reconciles the right-most column.
+          // Mobile-first 2-line layout:
+          //   Line 1 (top):    Label (left, semibold)     · Amount (right)
+          //   Line 2 (bottom): Time + actor/ref (muted)   · Chevron
+          // Stacks vertically on narrow screens without truncating the
+          // actor column the way the old 5-column grid did.
           const middleLabel = isOut ? withdrawalReasonLabel(line.reason) : (line.patient_name || 'Unknown patient');
-          const trailingLabel = isOut
-            ? (line.taken_by_name ? `by ${line.taken_by_name}` : null)
-            : (line.appointment_ref ?? '—');
+          const subParts: string[] = [formatDateTime(line.taken_at)];
+          if (isOut) {
+            if (line.taken_by_name) subParts.push(`by ${line.taken_by_name}`);
+          } else {
+            if (line.appointment_ref) subParts.push(line.appointment_ref);
+          }
           return (
             <li
               key={key}
@@ -491,8 +496,7 @@ function RecentActivityCard({
                   background: 'transparent',
                   border: 'none',
                   padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(120px, 1fr) minmax(140px, 2fr) minmax(120px, 1fr) auto auto',
+                  display: 'flex',
                   alignItems: 'center',
                   gap: theme.space[3],
                   textAlign: 'left',
@@ -506,41 +510,40 @@ function RecentActivityCard({
                   e.currentTarget.style.background = 'transparent';
                 }}
               >
-                <span
+                <div
                   style={{
-                    fontSize: theme.type.size.sm,
-                    color: theme.color.inkMuted,
-                    fontVariantNumeric: 'tabular-nums',
-                    whiteSpace: 'nowrap',
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
                   }}
                 >
-                  {formatDateTime(line.taken_at)}
-                </span>
-                <span
-                  style={{
-                    fontSize: theme.type.size.sm,
-                    fontWeight: theme.type.weight.semibold,
-                    color: theme.color.ink,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {middleLabel}
-                </span>
-                <span
-                  style={{
-                    fontSize: theme.type.size.xs,
-                    color: theme.color.inkMuted,
-                    fontVariantNumeric: 'tabular-nums',
-                    letterSpacing: theme.type.tracking.tight,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {trailingLabel ?? ''}
-                </span>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.sm,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.ink,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {middleLabel}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                      fontVariantNumeric: 'tabular-nums',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {subParts.join(' · ')}
+                  </span>
+                </div>
                 <span
                   style={{
                     fontSize: theme.type.size.base,
@@ -548,6 +551,7 @@ function RecentActivityCard({
                     color: amountColor,
                     fontVariantNumeric: 'tabular-nums',
                     whiteSpace: 'nowrap',
+                    flexShrink: 0,
                   }}
                 >
                   {amountPrefix}{formatPence(line.amount_pence)}
@@ -881,20 +885,21 @@ function CountRow({
   const diff = count.variance_pence;
   const matched = counted !== null && diff === 0;
   const showStatus = count.status !== 'signed';
+  const isLegacy = count.kind === 'legacy_baseline';
 
   // Headline sentence — varies by whether the count matched.
-  const summary =
-    counted === null ? (
-      <>Not yet counted · expected {formatPence(expected)}</>
-    ) : matched ? (
-      <>
-        {formatPence(counted)} counted · matched expected
-      </>
-    ) : (
-      <>
-        {formatPence(counted)} counted · expected {formatPence(expected)}
-      </>
-    );
+  // Legacy baseline reads as a seed event, not a reconciliation, so
+  // it skips the "expected vs counted" framing entirely (expected is
+  // 0 by construction; the variance pill would be misleading).
+  const summary = isLegacy ? (
+    <>Starting balance {formatPence(counted ?? 0)}</>
+  ) : counted === null ? (
+    <>Not yet counted · expected {formatPence(expected)}</>
+  ) : matched ? (
+    <>{formatPence(counted)} counted · matched expected</>
+  ) : (
+    <>{formatPence(counted)} counted · expected {formatPence(expected)}</>
+  );
 
   return (
     <li
@@ -923,8 +928,22 @@ function CountRow({
           <span style={{ fontVariantNumeric: 'tabular-nums' }}>
             {formatLongDate(count.period_end)}
           </span>
+          {isLegacy ? (
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.inkMuted,
+                background: theme.color.bg,
+                padding: `2px ${theme.space[2]}px`,
+                borderRadius: theme.radius.pill,
+              }}
+            >
+              Starting balance
+            </span>
+          ) : null}
           {showStatus ? <CountStatus status={count.status} /> : null}
-          {!matched && counted !== null ? (
+          {!isLegacy && !matched && counted !== null ? (
             <span
               style={{
                 fontSize: theme.type.size.xs,

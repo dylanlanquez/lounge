@@ -49,6 +49,13 @@ export interface CashCountRow {
   actual_pence: number | null;
   variance_pence: number;
   status: 'pending' | 'signed' | 'disputed';
+  /** 'regular' chains onto the previous signed count. 'legacy_baseline'
+   *  is the one-shot launch / re-launch seeding row. Used by the
+   *  history list to render the row as a baseline rather than a
+   *  routine reconciliation (no over/under variance pill, "Starting
+   *  balance" copy instead of "expected"). Defaults to 'regular' on
+   *  any historical row that predates the kind column. */
+  kind: 'regular' | 'legacy_baseline';
   notes: string | null;
   counted_by_name: string;
   counted_at: string;
@@ -64,6 +71,7 @@ interface RawCashCount {
   actual_pence: number | null;
   variance_pence: number;
   status: 'pending' | 'signed' | 'disputed';
+  kind?: 'regular' | 'legacy_baseline' | null;
   notes: string | null;
   counted_at: string;
   signed_off_at: string | null;
@@ -87,6 +95,9 @@ export function shapeCashCounts(raw: RawCashCount[]): CashCountRow[] {
       actual_pence: r.actual_pence,
       variance_pence: r.variance_pence,
       status: r.status,
+      kind: (r.kind === 'legacy_baseline' ? 'legacy_baseline' : 'regular') as
+        | 'regular'
+        | 'legacy_baseline',
       notes: r.notes,
       counted_by_name: composePersonName(pickOne(r.counted_by)),
       counted_at: r.counted_at,
@@ -131,7 +142,7 @@ export function useCashCounts(): CashCountsResult {
           .from('lng_cash_counts')
           .select(
             `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
-             status, notes, counted_at, signed_off_at,
+             status, kind, notes, counted_at, signed_off_at,
              counted_by:accounts!counted_by ( first_name, last_name, name ),
              signed_off_by:accounts!signed_off_by ( first_name, last_name, name )`,
           )
