@@ -4,6 +4,7 @@ import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
 import { addDaysIso } from '../calendarMonth.ts';
 import { logFailure } from '../failureLog.ts';
 import { properCase } from './appointments.ts';
+import { useLaunchDate } from './launchDate.ts';
 
 // Reports — read-side hooks for the Reports section.
 //
@@ -368,19 +369,34 @@ export function useReportsBookingsVsWalkIns(range: DateRange): BookingsVsWalkIns
   const [data, setData] = useState<BookingsVsWalkInsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Floor every appointment-side query at the saved launch instant so
+  // legacy Calendly bookings never inflate the booked / arrival
+  // counts on a range that crosses the launch boundary.
+  const launch = useLaunchDate();
 
   useEffect(() => {
+    if (launch.loading) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    const apptFromIso = launch.data && launch.data > fromIso ? launch.data : fromIso;
     (async () => {
       try {
+        // Whole range is pre-launch — skip the network call and emit
+        // empty aggregates so the chart shows zero instead of an
+        // inflated bookings count of legacy rows.
+        if (apptFromIso > toIso) {
+          if (cancelled) return;
+          setData(aggregateBookingsVsWalkIns(range, [], []));
+          setLoading(false);
+          return;
+        }
         const [apptRes, visitRes] = await Promise.all([
           supabase
             .from('lng_appointments')
             .select('id, start_at, status, patient_id')
-            .gte('start_at', fromIso)
+            .gte('start_at', apptFromIso)
             .lte('start_at', toIso),
           supabase
             .from('lng_visits')
@@ -416,7 +432,7 @@ export function useReportsBookingsVsWalkIns(range: DateRange): BookingsVsWalkIns
     return () => {
       cancelled = true;
     };
-  }, [range]);
+  }, [range, launch.loading, launch.data]);
 
   return { data, loading, error };
 }
@@ -2418,14 +2434,26 @@ export function useReportsOnlineOrders(range: DateRange): OnlineOrdersResult {
   const [data, setData] = useState<OnlineOrdersData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Floor at launch_date so legacy Calendly rows with a Shopify
+  // order attached don't show up as a pre-launch credit on the
+  // online-orders surface.
+  const launch = useLaunchDate();
 
   useEffect(() => {
+    if (launch.loading) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    const apptFromIso = launch.data && launch.data > fromIso ? launch.data : fromIso;
     (async () => {
       try {
+        if (apptFromIso > toIso) {
+          if (cancelled) return;
+          setData(aggregateOnlineOrders([]));
+          setLoading(false);
+          return;
+        }
         const { data: rows, error: err } = await supabase
           .from('lng_appointments')
           .select(
@@ -2435,7 +2463,7 @@ export function useReportsOnlineOrders(range: DateRange): OnlineOrdersResult {
              patient:patients ( first_name, last_name, internal_ref )`,
           )
           .not('shopify_order_id', 'is', null)
-          .gte('start_at', fromIso)
+          .gte('start_at', apptFromIso)
           .lte('start_at', toIso);
         if (cancelled) return;
         if (err) throw new Error(err.message);
@@ -2460,7 +2488,7 @@ export function useReportsOnlineOrders(range: DateRange): OnlineOrdersResult {
     return () => {
       cancelled = true;
     };
-  }, [range]);
+  }, [range, launch.loading, launch.data]);
 
   return { data, loading, error };
 }

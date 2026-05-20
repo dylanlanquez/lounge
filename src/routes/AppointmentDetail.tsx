@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Copy,
   CreditCard,
+  History,
   Mail,
   MapPin,
   RotateCcw,
@@ -79,6 +80,7 @@ import { formatPence } from '../lib/queries/carts.ts';
 import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { useLaunchDate } from '../lib/queries/launchDate.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { recordOwedToPatient } from '../lib/queries/owedToPatient.ts';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
@@ -140,6 +142,11 @@ export function AppointmentDetail() {
   const params = useParams();
   const isMobile = useIsMobile(640);
   const { result, refresh } = useAppointmentDetail(params.id);
+  // Loaded once at the page level so the appointment fetch and the
+  // launch-date read race in parallel. Holding the page render until
+  // both settle avoids the PreLaunchBanner appearing a beat after
+  // the hero on legacy Calendly rows ("no load-time flicker" rule).
+  const launch = useLaunchDate();
 
   const entry = (location.state as EntryState | null) ?? {};
 
@@ -175,7 +182,7 @@ export function AppointmentDetail() {
     >
       <div style={{ maxWidth: innerMaxWidth, margin: '0 auto' }}>
         <Breadcrumbs entry={entry} appt={result.data} />
-        {result.state === 'loading' ? (
+        {result.state === 'loading' || launch.loading ? (
           <SkeletonView />
         ) : result.state === 'not_found' ? (
           <NotFound onBack={() => navigate('/ledger')} />
@@ -202,7 +209,7 @@ export function AppointmentDetail() {
             }}
           />
         ) : (
-          <Loaded appt={result.data} onChanged={refresh} />
+          <Loaded appt={result.data} onChanged={refresh} launchDate={launch.data} />
         )}
       </div>
       {createdToast ? (
@@ -331,9 +338,15 @@ function DateSkeleton() {
 function Loaded({
   appt,
   onChanged,
+  launchDate,
 }: {
   appt: AppointmentDetailRow;
   onChanged: () => void;
+  /** ISO instant Lounge went live, read from lng_settings. Null when
+   *  unset. When set and appt.start_at predates it, the
+   *  PreLaunchBanner above the hero flags the booking as legacy
+   *  Calendly history. */
+  launchDate: string | null;
 }) {
   const navigate = useNavigate();
   // Resolve the signed-in user's accounts.id (NOT the auth user uuid)
@@ -571,8 +584,11 @@ function Loaded({
     }
   };
 
+  const isPreLaunch = !!launchDate && appt.start_at < launchDate;
+
   return (
     <>
+      {isPreLaunch ? <PreLaunchBanner /> : null}
       <Hero appt={appt} fullName={fullName} tone={tone} />
 
       {/* Customer service note sits between the patient Hero and the
@@ -3335,6 +3351,65 @@ function CancelledRefundBanner({
       <Button variant="primary" size="sm" onClick={onOpenRefund}>
         Refund {amount}
       </Button>
+    </div>
+  );
+}
+
+// Quiet banner pinned above the hero on appointments that pre-date
+// the saved lounge.launch_date. Communicates "this is legacy Calendly
+// history" so staff understand why there's no visit / payment /
+// notes attached, without flagging the row as cancelled or no-show.
+// Neutral chrome only — no alert tone, no action button.
+function PreLaunchBanner() {
+  return (
+    <div
+      style={{
+        marginTop: theme.space[3],
+        marginBottom: theme.space[4],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 32,
+          height: 32,
+          borderRadius: '50%',
+          background: theme.color.bg,
+          color: theme.color.inkMuted,
+          flexShrink: 0,
+        }}
+      >
+        <History size={16} aria-hidden />
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+          }}
+        >
+          Booked before Lounge launched
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.normal,
+          }}
+        >
+          This appointment was made through Calendly before the app went live. Kept for reference only, no visit, payment or notes were recorded here.
+        </span>
+      </div>
     </div>
   );
 }

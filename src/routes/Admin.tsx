@@ -79,9 +79,7 @@ import {
   type SystemFailureRow,
 } from '../lib/queries/admin.ts';
 import {
-  previewPreLaunchBackfillCount,
   previewTestPatientAppointmentsWipe,
-  runPreLaunchBackfill,
   setLaunchDate,
   TEST_PATIENT_EMAILS,
   useLaunchDate,
@@ -1099,20 +1097,11 @@ function TestingTab() {
   );
 }
 
-// Launch-date card on the Testing tab. Two phases:
-//
-//   1. Date + time pickers + Save — writes lng_settings.lounge.launch_date.
-//   2. Backfill button — calls lng_pre_launch_no_show_backfill(),
-//      which flips every status='booked' AND end_at < launch_date row
-//      to status='no_show' with a clearly-tagged cancel_reason.
-//
-// Confirmation gate sits in front of the backfill so the operator
-// sees how many rows are about to flip BEFORE committing. The RPC is
-// idempotent so the worst case of a fast-double-tap is a no-op
-// second run, but the confirmation is still useful because the
-// cancel_reason on every flipped row reads "Pre-Lounge launch
-// backfill, not a real no-show" — once persisted it shows on the
-// timeline forever.
+// Launch-date card on the Testing tab. Date + time pickers + Save
+// write lng_settings.lounge.launch_date. The saved instant drives
+// the AppointmentDetail PreLaunchBanner and the reports range clamp
+// so pre-launch Calendly history is naturally excluded from charts
+// without touching any underlying row.
 function LaunchCard({
   onToast,
 }: {
@@ -1132,13 +1121,6 @@ function LaunchCard({
   const timeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Backfill state — preview count + confirm sheet.
-  const [previewCount, setPreviewCount] = useState<number | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [running, setRunning] = useState(false);
-
   // Resync local form state when the persisted launch_date changes —
   // matters after a Save → refresh round-trip so the form reflects
   // exactly what's in the DB.
@@ -1151,37 +1133,6 @@ function LaunchCard({
       setDate('');
       setTime('');
     }
-  }, [launch.data]);
-
-  // Refresh the "X rows will be flipped" preview whenever the
-  // persisted launch_date changes. The preview reads from end_at
-  // against the SAVED launch date (not the unsaved form state) so it
-  // matches what the RPC would do if pressed right now.
-  useEffect(() => {
-    if (!launch.data) {
-      setPreviewCount(null);
-      setPreviewError(null);
-      return;
-    }
-    let cancelled = false;
-    setPreviewLoading(true);
-    (async () => {
-      try {
-        const count = await previewPreLaunchBackfillCount(launch.data!);
-        if (cancelled) return;
-        setPreviewCount(count);
-        setPreviewError(null);
-      } catch (e) {
-        if (cancelled) return;
-        setPreviewError(e instanceof Error ? e.message : 'Could not preview backfill count');
-        setPreviewCount(null);
-      } finally {
-        if (!cancelled) setPreviewLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, [launch.data]);
 
   const composed = composeLaunchIso(date, time);
@@ -1224,35 +1175,6 @@ function LaunchCard({
     }
   };
 
-  const onRunBackfill = async () => {
-    if (running) return;
-    setRunning(true);
-    try {
-      const flipped = await runPreLaunchBackfill();
-      onToast({
-        tone: 'success',
-        title: flipped === 0 ? 'Nothing to backfill' : `Backfilled ${flipped} booking${flipped === 1 ? '' : 's'}`,
-        description: flipped === 0
-          ? 'No still-booked rows older than the launch date.'
-          : 'Marked as no-show with the pre-launch tag on each.',
-      });
-      setConfirmOpen(false);
-      // Refresh preview so the count drops to 0 after the flip.
-      if (launch.data) {
-        const next = await previewPreLaunchBackfillCount(launch.data);
-        setPreviewCount(next);
-      }
-    } catch (e) {
-      onToast({
-        tone: 'error',
-        title: 'Backfill failed',
-        description: e instanceof Error ? e.message : undefined,
-      });
-    } finally {
-      setRunning(false);
-    }
-  };
-
   return (
     <Card padding="lg">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: theme.space[3] }}>
@@ -1270,7 +1192,7 @@ function LaunchCard({
               lineHeight: theme.type.leading.normal,
             }}
           >
-            Set the moment Lounge went live. The backfill below flips every still-booked appointment whose slot ended before this instant to no-show, with a clear "pre-launch backfill" tag on each so the timeline reads the right story. Anything already touched (arrived, complete, cancelled, rescheduled) and any booking after the launch instant is left alone.
+            Set the moment Lounge went live. Bookings that pre-date this instant get a "Booked before Lounge launched" banner on the appointment page, and the reports auto-floor their start date here so legacy Calendly history stays out of the funnel.
           </p>
         </div>
       </div>
@@ -1336,78 +1258,6 @@ function LaunchCard({
         ) : null}
       </div>
 
-      {/* Backfill section — only useful once a launch date is saved. */}
-      <div
-        style={{
-          marginTop: theme.space[5],
-          paddingTop: theme.space[5],
-          borderTop: `1px solid ${theme.color.border}`,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: theme.space[3],
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-            Pre-launch backfill
-          </p>
-          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
-            {launch.data
-              ? previewLoading
-                ? 'Counting how many bookings would flip…'
-                : previewError
-                  ? previewError
-                  : previewCount === null
-                    ? 'Run when ready to flip every untouched, pre-launch booking to no-show.'
-                    : previewCount === 0
-                      ? 'Nothing to backfill — every pre-launch booking has already been handled.'
-                      : `${previewCount.toLocaleString('en-GB')} booking${previewCount === 1 ? '' : 's'} would flip to no-show with the pre-launch tag.`
-              : 'Set a launch date above first. The backfill reads from the saved value.'}
-          </p>
-        </div>
-        <Button
-          variant="secondary"
-          onClick={() => setConfirmOpen(true)}
-          disabled={!launch.data || previewLoading || previewCount === 0}
-        >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <RotateCcw size={14} /> Run backfill
-          </span>
-        </Button>
-      </div>
-
-      <BottomSheet
-        open={confirmOpen}
-        onClose={running ? () => undefined : () => setConfirmOpen(false)}
-        title="Run the pre-launch backfill?"
-        description={
-          launch.data
-            ? `Flips every still-booked appointment whose slot ended before ${formatLaunchInstantLong(launch.data)} to no-show. Each flipped row gets the cancel reason "Pre-Lounge launch backfill, not a real no-show" so the timeline reads correctly.`
-            : 'Set a launch date first.'
-        }
-        footer={
-          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
-            <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={running}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <X size={16} aria-hidden /> Not yet
-              </span>
-            </Button>
-            <Button variant="primary" onClick={onRunBackfill} loading={running}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <Rocket size={16} aria-hidden /> {previewCount !== null && previewCount > 0 ? `Flip ${previewCount.toLocaleString('en-GB')}` : 'Run'}
-              </span>
-            </Button>
-          </div>
-        }
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
-            Idempotent. Running it again later updates zero extra rows.
-          </p>
-        </div>
-      </BottomSheet>
     </Card>
   );
 }
