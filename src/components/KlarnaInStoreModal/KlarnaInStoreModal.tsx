@@ -313,7 +313,7 @@ export function KlarnaInStoreModal({
       >
         {state === 'starting' ? (
           <>
-            <Loader2 size={32} style={{ animation: 'spin 1.2s linear infinite', color: theme.color.inkMuted }} />
+            <Loader2 size={32} style={{ animation: 'lng-spin 1.2s linear infinite', color: theme.color.inkMuted }} />
             <p style={{ margin: 0, color: theme.color.inkMuted }}>Starting Klarna session…</p>
           </>
         ) : state === 'awaiting_customer' ? (
@@ -339,7 +339,7 @@ export function KlarnaInStoreModal({
                 />
               </div>
             ) : (
-              <Loader2 size={32} style={{ animation: 'spin 1.2s linear infinite', color: theme.color.inkMuted }} />
+              <Loader2 size={32} style={{ animation: 'lng-spin 1.2s linear infinite', color: theme.color.inkMuted }} />
             )}
             <p
               style={{

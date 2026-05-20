@@ -79,6 +79,18 @@ export function applyGlobalStyles(): void {
     input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
     input[type="color"]::-webkit-color-swatch { border: none; border-radius: inherit; }
     input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
+    /* Canonical spinner keyframe used app-wide. Previously lived
+       inside Button (rendered alongside every Button instance), so
+       any component spinning outside a Button context (Klarna
+       starting state, terminal-payment modal, manager-notifications
+       saving pill, etc.) silently failed to animate when no Button
+       was on the page. Defining it here once means every
+       animation: lng-spin reference works regardless of mount
+       order. */
+    @keyframes lng-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
   `;
   document.head.appendChild(style);
 }
