@@ -620,6 +620,19 @@ function FactsLine({ facts }: { facts: ReadonlyArray<{ label: string; value: str
 
 function toneFor(event: TimelineEvent): EventTone {
   if (event.tone) return TONE[event.tone];
+  // Refund-axis hints carry their own tone so the events stand out
+  // against the rest of the timeline at a glance. Without this,
+  // "Refunded £X" and "Patient balance restored" fell through to
+  // TONE.neutral on the patient_event branch — the same grey as
+  // every other non-eventful row — and staff scanning a visit
+  // couldn't spot money-back rows in a busy timeline. Using
+  // TONE.alert ties refund rows visually to the "We owe the
+  // patient £X" rows (which already use alert tone via the
+  // visitTimeline resolver), so the whole money-axis story reads
+  // as one coloured family.
+  if (event.hint === 'refund_owed' || event.hint === 'refund_issued') {
+    return TONE.alert;
+  }
   switch (event.type) {
     case 'appointment_created':
     case 'deposit_paid':
