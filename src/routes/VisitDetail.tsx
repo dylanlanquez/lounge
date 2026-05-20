@@ -3359,21 +3359,58 @@ function buildVisitHeroProps(
     { tone: visitStatusTone(visit.status), label: visitStatusLabel(visit.status) },
   ];
   const isTerminated = visit.status === 'unsuitable' || visit.status === 'ended_early';
-  // Refund axis pill. When money has been returned, displace the
-  // "Paid in full" cart status with a refund label so the hero never
-  // reads as "Paid in full" when funds were partially or fully
-  // clawed back (Dylan's UX call — one pill, refund takes
-  // precedence). 'full' shows "Refunded"; 'partial' carries the
-  // amount inline so staff sees how much came back at a glance.
+  // Refund axis pill. When money has been returned AND the cart is
+  // net-out-of-pocket, displace the "Paid in full" cart status with
+  // a refund label so the hero never reads as "Paid in full" when
+  // funds were partially or fully clawed back (Dylan's UX call — one
+  // pill, refund takes precedence).
+  //
+  // The pill reflects the CURRENT net state of the till, not the
+  // cumulative refund history. A cycle of pay → refund → pay-again
+  // ends at "Paid in full", not "Partially refunded" — because the
+  // second payment cancelled out the prior refund. Reading
+  // refundedToDatePence in isolation would loop the pill forever,
+  // since that lifetime sum only ever grows. The check here gates
+  // on whether the patient currently has MORE money out than in:
+  //
+  //   • amountPaidPence (from lng_visit_paid_status) is already net
+  //     of every succeeded refund whose underlying payment is still
+  //     succeeded. So when a refund has been compensated for by a
+  //     subsequent payment, amountPaidPence climbs back up.
+  //   • cartTotalPence anchors the "fully paid" threshold. If
+  //     amountPaidPence >= cartTotalPence, the cart is settled
+  //     regardless of how many refund/pay cycles preceded it.
+  //
+  // So:
+  //   • net == 0 AND refunds exist           → "Refunded"
+  //   • 0 < net < cartTotal AND refunds exist → "Partially refunded £X"
+  //     where X is what's still outside the till net (cartTotal − net),
+  //     i.e. what re-payment is needed to clear the bill again
+  //   • otherwise (net >= cartTotal, or net > 0 with no refunds) →
+  //     fall through to the regular cart-status pill
+  const cartTotalPence = cart?.total_pence ?? 0;
   const isFullyRefunded = refundedToDatePence > 0 && amountPaidPence <= 0;
-  const isPartiallyRefunded = refundedToDatePence > 0 && amountPaidPence > 0;
+  const isPartiallyRefunded =
+    refundedToDatePence > 0 &&
+    amountPaidPence > 0 &&
+    amountPaidPence < cartTotalPence;
   if (cart && !isTerminated) {
     if (isFullyRefunded || isPartiallyRefunded) {
+      // Partial-refund amount = what's currently outside the till
+      // (cartTotal − net), matching the "still owed by patient"
+      // figure the cart breakdown shows. Reading
+      // refundedToDatePence directly would be the lifetime
+      // refund sum, which can be larger than the current
+      // outstanding when re-payments have happened in between.
+      const outstandingFromRefundsPence = Math.max(
+        0,
+        cartTotalPence - amountPaidPence,
+      );
       pills.push({
         tone: 'refunded',
         label: isFullyRefunded
           ? 'Refunded'
-          : `Partially refunded ${formatPence(refundedToDatePence)}`,
+          : `Partially refunded ${formatPence(outstandingFromRefundsPence)}`,
       });
     } else {
       pills.push({
