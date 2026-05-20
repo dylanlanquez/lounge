@@ -4902,10 +4902,15 @@ function VisitActionStack({
           >
             <UserIcon size={15} aria-hidden />
           </span>
-          <h3
+          <h2
             style={{
               margin: 0,
-              fontSize: theme.type.size.md,
+              // Matches the size every other section heading on this
+              // page uses (CollapsibleCard's <h2> → theme.type.size.lg).
+              // Patient profile was alone at .md, which made it read
+              // as a sub-heading rather than a peer of the section
+              // headers above and below it.
+              fontSize: theme.type.size.lg,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
               letterSpacing: theme.type.tracking.tight,
@@ -4916,7 +4921,7 @@ function VisitActionStack({
             }}
           >
             Patient profile
-          </h3>
+          </h2>
         </span>
         <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
       </button>
