@@ -1146,22 +1146,16 @@ async function fetchPatientEvents(visit: VisitRow): Promise<PatientEventsResult>
           ? r.payload.approver_account_id
           : null;
       // SMS detail line — overrides the generic patient-event
-      // detail for sms_* rows so the receptionist sees the
-      // destination phone right on the timeline. View SMS opens
-      // the body in the modal. Receipt SMS rows already carry the
-      // recipient phone on payload.recipient (the send-receipt
-      // edge function stamps it there), so we use that directly
-      // instead of going via the twilio_sid lookup.
-      const receiptSmsRecipient =
-        isReceiptSmsRow && typeof r.payload?.recipient === 'string'
-          ? r.payload.recipient
-          : null;
+      // detail for sms_delivered / sms_failed rows so the
+      // receptionist sees the destination phone right on the
+      // timeline. View SMS opens the body in the modal. Receipt
+      // rows already carry the recipient on composePatientEventDetail
+      // ("to +44... · via SMS"), so we don't prepend a second
+      // "Sent to..." for them — the base detail stands alone.
       const baseDetail = composePatientEventDetail(r);
       const detail = smsTwilioSid && smsToPhone
         ? `Sent to ${smsToPhone}${baseDetail ? ` · ${baseDetail}` : ''}`
-        : receiptSmsRecipient
-          ? `Sent to ${receiptSmsRecipient}${baseDetail ? ` · ${baseDetail}` : ''}`
-          : baseDetail;
+        : baseDetail;
       return {
         id: `patient-event-${r.id}`,
         type: 'patient_event' as const,

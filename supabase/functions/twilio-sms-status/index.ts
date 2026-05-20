@@ -175,7 +175,24 @@ Deno.serve(async (req) => {
   // gating on the prior status — Twilio fires queued → sent →
   // delivered as separate callbacks, but only the actual transition
   // to sent / failed produces a timeline-worthy event.
-  if (prior && prior.send_status !== effectiveStatus && effectiveStatus !== 'pending' && prior.patient_id) {
+  //
+  // Payment receipts are deliberately excluded from this insert.
+  // send-receipt already writes a 'receipt_sent' patient_events row
+  // at dispatch time (mirroring the email side, which has no
+  // equivalent 'email_delivered' event). Without this skip the
+  // timeline shows the receipt twice: once as "Receipt sent" from
+  // send-receipt, once as "Text message delivered" from here. The
+  // lng_sms_messages.send_status update above still runs so the
+  // View SMS modal reflects the actual delivery state — only the
+  // duplicated timeline row is suppressed.
+  const isReceiptSms = prior?.template_key === 'payment_receipt';
+  if (
+    prior &&
+    prior.send_status !== effectiveStatus &&
+    effectiveStatus !== 'pending' &&
+    prior.patient_id &&
+    !isReceiptSms
+  ) {
     const transitionEventType =
       effectiveStatus === 'sent' ? 'sms_delivered' : 'sms_failed';
     await admin.from('patient_events').insert({
