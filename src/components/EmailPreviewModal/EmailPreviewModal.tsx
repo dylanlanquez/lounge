@@ -395,7 +395,15 @@ function EmailFrame({ html, subject }: { html: string; subject: string }) {
         // JS, and disabling it eliminates the entire vector category.
         // allow-popups lets link clicks open in a new tab so staff
         // can verify CTA destinations without leaving the preview.
-        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        // allow-same-origin is REQUIRED so the parent can read
+        // contentDocument and measure scrollHeight. Without it the
+        // iframe gets an opaque origin and ref.current.contentDocument
+        // is null — measure() early-returns on every call, the iframe
+        // stays pinned to its initial 800px, and any email taller than
+        // that gets silently clipped. allow-same-origin without
+        // allow-scripts cannot be exploited (no JS can run inside the
+        // iframe), it just lets the parent inspect the document.
+        sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
         referrerPolicy="no-referrer"
         scrolling="no"
         style={{
