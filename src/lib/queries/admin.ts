@@ -233,17 +233,33 @@ export async function resetTestAppointment(appointmentId: string): Promise<void>
     await supabase.from('lng_visits').delete().eq('id', v.id);
   }
 
+  // Wipe Google Meet attendance rows so the appointment's
+  // attendance card resets to "no attendance yet" on next paint.
+  await supabase.from('lng_meet_attendance').delete().eq('appointment_id', appointmentId);
+
   // Reset the appointment shell: status back to booked, cancel_reason
-  // cleared (no_show writes one). Deposit fields are intentionally left
-  // alone — those were captured at booking time, not during the test.
+  // cleared (no_show writes one), conference markers cleared so the
+  // virtual side reads as "never joined" and the Join meeting button
+  // re-appears on the action list. Deposit fields are intentionally
+  // left alone — those were captured at booking time, not during
+  // the test.
   await supabase
     .from('lng_appointments')
-    .update({ status: 'booked', cancel_reason: null })
+    .update({
+      status: 'booked',
+      cancel_reason: null,
+      conference_started_at: null,
+      conference_ended_at: null,
+      conference_count: 0,
+      recording_count: 0,
+      transcript_count: 0,
+    })
     .eq('id', appointmentId);
 
   // Wipe test-flow patient_events. Two passes:
   //   1. Events keyed on appointment_id in their payload — every
-  //      mark-arrived / no-show / undo / join action emits one.
+  //      mark-arrived / no-show / undo / join / rejoin action
+  //      emits one.
   //   2. visit_closed events keyed on visit_id (no appointment_id in
   //      that payload), one per visit we just deleted.
   const APPT_EVENT_TYPES = [
@@ -251,6 +267,7 @@ export async function resetTestAppointment(appointmentId: string): Promise<void>
     'no_show',
     'no_show_reversed',
     'virtual_meeting_joined',
+    'virtual_meeting_rejoined',
   ];
   for (const type of APPT_EVENT_TYPES) {
     await supabase

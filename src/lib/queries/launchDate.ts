@@ -140,6 +140,7 @@ export const TEST_PATIENT_EMAILS: readonly string[] = [
   'dylan@venneir.com',
   'dylanjmlane@icloud.com',
   'dylan@lanquez.com',
+  'dylanlane@venneir.com',
   'hello@lanquez.com',
   'alex@venneir.com',
   'venneirlaboratory@gmail.com',
@@ -169,12 +170,43 @@ export async function previewTestPatientAppointmentsWipe(
   const patientIds = (patientsRes.data ?? []).map((r) => (r as { id: string }).id);
   if (patientIds.length === 0) return { patients: 0, appointments: 0 };
 
+  // Count both appointments AND orphan walk-ins keyed on the patient.
+  // venneirlaboratory@gmail.com surfaced this gap — its only test row
+  // is LAP-00003, a walk-in with no lng_appointments row, so the
+  // preview said "0 appointments to wipe" and the operator skipped
+  // the bin. The wipe RPC catches walk-ins server-side (see
+  // 20260520000003_lng_wipe_orphan_walk_ins.sql); the preview has
+  // to match so the count the operator sees matches what the RPC
+  // actually deletes.
   const apptRes = await supabase
     .from('lng_appointments')
     .select('id', { head: true, count: 'exact' })
     .in('patient_id', patientIds);
   if (apptRes.error) throw new Error(apptRes.error.message);
-  return { patients: patientIds.length, appointments: apptRes.count ?? 0 };
+  const walkInRes = await supabase
+    .from('lng_walk_ins')
+    .select('id', { head: true, count: 'exact' })
+    .in('patient_id', patientIds);
+  if (walkInRes.error) throw new Error(walkInRes.error.message);
+  // Walk-ins that ARE referenced by an lng_appointments.walk_in_id
+  // would be double-counted (the appointment count + the walk-in
+  // count both include them). Subtract that overlap so the figure
+  // matches what the RPC reports back ("X appointments" where X is
+  // appointment rows + truly-orphan walk-ins).
+  const linkedRes = await supabase
+    .from('lng_appointments')
+    .select('id', { head: true, count: 'exact' })
+    .in('patient_id', patientIds)
+    .not('walk_in_id', 'is', null);
+  if (linkedRes.error) throw new Error(linkedRes.error.message);
+  const apptCount = apptRes.count ?? 0;
+  const walkInCount = walkInRes.count ?? 0;
+  const linkedCount = linkedRes.count ?? 0;
+  const orphanWalkIns = Math.max(0, walkInCount - linkedCount);
+  return {
+    patients: patientIds.length,
+    appointments: apptCount + orphanWalkIns,
+  };
 }
 
 /**
