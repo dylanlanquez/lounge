@@ -3140,20 +3140,32 @@ function StaffTab() {
                           {s.is_manager ? <RolePill tone="neutral">Manager</RolePill> : null}
                           {s.is_customer_service ? <RolePill tone="neutral">Customer Service</RolePill> : null}
                           {s.require_2fa ? <RolePill tone="neutral">2FA required</RolePill> : null}
-                          {/* Pending-invite indicator. Surfaces when a
-                              new staff member has been provisioned via
-                              lng-create-staff-account (invite_sent_at
-                              set) but has not yet accepted by clicking
-                              through to /welcome (invite_accepted_at
-                              null). Orange "Pending invite" while the
-                              token is still in its 7-day window; red
-                              "Invite expired" once invite_expires_at is
-                              in the past so the admin knows to resend.
-                              Pre-feature accounts (invite_sent_at null
-                              and invite_accepted_at backfilled from
-                              hired_at) never enter this state. */}
-                          {!s.invite_accepted_at && s.invite_sent_at
+                          {/* Pending-invite indicator. Three states
+                              surface here, all gated on
+                              !invite_accepted_at:
+                                - Awaiting invite: row has no
+                                  invite_sent_at yet — either freshly
+                                  reset (admin needs to click Resend
+                                  for the first time) or a row that
+                                  predates the custom-token flow and
+                                  was reset by 20260520000008.
+                                - Pending invite: invite_sent_at set
+                                  and within the 7-day window.
+                                - Invite expired: invite_sent_at set
+                                  and invite_expires_at in the past.
+                              Pre-feature accounts that accepted under
+                              the old Supabase flow have invite_accepted_at
+                              backfilled to hired_at and never enter
+                              any of these states. */}
+                          {!s.invite_accepted_at
                             ? (() => {
+                                if (!s.invite_sent_at) {
+                                  return (
+                                    <StatusPill tone="unsuitable" size="sm">
+                                      Awaiting invite
+                                    </StatusPill>
+                                  );
+                                }
                                 const expiresMs = s.invite_expires_at
                                   ? new Date(s.invite_expires_at).getTime()
                                   : null;
