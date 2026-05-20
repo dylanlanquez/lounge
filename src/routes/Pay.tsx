@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -232,6 +232,90 @@ export function Pay() {
   // after a successful void / new payment.
   const { data: cartPayments, refresh: refreshCartPayments } = useCartPayments(cart?.id ?? null);
   const succeededPayments = cartPayments.filter((p) => p.status === 'succeeded');
+
+  // Cart-level safety net for terminal + Klarna + BNPL payments. The
+  // per-modal onSucceeded path is the happy case, but in production
+  // we've seen the receipt screen never appear when the modal misses
+  // the UPDATE event for a succeeded payment — modal closed before the
+  // Stripe webhook landed, realtime channel dropped mid-tap, retry
+  // sequence that minted a fresh attempt_id and the previous channel
+  // was bound to the old payment_id. The DB still ends up correct
+  // (lng_payments.status='succeeded', cart flipped to paid) but the
+  // UI is stuck on the method picker.
+  //
+  // This subscription watches every lng_payments row for the current
+  // cart. Any UPDATE fires a refresh of paidStatus + cartPayments.
+  // A second effect below then advances stage='success' whenever a
+  // NEW succeeded payment arrives AND the cart is fully settled.
+  useEffect(() => {
+    if (!cart?.id) return;
+    const channel = supabase
+      .channel(`lng_payments:cart:${cart.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'lng_payments',
+          filter: `cart_id=eq.${cart.id}`,
+        },
+        () => {
+          refreshPaid();
+          refreshCartPayments();
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'lng_payments',
+          filter: `cart_id=eq.${cart.id}`,
+        },
+        () => {
+          refreshPaid();
+          refreshCartPayments();
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [cart?.id, refreshPaid, refreshCartPayments]);
+
+  // Count of succeeded payments captured the first time the cart
+  // mounts. The safety-net effect below only fires when this count
+  // grows — without it, opening Pay for an already-paid visit would
+  // skip past the "Already collected" view straight to the receipt
+  // picker, which is a behaviour change beyond the bug we're fixing.
+  const initialSucceededCountRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (cart && initialSucceededCountRef.current === null) {
+      initialSucceededCountRef.current = succeededPayments.length;
+    }
+  }, [cart, succeededPayments.length]);
+
+  // Auto-advance to the receipt picker when a new succeeded payment
+  // lands and clears the outstanding. The lastAdvancedRef gate stops
+  // a second render from re-firing for the same payment id.
+  const lastAdvancedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!cart) return;
+    if (stage === 'success') return;
+    if (outstandingPence > 0) return;
+    if (initialSucceededCountRef.current === null) return;
+    if (succeededPayments.length <= initialSucceededCountRef.current) return;
+    const latest = succeededPayments[succeededPayments.length - 1];
+    if (!latest) return;
+    if (lastAdvancedRef.current === latest.id) return;
+    lastAdvancedRef.current = latest.id;
+    setPaymentId(latest.id);
+    setTerminalOpen(false);
+    setKlarnaOpen(false);
+    setBnplOpen(false);
+    setChargeAmountText('');
+    setStage('success');
+  }, [cart, stage, outstandingPence, succeededPayments]);
 
   // Void sheet state. Captures the reason — manager approval has
   // moved out of band: configured managers get an emailed
