@@ -1146,6 +1146,11 @@ function NewCountSheet({
     }
 
     setBusy(true);
+    // Tracked so the catch block can roll back a half-created count
+    // — without this, a failed sign (constraint violation, network
+    // blip, RLS rejection) leaves a pending row in the safe history
+    // alongside any successful retry.
+    let pendingCountId: string | null = null;
     try {
       const locationId = await resolveLocationId();
       const created = await createCashCount({
@@ -1154,11 +1159,13 @@ function NewCountSheet({
         period_end: periodEnd,
         kind,
       });
+      pendingCountId = created.count_id;
       await updateCashCountActual(created.count_id, actualPence, notes);
       await signCashCount({
         count_id: created.count_id,
         signer_account_id: managerId,
       });
+      pendingCountId = null;
       // Inline withdrawal records AFTER the count is signed, so the
       // withdrawal's taken_at falls AFTER the count's period_end and
       // flows into the next count's running-balance maths (rather
@@ -1183,6 +1190,17 @@ function NewCountSheet({
       }
       onSigned();
     } catch (e) {
+      // Roll back a pending count so the next retry isn't blocked
+      // by orphan history. Best-effort; if the delete fails too
+      // (RLS, network) we still surface the original error.
+      if (pendingCountId) {
+        const { supabase } = await import('../lib/supabase.ts');
+        await supabase
+          .from('lng_cash_counts')
+          .delete()
+          .eq('id', pendingCountId)
+          .eq('status', 'pending');
+      }
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
       await logFailure({
