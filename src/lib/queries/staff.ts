@@ -299,6 +299,21 @@ export async function setStaffName(
   if (error) throw new Error(error.message);
 }
 
+// Sets the clinic location a staff member is bound to. Writes to
+// public.accounts (identity is shared with Meridian — accounts.location_id
+// drives location filtering across both apps). Required by the
+// staff-list "No location assigned" warning: until this is set, the
+// receptionist deterministic-location hook can't decide which clinic
+// bookings the staff member creates land at, and large parts of the
+// Lounge UI render empty for them. Pass null to clear.
+export async function setStaffLocation(accountId: string, locationId: string | null): Promise<void> {
+  const { error } = await supabase
+    .from('accounts')
+    .update({ location_id: locationId })
+    .eq('id', accountId);
+  if (error) throw new Error(error.message);
+}
+
 // Soft-delete: status='inactive' + deactivated_at + deactivated_by.
 // Their attribution on every past signature/payment/audit row stays
 // intact. They can no longer sign in to Lounge once the UI gates on

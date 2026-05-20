@@ -51,6 +51,7 @@ import {
   setIsCustomerService,
   setIsManager,
   setRequire2fa,
+  setStaffLocation,
   setStaffName,
   setStaffRole,
   unarchiveStaffRole,
@@ -140,6 +141,7 @@ import {
 } from '../lib/queries/upgrades.ts';
 import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
+import { useLocations } from '../lib/queries/locations.ts';
 import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
@@ -2385,6 +2387,13 @@ function StaffTab() {
   // dropdown can show a busy state without locking the rest of the
   // sheet.
   const [roleAssignBusy, setRoleAssignBusy] = useState(false);
+  // Same idea, separate flag, for the per-staff location dropdown.
+  // Multiple staff added today have accounts.location_id null, which
+  // hides most of the app from them (every Lounge view filters on
+  // the deterministic location). Surfacing a dropdown in the Manage
+  // sheet is the recovery path.
+  const [locationAssignBusy, setLocationAssignBusy] = useState(false);
+  const locations = useLocations();
 
   // Role catalogue management. The "Manage roles" sheet is a sibling
   // to the Manage staff sheet — opened from the header bar, not from
@@ -2558,6 +2567,27 @@ function StaffTab() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setNameBusy(false);
+    }
+  };
+
+  // Persist the location selected in the Manage sheet's location
+  // dropdown. accounts.location_id drives every clinic-axis filter
+  // in the app (which schedule the staff sees, which till they post
+  // payments against, which patient pool they search), so leaving it
+  // null hides most of the UI from them. Empty value clears the
+  // binding entirely.
+  const saveLocation = async (next: string | null) => {
+    if (!managing) return;
+    if (next === managing.location_id) return;
+    setLocationAssignBusy(true);
+    setError(null);
+    try {
+      await setStaffLocation(managing.account_id, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLocationAssignBusy(false);
     }
   };
 
@@ -3316,6 +3346,49 @@ function StaffTab() {
                 onManage={openRoles}
                 busy={roleAssignBusy}
               />
+            </ManageSection>
+
+            <ManageSection
+              title="Location"
+              description="Which clinic this person is bound to. Drives every location-axis filter in Lounge: which schedule they see, which till they post payments against, which patient pool they search. Leave it unassigned and most of the app will look empty to them on sign-in."
+            >
+              <DropdownSelect<string>
+                ariaLabel="Location"
+                value={managing.location_id ?? ''}
+                placeholder={locations.loading ? 'Loading locations…' : 'Choose a clinic'}
+                disabled={locationAssignBusy || locations.loading || (locations.data?.length ?? 0) === 0}
+                options={[
+                  { value: '', label: 'No location' },
+                  ...(locations.data ?? []).map((l) => ({
+                    value: l.id,
+                    // "The Venneir Clinic, lab · Glasgow" — keeps the
+                    // type/city visible so two same-named rows (the
+                    // Glasgow practice and lab share the venneir
+                    // name) are distinguishable in the dropdown.
+                    label: [
+                      l.name,
+                      l.type ? `, ${l.type}` : '',
+                      l.city ? ` · ${l.city}` : '',
+                    ].join(''),
+                  })),
+                ]}
+                onChange={(next) => {
+                  void saveLocation(next === '' ? null : next);
+                }}
+              />
+              {!managing.location_id ? (
+                <p
+                  style={{
+                    margin: `${theme.space[2]}px 0 0`,
+                    fontSize: theme.type.size.xs,
+                    color: theme.color.warn,
+                    fontWeight: theme.type.weight.medium,
+                    lineHeight: theme.type.leading.relaxed,
+                  }}
+                >
+                  No location assigned. Most of the app will render empty for this person until you pick one.
+                </p>
+              ) : null}
             </ManageSection>
 
             <ManageSection

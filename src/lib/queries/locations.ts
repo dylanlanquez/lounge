@@ -175,6 +175,13 @@ export function useEditableLocation(): EditableResult {
 export interface LocationOption {
   id: string;
   name: string;
+  // Type ('lab' | 'practice' | ...) and city carried so callers
+  // that render a richer label ("The Venneir Clinic, lab · Glasgow")
+  // can do so without a second query. Older call sites that only
+  // read id + name keep working — the extra fields are optional on
+  // the type and tolerated by every consumer touched.
+  type?: string | null;
+  city?: string | null;
 }
 
 interface LocationsResult {
@@ -193,7 +200,7 @@ export function useLocations(): LocationsResult {
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('locations')
-        .select('id, name')
+        .select('id, name, type, city')
         .order('name', { ascending: true });
       if (cancelled) return;
       if (err) {
