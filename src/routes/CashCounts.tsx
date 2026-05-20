@@ -212,6 +212,7 @@ export function CashCounts() {
         open={takeFromSafeOpen}
         onClose={() => setTakeFromSafeOpen(false)}
         currentExpectedPence={position.data?.expected_in_safe_pence ?? 0}
+        currentAccountId={account.account_id ?? null}
         onRecorded={() => {
           position.refresh();
           setTakeFromSafeOpen(false);
@@ -616,11 +617,17 @@ function TakeFromSafeSheet({
   open,
   onClose,
   currentExpectedPence,
+  currentAccountId,
   onRecorded,
 }: {
   open: boolean;
   onClose: () => void;
   currentExpectedPence: number;
+  /** accounts.id of the signed-in staff member. Passed through to
+   *  sendManagerNotification as staff_account_id so the manager
+   *  email renders {{takenByName}} correctly. Null only on the rare
+   *  surface where the account hasn't resolved yet. */
+  currentAccountId: string | null;
   onRecorded: () => void;
 }) {
   const [amountText, setAmountText] = useState('');
@@ -675,7 +682,7 @@ function TakeFromSafeSheet({
         reason,
         patientId: null,
         visitId: null,
-        staffAccountId: null,
+        staffAccountId: currentAccountId,
         note,
         withdrawalId: withdrawal_id,
       });
