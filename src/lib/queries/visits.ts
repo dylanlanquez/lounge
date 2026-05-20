@@ -549,6 +549,15 @@ export interface AppointmentShopifyOrder {
 // lng_walk_ins so the visit page doesn't need to know which kind it
 // landed on.
 export interface VisitAppointmentContext {
+  // Underlying lng_appointments.id — threaded through so VisitDetail
+  // can pass it to AppointmentNotesHero. The visit row already has
+  // appointment_id, but having it here keeps the call sites uniform
+  // ("read everything appointment-side off the context").
+  id: string;
+  // Customer-service note from lng_appointments.notes. Editable from
+  // VisitDetail via AppointmentNotesHero so the clinic floor can
+  // flag follow-ups during / after the appointment.
+  notes: string | null;
   event_type_label: string | null;
   intake: Array<{ question: string; answer: string }> | null;
   appointment_ref: string | null;
@@ -759,12 +768,14 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant'
+              'id, notes, event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
           if (!cancelled && !apptErr && appt) {
             const a = appt as {
+              id: string;
+              notes: string | null;
               event_type_label: string | null;
               intake: Array<{ question: string; answer: string }> | null;
               deposit_pence: number | null;
@@ -790,6 +801,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               repair_variant: string | null;
             };
             setAppointment({
+              id: a.id,
+              notes: a.notes,
               event_type_label: a.event_type_label,
               intake: a.intake,
               appointment_ref: a.appointment_ref ?? null,
@@ -852,6 +865,13 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               created_at: string;
             };
             setAppointment({
+              // Walk-ins have no lng_appointments row; use the
+              // walk-in id as a stand-in. AppointmentNotesHero is
+              // gated below so it's never rendered for walk-ins,
+              // but the field still has to be a string to satisfy
+              // the shared context shape.
+              id: visitRow.walk_in_id,
+              notes: null,
               event_type_label: w.service_type, // best-effort label for the catalogue picker
               intake: null,
               appointment_ref: w.appointment_ref ?? null,

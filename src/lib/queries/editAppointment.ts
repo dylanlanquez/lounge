@@ -49,21 +49,8 @@ export async function editAppointment(input: {
     staff_account_id: string | null;
   };
 
-  if (existing.source === 'calendly') {
-    throw new Error(
-      "Calendly-sourced bookings can't be edited here. The source of truth is Calendly itself.",
-    );
-  }
-  if (
-    existing.status === 'cancelled' ||
-    existing.status === 'no_show' ||
-    existing.status === 'complete' ||
-    existing.status === 'rescheduled'
-  ) {
-    throw new Error(`Can't edit an appointment with status "${existing.status}".`);
-  }
-
-  // Build the patch only with fields the caller actually passed.
+  // Build the patch first so we can scope the source/status gates to
+  // the fields that actually conflict with them.
   // Undefined means "leave it alone"; null is a deliberate clear.
   const patch: Record<string, unknown> = {};
   if (input.notes !== undefined) {
@@ -72,6 +59,30 @@ export async function editAppointment(input: {
   }
   if (input.staffAccountId !== undefined) {
     patch.staff_account_id = input.staffAccountId || null;
+  }
+
+  // Source and status gates only apply to fields that conflict with
+  // them. Notes are a Lounge-internal field — Calendly doesn't carry
+  // them, and a completed / cancelled visit can still legitimately
+  // need notes added (a hand-off comment, a follow-up reminder for
+  // next time the patient comes in). staff_account_id changes still
+  // need an active appointment whose source we own.
+  const isNotesOnly =
+    'notes' in patch && !('staff_account_id' in patch);
+  if (!isNotesOnly) {
+    if (existing.source === 'calendly') {
+      throw new Error(
+        "Calendly-sourced bookings can't be edited here. The source of truth is Calendly itself.",
+      );
+    }
+    if (
+      existing.status === 'cancelled' ||
+      existing.status === 'no_show' ||
+      existing.status === 'complete' ||
+      existing.status === 'rescheduled'
+    ) {
+      throw new Error(`Can't edit an appointment with status "${existing.status}".`);
+    }
   }
 
   if (Object.keys(patch).length === 0) {

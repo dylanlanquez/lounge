@@ -139,6 +139,7 @@ export async function previewPreLaunchBackfillCount(iso: string): Promise<number
 export const TEST_PATIENT_EMAILS: readonly string[] = [
   'dylan@venneir.com',
   'dylanjmlane@icloud.com',
+  'dylanjmland@icloud.com',
   'dylan@lanquez.com',
   'dylanlane@venneir.com',
   'hello@lanquez.com',

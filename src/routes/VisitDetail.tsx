@@ -64,6 +64,7 @@ import {
   type AppointmentSource,
 } from '../lib/queries/appointments.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
+import { AppointmentNotesHero } from '../components/AppointmentNotesHero/AppointmentNotesHero.tsx';
 import {
   formatDateLongOrdinal,
   formatTime,
@@ -165,7 +166,16 @@ export function VisitDetail() {
   const { data: productConfig } = useAdminProductConfig();
   const navigate = useNavigate();
   const location = useLocation();
-  const { visit, patient, deposit, shopifyOrder, appointment, receptionistName, loading } = useVisitDetail(id);
+  const {
+    visit,
+    patient,
+    deposit,
+    shopifyOrder,
+    appointment,
+    receptionistName,
+    loading,
+    refresh: refreshVisitDetail,
+  } = useVisitDetail(id);
   const { upgrades: appointmentUpgrades, repairItems: appointmentRepairItems } =
     useAppointmentExtras(visit?.appointment_id ?? null);
   // Live booking-type phases for the appointment, projected onto
@@ -1517,6 +1527,26 @@ export function VisitDetail() {
                   ) : undefined
                 }
               />
+              {/* Customer service note for the clinic floor. Sits
+                  directly under the visit hero so the team sees it
+                  before any other card on the page. Editable by any
+                  active Lounge staff at any time — audit row written
+                  to patient_events on every save. The note lives on
+                  lng_appointments.notes so it travels with the
+                  appointment through every reschedule and across the
+                  booked → arrived → joined → complete lifecycle.
+                  Gated on visit.appointment_id so the hero never
+                  renders for walk-ins (no appointment row, no notes
+                  field on lng_walk_ins yet). */}
+              {appointment && visit?.appointment_id ? (
+                <div style={{ marginTop: theme.space[4] }}>
+                  <AppointmentNotesHero
+                    appointmentId={appointment.id}
+                    notes={appointment.notes}
+                    onChanged={refreshVisitDetail}
+                  />
+                </div>
+              ) : null}
               <BottomSheet
                 open={visitTimelineOpen}
                 onClose={() => setVisitTimelineOpen(false)}
