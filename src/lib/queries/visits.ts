@@ -53,6 +53,14 @@ export interface CreateWalkInInput {
   patient_id: string;
   location_id: string;
   service_type?: string;
+  // Catalogue axis pins. Used to compose the schedule / hero label
+  // through formatAppointmentSummary the same way a native widget
+  // booking does, so a walk-in for a snapped denture reads "Denture
+  // Repair" instead of the bare "Walk-in" fallback. Pass when known;
+  // null otherwise.
+  arch?: string | null;
+  product_key?: string | null;
+  repair_variant?: string | null;
   notes?: string;
   // Stamped onto the new lng_walk_ins row so the lab can find the
   // patient's impression and the receptionist has a human-readable
@@ -147,6 +155,25 @@ export async function createWalkInVisit(
       created_via: 'walk_in',
       start_at: start.toISOString(),
       end_at: end.toISOString(),
+      // Carry the picked service axis onto the marker so every
+      // surface that runs the row through formatAppointmentSummary
+      // renders "Denture Repair" / "Same-day Lower Retainer" etc.
+      // instead of the bare "Walk-in" fallback. The marker was
+      // previously written with service_type = null and an
+      // event_type_label of 'Walk-in', which meant the Schedule
+      // click sheet, the patient timeline, and the visit-side
+      // hero all read "Walk-in" as the booking title regardless
+      // of what the receptionist actually staged. Walk-ins still
+      // identify themselves as walk-ins via walk_in_id IS NOT
+      // NULL — the schedule renders a "Walk-in" prefix when that
+      // FK is set, so we don't lose that signal by populating the
+      // service axis here. event_type_label stays as a fallback
+      // for the 'other' / null service cases where the formatter
+      // returns the persisted label.
+      service_type: input.service_type ?? null,
+      arch: input.arch ?? null,
+      product_key: input.product_key ?? null,
+      repair_variant: input.repair_variant ?? null,
       event_type_label: 'Walk-in',
       status: 'arrived',
       walk_in_id: walkIn.id,

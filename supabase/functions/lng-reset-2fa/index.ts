@@ -6,11 +6,13 @@
 // prompted to enrol a fresh one on next sign-in (chunk 3 wires the
 // enrolment screen).
 //
-// Implementation: deletes auth.mfa_factors rows for the user.
-// The Supabase JS admin SDK doesn't expose mfa.deleteFactor at the
-// admin level, but auth.mfa_factors is a regular table accessible
-// to the service role. We delete by user_id which removes every
-// factor type (totp, phone) the user has enrolled.
+// Implementation: delegates to the lng_admin_reset_mfa SECURITY
+// DEFINER RPC, called with the admin's bearer JWT so auth_is_lng_admin()
+// inside the function evaluates against the real caller. The earlier
+// approach (admin.schema('auth').from('mfa_factors').delete()) failed
+// at runtime because PostgREST does not expose the auth schema in
+// db.schemas by default — the call returned a 4xx and the admin saw
+// "Could not reset 2FA. Edge Function returned a non-2xx status code".
 //
 // Auth: Bearer JWT (anon key). Caller must be an active Lounge admin.
 //
@@ -103,22 +105,23 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { ok: false, error: 'Staff member has no auth user (invite not yet accepted?)' });
   }
 
-  // Remove all enrolled MFA factors for this auth user. auth.mfa_factors
-  // is a regular table from PostgREST's perspective when accessed via
-  // the service role. We schema-qualify because PostgREST exposes the
-  // public schema by default; the admin client honours the schema in
-  // the from() argument.
-  const { data: deleted, error: delErr } = await admin
-    .schema('auth')
-    .from('mfa_factors')
-    .delete()
-    .eq('user_id', targetAuthId)
-    .select('id');
-  if (delErr) {
-    return jsonResponse(500, { ok: false, error: `Could not delete MFA factors: ${delErr.message}` });
+  // Delegate the actual auth.mfa_factors delete to the SECURITY
+  // DEFINER lng_admin_reset_mfa RPC (defined in
+  // 20260520000011_lng_admin_reset_mfa_rpc.sql). We call the RPC
+  // via the user-scoped client so auth_is_lng_admin() inside the
+  // function evaluates against the admin's auth.uid(); a service-
+  // role call would bypass auth.uid() and be rejected.
+  const { data: removedRaw, error: rpcErr } = await userClient.rpc(
+    'lng_admin_reset_mfa',
+    { p_target_auth_user_id: targetAuthId },
+  );
+  if (rpcErr) {
+    return jsonResponse(500, {
+      ok: false,
+      error: `Could not delete MFA factors: ${rpcErr.message}`,
+    });
   }
-
-  const factorsRemoved = Array.isArray(deleted) ? deleted.length : 0;
+  const factorsRemoved = typeof removedRaw === 'number' ? removedRaw : 0;
 
   // Audit log so an admin can answer "who reset whose 2FA when".
   try {
