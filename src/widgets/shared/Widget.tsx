@@ -231,11 +231,41 @@ function WidgetReady({
     if (prefill?.shopifyCustomerEmail) {
       out.details.email = prefill.shopifyCustomerEmail.toLowerCase().trim();
     }
-    if (!out.location && typeof window !== 'undefined') {
-      const param = new URLSearchParams(window.location.search).get('location');
-      if (param) {
-        const match = locations.find((l) => l.id === param);
-        if (match) out.location = match;
+    if (typeof window !== 'undefined') {
+      const search = new URLSearchParams(window.location.search);
+      if (!out.location) {
+        const param = search.get('location');
+        if (param) {
+          const match = locations.find((l) => l.id === param);
+          if (match) out.location = match;
+        }
+      }
+      // Service + product prefill from URL params. Lets external
+      // surfaces (One Click portal, marketing CTAs, emails) deep-
+      // link customers straight past the "What you need" service
+      // selection step into the next step of the flow. Service
+      // values match lng_booking_type_config.service_type
+      // (denture_repair, click_in_veneers, same_day_appliance,
+      // impression_appointment, other); product values match
+      // lwo_catalogue.product_key (retainer, night_guard,
+      // whitening_tray, day_guard, whitening_kit,
+      // click_in_veneers, missing_tooth, etc.).
+      if (!out.service) {
+        const param = search.get('service');
+        if (param) {
+          const match = bookingTypes.find((bt) => bt.serviceType === param);
+          if (match) out.service = match;
+        }
+      }
+      if (!out.axes.product_key) {
+        const param = search.get('product');
+        if (param) out.axes.product_key = param;
+      }
+      if (!out.axes.arch) {
+        const param = search.get('arch');
+        if (param === 'upper' || param === 'lower' || param === 'both') {
+          out.axes.arch = param;
+        }
       }
     }
     return out;
