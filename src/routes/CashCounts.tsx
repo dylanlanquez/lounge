@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ChevronRight, Download, FileSignature, Plus, Wallet } from 'lucide-react';
+import { ArrowDownToLine, ChevronRight, Download, FileSignature, Plus, Wallet } from 'lucide-react';
 import {
   BottomSheet,
   Button,
   Card,
+  DropdownSelect,
   EmptyState,
   Input,
   Section,
@@ -20,15 +21,21 @@ import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
   type CashCountRow,
   type CashPosition,
+  type CashPositionPaymentLine,
+  type WithdrawalReason,
+  WITHDRAWAL_REASONS,
   createCashCount,
+  recordCashWithdrawal,
   signCashCount,
   updateCashCountActual,
   useAnomalyThresholds,
   useCashCounts,
   useCashCountStatement,
   useCashPosition,
+  withdrawalReasonLabel,
 } from '../lib/queries/cashCounts.ts';
 import { formatNumber, formatPence } from '../lib/queries/carts.ts';
+import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
 import { listManagers, type ManagerRow } from '../lib/queries/staff.ts';
 import { buildCashCountPdf, downloadCashCountPdf } from '../lib/cashCountPdf.ts';
 import { logFailure } from '../lib/failureLog.ts';
@@ -69,6 +76,7 @@ export function CashCounts() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetKind, setSheetKind] = useState<'regular' | 'legacy_baseline'>('regular');
   const [statementCountId, setStatementCountId] = useState<string | null>(null);
+  const [takeFromSafeOpen, setTakeFromSafeOpen] = useState(false);
 
   // Admin → Testing → "Start legacy cash count" navigates here with
   // location.state.kind = 'legacy_baseline'. Pick that up exactly
@@ -162,9 +170,15 @@ export function CashCounts() {
                 setSheetKind('regular');
                 setSheetOpen(true);
               }}
+              onTakeFromSafe={() => setTakeFromSafeOpen(true)}
             />
             {position.data.lines.length > 0 ? (
-              <ContributingPaymentsCard lines={position.data.lines} />
+              <RecentActivityCard
+                lines={position.data.lines}
+                baselinePence={position.data.baseline_pence}
+                paymentCount={position.data.payment_count}
+                withdrawalCount={position.data.withdrawal_count}
+              />
             ) : null}
             <HistoryCard
               counts={counts.data}
@@ -194,6 +208,16 @@ export function CashCounts() {
         />
       ) : null}
 
+      <TakeFromSafeSheet
+        open={takeFromSafeOpen}
+        onClose={() => setTakeFromSafeOpen(false)}
+        currentExpectedPence={position.data?.expected_in_safe_pence ?? 0}
+        onRecorded={() => {
+          position.refresh();
+          setTakeFromSafeOpen(false);
+        }}
+      />
+
       <CountDetailsSheet
         countId={statementCountId}
         onClose={() => setStatementCountId(null)}
@@ -210,14 +234,17 @@ function RightNowCard({
   position,
   canCountCash,
   onStart,
+  onTakeFromSafe,
 }: {
   position: CashPosition;
   canCountCash: boolean;
   onStart: () => void;
+  onTakeFromSafe: () => void;
 }) {
   const last = position.last_signed_count;
   const hasActivity =
-    position.payment_count > 0 || position.expected_in_safe_pence > 0;
+    position.payment_count > 0 || position.withdrawal_count > 0 || position.expected_in_safe_pence > 0;
+  const hasCashInSafe = position.expected_in_safe_pence > 0;
 
   return (
     <Card padding="lg">
@@ -285,20 +312,17 @@ function RightNowCard({
           <>
             should be in the safe.{' '}
             <span style={{ color: theme.color.inkMuted }}>
-              {formatNumber(position.payment_count)} cash payment
-              {position.payment_count === 1 ? '' : 's'}
-              {last
-                ? ` since the last count on ${formatLongDate(last.period_end)}.`
-                : position.earliest_payment_at
-                  ? ` since the first cash payment on ${formatLongDate(position.earliest_payment_at)}.`
-                  : '.'}
+              Opening {formatPence(position.baseline_pence)}
+              {last ? ` from the count on ${formatLongDate(last.period_end)}` : ''}.
+              {' '}Since: {formatNumber(position.payment_count)} payment{position.payment_count === 1 ? '' : 's'} in,
+              {' '}{formatNumber(position.withdrawal_count)} withdrawal{position.withdrawal_count === 1 ? '' : 's'} out.
             </span>
           </>
         ) : (
           <span style={{ color: theme.color.inkMuted }}>
             {last
-              ? `No cash payments since the last count on ${formatLongDate(last.period_end)}. Nothing to count yet.`
-              : 'No cash activity yet. Cash counts kick in once the first cash payment is taken.'}
+              ? `No cash activity since the last count on ${formatLongDate(last.period_end)}. Nothing to count yet.`
+              : 'No cash activity yet. Cash counts kick in once the first cash payment is taken or you seed a starting balance.'}
           </span>
         )}
       </p>
@@ -320,14 +344,31 @@ function RightNowCard({
         </p>
       ) : null}
 
-      {canCountCash && hasActivity ? (
-        <div style={{ marginTop: theme.space[5] }}>
-          <Button variant="primary" onClick={onStart}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-              <Plus size={14} aria-hidden />
-              Count cash now
-            </span>
-          </Button>
+      {canCountCash ? (
+        <div
+          style={{
+            marginTop: theme.space[5],
+            display: 'flex',
+            gap: theme.space[3],
+            flexWrap: 'wrap',
+          }}
+        >
+          {hasActivity ? (
+            <Button variant="primary" onClick={onStart}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <Plus size={14} aria-hidden />
+                Count cash now
+              </span>
+            </Button>
+          ) : null}
+          {hasCashInSafe ? (
+            <Button variant="secondary" onClick={onTakeFromSafe}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <ArrowDownToLine size={14} aria-hidden />
+                Take from safe
+              </span>
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </Card>
@@ -342,17 +383,33 @@ function RightNowCard({
 // alone.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ContributingPaymentsCard({
+// Renamed from ContributingPaymentsCard. Now shows interleaved cash
+// activity — payments add to the running balance, withdrawals
+// subtract from it. Lines are pre-sorted newest-first by
+// useCashPosition. Tap a payment row to open the visit; withdrawals
+// have no click-through (no visit attached, just an audit row).
+function RecentActivityCard({
   lines,
+  baselinePence,
+  paymentCount,
+  withdrawalCount,
 }: {
   lines: CashPosition['lines'];
+  baselinePence: number;
+  paymentCount: number;
+  withdrawalCount: number;
 }) {
   const navigate = useNavigate();
-  const total = useMemo(
-    () => lines.reduce((sum, l) => sum + l.amount_pence, 0),
+  const paymentTotal = useMemo(
+    () => lines.reduce((sum, l) => (l.kind === 'payment' ? sum + l.amount_pence : sum), 0),
     [lines],
   );
-  const handleOpen = (line: CashPosition['lines'][number]) => {
+  const withdrawalTotal = useMemo(
+    () => lines.reduce((sum, l) => (l.kind === 'withdrawal' ? sum + l.amount_pence : sum), 0),
+    [lines],
+  );
+  const netDelta = paymentTotal - withdrawalTotal;
+  const handleOpenPayment = (line: CashPositionPaymentLine) => {
     if (!line.visit_id) return;
     navigate(`/visit/${line.visit_id}`);
   };
@@ -378,7 +435,7 @@ function ContributingPaymentsCard({
               letterSpacing: theme.type.tracking.wide,
             }}
           >
-            Cash payments since last count
+            Activity since last count
           </span>
           <span
             style={{
@@ -387,7 +444,7 @@ function ContributingPaymentsCard({
               lineHeight: theme.type.leading.snug,
             }}
           >
-            {formatNumber(lines.length)} payment{lines.length === 1 ? '' : 's'} adding up to {formatPence(total)}. Includes partials — tap a row to open the visit.
+            Opening {formatPence(baselinePence)}. {formatNumber(paymentCount)} payment{paymentCount === 1 ? '' : 's'} in, {formatNumber(withdrawalCount)} withdrawal{withdrawalCount === 1 ? '' : 's'} out. Tap a payment row to open the visit.
           </span>
         </div>
       </div>
@@ -403,17 +460,28 @@ function ContributingPaymentsCard({
         }}
       >
         {lines.map((line, idx) => {
-          const interactive = !!line.visit_id;
+          const key = line.kind === 'payment' ? line.payment_id : line.withdrawal_id;
+          const interactive = line.kind === 'payment' && !!line.visit_id;
+          const isOut = line.kind === 'withdrawal';
+          const amountColor = isOut ? theme.color.alert : theme.color.accent;
+          const amountPrefix = isOut ? '−' : '+';
+          // Payments: time / patient / ref / amount. Withdrawals:
+          // time / reason / taken-by / amount. Same 4-column grid so
+          // the eye still reconciles the right-most column.
+          const middleLabel = isOut ? withdrawalReasonLabel(line.reason) : (line.patient_name || 'Unknown patient');
+          const trailingLabel = isOut
+            ? (line.taken_by_name ? `by ${line.taken_by_name}` : null)
+            : (line.appointment_ref ?? '—');
           return (
             <li
-              key={line.payment_id}
+              key={key}
               style={{
                 borderTop: idx === 0 ? 'none' : `1px solid ${theme.color.border}`,
               }}
             >
               <button
                 type="button"
-                onClick={() => handleOpen(line)}
+                onClick={() => line.kind === 'payment' && handleOpenPayment(line)}
                 disabled={!interactive}
                 style={{
                   appearance: 'none',
@@ -423,9 +491,6 @@ function ContributingPaymentsCard({
                   border: 'none',
                   padding: `${theme.space[3]}px ${theme.space[4]}px`,
                   display: 'grid',
-                  // 4-column grid: time + patient + ref + amount,
-                  // amount column right-aligned with tabular-nums so
-                  // the eye reconciles the column down to the total.
                   gridTemplateColumns: 'minmax(120px, 1fr) minmax(140px, 2fr) minmax(120px, 1fr) auto auto',
                   alignItems: 'center',
                   gap: theme.space[3],
@@ -460,7 +525,7 @@ function ContributingPaymentsCard({
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {line.patient_name || 'Unknown patient'}
+                  {middleLabel}
                 </span>
                 <span
                   style={{
@@ -473,18 +538,18 @@ function ContributingPaymentsCard({
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  {line.appointment_ref ?? '—'}
+                  {trailingLabel ?? ''}
                 </span>
                 <span
                   style={{
                     fontSize: theme.type.size.base,
                     fontWeight: theme.type.weight.semibold,
-                    color: theme.color.ink,
+                    color: amountColor,
                     fontVariantNumeric: 'tabular-nums',
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {formatPence(line.amount_pence)}
+                  {amountPrefix}{formatPence(line.amount_pence)}
                 </span>
                 <ChevronRight
                   size={14}
@@ -500,9 +565,9 @@ function ContributingPaymentsCard({
         })}
       </ul>
 
-      {/* Footer total — reconciles to the RightNowCard's
-          expected_in_safe_pence so staff can double-check the
-          table's sum equals the headline. */}
+      {/* Footer total — opening + net = closing. Reconciles to the
+          RightNowCard's expected_in_safe_pence so staff can double-
+          check the table's sum equals the headline. */}
       <div
         style={{
           marginTop: theme.space[3],
@@ -521,20 +586,216 @@ function ContributingPaymentsCard({
             fontWeight: theme.type.weight.semibold,
           }}
         >
-          Total
+          Net since opening
         </span>
         <span
           style={{
             fontSize: theme.type.size.lg,
             fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
+            color: netDelta < 0 ? theme.color.alert : theme.color.ink,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
-          {formatPence(total)}
+          {netDelta < 0 ? '−' : '+'}{formatPence(Math.abs(netDelta))}
         </span>
       </div>
     </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Take from safe — records a cash withdrawal (bank deposit, float
+// top-up, petty cash, owner draw, other). Solo recording — the audit
+// row + the manager-notification email substitute for a second
+// signer. Amount, reason, optional note. Refuses an amount above the
+// current expected balance — there's no scenario where staff legit-
+// imately remove more cash than is recorded as being in the safe.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TakeFromSafeSheet({
+  open,
+  onClose,
+  currentExpectedPence,
+  onRecorded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  currentExpectedPence: number;
+  onRecorded: () => void;
+}) {
+  const [amountText, setAmountText] = useState('');
+  const [reason, setReason] = useState<WithdrawalReason>('bank_deposit');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setAmountText('');
+    setReason('bank_deposit');
+    setNote('');
+    setError(null);
+  }, [open]);
+
+  const amountPence = useMemo(() => {
+    const float = Number(amountText.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(float) || float <= 0) return null;
+    return Math.round(float * 100);
+  }, [amountText]);
+
+  const submit = async () => {
+    setError(null);
+    if (amountPence === null) {
+      setError('Enter the amount in pounds, e.g. 400.00.');
+      return;
+    }
+    if (amountPence > currentExpectedPence) {
+      setError(
+        `That's more than the ${formatPence(currentExpectedPence)} the safe is recording. Count the safe first if the running balance is wrong.`,
+      );
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const locationId = await resolveLocationId();
+      const { withdrawal_id } = await recordCashWithdrawal({
+        location_id: locationId,
+        amount_pence: amountPence,
+        reason,
+        note,
+      });
+      // Manager-notification email is fire-and-forget; if it fails
+      // the withdrawal row itself is already persisted, so the
+      // running balance is still correct. The failure logs to
+      // lng_system_failures inside sendManagerNotification.
+      void sendManagerNotification({
+        actionKind: 'cash_withdrawn',
+        amountPence,
+        reason,
+        patientId: null,
+        visitId: null,
+        staffAccountId: null,
+        note,
+        withdrawalId: withdrawal_id,
+      });
+      onRecorded();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      await logFailure({
+        source: 'cash.withdrawal.write',
+        severity: 'error',
+        message,
+        context: { amountPence, reason },
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <BottomSheet
+      open={open}
+      onClose={() => !busy && onClose()}
+      dismissable={!busy}
+      title="Take from safe"
+      description="Record cash physically leaving the safe — bank deposit, float top-up, petty cash, owner draw, or another reason. The running balance drops by this amount and the configured managers get an email for their records."
+      footer={
+        <div
+          style={{
+            display: 'flex',
+            gap: theme.space[3],
+            justifyContent: 'flex-end',
+            flexWrap: 'wrap',
+          }}
+        >
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy}>
+            Record withdrawal
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        <div
+          style={{
+            padding: theme.space[5],
+            borderRadius: theme.radius.input,
+            background: theme.color.accentBg,
+            border: `1px solid ${theme.color.border}`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[2],
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Currently in safe
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xxl,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: theme.type.leading.tight,
+            }}
+          >
+            {formatPence(currentExpectedPence)}
+          </span>
+        </div>
+
+        <Input
+          label="Amount taken (£)"
+          numericFormat="currency"
+          value={amountText}
+          onChange={(e) => setAmountText(e.target.value)}
+          placeholder="e.g. 400.00"
+          autoFocus
+        />
+
+        <DropdownSelect
+          label="Reason"
+          value={reason}
+          onChange={(v) => setReason(v as WithdrawalReason)}
+          options={WITHDRAWAL_REASONS.map((r) => ({ value: r.value, label: r.label }))}
+        />
+
+        <Input
+          label="Note (optional)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="e.g. Lloyds drop, slip #84."
+        />
+
+        {error ? (
+          <p
+            role="alert"
+            style={{
+              margin: 0,
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              background: '#FFEEEC',
+              color: theme.color.alert,
+              fontSize: theme.type.size.sm,
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </BottomSheet>
   );
 }
 
@@ -1323,6 +1584,68 @@ function CountDetailsSheet({
               </ul>
             )}
           </Section>
+          {data.withdrawals.length > 0 ? (
+            <Section title={`Cash taken from the safe in this period (${formatNumber(data.withdrawals.length)})`}>
+              <ul
+                style={{
+                  listStyle: 'none',
+                  margin: 0,
+                  padding: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[2],
+                }}
+              >
+                {data.withdrawals.map((w) => (
+                  <li
+                    key={w.withdrawal_id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto',
+                      gap: theme.space[3],
+                      padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                      borderRadius: theme.radius.input,
+                      background: theme.color.bg,
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: theme.type.size.sm,
+                          fontWeight: theme.type.weight.semibold,
+                        }}
+                      >
+                        {withdrawalReasonLabel(w.reason)}
+                        {w.taken_by_name ? <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}> · by {w.taken_by_name}</span> : null}
+                      </p>
+                      <p
+                        style={{
+                          margin: `${theme.space[1]}px 0 0`,
+                          fontSize: theme.type.size.xs,
+                          color: theme.color.inkMuted,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {formatDateTime(w.taken_at)}
+                        {w.note ? ` · ${w.note}` : ''}
+                      </p>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: theme.type.size.sm,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.alert,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      −{formatPence(w.amount_pence)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          ) : null}
         </div>
       )}
     </BottomSheet>

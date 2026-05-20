@@ -67,7 +67,8 @@ type ActionKind =
   | 'discount_amended'
   | 'discount_removed'
   | 'refund_issued'
-  | 'payment_voided';
+  | 'payment_voided'
+  | 'cash_withdrawn';
 
 const ACTION_TITLES: Record<ActionKind, string> = {
   discount_applied: 'Discount applied',
@@ -75,6 +76,20 @@ const ACTION_TITLES: Record<ActionKind, string> = {
   discount_removed: 'Discount removed',
   refund_issued: 'Refund issued',
   payment_voided: 'Payment voided',
+  cash_withdrawn: 'Cash taken from the safe',
+};
+
+// Friendly labels for the lng_cash_withdrawals.reason enum. Kept in
+// sync with src/lib/queries/cashCounts.ts WITHDRAWAL_REASONS — but
+// duplicated here because the edge function can't import from the
+// app bundle (different runtime / packaging). Touch both if you add
+// a reason.
+const WITHDRAWAL_REASON_LABELS: Record<string, string> = {
+  bank_deposit: 'Bank deposit',
+  float_top_up: 'Float top-up',
+  petty_cash: 'Petty cash',
+  owner_draw: 'Owner draw',
+  other: 'Other',
 };
 
 Deno.serve(async (req) => {
@@ -115,6 +130,12 @@ async function handle(req: Request): Promise<Response> {
     patient_id?: string | null;
     visit_id?: string | null;
     staff_account_id?: string | null;
+    /** cash_withdrawn only: optional free-text note typed at the
+     *  Take-from-safe sheet. */
+    note?: string | null;
+    /** cash_withdrawn only: id of the newly-inserted withdrawal row.
+     *  Surfaced on the audit log line for traceability. */
+    withdrawal_id?: string | null;
   };
   try {
     body = await req.json();
@@ -171,15 +192,24 @@ async function handle(req: Request): Promise<Response> {
   //    visit ref, staff name). Each lookup is best-effort — a missing
   //    visit shouldn't sink the whole send, the template just renders
   //    empty for that variable.
-  const template = await loadTemplate(admin, 'manager_notification');
+  //
+  // Cash withdrawals use their own template (cash_withdrawal_notification)
+  // because the copy + variable surface are cash-flow focused, not
+  // patient-visit focused. Every other action_kind keeps the original
+  // manager_notification template.
+  const templateKey = actionKind === 'cash_withdrawn'
+    ? 'cash_withdrawal_notification'
+    : 'manager_notification';
+  const template = await loadTemplate(admin, templateKey);
   if (!template || !template.enabled) {
     await logFailure(admin, {
       stage: 'template_missing_or_disabled',
       action_kind: actionKind,
+      template_key: templateKey,
     });
     return jsonResponse(200, {
       ok: false,
-      error: 'manager_notification template missing or paused',
+      error: `${templateKey} template missing or paused`,
     });
   }
   const brand = await loadBrand(admin).catch(() => EMPTY_BRAND);
@@ -192,6 +222,11 @@ async function handle(req: Request): Promise<Response> {
   const actionTitle = ACTION_TITLES[actionKind];
   const actionSummary = buildActionSummary(actionKind, amount, visitRef, patientName);
   const processedAt = formatNow();
+  const reasonLabel = actionKind === 'cash_withdrawn'
+    ? (WITHDRAWAL_REASON_LABELS[reasonText] ?? reasonText)
+    : reasonText;
+  const noteOrEmpty = (body.note ?? '').toString().trim();
+  const safeUrl = `${LOUNGE_PUBLIC_URL}/cash-counts`;
 
   // 4. Send one email per recipient. Per-recipient failures are
   //    logged but don't abort the rest.
@@ -204,9 +239,18 @@ async function handle(req: Request): Promise<Response> {
       actionSummary,
       amount,
       reason: reasonText,
+      reasonLabel,
+      noteOrEmpty: noteOrEmpty.length > 0 ? noteOrEmpty : '—',
       patientName,
       visitRef,
       staffName,
+      // takenBy{Name,At} mirror the cash_withdrawal_notification
+      // template variables. For other action_kinds they fall back
+      // to staffName / processedAt so the manager_notification
+      // template can keep using the existing names.
+      takenByName: staffName,
+      takenAt: processedAt,
+      safeUrl,
       managerName,
       processedAt,
       visitUrl,
@@ -417,6 +461,12 @@ function buildActionSummary(
       return `${amount} refund issued ${target}.`;
     case 'payment_voided':
       return `${amount} payment voided ${target}.`;
+    case 'cash_withdrawn':
+      // cash_withdrawn uses its own template — actionSummary is kept
+      // here for parity with the manager_notification surface but
+      // intentionally omits visit-targeting language (there is no
+      // patient on a safe withdrawal).
+      return `${amount} taken from the safe.`;
   }
 }
 

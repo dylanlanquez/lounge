@@ -5,7 +5,7 @@
 // A4 layout — header with brand + period, totals block, line table,
 // signature block at the bottom.
 
-import type { CashCountStatement } from './queries/cashCounts.ts';
+import { withdrawalReasonLabel as withdrawalReasonLabelPdf, type CashCountStatement } from './queries/cashCounts.ts';
 
 interface JsPdfDoc {
   setFont: (fontName: string, fontStyle?: string) => void;
@@ -149,6 +149,35 @@ export async function buildCashCountPdf(
     pdf.text(line.appointment_ref ?? '—', MARGIN_L + 110, y);
     pdf.text(formatGbp(line.amount_pence), PAGE_W - MARGIN_R, y, { align: 'right' });
     y += 5;
+  }
+
+  // Withdrawals — cash taken out of the safe during this period (bank
+  // deposit, float top-up, etc.). Listed below the payment lines under
+  // their own heading so the reader can reconcile the running balance
+  // ("payments in" + "cash taken out" = "expected").
+  if (statement.withdrawals && statement.withdrawals.length > 0) {
+    y += 8;
+    if (y > PAGE_H - MARGIN_B - 20) {
+      pdf.addPage();
+      y = MARGIN_T;
+    }
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.text('CASH TAKEN FROM THE SAFE', MARGIN_L, y);
+    y += 5;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    for (const w of statement.withdrawals) {
+      if (y > PAGE_H - MARGIN_B - 20) {
+        pdf.addPage();
+        y = MARGIN_T;
+      }
+      pdf.text(formatDateTime(w.taken_at), MARGIN_L, y);
+      pdf.text(truncate(withdrawalReasonLabelPdf(w.reason), 38), MARGIN_L + 38, y);
+      pdf.text(truncate(w.taken_by_name ?? '—', 24), MARGIN_L + 110, y);
+      pdf.text(`−${formatGbp(w.amount_pence)}`, PAGE_W - MARGIN_R, y, { align: 'right' });
+      y += 5;
+    }
   }
 
   y += 4;

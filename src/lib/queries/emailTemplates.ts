@@ -801,6 +801,53 @@ const MANAGER_NOTIFICATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   },
 ];
 
+const CASH_WITHDRAWAL_NOTIFICATION_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'amount',
+    label: 'Amount',
+    description: 'Formatted GBP amount taken from the safe, e.g. "£400.00".',
+    sample: '£400.00',
+  },
+  {
+    name: 'reasonLabel',
+    label: 'Reason',
+    description: 'Friendly reason label — one of "Bank deposit", "Float top-up", "Petty cash", "Owner draw", "Other".',
+    sample: 'Bank deposit',
+  },
+  {
+    name: 'noteOrEmpty',
+    label: 'Note',
+    description: 'The free-text note typed at the Take-from-safe sheet. Renders as "—" when no note was added.',
+    sample: 'Lloyds drop, slip #84.',
+  },
+  {
+    name: 'takenByName',
+    label: 'Taken by',
+    description: 'First + last name of the staff member who recorded the withdrawal.',
+    sample: 'James Walker',
+  },
+  {
+    name: 'takenAt',
+    label: 'Time recorded',
+    description: 'Date and time the withdrawal was recorded, in Europe/London, e.g. "Tue 19 May 2026 at 14:32".',
+    sample: 'Tue 19 May 2026 at 14:32',
+  },
+  {
+    name: 'managerName',
+    label: 'Manager name (per-recipient)',
+    description:
+      'First + last name of the recipient manager. Renders differently for each recipient when more than one manager is configured.',
+    sample: 'Dylan McAleer',
+  },
+  {
+    name: 'safeUrl',
+    label: 'Open cash counts link',
+    description:
+      'Deep-link back to the Cash counts page in Lounge. Drop into [button:Open cash counts]({{safeUrl}}) for a tappable CTA.',
+    sample: 'https://lounge.venneir.com/cash-counts',
+  },
+];
+
 const SHIPPING_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   {
     name: 'patientFirstName',
@@ -928,6 +975,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent from manager@notifications.venneir.com to each configured manager whenever a cashier applies, amends, or removes a discount, issues a refund, or voids a payment. Recipients are picked above this template editor.',
     variables: MANAGER_NOTIFICATION_VARIABLES,
+  },
+  {
+    key: 'cash_withdrawal_notification',
+    label: 'Cash withdrawal notification',
+    group: 'Manager notifications',
+    description:
+      'Sent from manager@notifications.venneir.com to each configured manager whenever a staff member records cash leaving the safe via the Take-from-safe sheet (bank deposit, float top-up, petty cash, owner draw, other). Recipients are managed under the Manager notification card above; this row only controls the copy.',
+    variables: CASH_WITHDRAWAL_NOTIFICATION_VARIABLES,
   },
 ];
 

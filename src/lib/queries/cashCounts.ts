@@ -14,6 +14,31 @@ function pickOne<T>(value: T | T[] | null | undefined): T | null {
   return value as T;
 }
 
+// ── Cash withdrawal reasons ────────────────────────────────────────────────
+// Enum mirrors the lng_cash_withdrawals.reason CHECK constraint in
+// 20260520000014. Friendly labels are used on the Take-from-safe sheet,
+// the Right-now card, the count statement, and the manager-notification
+// email. Keep these in sync with the SQL CHECK; adding a new reason
+// requires a migration AND an entry here.
+export type WithdrawalReason =
+  | 'bank_deposit'
+  | 'float_top_up'
+  | 'petty_cash'
+  | 'owner_draw'
+  | 'other';
+
+export const WITHDRAWAL_REASONS: Array<{ value: WithdrawalReason; label: string }> = [
+  { value: 'bank_deposit', label: 'Bank deposit' },
+  { value: 'float_top_up', label: 'Float top-up' },
+  { value: 'petty_cash', label: 'Petty cash' },
+  { value: 'owner_draw', label: 'Owner draw' },
+  { value: 'other', label: 'Other' },
+];
+
+export function withdrawalReasonLabel(reason: string): string {
+  return WITHDRAWAL_REASONS.find((r) => r.value === reason)?.label ?? reason;
+}
+
 // ── Past counts list ────────────────────────────────────────────────────────
 
 export interface CashCountRow {
@@ -72,7 +97,7 @@ export function shapeCashCounts(raw: RawCashCount[]): CashCountRow[] {
 }
 
 function composePersonName(
-  p: { first_name: string | null; last_name: string | null; name: string | null } | null,
+  p: { first_name: string | null; last_name: string | null; name?: string | null } | null,
 ): string {
   if (!p) return '—';
   // Title Case so reports + cash count statements never echo
@@ -80,7 +105,7 @@ function composePersonName(
   const fn = properCase(p.first_name);
   const ln = properCase(p.last_name);
   if (fn && ln) return `${fn} ${ln}`;
-  return fn || ln || properCase(p.name) || '—';
+  return fn || ln || properCase(p.name ?? null) || '—';
 }
 
 interface CashCountsResult {
@@ -140,16 +165,18 @@ export function useCashCounts(): CashCountsResult {
 
 // ── Current outstanding cash position ───────────────────────────────────────
 // "What should be in the safe right now?" =
-//   (sum of cash payments since the last signed count's period_end)
-//   minus (any cash refunds in that same window — but cash refunds
-//   happen out-of-band so we treat status='cancelled' on cash
-//   payments as zero contribution)
+//   last_signed_count.actual_pence (carry-forward opening balance)
+//   + sum of cash payments since the last signed count's period_end
+//   − sum of cash refunds in that same window
+//   − sum of cash withdrawals in that same window (bank deposit,
+//     float top-up, petty cash, owner draw, other — recorded via
+//     recordCashWithdrawal)
 //
-// In practice: every cash payment with status='succeeded' AND
-// succeeded_at > lastSignedCount.period_end. If no signed count
-// exists yet, use the earliest cash payment as the start.
+// When no signed count exists yet, baseline = 0 and the running
+// total accumulates from the very first cash event.
 
-export interface CashPositionLine {
+export interface CashPositionPaymentLine {
+  kind: 'payment';
   payment_id: string;
   amount_pence: number;
   taken_at: string;
@@ -163,9 +190,29 @@ export interface CashPositionLine {
   visit_id: string | null;
 }
 
+export interface CashPositionWithdrawalLine {
+  kind: 'withdrawal';
+  withdrawal_id: string;
+  amount_pence: number;
+  taken_at: string;
+  /** One of the lng_cash_withdrawals.reason enum values. The UI
+   *  resolves the friendly label via WITHDRAWAL_REASONS. */
+  reason: WithdrawalReason;
+  note: string | null;
+  taken_by_name: string | null;
+}
+
+export type CashPositionLine = CashPositionPaymentLine | CashPositionWithdrawalLine;
+
 export interface CashPosition {
+  /** Running balance = baseline + payments − refunds − withdrawals.
+   *  Now an absolute figure, not a delta. */
   expected_in_safe_pence: number;
+  /** Opening balance carried forward from the last signed count's
+   *  actual_pence (or 0 when there has never been a signed count). */
+  baseline_pence: number;
   payment_count: number;
+  withdrawal_count: number;
   earliest_payment_at: string | null;
   latest_payment_at: string | null;
   // Last signed count is the anchor.
@@ -227,7 +274,7 @@ export function useCashPosition(): CashPositionResult {
         const last = lastRes.data as { id: string; period_end: string; actual_pence: number | null; signed_off_at: string } | null;
         const sinceIso = last ? last.period_end : '1970-01-01T00:00:00Z';
 
-        const [paymentsRes, refundsRes] = await Promise.all([
+        const [paymentsRes, refundsRes, withdrawalsRes] = await Promise.all([
           supabase
             .from('lng_payments')
             .select(
@@ -257,10 +304,23 @@ export function useCashPosition(): CashPositionResult {
             .eq('status', 'succeeded')
             .gt('refunded_at', sinceIso)
             .order('refunded_at', { ascending: false }),
+          // Cash withdrawals — bank deposits, float top-ups, petty
+          // cash etc. Each row drops the running safe balance by its
+          // amount_pence. Joined to accounts for the taken_by display
+          // name on the Right-now card.
+          supabase
+            .from('lng_cash_withdrawals')
+            .select(
+              `id, amount_pence, reason, note, taken_at,
+               taken_by_account:accounts!lng_cash_withdrawals_taken_by_fkey ( first_name, last_name )`,
+            )
+            .gt('taken_at', sinceIso)
+            .order('taken_at', { ascending: false }),
         ]);
         if (cancelled) return;
         if (paymentsRes.error) throw new Error(`cash_payments: ${paymentsRes.error.message}`);
         if (refundsRes.error) throw new Error(`cash_refunds: ${refundsRes.error.message}`);
+        if (withdrawalsRes.error) throw new Error(`cash_withdrawals: ${withdrawalsRes.error.message}`);
 
         const raw = (paymentsRes.data ?? []) as RawCashPosition[];
         const refundRows = ((refundsRes.data ?? []) as Array<{
@@ -269,18 +329,37 @@ export function useCashPosition(): CashPositionResult {
           refunded_at: string;
           payment_id: string | null;
         }>);
+        const withdrawalRows = ((withdrawalsRes.data ?? []) as Array<{
+          id: string;
+          amount_pence: number;
+          reason: WithdrawalReason;
+          note: string | null;
+          taken_at: string;
+          taken_by_account:
+            | { first_name: string | null; last_name: string | null }
+            | { first_name: string | null; last_name: string | null }[]
+            | null;
+        }>);
+        // Baseline carries forward from the last signed count's
+        // actual_pence; first-ever-count case starts from zero and
+        // accumulates pure flow until the first sign-off.
+        const baseline = last?.actual_pence ?? 0;
         const cashRefundsTotal = refundRows.reduce(
           (acc, r) => acc + (r.amount_pence ?? 0),
           0,
         );
-        let total = -cashRefundsTotal; // start negative so refunds drop the running total
+        const cashWithdrawalsTotal = withdrawalRows.reduce(
+          (acc, w) => acc + (w.amount_pence ?? 0),
+          0,
+        );
+        let total = baseline - cashRefundsTotal - cashWithdrawalsTotal;
         let earliest: string | null = null;
         let latest: string | null = null;
         for (const r of refundRows) {
           if (!earliest || r.refunded_at < earliest) earliest = r.refunded_at;
           if (!latest || r.refunded_at > latest) latest = r.refunded_at;
         }
-        const lines: CashPositionLine[] = raw.map((r) => {
+        const paymentLines: CashPositionPaymentLine[] = raw.map((r) => {
           total += r.amount_pence;
           if (!earliest || r.succeeded_at < earliest) earliest = r.succeeded_at;
           if (!latest || r.succeeded_at > latest) latest = r.succeeded_at;
@@ -290,6 +369,7 @@ export function useCashPosition(): CashPositionResult {
           const appt = pickOne(visit?.appointment ?? null);
           const walkIn = pickOne(visit?.walk_in ?? null);
           return {
+            kind: 'payment' as const,
             payment_id: r.id,
             amount_pence: r.amount_pence,
             taken_at: r.succeeded_at,
@@ -298,11 +378,31 @@ export function useCashPosition(): CashPositionResult {
             visit_id: visit?.id ?? null,
           };
         });
+        const withdrawalLines: CashPositionWithdrawalLine[] = withdrawalRows.map((w) => {
+          const actor = pickOne(w.taken_by_account ?? null);
+          if (!earliest || w.taken_at < earliest) earliest = w.taken_at;
+          if (!latest || w.taken_at > latest) latest = w.taken_at;
+          return {
+            kind: 'withdrawal' as const,
+            withdrawal_id: w.id,
+            amount_pence: w.amount_pence,
+            taken_at: w.taken_at,
+            reason: w.reason,
+            note: w.note,
+            taken_by_name: composePersonName(actor),
+          };
+        });
+        // Interleave by time so the activity card reads as a
+        // chronological narrative of safe movements.
+        const lines: CashPositionLine[] = [...paymentLines, ...withdrawalLines]
+          .sort((a, b) => (a.taken_at < b.taken_at ? 1 : a.taken_at > b.taken_at ? -1 : 0));
 
         if (cancelled) return;
         setData({
           expected_in_safe_pence: total,
-          payment_count: lines.length,
+          baseline_pence: baseline,
+          payment_count: paymentLines.length,
+          withdrawal_count: withdrawalLines.length,
           earliest_payment_at: earliest,
           latest_payment_at: latest,
           last_signed_count: last,
@@ -700,16 +800,27 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   const counterId = (meId as string | null) ?? null;
   if (!counterId) throw new Error('Could not resolve current account.');
 
-  // Snapshot the cash payments that fall in this period. We do this
-  // BEFORE inserting the count row so we know expected_pence up front.
-  // Once the count is signed the lines are immutable; even if
-  // payments are voided afterwards, the count's record stays exact.
+  // Snapshot the cash payments, refunds AND withdrawals that fall in
+  // this period. We do this BEFORE inserting the count row so we
+  // know expected_pence up front. Once the count is signed the
+  // lines are immutable; even if payments are voided / withdrawals
+  // are corrected afterwards, the count's record stays exact.
   //
-  // Cash refunds in the same period drop expected_pence by exactly
-  // their amount — the cash left the drawer when the staff member
-  // handed it back. Partial refunds leave the payment as 'succeeded'
-  // so a naive query counted them as still on hand.
-  const [paymentsRes, refundsSnapshotRes] = await Promise.all([
+  // Cash refunds drop expected_pence by exactly their amount — the
+  // cash left the drawer when the staff member handed it back.
+  // Withdrawals do the same (bank deposit, float top-up, etc.).
+  // Baseline is the previous signed count's actual_pence (the
+  // opening balance the safe carries into this period); zero when
+  // this is the first ever count.
+  const [baselineRes, paymentsRes, refundsSnapshotRes, withdrawalsSnapshotRes] = await Promise.all([
+    supabase
+      .from('lng_cash_counts')
+      .select('actual_pence, period_end')
+      .eq('status', 'signed')
+      .lte('period_end', input.period_start)
+      .order('period_end', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
     supabase
       .from('lng_payments')
       .select(
@@ -734,12 +845,38 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       .eq('status', 'succeeded')
       .gte('refunded_at', input.period_start)
       .lte('refunded_at', input.period_end),
+    supabase
+      .from('lng_cash_withdrawals')
+      .select(
+        `id, amount_pence, reason, note, taken_at,
+         taken_by_account:accounts!lng_cash_withdrawals_taken_by_fkey ( first_name, last_name )`,
+      )
+      .gte('taken_at', input.period_start)
+      .lte('taken_at', input.period_end),
   ]);
+  if (baselineRes.error) throw new Error(baselineRes.error.message);
   if (paymentsRes.error) throw new Error(paymentsRes.error.message);
   if (refundsSnapshotRes.error) throw new Error(refundsSnapshotRes.error.message);
+  if (withdrawalsSnapshotRes.error) throw new Error(withdrawalsSnapshotRes.error.message);
+  const baselinePence = (baselineRes.data as { actual_pence: number | null } | null)?.actual_pence ?? 0;
   const cashRefundsTotal = ((refundsSnapshotRes.data ?? []) as Array<{
     amount_pence: number;
   }>).reduce((acc, r) => acc + (r.amount_pence ?? 0), 0);
+  const withdrawalSnapshotRows = ((withdrawalsSnapshotRes.data ?? []) as Array<{
+    id: string;
+    amount_pence: number;
+    reason: WithdrawalReason;
+    note: string | null;
+    taken_at: string;
+    taken_by_account:
+      | { first_name: string | null; last_name: string | null }
+      | { first_name: string | null; last_name: string | null }[]
+      | null;
+  }>);
+  const cashWithdrawalsTotal = withdrawalSnapshotRows.reduce(
+    (acc, w) => acc + (w.amount_pence ?? 0),
+    0,
+  );
 
   interface RawSnapshot {
     id: string;
@@ -779,7 +916,19 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       | null;
   }
   const raw = (paymentsRes.data ?? []) as RawSnapshot[];
-  const expected_pence = raw.reduce((s, r) => s + r.amount_pence, 0) - cashRefundsTotal;
+  // Running balance: baseline carried from the previous signed count
+  // + period payments − period refunds − period withdrawals. Clamp
+  // at 0 — the DB check (expected_pence >= 0) would otherwise reject
+  // the insert. If you see this clamp fire in practice the
+  // underlying figures are inconsistent (e.g. a refund recorded
+  // without the matching baseline) and the count needs investigating.
+  const expected_pence = Math.max(
+    0,
+    baselinePence
+      + raw.reduce((s, r) => s + r.amount_pence, 0)
+      - cashRefundsTotal
+      - cashWithdrawalsTotal,
+  );
 
   // Insert the count row. lines come next.
   const kind = input.kind ?? 'regular';
@@ -844,7 +993,82 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       throw new Error(`Lines insert failed (count ${count_id}): ${linesErr.message}`);
     }
   }
+
+  // Snapshot the withdrawals that count against this period. Same
+  // pattern as the payment lines above — denormalise reason / note /
+  // taken_by name so the statement reads accurately later.
+  if (withdrawalSnapshotRows.length > 0) {
+    const withdrawalRows = withdrawalSnapshotRows.map((w) => {
+      const actor = pickOne(w.taken_by_account ?? null);
+      return {
+        count_id,
+        withdrawal_id: w.id,
+        amount_pence: w.amount_pence,
+        reason_snapshot: w.reason,
+        note_snapshot: w.note,
+        taken_at: w.taken_at,
+        taken_by_name_snapshot: composePersonName(actor),
+      };
+    });
+    const { error: wLinesErr } = await supabase
+      .from('lng_cash_count_withdrawal_lines')
+      .insert(withdrawalRows);
+    if (wLinesErr) {
+      throw new Error(`Withdrawal lines insert failed (count ${count_id}): ${wLinesErr.message}`);
+    }
+  }
   return { count_id, expected_pence, lines_count: raw.length, kind };
+}
+
+// ── Record a cash withdrawal ───────────────────────────────────────────────
+//
+// Inserts a row into lng_cash_withdrawals (audit + running-balance
+// driver). Also fires the manager-notification email best-effort —
+// failure to deliver MUST NOT undo the audit row, so it's caught and
+// surfaced to lng_system_failures, not bubbled up.
+//
+// Callers (Take-from-safe sheet) await this and refresh
+// useCashPosition so the Right-now card reflects the new balance.
+
+export interface RecordCashWithdrawalInput {
+  location_id: string;
+  amount_pence: number;
+  reason: WithdrawalReason;
+  note?: string | null;
+}
+
+export interface RecordCashWithdrawalResult {
+  withdrawal_id: string;
+}
+
+export async function recordCashWithdrawal(
+  input: RecordCashWithdrawalInput,
+): Promise<RecordCashWithdrawalResult> {
+  if (!Number.isFinite(input.amount_pence) || input.amount_pence <= 0) {
+    throw new Error('Amount must be greater than zero.');
+  }
+  if (!WITHDRAWAL_REASONS.find((r) => r.value === input.reason)) {
+    throw new Error(`Unknown withdrawal reason: ${input.reason}`);
+  }
+  const { data: meId } = await supabase.rpc('auth_account_id');
+  const takenBy = (meId as string | null) ?? null;
+  if (!takenBy) throw new Error('Could not resolve current account.');
+  const trimmedNote = input.note?.trim();
+  const { data: inserted, error } = await supabase
+    .from('lng_cash_withdrawals')
+    .insert({
+      location_id: input.location_id,
+      amount_pence: input.amount_pence,
+      reason: input.reason,
+      note: trimmedNote && trimmedNote.length > 0 ? trimmedNote : null,
+      taken_by: takenBy,
+    })
+    .select('id')
+    .single();
+  if (error || !inserted) {
+    throw new Error(`Could not record withdrawal: ${error?.message ?? 'no row returned'}`);
+  }
+  return { withdrawal_id: (inserted as { id: string }).id };
 }
 
 export async function updateCashCountActual(
@@ -910,9 +1134,19 @@ export interface CashCountStatementLine {
   appointment_ref: string | null;
 }
 
+export interface CashCountStatementWithdrawal {
+  withdrawal_id: string;
+  amount_pence: number;
+  taken_at: string;
+  reason: WithdrawalReason;
+  note: string | null;
+  taken_by_name: string | null;
+}
+
 export interface CashCountStatement {
   count: CashCountRow;
   lines: CashCountStatementLine[];
+  withdrawals: CashCountStatementWithdrawal[];
 }
 
 interface RawStatementCount extends RawCashCount {}
@@ -939,7 +1173,7 @@ export function useCashCountStatement(countId: string | null): StatementResult {
     setError(null);
     (async () => {
       try {
-        const [countRes, linesRes] = await Promise.all([
+        const [countRes, linesRes, withdrawalLinesRes] = await Promise.all([
           supabase
             .from('lng_cash_counts')
             .select(
@@ -955,10 +1189,16 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             .select('payment_id, amount_pence, taken_at, patient_name_snapshot, appointment_ref_snapshot')
             .eq('count_id', countId)
             .order('taken_at', { ascending: true }),
+          supabase
+            .from('lng_cash_count_withdrawal_lines')
+            .select('withdrawal_id, amount_pence, taken_at, reason_snapshot, note_snapshot, taken_by_name_snapshot')
+            .eq('count_id', countId)
+            .order('taken_at', { ascending: true }),
         ]);
         if (cancelled) return;
         if (countRes.error) throw new Error(countRes.error.message);
         if (linesRes.error) throw new Error(linesRes.error.message);
+        if (withdrawalLinesRes.error) throw new Error(withdrawalLinesRes.error.message);
         if (!countRes.data) throw new Error('Count not found');
         const [shaped] = shapeCashCounts([countRes.data as RawStatementCount]);
         if (!shaped) throw new Error('Count not found');
@@ -975,8 +1215,23 @@ export function useCashCountStatement(countId: string | null): StatementResult {
           patient_name: l.patient_name_snapshot ?? '—',
           appointment_ref: l.appointment_ref_snapshot,
         }));
+        const withdrawals: CashCountStatementWithdrawal[] = ((withdrawalLinesRes.data ?? []) as Array<{
+          withdrawal_id: string;
+          amount_pence: number;
+          taken_at: string;
+          reason_snapshot: string;
+          note_snapshot: string | null;
+          taken_by_name_snapshot: string | null;
+        }>).map((w) => ({
+          withdrawal_id: w.withdrawal_id,
+          amount_pence: w.amount_pence,
+          taken_at: w.taken_at,
+          reason: w.reason_snapshot as WithdrawalReason,
+          note: w.note_snapshot,
+          taken_by_name: w.taken_by_name_snapshot,
+        }));
         if (cancelled) return;
-        setData({ count: shaped, lines });
+        setData({ count: shaped, lines, withdrawals });
         setLoading(false);
       } catch (e: unknown) {
         if (cancelled) return;

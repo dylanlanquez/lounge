@@ -231,7 +231,8 @@ export type ManagerNotificationActionKind =
   | 'discount_amended'
   | 'discount_removed'
   | 'refund_issued'
-  | 'payment_voided';
+  | 'payment_voided'
+  | 'cash_withdrawn';
 
 export interface SendManagerNotificationInput {
   actionKind: ManagerNotificationActionKind;
@@ -240,6 +241,14 @@ export interface SendManagerNotificationInput {
   patientId: string | null;
   visitId: string | null;
   staffAccountId: string | null;
+  /** cash_withdrawn only — optional free-text note typed by the
+   *  staff member on the Take-from-safe sheet. Surfaced in the
+   *  email body via the {{noteOrEmpty}} variable. */
+  note?: string | null;
+  /** cash_withdrawn only — id of the new lng_cash_withdrawals row.
+   *  Recorded on the audit log line so the email send can be tied
+   *  back to its withdrawal. */
+  withdrawalId?: string | null;
 }
 
 export interface SendManagerNotificationResult {
@@ -264,6 +273,8 @@ export async function sendManagerNotification(
           patient_id: input.patientId,
           visit_id: input.visitId,
           staff_account_id: input.staffAccountId,
+          note: input.note ?? null,
+          withdrawal_id: input.withdrawalId ?? null,
         },
       },
     );
