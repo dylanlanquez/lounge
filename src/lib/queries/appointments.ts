@@ -55,11 +55,6 @@ export interface AppointmentRow {
   brand_id: string | null;
   staff_account_id: string | null;
   notes: string | null;
-  /** Free-text reason stamped on cancelled / no-show rows. Carried on
-   *  the row shape so the ScheduleListView can detect pre-launch
-   *  backfill rows via isPreLaunchBackfillNoShow() and suppress the
-   *  red "No show" pill while keeping the underlying status. */
-  cancel_reason: string | null;
   intake: IntakeAnswer[] | null;
   join_url: string | null;
   /** When set, this row is the calendar marker for a walk-in (the

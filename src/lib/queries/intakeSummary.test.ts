@@ -18,7 +18,6 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   brand_id: null,
   staff_account_id: null,
   notes: null,
-  cancel_reason: null,
   intake,
   join_url: null,
   walk_in_id: null,

@@ -46,7 +46,7 @@ import {
   type ScheduledApptStatus,
 } from '../lib/queries/patientProfile.ts';
 import { formatPence } from '../lib/queries/carts.ts';
-import { formatVisitCrumb, isPreLaunchBackfillNoShow } from '../lib/queries/visits.ts';
+import { formatVisitCrumb } from '../lib/queries/visits.ts';
 import {
   sectionSignatureState,
   useSignedWaivers,
@@ -1777,7 +1777,7 @@ function ApptCardRow({
         {isVisit ? (
           <VisitStatusPill visit={row.visit!} />
         ) : (
-          <ApptStatusPill row={row.appointment!} />
+          <ApptStatusPill status={row.appointment!.status} />
         )}
         {clickable ? (
           <ChevronRightIcon
@@ -1803,16 +1803,11 @@ function VisitStatusPill({ visit }: { visit: PatientVisitRow }) {
   return <StatusPill tone={tone} size="sm">{label}</StatusPill>;
 }
 
-function ApptStatusPill({ row }: { row: PatientScheduledAppointmentRow }) {
-  // Pre-launch backfill rows are flagged no_show in the DB so reports
-  // ignore them, but they're not real no-shows — render nothing rather
-  // than the loud red pill on legacy Calendly history.
-  if (isPreLaunchBackfillNoShow(row)) return null;
+function ApptStatusPill({ status }: { status: ScheduledApptStatus }) {
   // Map lng_appointments.status onto the StatusPill tone vocabulary.
   // Booked + arrived sit on the active rail; complete maps to its
   // muted-green; no_show is the loud one; cancelled / rescheduled both
   // read as inert.
-  const status = row.status;
   const tone =
     status === 'complete'
       ? 'complete'

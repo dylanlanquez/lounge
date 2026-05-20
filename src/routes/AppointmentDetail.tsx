@@ -78,7 +78,7 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
-import { humaniseCancelReason, isPreLaunchBackfillNoShow, logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { recordOwedToPatient } from '../lib/queries/owedToPatient.ts';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
@@ -660,7 +660,7 @@ function Loaded({
             text={humaniseCancelReason(appt.cancel_reason) ?? appt.cancel_reason}
           />
         ) : null}
-        {appt.status === 'no_show' && appt.cancel_reason && !isPreLaunchBackfillNoShow(appt) ? (
+        {appt.status === 'no_show' && appt.cancel_reason ? (
           <ReasonCard
             tone="no_show"
             label="No-show reason"
@@ -1058,13 +1058,9 @@ function Hero({
   // lands on the hero. Distinct from the solid-green "Paid" used for a
   // fully-settled cart on VisitDetail — a £25 deposit is not the same
   // as a £200 visit being paid in full.
-  // Pre-launch backfill rows stay status='no_show' for reports but
-  // shouldn't surface a loud red status pill on the hero. Skip the
-  // status pill entirely on those rows; deposit / refund pills below
-  // still apply if the booking carried money.
-  const pills: AppointmentHeroPill[] = isPreLaunchBackfillNoShow(appt)
-    ? []
-    : [{ tone, label: humaniseAppointmentStatus(appt.status) }];
+  const pills: AppointmentHeroPill[] = [
+    { tone, label: humaniseAppointmentStatus(appt.status) },
+  ];
   if (appt.deposit_status === 'paid' && (appt.deposit_pence ?? 0) > 0) {
     // Refund-axis check before the deposit / paid-in-full label:
     // when money has been returned, displace the green money pill
@@ -1326,18 +1322,6 @@ function buildApptRibbon(
       };
     }
     case 'no_show': {
-      // Pre-launch backfill rows are flagged no_show for reports only.
-      // Render the ribbon as a quiet past-appointment marker so the
-      // page doesn't shout "Patient did not turn up" for every legacy
-      // Calendly row.
-      if (isPreLaunchBackfillNoShow(appt)) {
-        return {
-          icon: <CheckCircle2 size={16} aria-hidden />,
-          timeLine: 'Past appointment',
-          relative: null,
-          tone: 'neutral',
-        };
-      }
       return {
         icon: <UserX size={16} aria-hidden />,
         timeLine: 'Patient did not turn up',
