@@ -200,9 +200,16 @@ Deno.serve(async (req) => {
     } catch { /* ignore */ }
   }
 
+  // invite_url is always returned, even on email_sent: true. Resend
+  // sometimes accepts a send and the message still doesn't reach the
+  // recipient (corporate filters, broken DKIM on the destination
+  // domain, ATP quarantines). Admins need the fresh URL on every
+  // resend so they can hand-deliver via Slack/WhatsApp if the email
+  // doesn't arrive. email_error stays gated on !emailSent.
   return jsonResponse(200, {
     ok: true,
     email_sent: emailSent,
+    invite_url: inviteUrl,
     ...(emailSent ? {} : { manual_invite_link: inviteUrl, email_error: emailError }),
   });
 });

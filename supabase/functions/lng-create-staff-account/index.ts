@@ -295,6 +295,14 @@ Deno.serve(async (req) => {
     } catch { /* ignore */ }
   }
 
+  // invite_url is always returned, even on email_sent: true. Resend
+  // sometimes accepts a send and the message still doesn't reach the
+  // recipient (corporate filters, broken DKIM on the destination
+  // domain, ATP quarantines). Giving admins a copyable fallback link
+  // on every successful create means they can hand-deliver the URL
+  // via Slack/WhatsApp if the email never arrives, without having to
+  // hit Resend invite a second time. email_error is still gated on
+  // !emailSent so the success path stays clean.
   return jsonResponse(200, {
     ok: true,
     staff_member_id: staffMemberId,
@@ -302,6 +310,7 @@ Deno.serve(async (req) => {
     auth_user_id: newAuthUserId,
     display_name: composedName,
     email_sent: emailSent,
+    invite_url: inviteUrl,
     ...(emailSent ? {} : { manual_invite_link: inviteUrl, email_error: emailError }),
   });
 });

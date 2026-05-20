@@ -430,8 +430,13 @@ export async function addStaffMemberByEmail(
 // emailSent is false, manualInviteLink contains the action_link the
 // admin can copy and deliver themselves rather than re-running the
 // flow (which would fail because the auth user already exists).
+// inviteUrl is the same URL but returned on every success too — a
+// belt-and-braces fallback for the case where Resend reports send
+// success but the email is silently filtered (corporate ATP /
+// DKIM / spam quarantines do this without any failure signal).
 export interface InviteResult extends AddByEmailResult {
   emailSent: boolean;
+  inviteUrl: string;
   manualInviteLink?: string;
   emailError?: string;
 }
@@ -450,6 +455,7 @@ export async function inviteNewStaffMember(args: {
     account_id?: string;
     display_name?: string;
     email_sent?: boolean;
+    invite_url?: string;
     manual_invite_link?: string;
     email_error?: string;
   }>('lng-create-staff-account', {
@@ -470,6 +476,10 @@ export async function inviteNewStaffMember(args: {
     account_id: invocation.account_id!,
     display_name: invocation.display_name!,
     emailSent: invocation.email_sent === true,
+    // invite_url is always returned by the function. Fall back to
+    // manual_invite_link for older deployments that haven't been
+    // upgraded yet.
+    inviteUrl: invocation.invite_url ?? invocation.manual_invite_link ?? '',
     manualInviteLink: invocation.manual_invite_link,
     emailError: invocation.email_error,
   };
@@ -493,6 +503,11 @@ export async function inviteNewStaffMember(args: {
 export interface SendLinkResult {
   emailSent: boolean;
   manualLink?: string;
+  // inviteUrl is set only by the staff invite path (resend + create);
+  // it carries the active /welcome?invite=<token> URL so the UI can
+  // copy and surface it whether or not Resend delivered. magic-link /
+  // password-reset endpoints leave it undefined.
+  inviteUrl?: string;
   emailError?: string;
 }
 
@@ -542,6 +557,7 @@ export async function resendStaffInvite(staffMemberId: string): Promise<SendLink
     error?: string;
     email_sent?: boolean;
     email_error?: string;
+    invite_url?: string;
     manual_invite_link?: string;
   }>('lng-resend-staff-invite', {
     body: { staff_member_id: staffMemberId },
@@ -553,7 +569,47 @@ export async function resendStaffInvite(staffMemberId: string): Promise<SendLink
   return {
     emailSent: data.email_sent === true,
     manualLink: data.manual_invite_link,
+    inviteUrl: data.invite_url ?? data.manual_invite_link,
     emailError: data.email_error,
+  };
+}
+
+// Read-only fetch of the *currently active* invite URL for a pending
+// staff member. Admin-only (gated server-side by lng-get-staff-invite-
+// link). Returns null when the staff member has already accepted or
+// has no token on file. Crucially this does NOT mint a new token —
+// the existing email already in the staff member's inbox stays valid.
+export interface StaffInviteLink {
+  inviteUrl: string | null;
+  hasToken: boolean;
+  expired: boolean;
+  accepted: boolean;
+  inviteSentAt: string | null;
+  inviteExpiresAt: string | null;
+}
+
+export async function getStaffInviteLink(staffMemberId: string): Promise<StaffInviteLink> {
+  const { data, error } = await supabase.functions.invoke<{
+    ok: boolean;
+    error?: string;
+    invite_url?: string | null;
+    has_token?: boolean;
+    expired?: boolean;
+    accepted?: boolean;
+    invite_sent_at?: string | null;
+    invite_expires_at?: string | null;
+  }>('lng-get-staff-invite-link', { body: { staff_member_id: staffMemberId } });
+  if (error) throw new Error(error.message);
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error ?? 'Could not fetch the invite link.');
+  }
+  return {
+    inviteUrl: data.invite_url ?? null,
+    hasToken: data.has_token === true,
+    expired: data.expired === true,
+    accepted: data.accepted === true,
+    inviteSentAt: data.invite_sent_at ?? null,
+    inviteExpiresAt: data.invite_expires_at ?? null,
   };
 }
 

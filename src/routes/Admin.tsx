@@ -40,6 +40,7 @@ import {
   createStaffRole,
   resetTwoFactor,
   resendStaffInvite,
+  getStaffInviteLink,
   sendMagicLink,
   sendPasswordReset,
   setAdminPageAccess,
@@ -2358,6 +2359,22 @@ function StaffTab() {
     description?: string;
     manualLink?: string;
   } | null>(null);
+  // Active invite URL for the currently-managed staff member, fetched
+  // lazily via lng-get-staff-invite-link the moment a pending staff
+  // row's Manage sheet opens. Read-only — the function does NOT mint
+  // a fresh token, so the URL shown here matches the one already
+  // sitting in the staff member's inbox. 'loading' covers the fetch
+  // in flight, 'error' surfaces a fetch failure (network, auth) so
+  // the admin can retry, and 'ready' carries the resolved URL +
+  // expiry. Admins use this URL as a Slack/WhatsApp fallback when the
+  // staff_invite email doesn't reach the inbox (silent Resend
+  // acceptance + downstream filter, broken DKIM, ATP quarantine, etc.)
+  const [pendingInviteLink, setPendingInviteLink] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ready'; url: string | null; expired: boolean; expiresAt: string | null }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
   const [confirmReset2fa, setConfirmReset2fa] = useState(false);
   // Tab key currently mid-write for the per-page access toggles.
   // Used to disable just-clicked rows while their PATCH is in flight,
@@ -2427,6 +2444,45 @@ function StaffTab() {
       setManaging(fresh);
     }
   }, [staff.data, managing]);
+
+  // Fetch the currently-active invite URL whenever the Manage sheet
+  // opens for a pending staff member (invite sent, not yet accepted).
+  // Read-only — does NOT mint a new token. We key on staff_member_id
+  // alone so toggling an unrelated field on the row (manager flag,
+  // location, etc.) does not refetch. Accepted rows reset the state.
+  useEffect(() => {
+    if (!managing) {
+      setPendingInviteLink({ kind: 'idle' });
+      return;
+    }
+    if (managing.invite_accepted_at || !managing.invite_sent_at) {
+      setPendingInviteLink({ kind: 'idle' });
+      return;
+    }
+    let cancelled = false;
+    setPendingInviteLink({ kind: 'loading' });
+    (async () => {
+      try {
+        const result = await getStaffInviteLink(managing.staff_member_id);
+        if (cancelled) return;
+        setPendingInviteLink({
+          kind: 'ready',
+          url: result.inviteUrl,
+          expired: result.expired,
+          expiresAt: result.inviteExpiresAt,
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setPendingInviteLink({
+          kind: 'error',
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [managing?.staff_member_id, managing?.invite_accepted_at, managing?.invite_sent_at]);
 
   const toggleManager = async (staffMemberId: string, next: boolean) => {
     setBusyId(staffMemberId);
@@ -2545,16 +2601,30 @@ function StaffTab() {
           is_admin: addAdmin && canEditAdmin,
           is_manager: addManager,
         });
-        // If Resend couldn't deliver, hold the sheet open and show
-        // the action_link so the admin can copy and forward
-        // manually. The staff record itself is provisioned and
-        // valid; this is purely a delivery fallback.
-        if (!invited.emailSent && invited.manualInviteLink) {
+        // Always surface the invite link in the sheet on a successful
+        // create, even when Resend reports the email as sent. Two
+        // reasons:
+        //
+        //   1. Corporate filters (Outlook ATP, Gmail safe-links,
+        //      domain DMARC failures) routinely silently quarantine
+        //      legit mail with no failure signal back to Resend. The
+        //      admin has no way of knowing if the recipient actually
+        //      received it until they're sitting next to the new
+        //      starter wondering why they never got an email.
+        //   2. Even on guaranteed delivery, admins often prefer to
+        //      hand-deliver the link via Slack/WhatsApp so the new
+        //      starter has it instantly. Forcing them to dig through
+        //      a sent-mail archive to find the URL is silly.
+        //
+        // The `reason` field stays null on success — only set on
+        // genuine email failures so the copy reads cleanly without
+        // an alarming "Reason:" suffix.
+        if (invited.inviteUrl) {
           setAddManualInviteLink({
             name: invited.display_name,
             email: addEmail.trim(),
-            link: invited.manualInviteLink,
-            reason: invited.emailError ?? null,
+            link: invited.inviteUrl,
+            reason: invited.emailSent ? null : invited.emailError ?? null,
           });
           staff.refresh();
           return;
@@ -2606,18 +2676,31 @@ function StaffTab() {
     setActionFeedback(null);
     try {
       const r = await resendStaffInvite(managing.staff_member_id);
+      // The resend always mints a fresh token + URL; snap the
+      // pending-link state to the new URL immediately so the
+      // copyable field in the Invite & sign-in panel matches the
+      // link in the just-sent email. Resend invites set a fresh 7-
+      // day expiry, so expired is always false here.
+      if (r.inviteUrl) {
+        setPendingInviteLink({
+          kind: 'ready',
+          url: r.inviteUrl,
+          expired: false,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+      }
       if (r.emailSent) {
         setActionFeedback({
           tone: 'success',
           title: 'Invite re-sent.',
-          description: `A fresh invite landed in ${managing.login_email}. The link is valid for 7 days; previous invite links are now invalid.`,
+          description: `A fresh invite landed in ${managing.login_email}. The link is valid for 7 days; previous invite links are now invalid. The new link is also shown above so you can copy it as a backup.`,
         });
         staff.refresh();
       } else {
         setActionFeedback({
           tone: 'error',
           title: 'Invite generated, but email could not be delivered.',
-          description: r.emailError ?? 'Copy the link below and send it manually.',
+          description: r.emailError ?? 'Copy the link above and send it manually.',
           manualLink: r.manualLink,
         });
       }
@@ -3057,6 +3140,35 @@ function StaffTab() {
                           {s.is_manager ? <RolePill tone="neutral">Manager</RolePill> : null}
                           {s.is_customer_service ? <RolePill tone="neutral">Customer Service</RolePill> : null}
                           {s.require_2fa ? <RolePill tone="neutral">2FA required</RolePill> : null}
+                          {/* Pending-invite indicator. Surfaces when a
+                              new staff member has been provisioned via
+                              lng-create-staff-account (invite_sent_at
+                              set) but has not yet accepted by clicking
+                              through to /welcome (invite_accepted_at
+                              null). Orange "Pending invite" while the
+                              token is still in its 7-day window; red
+                              "Invite expired" once invite_expires_at is
+                              in the past so the admin knows to resend.
+                              Pre-feature accounts (invite_sent_at null
+                              and invite_accepted_at backfilled from
+                              hired_at) never enter this state. */}
+                          {!s.invite_accepted_at && s.invite_sent_at
+                            ? (() => {
+                                const expiresMs = s.invite_expires_at
+                                  ? new Date(s.invite_expires_at).getTime()
+                                  : null;
+                                const expired = !!(
+                                  expiresMs &&
+                                  Number.isFinite(expiresMs) &&
+                                  expiresMs < Date.now()
+                                );
+                                return (
+                                  <StatusPill tone={expired ? 'cancelled' : 'unsuitable'} size="sm">
+                                    {expired ? 'Invite expired' : 'Pending invite'}
+                                  </StatusPill>
+                                );
+                              })()
+                            : null}
                         </>
                       )}
                       {nameMissing && !isInactive ? (
@@ -3327,6 +3439,7 @@ function StaffTab() {
                 inviteAcceptedAt={managing.invite_accepted_at}
                 lastSignInAt={managing.last_sign_in_at}
                 hiredAt={managing.hired_at}
+                pendingInviteLink={pendingInviteLink}
               />
             </ManageSection>
 
@@ -3560,11 +3673,14 @@ function StaffTab() {
               }}
             >
               <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-                Account created for {addManualInviteLink.name}, but the invite email could not be delivered.
+                {addManualInviteLink.reason
+                  ? `Account created for ${addManualInviteLink.name}, but the invite email could not be delivered.`
+                  : `Account created. Invite emailed to ${addManualInviteLink.email}.`}
               </p>
               <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
-                Copy this one-time invite link and send it to {addManualInviteLink.email} yourself. It expires in 24 hours.
-                {addManualInviteLink.reason ? ` (Reason: ${addManualInviteLink.reason})` : null}
+                {addManualInviteLink.reason
+                  ? `Copy this invite link and send it to ${addManualInviteLink.email} yourself. The link is valid for 7 days. (Reason: ${addManualInviteLink.reason})`
+                  : `Here's the invite link too, in case it doesn't reach the inbox (corporate spam filters quietly drop legit mail). Hand-deliver via Slack or WhatsApp if needed. The link is valid for 7 days.`}
               </p>
               <textarea
                 readOnly
@@ -3947,26 +4063,38 @@ function RolePill({ tone, children }: { tone: 'accent' | 'accent-soft' | 'neutra
 }
 
 // Read-only summary of the staff member's invite + sign-in
-// lifecycle. Three rows:
+// lifecycle, with a copyable invite URL surfaced for pending staff
+// so admins have a manual fallback when Resend silently accepts an
+// email that never reaches the inbox.
+//
+// Rows:
 //   - Invite sent → expires (when never accepted) OR Invite
 //     accepted (when accepted)
 //   - Last signed in (when present)
 //   - Joined Lounge (always — derived from hired_at)
-// Renders inline as a tight key/value grid; the ManageSection
-// header above carries the "Invite & sign-in" title so the panel
-// itself stays compact.
+//
+// When invite_accepted_at is null and a token is still on file, a
+// "Active invite link" card renders below the grid with the
+// /welcome?invite=... URL in a read-only textarea + Copy button —
+// same pattern as the Add Staff "could not be delivered" surface.
 function InviteStatusPanel({
   inviteSentAt,
   inviteExpiresAt,
   inviteAcceptedAt,
   lastSignInAt,
   hiredAt,
+  pendingInviteLink,
 }: {
   inviteSentAt: string | null;
   inviteExpiresAt: string | null;
   inviteAcceptedAt: string | null;
   lastSignInAt: string | null;
   hiredAt: string;
+  pendingInviteLink:
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ready'; url: string | null; expired: boolean; expiresAt: string | null }
+    | { kind: 'error'; message: string };
 }) {
   const rows: Array<{ label: string; value: string; tone?: 'muted' | 'alert' }> = [];
   if (inviteAcceptedAt) {
@@ -3998,43 +4126,175 @@ function InviteStatusPanel({
     label: 'Joined Lounge',
     value: formatLifecycleStamp(hiredAt),
   });
+  // Only render the copy-link card when the row is pending AND we
+  // have an actual URL (kind === 'ready' && url). Loading shows a
+  // muted hint so the admin knows the fetch is in flight; error
+  // surfaces the message in alert tone. Accepted staff and pre-
+  // feature accounts (no token on file) get nothing here.
+  const showLinkSection = !inviteAcceptedAt && pendingInviteLink.kind !== 'idle';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'max-content 1fr',
+          columnGap: theme.space[5],
+          rowGap: theme.space[2],
+          padding: theme.space[4],
+          background: theme.color.bg,
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+        }}
+      >
+        {rows.map((r, i) => (
+          <Fragment key={`${r.label}|${i}`}>
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontWeight: theme.type.weight.medium,
+                alignSelf: 'baseline',
+              }}
+            >
+              {r.label}
+            </span>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                color: r.tone === 'alert' ? theme.color.alert : theme.color.ink,
+                fontWeight: theme.type.weight.medium,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {r.value}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+      {showLinkSection ? <PendingInviteLinkCard state={pendingInviteLink} /> : null}
+    </div>
+  );
+}
+
+// Renders the active /welcome?invite=... URL with a Copy button for
+// staff who have a pending (un-accepted) invite. Same accent-bg
+// pattern as the Add Staff manual-link card. Three states:
+//   - loading: muted hint, no textarea
+//   - error: alert text, retry hint
+//   - ready (url present): readonly textarea + Copy button
+//   - ready (url null): "no active token" hint with a "Resend invite"
+//     pointer (the Action Row below still handles the actual send)
+function PendingInviteLinkCard({
+  state,
+}: {
+  state:
+    | { kind: 'loading' }
+    | { kind: 'ready'; url: string | null; expired: boolean; expiresAt: string | null }
+    | { kind: 'error'; message: string };
+}) {
+  if (state.kind === 'loading') {
+    return (
+      <div
+        style={{
+          padding: theme.space[4],
+          background: theme.color.accentBg,
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+        }}
+      >
+        Loading the active invite link…
+      </div>
+    );
+  }
+  if (state.kind === 'error') {
+    return (
+      <div
+        style={{
+          padding: theme.space[4],
+          background: 'rgba(184, 58, 42, 0.06)',
+          border: '1px solid rgba(184, 58, 42, 0.18)',
+          borderRadius: theme.radius.input,
+          fontSize: theme.type.size.sm,
+          color: theme.color.alert,
+        }}
+      >
+        Could not load the invite link: {state.message}
+      </div>
+    );
+  }
+  if (!state.url) {
+    return (
+      <div
+        style={{
+          padding: theme.space[4],
+          background: theme.color.bg,
+          border: `1px dashed ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.relaxed,
+        }}
+      >
+        No active invite link on file. Use Resend invite below to mint a fresh 7-day link.
+      </div>
+    );
+  }
   return (
     <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'max-content 1fr',
-        columnGap: theme.space[5],
-        rowGap: theme.space[2],
         padding: theme.space[4],
-        background: theme.color.bg,
+        background: theme.color.accentBg,
         border: `1px solid ${theme.color.border}`,
         borderRadius: theme.radius.input,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
       }}
     >
-      {rows.map((r, i) => (
-        <Fragment key={`${r.label}|${i}`}>
-          <span
-            style={{
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              fontWeight: theme.type.weight.medium,
-              alignSelf: 'baseline',
-            }}
-          >
-            {r.label}
-          </span>
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              color: r.tone === 'alert' ? theme.color.alert : theme.color.ink,
-              fontWeight: theme.type.weight.medium,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {r.value}
-          </span>
-        </Fragment>
-      ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+          Active invite link
+        </span>
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.relaxed }}>
+          {state.expired
+            ? 'This invite has expired. Resend invite below to mint a fresh 7-day link.'
+            : 'Same URL as the email. Copy this and hand-deliver via Slack, WhatsApp, or SMS if the email never lands in the inbox. Clicking Resend invite below mints a new URL and voids this one.'}
+        </span>
+      </div>
+      <textarea
+        readOnly
+        value={state.url}
+        onFocus={(e) => e.currentTarget.select()}
+        style={{
+          width: '100%',
+          minHeight: 64,
+          padding: theme.space[3],
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: theme.type.size.xs,
+          background: theme.color.surface,
+          color: theme.color.ink,
+          resize: 'vertical',
+          boxSizing: 'border-box',
+        }}
+      />
+      <div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            if (state.url) {
+              void navigator.clipboard?.writeText(state.url).catch(() => {});
+            }
+          }}
+        >
+          Copy link
+        </Button>
+      </div>
     </div>
   );
 }
