@@ -743,13 +743,17 @@ export function Schedule() {
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <SourceGlyph source={selected.source} size={13} />
                 <span>
-                  {/* The "Walk-in · " prefix only belongs to actual
-                      walk-in marker rows (lng_walk_ins → lng_appointments).
-                      Lounge staff bookings via the Schedule's New Booking
-                      sheet also write source='manual' but carry walk_in_id
-                      null, so they should NOT show "Walk-in" — they're
-                      booked appointments, not unscheduled arrivals. */}
-                  {selected.walk_in_id ? 'Walk-in · ' : ''}
+                  {/* Walk-ins read like any other appointment on the
+                      click sheet. The earlier "Walk-in · " prefix
+                      made them visually distinct from staff-booked
+                      manual appointments, which is the opposite of
+                      what staff need — once a walk-in is on the
+                      schedule it's an appointment that needs the
+                      same operational handling. The walk-in nature
+                      stays available internally via
+                      selected.walk_in_id and the booking-details
+                      panel now renders the actual service ("Denture
+                      Repair" etc.) the receptionist picked. */}
                   {formatStart(selected.start_at)}
                   {staffDisplayName(selected) ? ` · with ${staffDisplayName(selected)}` : ''}
                 </span>
