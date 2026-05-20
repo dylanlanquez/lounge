@@ -808,9 +808,18 @@ function NewCountSheet({
     return Math.round(float * 100);
   }, [actualText]);
 
+  const isLegacyBaseline = kind === 'legacy_baseline';
   const diff = actualPence === null ? null : actualPence - position.expected_in_safe_pence;
+  // Variance against expected is meaningless for a baseline — the
+  // whole point of a legacy_baseline count is to seed the safe with
+  // whatever is physically there, regardless of what Lounge has
+  // recorded (which is normally £0 because no payments have been
+  // processed yet at launch). Skip the over-threshold note gate.
   const diffNeedsNote =
-    thresholds !== null && diff !== null && Math.abs(diff) >= thresholds.cash_variance_pence;
+    !isLegacyBaseline
+    && thresholds !== null
+    && diff !== null
+    && Math.abs(diff) >= thresholds.cash_variance_pence;
 
   const submit = async () => {
     setError(null);
@@ -828,7 +837,11 @@ function NewCountSheet({
       setError('Pick the manager signing off this count.');
       return;
     }
-    if (!position.last_signed_count && !position.earliest_payment_at) {
+    // Skip the activity gate for the legacy_baseline path — that's
+    // explicitly the "we just launched and the safe already has cash
+    // from work that was processed outside Lounge" entry point. For
+    // routine counts, refusing on no activity stays correct.
+    if (!isLegacyBaseline && !position.last_signed_count && !position.earliest_payment_at) {
       setError('No cash activity yet — there is nothing to count.');
       return;
     }
@@ -912,7 +925,7 @@ function NewCountSheet({
               letterSpacing: theme.type.tracking.tight,
             }}
           >
-            Expected in safe
+            {isLegacyBaseline ? 'Starting balance' : 'Expected in safe'}
           </h3>
           <p
             style={{
@@ -925,7 +938,7 @@ function NewCountSheet({
               lineHeight: theme.type.leading.tight,
             }}
           >
-            {formatPence(position.expected_in_safe_pence)}
+            {isLegacyBaseline ? '—' : formatPence(position.expected_in_safe_pence)}
           </p>
           <p
             style={{
@@ -935,10 +948,13 @@ function NewCountSheet({
               lineHeight: theme.type.leading.normal,
             }}
           >
-            Cash since{' '}
-            {position.last_signed_count
-              ? `the last count on ${formatLongDate(position.last_signed_count.period_end)}`
-              : `the first cash payment on ${formatLongDate(position.earliest_payment_at ?? '')}`}
+            {isLegacyBaseline
+              ? 'Enter what is physically in the safe right now, including any cash from work processed outside Lounge. This becomes the starting point.'
+              : position.last_signed_count
+                ? `Cash since the last count on ${formatLongDate(position.last_signed_count.period_end)}`
+                : position.earliest_payment_at
+                  ? `Cash since the first cash payment on ${formatLongDate(position.earliest_payment_at)}`
+                  : 'No cash activity yet.'}
           </p>
         </div>
 
@@ -951,7 +967,7 @@ function NewCountSheet({
           autoFocus
         />
 
-        {diff !== null ? (
+        {!isLegacyBaseline && diff !== null ? (
           <div
             style={{
               display: 'inline-flex',
