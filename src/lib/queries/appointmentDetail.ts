@@ -38,6 +38,9 @@ export interface AppointmentDetailRow {
   jb_ref: string | null;
   cancel_reason: string | null;
   notes: string | null;
+  /** Patient-typed widget note. Distinct from `notes` (staff CS
+   *  handoff note). Read-only on the staff side. */
+  customer_note: string | null;
   reschedule_to_id: string | null;
   staff_account_id: string | null;
   location_id: string;
@@ -213,6 +216,9 @@ interface RawAppointment {
   jb_ref: string | null;
   cancel_reason: string | null;
   notes: string | null;
+  /** Patient-typed widget note. Distinct from `notes` (staff CS
+   *  handoff note). Read-only on the staff side. */
+  customer_note: string | null;
   reschedule_to_id: string | null;
   staff_account_id: string | null;
   location_id: string;
@@ -280,7 +286,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, customer_note, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -440,6 +446,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           jb_ref: appt.jb_ref,
           cancel_reason: appt.cancel_reason,
           notes: appt.notes,
+          customer_note: (appt as RawAppointment & { customer_note?: string | null }).customer_note ?? null,
           reschedule_to_id: appt.reschedule_to_id,
           staff_account_id: appt.staff_account_id,
           location_id: appt.location_id,

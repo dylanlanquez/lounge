@@ -65,6 +65,7 @@ import {
 } from '../lib/queries/appointments.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { AppointmentNotesHero } from '../components/AppointmentNotesHero/AppointmentNotesHero.tsx';
+import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import {
   formatDateLongOrdinal,
   formatTime,
@@ -1539,13 +1540,23 @@ export function VisitDetail() {
                   renders for walk-ins (no appointment row, no notes
                   field on lng_walk_ins yet). */}
               {appointment && visit?.appointment_id ? (
-                <div style={{ marginTop: theme.space[4] }}>
-                  <AppointmentNotesHero
-                    appointmentId={appointment.id}
-                    notes={appointment.notes}
-                    onChanged={refreshVisitDetail}
-                  />
-                </div>
+                <>
+                  {appointment.customer_note ? (
+                    <div style={{ marginTop: theme.space[4] }}>
+                      <CustomerNoteHero
+                        note={appointment.customer_note}
+                        patientFirstName={patient?.first_name ?? null}
+                      />
+                    </div>
+                  ) : null}
+                  <div style={{ marginTop: theme.space[4] }}>
+                    <AppointmentNotesHero
+                      appointmentId={appointment.id}
+                      notes={appointment.notes}
+                      onChanged={refreshVisitDetail}
+                    />
+                  </div>
+                </>
               ) : null}
               <BottomSheet
                 open={visitTimelineOpen}

@@ -48,6 +48,7 @@ import {
 } from '../components/index.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { AppointmentNotesHero } from '../components/AppointmentNotesHero/AppointmentNotesHero.tsx';
+import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -591,12 +592,21 @@ function Loaded({
       {isPreLaunch ? <PreLaunchBanner /> : null}
       <Hero appt={appt} fullName={fullName} tone={tone} />
 
-      {/* Customer service note sits between the patient Hero and the
-          detail cards so anyone opening this booking notices it
-          before scrolling. The shared AppointmentNotesHero handles
-          both states (hero amber callout when content exists; quiet
-          "Add note" prompt when empty) and is mirrored on VisitDetail
-          so the same note travels with the visit through the day. */}
+      {/* Two notes blocks, stacked so the floor team reads them in
+          order. The customer's widget note (read-only, quiet) sits
+          on top — it's context from the patient. The amber-callout
+          customer-service note (editable) sits below — it's the
+          staff handoff and warrants the louder visual treatment.
+          CustomerNoteHero self-suppresses when there's no widget
+          note (most in-app bookings + Calendly imports). */}
+      {appt.customer_note ? (
+        <div style={{ marginTop: theme.space[5] }}>
+          <CustomerNoteHero
+            note={appt.customer_note}
+            patientFirstName={appt.patient.first_name}
+          />
+        </div>
+      ) : null}
       <div style={{ marginTop: theme.space[5] }}>
         <AppointmentNotesHero
           appointmentId={appt.id}

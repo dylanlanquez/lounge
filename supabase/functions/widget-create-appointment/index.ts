@@ -629,7 +629,13 @@ Deno.serve(async (req) => {
       service_type: body.serviceType,
       event_type_label: eventLabel,
       appointment_ref: appointmentRef,
-      notes: body.details.notes?.trim() || null,
+      // Patient-typed widget note lands in customer_note (read-only
+      // on the staff side). The `notes` column is reserved for the
+      // staff customer-service handoff note, edited from the
+      // AppointmentNotesHero — keeping the two separated stops the
+      // floor team mistaking customer requests for internal CS notes.
+      customer_note: body.details.notes?.trim() || null,
+      notes: null,
       repair_variant: effectiveRepairVariant,
       product_key: body.productKey ?? null,
       arch: body.arch ?? null,

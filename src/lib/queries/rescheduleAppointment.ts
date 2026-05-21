@@ -84,6 +84,7 @@ interface AppointmentRowMin {
   // and (via the linked-table copies further down) the same
   // upgrades, repair lines, and pre-visit smile photos.
   notes: string | null;
+  customer_note: string | null;
   intake: ReadonlyArray<{ question: string; answer: string }> | null;
   brand_id: 'venneir' | 'denture' | null;
   paid_in_full_at_booking: boolean | null;
@@ -230,7 +231,7 @@ export async function rescheduleAppointment(input: {
   const { data: existingRaw, error: readErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id, notes, intake, brand_id, paid_in_full_at_booking, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by',
+      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id, notes, customer_note, intake, brand_id, paid_in_full_at_booking, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by',
     )
     .eq('id', input.appointmentId)
     .maybeSingle();
@@ -335,6 +336,7 @@ export async function rescheduleAppointment(input: {
       // against the cart), Shopify-paid online order, brand
       // identity, and operator notes the original booking carried.
       notes: existing.notes,
+      customer_note: existing.customer_note,
       intake: existing.intake,
       brand_id: existing.brand_id,
       paid_in_full_at_booking: existing.paid_in_full_at_booking ?? false,

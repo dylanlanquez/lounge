@@ -585,6 +585,11 @@ export interface VisitAppointmentContext {
   // VisitDetail via AppointmentNotesHero so the clinic floor can
   // flag follow-ups during / after the appointment.
   notes: string | null;
+  // Patient-typed widget note from lng_appointments.customer_note.
+  // Read-only — surfaces in CustomerNoteHero above the staff CS note
+  // so the floor team can see what the customer asked when they
+  // booked without confusing it with internal handoff text.
+  customer_note: string | null;
   event_type_label: string | null;
   intake: Array<{ question: string; answer: string }> | null;
   appointment_ref: string | null;
@@ -795,7 +800,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'id, notes, event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant'
+              'id, notes, customer_note, event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -803,6 +808,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
             const a = appt as {
               id: string;
               notes: string | null;
+              customer_note: string | null;
               event_type_label: string | null;
               intake: Array<{ question: string; answer: string }> | null;
               deposit_pence: number | null;
@@ -830,6 +836,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
             setAppointment({
               id: a.id,
               notes: a.notes,
+              customer_note: a.customer_note ?? null,
               event_type_label: a.event_type_label,
               intake: a.intake,
               appointment_ref: a.appointment_ref ?? null,
@@ -899,6 +906,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               // the shared context shape.
               id: visitRow.walk_in_id,
               notes: null,
+              customer_note: null,
               event_type_label: w.service_type, // best-effort label for the catalogue picker
               intake: null,
               appointment_ref: w.appointment_ref ?? null,
