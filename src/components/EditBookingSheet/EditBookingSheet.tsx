@@ -5,7 +5,6 @@ import {
   Button,
   DropdownSelect,
   InlineHint,
-  Input,
   Section,
   StatusBanner,
   Toast,
@@ -16,12 +15,10 @@ import { useStaff } from '../../lib/queries/staff.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
 
 // EditBookingSheet — in-place edit for a native (manual / native-
-// source) Lounge appointment. The two non-time fields the staff
-// most commonly want to change after a booking is in:
+// source) Lounge appointment. Used to be a notes + staff sheet;
+// staff notes now have their own multi-note card with audit trail
+// (StaffNotesCard) so this sheet is staff-assignment-only.
 //
-//   Notes                  internal context — wheelchair access,
-//                          allergies the team should know about,
-//                          paperwork the patient is bringing.
 //   Staff                  who's taking the appointment. Optional
 //                          on every booking; this is where staff
 //                          assign or reassign a clinician after
@@ -47,7 +44,6 @@ export interface EditBookingSheetProps {
     source: 'calendly' | 'manual' | 'native';
     start_at: string;
     end_at: string;
-    notes: string | null;
     staff_account_id: string | null;
     patient_first_name: string | null;
     patient_last_name: string | null;
@@ -61,13 +57,6 @@ export function EditBookingSheet({
   appointment,
   onSaved,
 }: EditBookingSheetProps) {
-  // Treat the legacy "None" string the same as null/empty when
-  // seeding — older rows have the literal word stored where null
-  // would now live, and pre-filling that into the edit form would
-  // make staff manually clear it before they could type real notes.
-  const [notes, setNotes] = useState<string>(
-    isMeaningfulNotes(appointment.notes) ? (appointment.notes as string) : '',
-  );
   const [staffAccountId, setStaffAccountId] = useState<string>(
     appointment.staff_account_id ?? '',
   );
@@ -82,19 +71,11 @@ export function EditBookingSheet({
   // session bleed in.
   useEffect(() => {
     if (!open) return;
-    setNotes(isMeaningfulNotes(appointment.notes) ? (appointment.notes as string) : '');
     setStaffAccountId(appointment.staff_account_id ?? '');
     setError(null);
-  }, [open, appointment.id, appointment.notes, appointment.staff_account_id]);
+  }, [open, appointment.id, appointment.staff_account_id]);
 
-  // Compare against the meaningful-notes view of the seed value so
-  // the legacy "None" doesn't count as a "no changes" no-op when
-  // the user clears it.
-  const seededNotes = isMeaningfulNotes(appointment.notes)
-    ? (appointment.notes as string)
-    : null;
   const noChanges =
-    (notes.trim() || null) === seededNotes &&
     (staffAccountId || null) === (appointment.staff_account_id ?? null);
 
   const onSave = async () => {
@@ -104,7 +85,6 @@ export function EditBookingSheet({
     try {
       await editAppointment({
         appointmentId: appointment.id,
-        notes: notes.trim() === '' ? null : notes,
         staffAccountId: staffAccountId || null,
       });
       onSaved();
@@ -149,12 +129,14 @@ export function EditBookingSheet({
         description={
           patientName ? (
             <span>
-              Update notes and staff assignment for <strong>{patientName}</strong>'s
-              appointment. To move the time, use Reschedule instead.
+              Reassign the staff member taking <strong>{patientName}</strong>'s
+              appointment. Notes have moved to the Staff notes card on the appointment.
+              To move the time, use Reschedule instead.
             </span>
           ) : (
             <span>
-              Update notes and staff assignment. To move the time, use Reschedule instead.
+              Reassign the staff member on this appointment. Notes have moved to the
+              Staff notes card. To move the time, use Reschedule instead.
             </span>
           )
         }
@@ -189,19 +171,6 @@ export function EditBookingSheet({
               {error}
             </StatusBanner>
           ) : null}
-
-          <Section
-            title="Notes"
-            info="Free text shown on the schedule card and the patient profile. Use this for context the team should see at a glance, like wheelchair access, language needs, or allergies."
-          >
-            <Input
-              aria-label="Notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. wheelchair access; bringing a translator; allergic to latex."
-              disabled={saving}
-            />
-          </Section>
 
           <Section
             title="Staff"
@@ -325,14 +294,3 @@ function composePatientName(first: string | null, last: string | null): string |
   return [f, l].filter(Boolean).join(' ');
 }
 
-// Notes column historically allowed the literal string "None" where
-// null would now live. Treat that as no notes when seeding the form
-// so the operator doesn't have to manually clear the placeholder
-// before typing real notes.
-function isMeaningfulNotes(notes: string | null): boolean {
-  if (!notes) return false;
-  const trimmed = notes.trim();
-  if (!trimmed) return false;
-  if (/^none$/i.test(trimmed)) return false;
-  return true;
-}

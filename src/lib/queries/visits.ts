@@ -594,13 +594,15 @@ export interface AppointmentShopifyOrder {
 // landed on.
 export interface VisitAppointmentContext {
   // Underlying lng_appointments.id — threaded through so VisitDetail
-  // can pass it to AppointmentNotesHero. The visit row already has
+  // can pass it to the StaffNotesCard. The visit row already has
   // appointment_id, but having it here keeps the call sites uniform
   // ("read everything appointment-side off the context").
   id: string;
-  // Customer-service note from lng_appointments.notes. Editable from
-  // VisitDetail via AppointmentNotesHero so the clinic floor can
-  // flag follow-ups during / after the appointment.
+  // Legacy single-text note column on lng_appointments. Superseded
+  // by lng_appointment_staff_notes (multi-note + audit) on 21 May
+  // 2026; this field stays selected for backward-compat reads and
+  // will be dropped in a follow-up migration once nothing still
+  // touches it.
   notes: string | null;
   // Patient-typed widget note from lng_appointments.customer_note.
   // Read-only — surfaces in CustomerNoteHero above the staff CS note

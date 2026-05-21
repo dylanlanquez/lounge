@@ -64,7 +64,7 @@ import {
   type AppointmentSource,
 } from '../lib/queries/appointments.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
-import { AppointmentNotesHero } from '../components/AppointmentNotesHero/AppointmentNotesHero.tsx';
+import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
 import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import {
   formatDateLongOrdinal,
@@ -175,7 +175,6 @@ export function VisitDetail() {
     appointment,
     receptionistName,
     loading,
-    refresh: refreshVisitDetail,
   } = useVisitDetail(id);
   const { upgrades: appointmentUpgrades, repairItems: appointmentRepairItems } =
     useAppointmentExtras(visit?.appointment_id ?? null);
@@ -1550,10 +1549,9 @@ export function VisitDetail() {
                     </div>
                   ) : null}
                   <div style={{ marginTop: theme.space[4] }}>
-                    <AppointmentNotesHero
+                    <StaffNotesCard
                       appointmentId={appointment.id}
-                      notes={appointment.notes}
-                      onChanged={refreshVisitDetail}
+                      patientId={visit.patient_id}
                     />
                   </div>
                 </>

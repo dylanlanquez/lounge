@@ -278,6 +278,12 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Reminder email sent';
     case 'appointment_reminder_skipped':
       return 'Reminder skipped';
+    case 'staff_note_added':
+      return 'Staff note added';
+    case 'staff_note_amended':
+      return 'Staff note amended';
+    case 'staff_note_deleted':
+      return 'Staff note deleted';
     case 'sms_queued':
       return 'Text message sending';
     case 'sms_delivered':

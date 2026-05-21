@@ -47,7 +47,7 @@ import {
   type ToastTone,
 } from '../components/index.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
-import { AppointmentNotesHero } from '../components/AppointmentNotesHero/AppointmentNotesHero.tsx';
+import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
 import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
@@ -608,10 +608,9 @@ function Loaded({
         </div>
       ) : null}
       <div style={{ marginTop: theme.space[5] }}>
-        <AppointmentNotesHero
+        <StaffNotesCard
           appointmentId={appt.id}
-          notes={appt.notes}
-          onChanged={onChanged}
+          patientId={appt.patient_id ?? null}
         />
       </div>
 

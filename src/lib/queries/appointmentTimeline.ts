@@ -756,6 +756,50 @@ function mapEvent(
       };
     }
 
+    case 'staff_note_added': {
+      const preview = readString(row.payload, 'body_preview');
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'Staff note added',
+        detail: preview ?? undefined,
+        hint: 'flag',
+        tone: 'neutral',
+      };
+    }
+
+    case 'staff_note_amended': {
+      const from = readString(row.payload, 'from');
+      const to = readString(row.payload, 'to');
+      // Lead with the new text so the timeline shows what the note
+      // says now. The full diff stays on the patient_events payload
+      // for anyone querying the raw audit.
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'Staff note amended',
+        detail: to
+          ? from && from !== to
+            ? `Now reads: ${truncate(to, 80)}`
+            : truncate(to, 80)
+          : undefined,
+        hint: 'flag',
+        tone: 'neutral',
+      };
+    }
+
+    case 'staff_note_deleted': {
+      const reason = readString(row.payload, 'reason');
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'Staff note deleted',
+        detail: reason ? `Reason: ${reason}` : undefined,
+        hint: 'flag',
+        tone: 'warn',
+      };
+    }
+
     case 'deposit_paid': {
       const pence = readNumber(row.payload, 'amount_pence') ?? readNumber(row.payload, 'pence');
       const provider = readString(row.payload, 'provider');
@@ -1020,9 +1064,10 @@ function bookingFacts(
     }
   }
 
-  if (appt.notes?.trim()) {
-    facts.push({ label: 'Booking notes', value: appt.notes.trim() });
-  }
+  // Staff notes used to surface here as a "Booking notes" fact line,
+  // but the canonical view is now StaffNotesCard with its own
+  // history disclosure on the appointment detail page. Showing the
+  // same text twice would be noise.
 
   return facts;
 }

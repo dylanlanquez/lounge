@@ -333,9 +333,10 @@ export async function rescheduleAppointment(input: {
       // Booking-time data the patient committed to. Preserved across
       // the reschedule so the new appointment surfaces the same
       // intake answers, deposit credit (so the till still nets it
-      // against the cart), Shopify-paid online order, brand
-      // identity, and operator notes the original booking carried.
-      notes: existing.notes,
+      // against the cart), Shopify-paid online order, and brand
+      // identity. Staff notes copy separately in
+      // carryOverLinkedTables → copyActiveStaffNotes since they
+      // now live in lng_appointment_staff_notes.
       customer_note: existing.customer_note,
       intake: existing.intake,
       brand_id: existing.brand_id,
@@ -607,7 +608,48 @@ async function carryOverLinkedTables(
       oldAppointmentId,
       newAppointmentId,
     }),
+    copyActiveStaffNotes(oldAppointmentId, newAppointmentId),
   ]);
+}
+
+// Staff notes carry forward across a reschedule so the new
+// appointment surfaces the same context the team built up on the
+// original booking. Only active notes copy — soft-deleted rows are
+// part of the OLD appointment's audit trail and have no place on
+// the new slot. created_at + author preserve so the timeline
+// shows the note in its original light.
+async function copyActiveStaffNotes(
+  oldAppointmentId: string,
+  newAppointmentId: string,
+): Promise<void> {
+  const { data, error: readErr } = await supabase
+    .from('lng_appointment_staff_notes')
+    .select('body, author_account_id, created_at')
+    .eq('appointment_id', oldAppointmentId)
+    .is('deleted_at', null);
+  if (readErr) {
+    console.warn('[reschedule] read lng_appointment_staff_notes failed:', readErr.message);
+    return;
+  }
+  const rows = (data ?? []) as Array<{
+    body: string;
+    author_account_id: string | null;
+    created_at: string;
+  }>;
+  if (rows.length === 0) return;
+  const inserts = rows.map((r) => ({
+    appointment_id: newAppointmentId,
+    body: r.body,
+    author_account_id: r.author_account_id,
+    created_at: r.created_at,
+    updated_at: r.created_at,
+  }));
+  const { error: insertErr } = await supabase
+    .from('lng_appointment_staff_notes')
+    .insert(inserts);
+  if (insertErr) {
+    console.warn('[reschedule] copy lng_appointment_staff_notes failed:', insertErr.message);
+  }
 }
 
 async function copyRowsForAppointment(args: {
