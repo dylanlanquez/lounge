@@ -1,18 +1,17 @@
 import { MessageSquareQuote } from 'lucide-react';
+import { Card } from '../Card/Card.tsx';
 import { theme } from '../../theme/index.ts';
 
 // Read-only callout for the note the patient typed into the booking
-// widget. Distinct from AppointmentNotesHero (the amber editable
-// customer-service handoff note) so staff don't conflate
-// "questions/context from the customer" with "internal CS handoff".
+// widget. Distinct from AppointmentNotesHero (the staff customer-
+// service handoff note) so the floor team can tell what's a customer
+// request vs an internal CS instruction.
 //
-// Renders nothing when the appointment has no customer note (most
-// in-person staff bookings and Calendly imports don't carry one).
-//
-// Tone: quiet ink-on-near-white card with a leading quote icon. Not
-// alarming (it's information, not a directive), but visually pinned
-// near the top of the page so the floor team sees what the patient
-// asked when the booking landed.
+// Self-suppresses when there's no customer note. Visual weight
+// matches the other detail cards on AppointmentDetail / VisitDetail
+// (Booking details, Intake answers, etc.) — quiet card chrome,
+// small icon, sensible body text. No heavy left border, no big
+// accent colours.
 
 export interface CustomerNoteHeroProps {
   /** Patient-typed note from lng_appointments.customer_note. Null
@@ -29,49 +28,54 @@ export function CustomerNoteHero({ note, patientFirstName }: CustomerNoteHeroPro
   const speaker = (patientFirstName ?? '').trim() || 'the customer';
 
   return (
-    <div
-      role="note"
-      aria-label="Customer's booking note"
-      style={{
-        padding: theme.space[5],
-        background: theme.color.surface,
-        border: `1px solid ${theme.color.border}`,
-        borderLeft: `5px solid ${theme.color.ink}`,
-        borderRadius: theme.radius.card,
-        display: 'flex',
-        gap: theme.space[4],
-        alignItems: 'flex-start',
-      }}
-    >
-      <MessageSquareQuote
-        size={20}
-        aria-hidden
-        style={{ color: theme.color.inkMuted, flexShrink: 0, marginTop: 2 }}
-      />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+    <Card padding="lg">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          marginBottom: theme.space[3],
+        }}
+      >
         <span
+          aria-hidden
           style={{
-            fontSize: theme.type.size.xs,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkMuted,
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
+            width: 30,
+            height: 30,
+            borderRadius: theme.radius.pill,
+            background: theme.color.accentBg,
+            color: theme.color.accent,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
           }}
         >
-          Note from {speaker}
+          <MessageSquareQuote size={15} aria-hidden />
         </span>
-        <p
+        <h3
           style={{
             margin: 0,
             fontSize: theme.type.size.md,
+            fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
-            lineHeight: theme.type.leading.relaxed,
-            whiteSpace: 'pre-wrap',
+            letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {trimmed}
-        </p>
+          Note from {speaker}
+        </h3>
       </div>
-    </div>
+      <p
+        style={{
+          margin: 0,
+          fontSize: theme.type.size.sm,
+          color: theme.color.ink,
+          lineHeight: theme.type.leading.snug,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {trimmed}
+      </p>
+    </Card>
   );
 }

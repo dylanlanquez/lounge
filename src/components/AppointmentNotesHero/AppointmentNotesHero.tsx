@@ -1,22 +1,19 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Pencil, StickyNote } from 'lucide-react';
+import { Pencil, StickyNote } from 'lucide-react';
 import { Button, Card } from '../index.ts';
 import { theme } from '../../theme/index.ts';
 import { editAppointment } from '../../lib/queries/editAppointment.ts';
 import { logFailure } from '../../lib/failureLog.ts';
 
-// Customer-service note for the clinic team. Surfaces the
-// lng_appointments.notes column with a hero amber callout when there
-// is content, and a quieter "Add note" affordance when empty + still
-// editable. Rendered above the detail grid on AppointmentDetail and
-// above the body on VisitDetail so the clinic floor sees it before
-// any other card.
+// Customer-service note for the clinic team. Renders the
+// lng_appointments.notes column as a quiet detail card that matches
+// the visual weight of the other cards on AppointmentDetail /
+// VisitDetail (Booking details, Intake answers, etc.). Editable in
+// place by any active Lounge staff member at any time.
 //
-// Editable by any active Lounge staff member at any time — completed
-// visits often need a follow-up note for next time, and Calendly
-// bookings carry no notes column in Calendly itself so editing here
-// doesn't drift from any source of truth. Every save writes a
-// patient_events audit row with actor_account_id via editAppointment.
+// Distinct from the patient-typed widget note (CustomerNoteHero) —
+// this is the internal handoff. Visual cue is just the StickyNote
+// icon + the title; no heavy accent colours, no thick borders.
 //
 // The note carries through every reschedule (rescheduleAppointment.ts
 // copies notes onto the new row) and stays attached as the visit
@@ -153,83 +150,11 @@ export function AppointmentNotesHero({
     </div>
   );
 
-  // HERO: tinted-orange callout, impossible to miss. Matches the
-  // "warning, do not ignore" pattern (deposit-failed banner,
-  // unsuitable status pill) used elsewhere in the app.
-  if (isHero) {
-    return (
-      <div
-        role="note"
-        aria-label="Customer service note"
-        style={{
-          padding: theme.space[5],
-          background: 'rgba(179, 104, 21, 0.10)',
-          border: '1px solid rgba(179, 104, 21, 0.30)',
-          borderLeft: `5px solid ${theme.color.warn}`,
-          borderRadius: theme.radius.card,
-          display: 'flex',
-          gap: theme.space[4],
-          alignItems: 'flex-start',
-        }}
-      >
-        <AlertTriangle
-          size={22}
-          aria-hidden
-          style={{ color: theme.color.warn, flexShrink: 0, marginTop: 2 }}
-        />
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: theme.space[2],
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-              justifyContent: 'space-between',
-              gap: theme.space[3],
-              flexWrap: 'wrap',
-            }}
-          >
-            <span
-              style={{
-                fontSize: theme.type.size.xs,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.warn,
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-              }}
-            >
-              Customer service note
-            </span>
-            {editButton}
-          </div>
-          {editing ? (
-            editingBody
-          ) : (
-            <p
-              style={{
-                margin: 0,
-                fontSize: theme.type.size.lg,
-                fontWeight: theme.type.weight.medium,
-                color: theme.color.ink,
-                lineHeight: theme.type.leading.relaxed,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {trimmed}
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // EMPTY + editable fallback: muted card with an "Add note" prompt.
+  // Single chrome for both populated + empty states. Matches the
+  // Booking details / Intake answers cards on the same page —
+  // Card padding="lg", small circled icon, sensible heading,
+  // sm body text. Hero amber callout was Dylan's call to scrap;
+  // visual weight now mirrors the rest of the page.
   return (
     <Card padding="lg">
       <div
@@ -238,32 +163,62 @@ export function AppointmentNotesHero({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: theme.space[3],
-          marginBottom: editing ? theme.space[3] : 0,
+          marginBottom: theme.space[3],
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-          <StickyNote size={15} aria-hidden style={{ color: theme.color.inkMuted }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], minWidth: 0 }}>
           <span
+            aria-hidden
             style={{
-              fontSize: theme.type.size.sm,
+              width: 30,
+              height: 30,
+              borderRadius: theme.radius.pill,
+              background: theme.color.accentBg,
+              color: theme.color.accent,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <StickyNote size={15} aria-hidden />
+          </span>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
             }}
           >
             Customer service note
-          </span>
+          </h3>
         </div>
         {editButton}
       </div>
       {editing ? (
         editingBody
+      ) : isHero ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            lineHeight: theme.type.leading.snug,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {trimmed}
+        </p>
       ) : (
         <p
           style={{
-            margin: editing ? 0 : `${theme.space[2]}px 0 0`,
+            margin: 0,
             fontSize: theme.type.size.sm,
             color: theme.color.inkMuted,
             fontStyle: 'italic',
+            lineHeight: theme.type.leading.snug,
           }}
         >
           No note yet. Leave one here so the clinic team notices anything they need to know about this appointment on the day.
