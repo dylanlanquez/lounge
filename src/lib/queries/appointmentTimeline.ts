@@ -706,6 +706,27 @@ function mapEvent(
       };
     }
 
+    case 'appointment_no_show_email_sent': {
+      // Sent from markNoShow() after the status flip. No bespoke
+      // resender wired (the no-show email is meant to fire once at
+      // status flip, not be re-dispatched on demand from the
+      // timeline); the View pill renders off emailMessageId and the
+      // generic Resend pill rides the persisted snapshot via
+      // resendEmailByMessageId — same shape as receipts and dispatch.
+      const recipient = readString(row.payload, 'recipient');
+      const emailMessageId = readString(row.payload, 'email_message_id');
+      const detail = joinDetail(recipient ? `to ${recipient}` : null);
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'No-show email sent',
+        detail,
+        hint: 'mail',
+        tone: 'neutral',
+        emailMessageId,
+      };
+    }
+
     case 'appointment_reminder_sent': {
       const recipient = readString(row.payload, 'recipient');
       const emailMessageId = readString(row.payload, 'email_message_id');

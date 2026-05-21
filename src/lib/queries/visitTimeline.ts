@@ -272,6 +272,8 @@ const HUMAN_PATIENT_EVENT = (et: string): string => {
       return 'Confirmation email sent';
     case 'appointment_cancellation_sent':
       return 'Cancellation email sent';
+    case 'appointment_no_show_email_sent':
+      return 'No-show email sent';
     case 'appointment_reminder_sent':
       return 'Reminder email sent';
     case 'appointment_reminder_skipped':
@@ -1194,6 +1196,7 @@ const EMAIL_EVENT_TYPES = new Set<string>([
   'visit_shipped',
   'appointment_confirmation_sent',
   'appointment_cancellation_sent',
+  'appointment_no_show_email_sent',
   'appointment_reminder_sent',
 ]);
 
