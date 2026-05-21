@@ -3,6 +3,7 @@ import { supabase } from '../supabase.ts';
 import type { PatientRow } from './patients.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
+import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 
 export interface VisitRow {
   id: string;
@@ -333,6 +334,22 @@ export async function markNoShow(
       joined_before_no_show: context.joinedBeforeNoShow,
     },
   });
+
+  // Best-effort no-show email dispatch. The edge function honours the
+  // appointment_no_show template's `enabled` flag, which seeds disabled
+  // per booking type — until Dylan writes the copy and switches the row
+  // on, this returns reason: 'template_disabled' and nothing leaves the
+  // building. Errors are swallowed: the status flip + patient_events
+  // row are the source of truth; an email failure must never mask that
+  // the no-show was recorded.
+  try {
+    await sendAppointmentConfirmation({
+      appointmentId,
+      intent: 'no_show',
+    });
+  } catch {
+    // Intentional: see comment above.
+  }
 }
 
 // Reverses a no-show flag. Patient turned up late after staff already

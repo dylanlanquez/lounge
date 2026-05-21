@@ -913,6 +913,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     variables: CANCELLATION_VARIABLES,
   },
   {
+    key: 'appointment_no_show',
+    label: 'Appointment missed',
+    group: 'Appointments',
+    description:
+      'Sent automatically when staff mark an appointment as a no-show. Disabled by default. Switch on per booking type once you\'ve written the copy you want each cohort to receive.',
+    variables: APPOINTMENT_VARIABLES,
+  },
+  {
     key: 'appointment_reminder',
     label: 'Reminder · 24 hours before',
     group: 'Appointments',

@@ -109,7 +109,7 @@ async function handle(req: Request): Promise<Response> {
   let body: {
     appointmentId?: string;
     oldAppointmentIdToCancel?: string;
-    intent?: 'confirmation' | 'cancellation';
+    intent?: 'confirmation' | 'cancellation' | 'no_show';
   };
   try {
     body = await req.json();
@@ -118,7 +118,7 @@ async function handle(req: Request): Promise<Response> {
   }
   const appointmentId = body.appointmentId;
   const oldAppointmentIdToCancel = body.oldAppointmentIdToCancel ?? null;
-  const intent: 'confirmation' | 'cancellation' = body.intent ?? 'confirmation';
+  const intent: 'confirmation' | 'cancellation' | 'no_show' = body.intent ?? 'confirmation';
   if (!appointmentId) {
     return jsonResponse(400, { ok: false, error: 'appointmentId required' });
   }
@@ -174,26 +174,40 @@ async function handle(req: Request): Promise<Response> {
   const location = locationRow as LocationRow | null;
 
   // ── Resolve intent → kind ──────────────────────────────────────
-  // Three modes:
+  // Four modes:
   //   cancellation  — build CANCEL .ics for the given appointment,
   //                   send "your appointment has been cancelled"
   //                   email. No paired REQUEST.
+  //   no_show       — send "we missed you" email. No .ics: the
+  //                   slot has already passed and the appointment
+  //                   has been marked no-show in the schedule, so
+  //                   the patient's calendar entry is no longer
+  //                   load-bearing. Pulls the appointment_no_show
+  //                   template.
   //   reschedule    — confirmation intent + oldApt set. REQUEST for
   //                   the new slot + CANCEL for the old, paired in
   //                   one email so calendars update cleanly.
   //   booking       — confirmation intent, no oldApt. REQUEST only.
-  const kind: 'booking' | 'reschedule' | 'cancellation' =
+  const kind: 'booking' | 'reschedule' | 'cancellation' | 'no_show' =
     intent === 'cancellation'
       ? 'cancellation'
+      : intent === 'no_show'
+      ? 'no_show'
       : oldApt
       ? 'reschedule'
       : 'booking';
 
   // ── Build .ics attachment(s) ───────────────────────────────────
-  let primaryIcs: string;
+  let primaryIcs: string | null = null;
   let secondaryIcs: string | null = null;
 
-  if (kind === 'cancellation') {
+  if (kind === 'no_show') {
+    // No calendar attachment for no-show emails. The patient's
+    // calendar entry already passed; sending a REQUEST would just
+    // duplicate the past event, sending a CANCEL would imply we'd
+    // pulled the slot ourselves. Leave primaryIcs null and skip
+    // the attachment array entirely below.
+  } else if (kind === 'cancellation') {
     // Bumping the sequence is what tells the patient's calendar to
     // actually remove the event — Apple Mail and Outlook ignore
     // CANCEL with a stale sequence.
@@ -267,6 +281,8 @@ async function handle(req: Request): Promise<Response> {
   const templateKey =
     kind === 'cancellation'
       ? 'booking_cancellation'
+      : kind === 'no_show'
+      ? 'appointment_no_show'
       : kind === 'reschedule'
       ? isVirtual ? 'booking_reschedule_virtual' : 'booking_reschedule'
       : isVirtual ? 'booking_confirmation_virtual' : 'booking_confirmation';
@@ -378,12 +394,13 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
-  const attachments = [
-    {
+  const attachments: { filename: string; content: string }[] = [];
+  if (primaryIcs) {
+    attachments.push({
       filename: kind === 'cancellation' ? 'cancel.ics' : 'invite.ics',
       content: btoa(unicodeEscape(primaryIcs)),
-    },
-  ];
+    });
+  }
   if (secondaryIcs) {
     attachments.push({
       filename: 'cancel.ics',
@@ -408,8 +425,8 @@ async function handle(req: Request): Promise<Response> {
       patient_id: apt.patient_id,
       appointment_id: apt.id,
       location_id: apt.location_id,
-      kind: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
-      template_key: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
+      kind: emailMessageKind(kind),
+      template_key: emailMessageKind(kind),
       subject,
       html,
       body_text: text,
@@ -441,8 +458,8 @@ async function handle(req: Request): Promise<Response> {
     patient_id: apt.patient_id,
     appointment_id: apt.id,
     location_id: apt.location_id,
-    kind: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
-    template_key: kind === 'cancellation' ? 'appointment_cancellation' : 'appointment_confirmation',
+    kind: emailMessageKind(kind),
+    template_key: emailMessageKind(kind),
     subject,
     html,
     body_text: text,
@@ -458,6 +475,8 @@ async function handle(req: Request): Promise<Response> {
     event_type:
       kind === 'cancellation'
         ? 'appointment_cancellation_sent'
+        : kind === 'no_show'
+        ? 'appointment_no_show_email_sent'
         : 'appointment_confirmation_sent',
     payload: {
       appointment_id: apt.id,
@@ -489,6 +508,19 @@ async function handle(req: Request): Promise<Response> {
     provider: 'resend',
     messageId: sendResult.messageId ?? null,
   });
+}
+
+// Translates the internal flow `kind` into the free-text label that
+// lng_email_messages.kind + .template_key carry. Used as the bucket
+// for admin filters and the patient timeline — the bare 'booking' /
+// 'reschedule' values aren't surfaced; both fold into the
+// confirmation bucket because they share the same template family.
+function emailMessageKind(
+  kind: 'booking' | 'reschedule' | 'cancellation' | 'no_show',
+): string {
+  if (kind === 'cancellation') return 'appointment_cancellation';
+  if (kind === 'no_show') return 'appointment_no_show';
+  return 'appointment_confirmation';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

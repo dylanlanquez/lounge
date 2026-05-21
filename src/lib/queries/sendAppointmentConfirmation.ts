@@ -5,7 +5,7 @@ import { supabase } from '../supabase.ts';
 // caller can branch on the reason code (e.g. show "no email on file"
 // inline instead of treating it as a hard error).
 //
-// Three intents:
+// Four intents:
 //
 //   confirmation  default. Sends a REQUEST .ics for the appointment
 //                 — the new-booking and reschedule flows. Reschedule
@@ -15,6 +15,11 @@ import { supabase } from '../supabase.ts';
 //   cancellation  Sends a CANCEL .ics + a "your appointment has
 //                 been cancelled" email. Caller is the cancel flow
 //                 in cancelAppointment().
+//   no_show       Sends a "we missed you" email. No .ics. Fired
+//                 best-effort from markNoShow() after the status
+//                 flip. Honours the appointment_no_show template's
+//                 enabled flag, which ships disabled per booking
+//                 type until the admin writes the copy.
 
 export type SendConfirmationReason =
   | 'delivery_not_configured'
@@ -23,7 +28,7 @@ export type SendConfirmationReason =
   | 'template_not_found'
   | 'template_disabled';
 
-export type SendConfirmationKind = 'booking' | 'reschedule' | 'cancellation';
+export type SendConfirmationKind = 'booking' | 'reschedule' | 'cancellation' | 'no_show';
 
 export type SendConfirmationResult =
   | {
@@ -41,7 +46,7 @@ export type SendConfirmationResult =
 export async function sendAppointmentConfirmation(args: {
   appointmentId: string;
   oldAppointmentIdToCancel?: string | null;
-  intent?: 'confirmation' | 'cancellation';
+  intent?: 'confirmation' | 'cancellation' | 'no_show';
 }): Promise<SendConfirmationResult> {
   const { data, error } = await supabase.functions.invoke<unknown>(
     'send-appointment-confirmation',
