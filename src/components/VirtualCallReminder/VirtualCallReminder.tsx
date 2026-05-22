@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, MessageSquare, Send } from 'lucide-react';
+import { ChevronRight, Loader2, MessageSquare, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import { theme } from '../../theme/index.ts';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
@@ -43,48 +43,93 @@ export function VirtualCallReminder({
   patientHasPhone,
 }: VirtualCallReminderProps) {
   const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState(false);
+  const disabled = !patientHasPhone;
   return (
     <>
+      {/* Action-row visual: full-width tappable strip with a circular
+          icon disc, label + sub-description, trailing chevron. Mirrors
+          the pattern used by "Join meeting", "Patient profile",
+          "Mark as no-show" etc. so the SMS reminder reads as the
+          same kind of affordance, not a stray pill. */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        disabled={!patientHasPhone}
+        disabled={disabled}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
         title={
-          patientHasPhone
-            ? 'Text the patient the join link'
-            : 'Add a phone number to the patient before sending an SMS.'
+          disabled
+            ? 'Add a phone number to the patient before sending an SMS.'
+            : undefined
         }
         style={{
           appearance: 'none',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          padding: `${theme.space[2]}px ${theme.space[3]}px`,
+          width: '100%',
           marginTop: theme.space[3],
-          background: theme.color.surface,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          background: hover && !disabled ? theme.color.bg : theme.color.surface,
           border: `1px solid ${theme.color.border}`,
           borderRadius: theme.radius.input,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          cursor: disabled ? 'not-allowed' : 'pointer',
           fontFamily: 'inherit',
-          fontSize: theme.type.size.sm,
-          fontWeight: theme.type.weight.semibold,
-          color: patientHasPhone ? theme.color.ink : theme.color.inkSubtle,
-          cursor: patientHasPhone ? 'pointer' : 'not-allowed',
-          opacity: patientHasPhone ? 1 : 0.6,
-          transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        }}
-        onMouseEnter={(e) => {
-          if (!patientHasPhone) return;
-          e.currentTarget.style.borderColor = theme.color.accent;
-          e.currentTarget.style.background = theme.color.accentBg;
-        }}
-        onMouseLeave={(e) => {
-          if (!patientHasPhone) return;
-          e.currentTarget.style.borderColor = theme.color.border;
-          e.currentTarget.style.background = theme.color.surface;
+          textAlign: 'left',
+          color: theme.color.ink,
+          opacity: disabled ? 0.55 : 1,
+          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          WebkitTapHighlightColor: 'transparent',
+          boxShadow: theme.shadow.card,
         }}
       >
-        <MessageSquare size={14} aria-hidden />
-        Text the join link to the patient
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 28,
+            height: 28,
+            borderRadius: theme.radius.pill,
+            background: theme.color.bg,
+            border: `1px solid ${theme.color.border}`,
+            color: theme.color.ink,
+            flexShrink: 0,
+          }}
+        >
+          <MessageSquare size={16} aria-hidden />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span
+            style={{
+              display: 'block',
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+            }}
+          >
+            Text the join link to the patient
+          </span>
+          <span
+            style={{
+              display: 'block',
+              marginTop: 2,
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+            }}
+          >
+            {disabled
+              ? 'No phone number on file'
+              : "Preview before it goes out — sends the meeting URL to the patient's mobile."}
+          </span>
+        </span>
+        <ChevronRight
+          size={16}
+          aria-hidden
+          style={{ color: theme.color.inkSubtle, flexShrink: 0 }}
+        />
       </button>
       <ReminderSheet
         open={open}
