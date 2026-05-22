@@ -52,6 +52,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
+import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   MeetingJoinBlockSheet,
   type MeetingJoinBlockReason,
@@ -2025,7 +2026,20 @@ function statusToTone(s: AppointmentRow['status']) {
 // when it starts, not when it ends.
 function formatStart(startIso: string): string {
   const s = new Date(startIso);
-  return `${s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · ${s.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+  // Pinned to clinic time + BST/GMT suffix.
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(s);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(s);
+  return `${date} · ${time} ${fmtTzAbbr(startIso)}`;
 }
 
 function formatClusterRange(rows: AppointmentRow[]): string {

@@ -15,6 +15,7 @@ import {
 } from './PreviewBackground.tsx';
 import type { PatientFileEntry, PatientProfileRow } from '../../lib/queries/patientProfile.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Preview3DModal — popup STL / OBJ / PLY viewer.
@@ -1376,9 +1377,21 @@ function formatBytes(bytes: number): string {
 function formatLongDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} at ${time} BST`;
+  // Pinned to clinic time + dynamic BST/GMT suffix. Was previously
+  // hardcoded "BST" which would have lied for half the year.
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(d);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${date} at ${time} ${fmtTzAbbr(iso)}`;
 }
 
 function formatDob(iso: string): string {

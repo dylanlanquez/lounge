@@ -5,6 +5,7 @@ import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import type { TimelineEvent, TimelineFact, TimelineTone } from './visitTimeline.ts';
 import { humaniseCancelReason } from './visits.ts';
+import { fmtTzAbbr } from '../dateFormat.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useAppointmentTimeline — full audit trail for a single appointment.
@@ -953,14 +954,24 @@ function formatBookingSlot(iso: string): string {
   });
 }
 
-// "12 May at 11:00" — used for sibling appointment timestamps inside
-// the reschedule detail line.
+// "12 May at 11:00 BST" — used for sibling appointment timestamps
+// inside the reschedule detail line. Pinned to clinic time so it
+// reads the same on a UK desk as on a Cairo lab screen.
 function formatWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} at ${time}`;
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: 'numeric',
+    month: 'short',
+  }).format(d);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${date} at ${time} ${fmtTzAbbr(iso)}`;
 }
 
 // Source-aware "who placed this booking" label for the Booking

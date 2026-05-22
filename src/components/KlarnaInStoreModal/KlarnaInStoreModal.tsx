@@ -6,6 +6,7 @@ import { theme } from '../../theme/index.ts';
 import { supabase } from '../../lib/supabase.ts';
 import { callEdgeFunction } from '../../lib/edgeFunction.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
+import { formatTime } from '../../lib/dateFormat.ts';
 
 // KlarnaInStoreModal
 //
@@ -397,7 +398,7 @@ export function KlarnaInStoreModal({
                   color: theme.color.inkMuted,
                 }}
               >
-                QR expires at {new Date(expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                QR expires at {formatTime(expiresAt)}
               </p>
             ) : null}
           </>

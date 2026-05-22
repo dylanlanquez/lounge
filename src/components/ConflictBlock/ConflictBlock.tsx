@@ -1,6 +1,7 @@
 import { theme } from '../../theme/index.ts';
 import { StatusBanner } from '../StatusBanner/StatusBanner.tsx';
 import { type RescheduleConflict } from '../../lib/queries/rescheduleAppointment.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 // Booking-conflict status block used by both new-booking and
 // reschedule sheets. Reads the live result of the
@@ -110,7 +111,7 @@ function describeConflict(c: RescheduleConflict): string {
   }
   const poolName = c.pool_id ? humanisePoolId(c.pool_id) : 'Resource';
   const window = c.conflict_start_at && c.conflict_end_at
-    ? `${formatTime(c.conflict_start_at)} to ${formatTime(c.conflict_end_at)}`
+    ? `${formatTime(c.conflict_start_at)} to ${formatTime(c.conflict_end_at)} ${fmtTzAbbr(c.conflict_start_at)}`
     : null;
   const phase = c.phase_label ? ` (${c.phase_label})` : '';
   if (window) {
@@ -130,9 +131,10 @@ function humanisePoolId(id: string): string {
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  });
+  }).format(new Date(iso));
 }

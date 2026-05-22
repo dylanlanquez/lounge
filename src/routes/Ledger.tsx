@@ -25,6 +25,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
+import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   formatCustomerServiceTitleLabel,
   properCase,
@@ -1689,7 +1690,15 @@ function formatRowDate(iso: string): string {
 function formatRowTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  // Pinned to clinic time + BST/GMT suffix so a row's time reads
+  // the same on a Cairo screen as on a Glasgow one.
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${time} ${fmtTzAbbr(iso)}`;
 }
 
 const NUM_FMT = new Intl.NumberFormat('en-GB');

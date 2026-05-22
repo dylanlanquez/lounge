@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { Card } from '../Card/Card.tsx';
 import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
@@ -456,20 +457,38 @@ function MetadataList({
   // conference, and the multi-conference count appends only when > 1
   // so the common single-conference case stays minimal.
   if (startedAt || endedAt) {
+    // Clinic time always — meeting timestamps come from Google's
+    // server and we want the lab team in Egypt to read them the
+    // same way the receptionist in Glasgow does. Zone suffix is
+    // added once at the end of the composed value.
     const fmt = (iso: string) =>
-      new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date(iso));
     const fmtDay = (iso: string) =>
-      new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
+        day: 'numeric',
+        month: 'short',
+      }).format(new Date(iso));
     const startLabel = startedAt ? `${fmtDay(startedAt)} ${fmt(startedAt)}` : '—';
     const endLabel = endedAt
       ? startedAt && new Date(endedAt).toDateString() !== new Date(startedAt).toDateString()
         ? `${fmtDay(endedAt)} ${fmt(endedAt)}`
         : fmt(endedAt)
       : 'still open';
+    const zoneSuffix = startedAt
+      ? ` ${fmtTzAbbr(startedAt)}`
+      : endedAt
+        ? ` ${fmtTzAbbr(endedAt)}`
+        : '';
     const count = conferenceCount ?? 0;
     rows.push({
       label: 'Conference',
-      value: `${startLabel} → ${endLabel}${count > 1 ? ` · ${count} conferences` : ''}`,
+      value: `${startLabel} → ${endLabel}${zoneSuffix}${count > 1 ? ` · ${count} conferences` : ''}`,
     });
   }
 
@@ -824,12 +843,20 @@ function HostChip({ isHost }: { isHost: boolean }) {
 
 function formatSingleSessionWindow(person: GroupedParticipant): string {
   if (!person.firstJoinedAt) return '';
+  // Clinic time + BST/GMT suffix at the end so a participant's
+  // session window reads unambiguously on any reviewer's screen.
   const fmt = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(iso));
+  const zone = fmtTzAbbr(person.firstJoinedAt);
   if (person.stillIn || !person.lastLeftAt) {
-    return `from ${fmt(person.firstJoinedAt)}`;
+    return `from ${fmt(person.firstJoinedAt)} ${zone}`;
   }
-  return `${fmt(person.firstJoinedAt)} → ${fmt(person.lastLeftAt)}`;
+  return `${fmt(person.firstJoinedAt)} → ${fmt(person.lastLeftAt)} ${zone}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────

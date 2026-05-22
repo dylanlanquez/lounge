@@ -25,6 +25,8 @@
 //                       per-section signatures still appear in the
 //                       audit table on the patient profile
 
+import { fmtTzAbbr } from './dateFormat.ts';
+
 export interface WaiverDocItem {
   qty: number;
   device: string;
@@ -215,11 +217,21 @@ function fmtDateTime(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return (
-    d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) +
-    ' at ' +
-    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-  );
+  // Pin to clinic time so a waiver signed in the UK clinic always
+  // reads as a UK timestamp on any reviewer's screen.
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(d);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${date} at ${time} ${fmtTzAbbr(iso)}`;
 }
 
 function archLabel(arch: WaiverDocItem['arch']): string {

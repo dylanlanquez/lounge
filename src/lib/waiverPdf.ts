@@ -31,6 +31,7 @@
 // flows.
 
 import type { WaiverDocInput, WaiverDocItem, WaiverDocSection } from './waiverDocument.ts';
+import { fmtTzAbbr } from './dateFormat.ts';
 
 // jsPDF is heavy (~390kB). Keep the dynamic import so it only loads
 // when the receptionist actually clicks Download or Email.
@@ -142,11 +143,22 @@ function fmtDateTime(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return (
-    d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) +
-    ' at ' +
-    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-  );
+  // PDF is referenced later (potentially by patients or insurers in
+  // any timezone), so pin to clinic time + zone suffix instead of
+  // letting the rendering device's locale silently convert.
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(d);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${date} at ${time} ${fmtTzAbbr(iso)}`;
 }
 
 function archLabel(arch: WaiverDocItem['arch']): string {

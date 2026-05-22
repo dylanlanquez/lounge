@@ -8,6 +8,7 @@ import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { Avatar } from '../Avatar/Avatar.tsx';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -53,8 +54,22 @@ export function KioskStatusBar() {
   const showCashCountsButton =
     !!account && (account.can_count_cash || account.can_view_financials);
 
-  const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  // Wall clock pinned to the clinic's timezone so a kiosk plugged in
+  // anywhere always reads as UK time. Zone suffix (BST/GMT) sits in
+  // a separate span below.
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(now);
+  const zone = fmtTzAbbr(now.toISOString());
   const percent = level === null ? null : Math.round(level * 100);
   const tone = batteryTone(percent);
 
@@ -169,7 +184,19 @@ export function KioskStatusBar() {
               {date}
             </span>
           ) : null}
-          <span style={{ fontWeight: theme.type.weight.semibold }}>{time}</span>
+          <span style={{ fontWeight: theme.type.weight.semibold }}>
+            {time}
+            <span
+              style={{
+                marginLeft: 4,
+                fontSize: '0.8em',
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.inkMuted,
+              }}
+            >
+              {zone}
+            </span>
+          </span>
         </span>
         {!isMobile ? <Divider /> : null}
         <ProfileButton

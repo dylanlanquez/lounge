@@ -1,6 +1,7 @@
 import { type CSSProperties } from 'react';
 import { ChevronRight, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 export interface ClusterCardProps {
   count: number;
@@ -58,7 +59,7 @@ export function ClusterCard({
         }
       }}
       style={styles}
-      aria-label={`${count} appointments from ${formatTime(startAt)} to ${formatTime(endAt)}, expand to see all`}
+      aria-label={`${count} appointments from ${formatTime(startAt)} to ${formatTime(endAt)} ${fmtTzAbbr(startAt)}, expand to see all`}
     >
       <div
         style={{
@@ -118,7 +119,7 @@ export function ClusterCard({
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {formatTime(startAt)} to {formatTime(endAt)} · {namesText}
+            {formatTime(startAt)} to {formatTime(endAt)} {fmtTzAbbr(startAt)} · {namesText}
           </p>
         </div>
         <ChevronRight size={18} color={theme.color.accent} aria-hidden />
@@ -127,10 +128,19 @@ export function ClusterCard({
   );
 }
 
+// Wall-clock components in clinic time so the cluster card reads
+// in UK time on any staff device. Zone suffix is added once at the
+// end of the range by the caller above so two adjacent times don't
+// each carry the abbreviation.
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const h = d.getHours();
-  const m = d.getMinutes();
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
   const hh = h % 12 === 0 ? 12 : h % 12;
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';

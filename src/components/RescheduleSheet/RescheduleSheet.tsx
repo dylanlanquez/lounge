@@ -27,6 +27,7 @@ import {
 } from '../../lib/queries/rescheduleAppointment.ts';
 import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
@@ -722,7 +723,7 @@ function CurrentSlotSummary({
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)}
+          {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)} {fmtTzAbbr(start.toISOString())}
         </p>
       </div>
     </div>
@@ -777,7 +778,15 @@ function formatDateLong(iso: string): string {
 }
 
 function formatTime(d: Date): string {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  // Pinned to clinic time so a UK booking always reads as UK time
+  // for staff in any country. Zone abbreviation (BST/GMT) is added
+  // once at the end of the range by the caller, not per-time.
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
 }
 
 function humaniseService(s: string): string {

@@ -26,6 +26,7 @@ import { Toast } from '../Toast/Toast.tsx';
 import { EmailPreviewModal } from '../EmailPreviewModal/EmailPreviewModal.tsx';
 import { SmsPreviewModal } from '../SmsPreviewModal/SmsPreviewModal.tsx';
 import { theme } from '../../theme/index.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import type { TimelineEvent } from '../../lib/queries/visitTimeline.ts';
 import {
   resendAppointmentEmail,
@@ -732,13 +733,22 @@ function compactTimestamp(iso: string): string {
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  if (sameDay) return time;
+  // Pinned to clinic time + BST/GMT suffix so timeline rows on a
+  // lab-team screen in Egypt read the same as on a Glasgow desk.
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  const zone = fmtTzAbbr(iso);
+  if (sameDay) return `${time} ${zone}`;
   const sameYear = d.getFullYear() === now.getFullYear();
-  const date = d.toLocaleDateString('en-GB', {
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     ...(sameYear ? {} : { year: 'numeric' }),
-  });
-  return `${date} · ${time}`;
+  }).format(d);
+  return `${date} · ${time} ${zone}`;
 }

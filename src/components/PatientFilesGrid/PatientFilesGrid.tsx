@@ -17,6 +17,7 @@ import {
   type PatientFileLabelRow,
 } from '../../lib/queries/patientFiles.ts';
 import { supabase } from '../../lib/supabase.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import type { PatientFileEntry, PatientProfileRow } from '../../lib/queries/patientProfile.ts';
 import { Preview3DModal } from './Preview3DModal.tsx';
 
@@ -1015,9 +1016,21 @@ function VersionCard({
 function formatLongDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} at ${time}`;
+  // Pinned to Europe/London + BST/GMT suffix so a UK upload reads
+  // the same on a Cairo lab screen as on a Glasgow reception desk.
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(d);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${date} at ${time} ${fmtTzAbbr(iso)}`;
 }
 
 // ─── Public surface ─────────────────────────────────────────────────────────

@@ -24,6 +24,8 @@
 // page-break between them. The progressive-degradation cascade still
 // runs on each page as a final safety net for an unusually fat row.
 
+import { fmtTzAbbr } from './dateFormat.ts';
+
 export interface PrintableLwoItem {
   qty: number;
   device: string;          // For appliances: catalogue name. For denture
@@ -170,12 +172,25 @@ function planSlips(items: PrintableLwoItem[]): SlipPlan {
 
 export function printLwo(input: PrintableLwoInput): void {
   const checkin = new Date(input.checkedInAt);
-  const today = checkin.toLocaleDateString('en-GB', {
+  // Printed paperwork follows the clinic's wall clock, not whatever
+  // timezone the kiosk happens to be set to. Append the zone
+  // abbreviation alongside the time so a printed slip can be
+  // matched back to the right wall-clock window months later.
+  const today = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  });
-  const checkinTime = checkin.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }).format(checkin);
+  const checkinTime =
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(checkin) +
+    ' ' +
+    fmtTzAbbr(input.checkedInAt);
 
   const plan = planSlips(input.items);
   const totalPages = plan.pages.length;

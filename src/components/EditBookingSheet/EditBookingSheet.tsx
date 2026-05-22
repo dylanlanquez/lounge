@@ -13,6 +13,7 @@ import { theme } from '../../theme/index.ts';
 import { editAppointment } from '../../lib/queries/editAppointment.ts';
 import { useStaff } from '../../lib/queries/staff.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 // EditBookingSheet — in-place edit for a native (manual / native-
 // source) Lounge appointment. Used to be a notes + staff sheet;
@@ -263,7 +264,7 @@ function CurrentSlotSummary({
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)}
+          {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)} {fmtTzAbbr(start.toISOString())}
         </p>
       </div>
     </div>
@@ -284,7 +285,13 @@ function formatLongDate(d: Date): string {
 }
 
 function formatTime(d: Date): string {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  // Clinic time always; zone suffix added once by the caller above.
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
 }
 
 function composePatientName(first: string | null, last: string | null): string | null {

@@ -9,6 +9,7 @@ import {
   formatLateDuration,
 } from '../../lib/queries/appointments.ts';
 import googleMeetIcon from '../../assets/google-meet.png';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 // Subset of lng_appointment_phases the card needs to render its
 // two-tone phase ribbon. Always passed in phase_index order. When the
@@ -333,13 +334,30 @@ function PhaseStrip({
 }
 
 function formatTimeRange(startIso: string, endIso: string): string {
-  return `${formatTime(startIso)} to ${formatTime(endIso)}`;
+  // Zone suffix lands once at the end of the range so it reads as
+  // one phrase. e.g. "10am to 11am BST".
+  return `${formatTimeNoZone(startIso)} to ${formatTimeNoZone(endIso)} ${fmtTzAbbr(startIso)}`;
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const h = d.getHours();
-  const m = d.getMinutes();
+  // Wrapped version with the zone suffix attached. Used by the
+  // single-time render at the head of the card.
+  return `${formatTimeNoZone(iso)} ${fmtTzAbbr(iso)}`;
+}
+
+// Computes the wall-clock hour/minute in clinic time so all
+// AppointmentCards on the schedule read in UK time regardless of
+// the staff member's device timezone. Returns "9am" / "10:30am" /
+// "2pm" format. Zone suffix is appended by the callers above.
+function formatTimeNoZone(iso: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
   const hh = h % 12 === 0 ? 12 : h % 12;
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
