@@ -49,6 +49,7 @@ import {
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
 import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
+import { VirtualCallReminder } from '../components/VirtualCallReminder/VirtualCallReminder.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
@@ -626,7 +627,19 @@ function Loaded({
         appt.status === 'cancelled' ||
         appt.status === 'no_show' ||
         appt.status === 'complete' ? null : appt.join_url ? (
-          <MeetingLinkCard joinUrl={appt.join_url} />
+          <>
+            <MeetingLinkCard joinUrl={appt.join_url} />
+            {/* "Patient not on the call" SMS reminder — visible
+                wherever the join link card is, so reception can
+                send the join URL to the patient's phone when the
+                clinician is on the call alone. Hidden on the
+                terminal statuses for the same reason the link
+                itself is hidden (the meeting is over or stale). */}
+            <VirtualCallReminder
+              appointmentId={appt.id}
+              patientHasPhone={!!(appt.patient.phone ?? '').trim()}
+            />
+          </>
         ) : appt.service_type === 'virtual_impression_appointment' ? (
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : null}

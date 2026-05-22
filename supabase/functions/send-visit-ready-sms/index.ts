@@ -53,6 +53,11 @@ const ALLOWED_TEMPLATE_KEYS = new Set([
   'please_call',
   'running_late',
   'reminder_to_attend',
+  // Fired from AppointmentDetail (not the Visit page) — reception
+  // sends this when the clinician is on the Meet call but the
+  // patient hasn't joined yet. Accepts appointment_id instead of
+  // visit_id since the visit row only exists post-arrival.
+  'virtual_call_waiting',
 ]);
 
 Deno.serve(async (req) => {
@@ -80,13 +85,27 @@ async function handle(req: Request): Promise<Response> {
   if (!who?.user) return jsonResponse(200, { ok: false, error: 'Not signed in.' });
 
   // ── Parse body ──────────────────────────────────────────────────
-  let body: { visit_id?: string; template_key?: string; preview?: boolean } = {};
+  // Accept EITHER visit_id (visit-page sender, original contract)
+  // OR appointment_id (AppointmentDetail page sender for the new
+  // virtual_call_waiting template, fired before the visit row
+  // exists). Same downstream rendering / Twilio path either way.
+  let body: {
+    visit_id?: string;
+    appointment_id?: string;
+    template_key?: string;
+    preview?: boolean;
+  } = {};
   try {
     body = await req.json();
   } catch {
     body = {};
   }
-  if (!body.visit_id) return jsonResponse(200, { ok: false, error: 'visit_id required' });
+  if (!body.visit_id && !body.appointment_id) {
+    return jsonResponse(200, {
+      ok: false,
+      error: 'visit_id or appointment_id required',
+    });
+  }
   const preview = body.preview === true;
   const templateKey = (body.template_key ?? DEFAULT_TEMPLATE_KEY).trim();
   if (!ALLOWED_TEMPLATE_KEYS.has(templateKey)) {
@@ -99,23 +118,52 @@ async function handle(req: Request): Promise<Response> {
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // ── Load the visit + everything we need for variable substitution
-  const { data: visitRow, error: visitErr } = await admin
-    .from('lng_visits')
-    .select('id, patient_id, location_id, appointment_id, status, opened_at')
-    .eq('id', body.visit_id)
-    .maybeSingle();
-  if (visitErr || !visitRow) {
-    return jsonResponse(200, { ok: false, error: 'Visit not found.', reason: 'visit_not_found' });
-  }
-  const visit = visitRow as {
-    id: string;
+  // ── Resolve the (visit, appointment, patient, location) context
+  // Visit-id path keeps the existing semantics. Appointment-id path
+  // skips the visit row entirely; cart logic is no-op since the
+  // patient hasn't arrived yet.
+  let visit: {
+    id: string | null;
     patient_id: string;
     location_id: string | null;
     appointment_id: string | null;
-    status: string;
-    opened_at: string;
   };
+  if (body.visit_id) {
+    const { data: visitRow, error: visitErr } = await admin
+      .from('lng_visits')
+      .select('id, patient_id, location_id, appointment_id')
+      .eq('id', body.visit_id)
+      .maybeSingle();
+    if (visitErr || !visitRow) {
+      return jsonResponse(200, { ok: false, error: 'Visit not found.', reason: 'visit_not_found' });
+    }
+    visit = visitRow as {
+      id: string;
+      patient_id: string;
+      location_id: string | null;
+      appointment_id: string | null;
+    };
+  } else {
+    const { data: apptRow, error: apptErr } = await admin
+      .from('lng_appointments')
+      .select('id, patient_id, location_id')
+      .eq('id', body.appointment_id!)
+      .maybeSingle();
+    if (apptErr || !apptRow) {
+      return jsonResponse(200, {
+        ok: false,
+        error: 'Appointment not found.',
+        reason: 'appointment_not_found',
+      });
+    }
+    const a = apptRow as { id: string; patient_id: string; location_id: string | null };
+    visit = {
+      id: null,
+      patient_id: a.patient_id,
+      location_id: a.location_id,
+      appointment_id: a.id,
+    };
+  }
 
   // Resolver order:
   //   1. patients — first_name, lwo_ref, phone (the SMS destination)
@@ -140,7 +188,7 @@ async function handle(req: Request): Promise<Response> {
     visit.appointment_id
       ? admin
           .from('lng_appointments')
-          .select('service_type, product_key, arch, appointment_ref, walk_in_id, start_at, staff_account_id')
+          .select('service_type, product_key, arch, appointment_ref, walk_in_id, start_at, staff_account_id, join_url')
           .eq('id', visit.appointment_id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -170,6 +218,7 @@ async function handle(req: Request): Promise<Response> {
         walk_in_id: string | null;
         start_at: string | null;
         staff_account_id: string | null;
+        join_url: string | null;
       }
     | null;
   // lng_settings.value is jsonb — for clinic.* string fields the stored
@@ -190,11 +239,16 @@ async function handle(req: Request): Promise<Response> {
   // fall back to the General row.
   let cartServiceTypes = new Set<string>();
   let cartProductKeys = new Set<string>();
-  const { data: cartRow } = await admin
-    .from('lng_carts')
-    .select('id')
-    .eq('visit_id', visit.id)
-    .maybeSingle();
+  // No visit row → no cart. Pre-arrival senders (the
+  // virtual_call_waiting reminder) take this branch and fall
+  // straight through to the appointment's own service_type hint.
+  const { data: cartRow } = visit.id
+    ? await admin
+        .from('lng_carts')
+        .select('id')
+        .eq('visit_id', visit.id)
+        .maybeSingle()
+    : { data: null };
   if (cartRow) {
     const { data: itemRows } = await admin
       .from('lng_cart_items')
@@ -315,6 +369,10 @@ async function handle(req: Request): Promise<Response> {
     appointmentRef: appointmentRef || '-',
     lwoRef: (patient.lwo_ref ?? '').trim() || '-',
     itemLabel: resolveItemLabel(appt, cartServiceTypes, cartProductKeys),
+    // Strip the scheme so the rendered SMS reads "meet.google.com/..."
+    // not "https://meet.google.com/..." — Twilio still auto-links it
+    // on the patient's phone and we save 8 characters per send.
+    joinUrl: stripScheme((appt?.join_url ?? '').trim()),
   };
   const renderedBody = substituteVariables(tpl.body, variables);
 

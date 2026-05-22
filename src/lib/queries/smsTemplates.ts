@@ -152,6 +152,13 @@ export const SMS_TEMPLATE_VARIABLES: ReadonlyArray<SmsTemplateVariable> = [
       'Immutable internal lab reference written when the patient is first created. Same patient always carries the same lwoRef across every visit. Many older patient records do not have one on file (renders as a dash), so prefer {{appointmentRef}} for customer-facing copy.',
     sample: 'LWO-12345',
   },
+  {
+    name: 'joinUrl',
+    label: 'Virtual meeting join link',
+    description:
+      'The Google Meet / video call URL on the appointment row. Only resolves for virtual impression bookings (those carry a join_url); falls back to an empty string for in-person and same-day appointments, so use this variable only in templates that exclusively target virtual bookings.',
+    sample: 'meet.google.com/abc-defg-hij',
+  },
   // Receipt-only variables. Resolved by send-receipt's SMS branch
   // from the closed cart + payment row. Other SMS templates won't
   // have access to these (the resolver leaves them as literal
@@ -403,6 +410,7 @@ export function humaniseSmsKey(key: string): string {
     please_call: 'Please give us a call',
     running_late: 'Clinician running late',
     reminder_to_attend: 'Reminder to attend',
+    virtual_call_waiting: 'Patient not on the virtual call',
     payment_receipt: 'Payment receipt',
   };
   return map[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
