@@ -119,17 +119,36 @@ Deno.serve(async (req) => {
   if (appt.status === 'cancelled') {
     return jsonResponse(409, { error: 'appointment_cancelled' });
   }
-  if (!appt.product_key) {
-    return jsonResponse(400, { error: 'service_not_supported' });
-  }
-  const { data: cfg, error: cfgErr } = await admin
-    .from('lng_product_widget_config')
-    .select('request_smile_photos')
-    .eq('service_type', appt.service_type)
-    .eq('product_key', appt.product_key)
-    .maybeSingle();
-  if (cfgErr) {
-    return jsonResponse(500, { error: 'config_lookup_failed', detail: cfgErr.message });
+  // Mirror configFor()'s lookup on the client (productWidgetConfig.ts):
+  //   1. If the appointment carries a product_key, do a direct
+  //      (service_type, product_key) lookup.
+  //   2. If product_key is NULL (single-product services like
+  //      click_in_veneers, where the widget never pins the product
+  //      axis on the appointment row), fall back to "the unique row
+  //      for this service_type" if exactly one config row exists.
+  // Keeping these in sync means the UI and function never disagree on
+  // whether a service supports smile photos.
+  let cfg: { request_smile_photos: boolean } | null = null;
+  if (appt.product_key) {
+    const { data, error: cfgErr } = await admin
+      .from('lng_product_widget_config')
+      .select('request_smile_photos')
+      .eq('service_type', appt.service_type)
+      .eq('product_key', appt.product_key)
+      .maybeSingle();
+    if (cfgErr) {
+      return jsonResponse(500, { error: 'config_lookup_failed', detail: cfgErr.message });
+    }
+    cfg = data;
+  } else {
+    const { data, error: cfgErr } = await admin
+      .from('lng_product_widget_config')
+      .select('request_smile_photos')
+      .eq('service_type', appt.service_type);
+    if (cfgErr) {
+      return jsonResponse(500, { error: 'config_lookup_failed', detail: cfgErr.message });
+    }
+    if (data && data.length === 1) cfg = data[0];
   }
   if (!cfg || cfg.request_smile_photos !== true) {
     return jsonResponse(400, { error: 'service_not_supported' });
