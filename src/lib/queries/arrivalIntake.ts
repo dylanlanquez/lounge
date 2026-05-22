@@ -7,10 +7,9 @@ import { callEdgeFunction } from '../edgeFunction.ts';
 // failure leaves the appointment unmarked rather than half-arrived:
 //
 //   1. patients fill-blanks merge (first/last/dob/sex/email/phone/address/
-//      allergies/emergency contact). Only writes columns that were NULL
-//      on the row we just read; matches the project's brief-§14
-//      fill-blanks rule for patient ingestion. Values that already exist
-//      are not touched.
+//      allergies). Only writes columns that were NULL on the row we just
+//      read; matches the project's brief-§14 fill-blanks rule for patient
+//      ingestion. Values that already exist are not touched.
 //   2. lng_appointments stamp (jb_ref + appointment_ref). The
 //      appointment_ref is generated server-side via
 //      generate_appointment_ref() so the LAP counter stays monotonic.
@@ -35,8 +34,6 @@ export interface ArrivalIntakePatientInput {
   portal_ship_postcode?: string | null;
   portal_ship_country_code?: string | null;
   allergies?: string | null;
-  emergency_contact_name?: string | null;
-  emergency_contact_phone?: string | null;
   // Marketing attribution — "How did you hear about us?". Captured
   // once on first arrival; the fill-blanks rule below means a
   // returning patient's existing answer is never overwritten.
@@ -57,18 +54,15 @@ export interface ArrivalIntakeSnapshot {
   portal_ship_postcode: string | null;
   portal_ship_country_code: string | null;
   allergies: string | null;
-  emergency_contact_name: string | null;
-  emergency_contact_phone: string | null;
   referred_by: string | null;
 }
 
 const INTAKE_PATIENT_COLUMNS =
-  'first_name, last_name, date_of_birth, sex, email, phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, allergies, emergency_contact_name, emergency_contact_phone, referred_by';
+  'first_name, last_name, date_of_birth, sex, email, phone, portal_ship_line1, portal_ship_line2, portal_ship_city, portal_ship_postcode, portal_ship_country_code, allergies, referred_by';
 
-// Reads the patient columns the intake sheet needs. Tolerates a missing
-// emergency_contact_* column (pre-migration deploys) by retrying with
-// the legacy column set and zero-filling the new keys. Once migration
-// 28 is applied everywhere this fallback is unreachable.
+// Reads the patient columns the intake sheet needs. Falls back to a
+// minimal legacy column set if the structured address columns aren't
+// present on the deployment (42703 = column does not exist).
 export async function readIntakeSnapshot(patientId: string): Promise<ArrivalIntakeSnapshot> {
   const { data, error } = await supabase
     .from('patients')
@@ -97,8 +91,6 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
         portal_ship_postcode: null,
         portal_ship_country_code: null,
         allergies: row.allergies ?? null,
-        emergency_contact_name: null,
-        emergency_contact_phone: null,
         referred_by: null,
       };
     }
@@ -118,8 +110,6 @@ export async function readIntakeSnapshot(patientId: string): Promise<ArrivalInta
     portal_ship_postcode: row.portal_ship_postcode ?? null,
     portal_ship_country_code: row.portal_ship_country_code ?? null,
     allergies: row.allergies ?? null,
-    emergency_contact_name: row.emergency_contact_name ?? null,
-    emergency_contact_phone: row.emergency_contact_phone ?? null,
     referred_by: row.referred_by ?? null,
   };
 }
@@ -184,8 +174,6 @@ export async function submitArrivalIntake(
   stage('portal_ship_postcode', input.patient.portal_ship_postcode);
   stage('portal_ship_country_code', input.patient.portal_ship_country_code);
   stage('allergies', input.patient.allergies);
-  stage('emergency_contact_name', input.patient.emergency_contact_name);
-  stage('emergency_contact_phone', input.patient.emergency_contact_phone);
   stage('referred_by', input.patient.referred_by);
 
   if (Object.keys(writes).length > 0) {

@@ -380,20 +380,6 @@ export function PatientEditModal({
               title="Care details"
               subtitle={isLinked ? 'Synced to venneir.com and One Click' : 'Stored at the lab only'}
             />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[4] }}>
-              <Input
-                label="Emergency contact name"
-                value={clinical.emergencyContactName}
-                onChange={(e) => setClinical((s) => ({ ...s, emergencyContactName: e.target.value }))}
-              />
-              <Input
-                label="Emergency contact phone"
-                type="tel"
-                value={clinical.emergencyContactPhone}
-                onChange={(e) => setClinical((s) => ({ ...s, emergencyContactPhone: e.target.value }))}
-              />
-            </div>
-
             <Input
               label="Allergies and sensitivities"
               value={clinical.allergies}

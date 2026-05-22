@@ -205,8 +205,6 @@ interface FormState {
   portal_ship_postcode: string;
   portal_ship_country_code: string;
   allergies: string;
-  emergency_contact_name: string;
-  emergency_contact_phone: string;
   // "How did you hear about us?" — captured once on first arrival
   // and never again. Drives Reports → Marketing attribution.
   referred_by: string;
@@ -225,8 +223,6 @@ const EMPTY_FORM: FormState = {
   portal_ship_postcode: '',
   portal_ship_country_code: 'GB',
   allergies: '',
-  emergency_contact_name: '',
-  emergency_contact_phone: '',
   referred_by: '',
 };
 
@@ -919,8 +915,6 @@ export function Arrival() {
     if (form.allergies.trim() === '' && (snapshot.allergies ?? '') === '') {
       list.push('Allergies & sensitivities');
     }
-    need('Emergency contact name', snapshot.emergency_contact_name, form.emergency_contact_name);
-    need('Emergency contact phone', snapshot.emergency_contact_phone, form.emergency_contact_phone);
     // "How did you hear about us?" — required only when not already
     // on file. The ReferralSourceSection itself only renders when
     // snapshot.referred_by is empty, so the same condition gates
@@ -1020,8 +1014,6 @@ export function Arrival() {
             'portal_ship_postcode',
             'portal_ship_country_code',
             'allergies',
-            'emergency_contact_name',
-            'emergency_contact_phone',
           ].includes(k as string)
         )
       ) as Set<keyof typeof form & string> as unknown as Set<
@@ -1044,8 +1036,6 @@ export function Arrival() {
           portal_ship_postcode: form.portal_ship_postcode,
           portal_ship_country_code: form.portal_ship_country_code,
           allergies: form.allergies,
-          emergency_contact_name: form.emergency_contact_name,
-          emergency_contact_phone: form.emergency_contact_phone,
           referred_by: form.referred_by,
         },
         jbRef: jbRequired ? jbRef.trim() || null : null,
@@ -1439,8 +1429,6 @@ function hydrateForm(snap: ArrivalIntakeSnapshot, setForm: (f: FormState) => voi
     portal_ship_postcode: snap.portal_ship_postcode ?? '',
     portal_ship_country_code: snap.portal_ship_country_code ?? 'GB',
     allergies: snap.allergies ?? '',
-    emergency_contact_name: snap.emergency_contact_name ?? '',
-    emergency_contact_phone: snap.emergency_contact_phone ?? '',
     referred_by: snap.referred_by ?? '',
   });
 }
@@ -2426,8 +2414,6 @@ function CustomerStep({
             editing={isEditing('allergies')}
             onBeginEdit={() => onBeginEdit('allergies')}
           />
-          <FieldRow required kind="name" label="Emergency contact name" current={snapshot.emergency_contact_name} value={form.emergency_contact_name} onChange={(v) => onUpdate('emergency_contact_name', v)} editing={isEditing('emergency_contact_name')} onBeginEdit={() => onBeginEdit('emergency_contact_name')} />
-          <FieldRow required kind="phone" label="Emergency contact phone" current={snapshot.emergency_contact_phone} value={form.emergency_contact_phone} onChange={(v) => onUpdate('emergency_contact_phone', v)} editing={isEditing('emergency_contact_phone')} onBeginEdit={() => onBeginEdit('emergency_contact_phone')} />
         </FormGrid>
       </section>
 
