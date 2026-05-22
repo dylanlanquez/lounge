@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Camera, Check, ChevronDown, Loader2 } from 'lucide-react';
+import { ArrowRight, Camera, Check, ChevronDown, Loader2, Upload } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
@@ -70,6 +70,11 @@ export interface SmilePhotosCardProps {
   // patient files grid (or any other dependent surface) so the new
   // smile-photo row appears without a manual reload.
   onPromoted?: () => void;
+  // When true, empty slots render an "Upload" affordance so any
+  // signed-in staff member (reception, floor, CS, admin) can attach
+  // the photo on behalf of the patient if they didn't do it from
+  // the booking-confirmation page. Defaults to true.
+  allowStaffUpload?: boolean;
 }
 
 export function SmilePhotosCard({
@@ -78,8 +83,9 @@ export function SmilePhotosCard({
   patientName,
   uploaderAccountId,
   onPromoted,
+  allowStaffUpload = true,
 }: SmilePhotosCardProps) {
-  const { rows, loading, error } = useBookingIntakePhotos(appointmentId);
+  const { rows, loading, error, refresh } = useBookingIntakePhotos(appointmentId);
   const byKind = new Map(rows.map((r) => [r.kind, r] as const));
   const uploadedCount = rows.length;
 
@@ -285,6 +291,51 @@ export function SmilePhotosCard({
 
   const canPromote = !!patientId && !!patientName;
 
+  // Per-tile upload state. Staff can fire one upload per slot at a
+  // time; state is keyed by kind so an in-flight Front upload doesn't
+  // grey out the Left or Right tiles.
+  type UploadState =
+    | { status: 'idle' }
+    | { status: 'busy' }
+    | { status: 'error'; message: string };
+  const [uploadByKind, setUploadByKind] = useState<Record<Kind, UploadState>>({
+    front: { status: 'idle' },
+    left: { status: 'idle' },
+    right: { status: 'idle' },
+  });
+
+  const handleUpload = async (kind: Kind, file: File) => {
+    setUploadByKind((prev) => ({ ...prev, [kind]: { status: 'busy' } }));
+    try {
+      const form = new FormData();
+      form.append('appointment_id', appointmentId);
+      form.append('kind', kind);
+      form.append('file', file);
+      const { data, error } = await supabase.functions.invoke<{
+        ok?: boolean;
+        error?: string;
+        detail?: string;
+      }>('staff-upload-intake-photo', { body: form });
+      if (error) {
+        throw new Error(error.message);
+      }
+      if (!data?.ok) {
+        throw new Error(data?.error ?? 'Upload failed');
+      }
+      setUploadByKind((prev) => ({ ...prev, [kind]: { status: 'idle' } }));
+      refresh();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Upload failed';
+      setUploadByKind((prev) => ({ ...prev, [kind]: { status: 'error', message } }));
+      await logFailure({
+        source: 'smile_photo_staff_upload_failed',
+        severity: 'error',
+        message,
+        context: { appointmentId, kind },
+      });
+    }
+  };
+
   const panelId = `lng-smile-photos-${appointmentId}`;
 
   return (
@@ -403,6 +454,9 @@ export function SmilePhotosCard({
                     promoteState={promote[s.kind]}
                     onPromote={() => row && requestPromote(s.kind, row)}
                     existsOnProfile={anyOnProfile.has(s.kind)}
+                    allowStaffUpload={allowStaffUpload}
+                    uploadState={uploadByKind[s.kind]}
+                    onPickFile={(file) => handleUpload(s.kind, file)}
                   />
                 );
               })}
@@ -538,6 +592,9 @@ function PhotoTile({
   promoteState,
   onPromote,
   existsOnProfile,
+  allowStaffUpload,
+  uploadState,
+  onPickFile,
 }: {
   label: string;
   loading: boolean;
@@ -560,6 +617,12 @@ function PhotoTile({
    *  "Add to profile" — so the operator sees the consequence of the
    *  tap before they take it. */
   existsOnProfile: boolean;
+  /** When true and the slot is empty, the tile becomes an upload
+   *  affordance — tap opens the file picker, and the staff member
+   *  attaches the photo on the patient's behalf. */
+  allowStaffUpload: boolean;
+  uploadState: { status: 'idle' } | { status: 'busy' } | { status: 'error'; message: string };
+  onPickFile: (file: File) => void;
 }) {
   // Tile chrome matches PhotoGallery.tsx's UploadTile precisely:
   // square aspect, theme.radius.card corners, 1.5px dashed border in
@@ -575,14 +638,48 @@ function PhotoTile({
   // need this because the bold inside-label IS the affordance text;
   // here the inside text is a state ("Not uploaded"), so the
   // outside caption answers "which view is this".
-  const interactive = signedUrl && onOpenLightbox;
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const showUploadAffordance =
+    !signedUrl && allowStaffUpload && uploadState.status !== 'busy';
+  // Click target priorities: filled tile = lightbox; empty + upload
+  // enabled = file picker; empty + read-only = no-op (parent has
+  // chosen to render in display-only mode).
+  const handleTileClick = () => {
+    if (signedUrl && onOpenLightbox) {
+      onOpenLightbox();
+      return;
+    }
+    if (showUploadAffordance) {
+      inputRef.current?.click();
+    }
+  };
+  const interactive = (signedUrl && onOpenLightbox) || showUploadAffordance;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          // Reset the input so picking the same file again triggers
+          // a fresh change event (after a failed upload retry).
+          e.target.value = '';
+          if (file) onPickFile(file);
+        }}
+      />
       <button
         type="button"
-        onClick={interactive ? onOpenLightbox! : undefined}
+        onClick={interactive ? handleTileClick : undefined}
         disabled={!interactive}
-        aria-label={signedUrl ? `Open ${label} photo` : `${label} — not uploaded`}
+        aria-label={
+          signedUrl
+            ? `Open ${label} photo`
+            : showUploadAffordance
+              ? `Upload ${label} photo`
+              : `${label} — not uploaded`
+        }
         style={{
           appearance: 'none',
           fontFamily: 'inherit',
@@ -620,6 +717,37 @@ function PhotoTile({
               objectFit: 'cover',
             }}
           />
+        ) : uploadState.status === 'busy' ? (
+          <>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 44,
+                height: 44,
+                borderRadius: theme.radius.pill,
+                background: theme.color.accentBg,
+                color: theme.color.accent,
+              }}
+            >
+              <Loader2
+                size={20}
+                aria-hidden
+                style={{ animation: 'lng-smile-promote-spin 0.9s linear infinite' }}
+              />
+            </span>
+            <span
+              style={{
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                textAlign: 'center',
+                color: theme.color.accent,
+              }}
+            >
+              Uploading…
+            </span>
+          </>
         ) : (
           <>
             <span
@@ -630,20 +758,46 @@ function PhotoTile({
                 width: 44,
                 height: 44,
                 borderRadius: theme.radius.pill,
-                background: theme.color.bg,
+                background:
+                  showUploadAffordance ? theme.color.accentBg : theme.color.bg,
+                color: showUploadAffordance ? theme.color.accent : theme.color.inkMuted,
               }}
             >
-              <Camera size={20} aria-hidden />
+              {showUploadAffordance ? (
+                <Upload size={20} aria-hidden />
+              ) : (
+                <Camera size={20} aria-hidden />
+              )}
             </span>
             <span
               style={{
                 fontSize: theme.type.size.sm,
                 fontWeight: theme.type.weight.semibold,
                 textAlign: 'center',
+                color: showUploadAffordance ? theme.color.accent : theme.color.inkMuted,
               }}
             >
-              {loading ? 'Loading…' : 'Not uploaded'}
+              {loading
+                ? 'Loading…'
+                : showUploadAffordance
+                  ? 'Upload photo'
+                  : 'Not uploaded'}
             </span>
+            {uploadState.status === 'error' ? (
+              <span
+                style={{
+                  marginTop: 2,
+                  paddingInline: 6,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.alert,
+                  textAlign: 'center',
+                  fontWeight: theme.type.weight.medium,
+                  lineHeight: 1.3,
+                }}
+              >
+                {uploadState.message}
+              </span>
+            ) : null}
           </>
         )}
       </button>
