@@ -553,6 +553,21 @@ export function RescheduleSheet({
                 }}
               />
             </div>
+            {/* Single subtle clinic-time confirmation. The HH:MM input
+                inside the trigger above stays clean; the zone sits in
+                its own quiet line so an Egypt-based admin can see at a
+                glance that the time they pick is interpreted as UK
+                clinic time, not their local. */}
+            <p
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkSubtle,
+                fontStyle: 'italic',
+              }}
+            >
+              Times shown in UK clinic time ({fmtTzAbbr(new Date().toISOString())}).
+            </p>
             <DatePicker
               open={dateOpen}
               onClose={() => setDateOpen(false)}
@@ -672,7 +687,6 @@ function CurrentSlotSummary({
   appointment: RescheduleSheetProps['appointment'];
 }) {
   const start = new Date(appointment.start_at);
-  const end = new Date(appointment.end_at);
   return (
     <div
       style={{
@@ -723,7 +737,7 @@ function CurrentSlotSummary({
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {formatLongDate(start)} · {formatTime(start)} to {formatTime(end)} {fmtTzAbbr(start.toISOString())}
+          {formatLongDate(start)} · {formatTime(start)} {fmtTzAbbr(start.toISOString())}
         </p>
       </div>
     </div>

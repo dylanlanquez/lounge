@@ -20,6 +20,7 @@ import { WaiverViewerDialog } from '../components/WaiverViewerDialog/WaiverViewe
 import type { WaiverDocInput } from '../lib/waiverDocument.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
+import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
@@ -1871,13 +1872,18 @@ function paymentLabel(v: PatientVisitRow): string {
 function formatDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('en-GB', {
+  // Clinic time + BST/GMT suffix so a patient profile row reads
+  // the same on any staff device.
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2651,13 +2657,16 @@ function SignatureActions({ onView }: { onView: () => void }) {
 function formatLongDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 const tableHeaderStyle: CSSProperties = {

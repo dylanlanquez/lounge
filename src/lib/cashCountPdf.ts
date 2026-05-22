@@ -6,6 +6,7 @@
 // signature block at the bottom.
 
 import { withdrawalReasonLabel as withdrawalReasonLabelPdf, type CashCountStatement } from './queries/cashCounts.ts';
+import { fmtTzAbbr } from './dateFormat.ts';
 
 interface JsPdfDoc {
   setFont: (fontName: string, fontStyle?: string) => void;
@@ -250,13 +251,16 @@ function formatDate(iso: string): string {
 }
 
 function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(new Date(iso));
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 function truncate(s: string, max: number): string {

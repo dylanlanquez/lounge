@@ -67,6 +67,7 @@ import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
 import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import {
+  fmtTzAbbr,
   formatDateLongOrdinal,
   formatTime,
   relativeMinutes,
@@ -4705,17 +4706,21 @@ function ShippedItemsCard({
     : [];
 
   const dispatchedAt = visit.dispatched_at
-    ? new Date(visit.dispatched_at).toLocaleString('en-GB', {
+    ? `${new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
         day: 'numeric', month: 'short', year: 'numeric',
         hour: '2-digit', minute: '2-digit',
-      })
+        hour12: false,
+      }).format(new Date(visit.dispatched_at))} ${fmtTzAbbr(visit.dispatched_at)}`
     : null;
 
   const emailSentAt = visit.shipping_email_sent_at
-    ? new Date(visit.shipping_email_sent_at).toLocaleString('en-GB', {
+    ? `${new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
         day: 'numeric', month: 'short',
         hour: '2-digit', minute: '2-digit',
-      })
+        hour12: false,
+      }).format(new Date(visit.shipping_email_sent_at))} ${fmtTzAbbr(visit.shipping_email_sent_at)}`
     : null;
 
   return (

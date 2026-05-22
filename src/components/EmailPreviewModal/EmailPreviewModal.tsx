@@ -10,6 +10,7 @@ import {
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { theme } from '../../theme/index.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useEmailMessage, type EmailMessageRow } from '../../lib/queries/emailMessages.ts';
 
 // EmailPreviewModal
@@ -533,12 +534,15 @@ function humaniseKind(kind: string): string {
 function formatSentAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     weekday: 'short',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }

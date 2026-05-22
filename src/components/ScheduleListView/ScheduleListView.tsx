@@ -53,6 +53,11 @@ function Section({
   onPick: (r: AppointmentRow) => void;
   now: Date;
 }) {
+  // Single subtle zone label per section. The rows below render
+  // just the time ("10:30am") to keep the column clean; the zone
+  // sits up here next to the section name so it's still visible
+  // without crowding every row.
+  const zone = rows.length > 0 ? fmtTzAbbr(rows[0]!.start_at) : '';
   return (
     <div>
       <p
@@ -66,6 +71,9 @@ function Section({
         }}
       >
         {label}
+        {zone ? (
+          <span style={{ marginLeft: theme.space[2], opacity: 0.7 }}>· {zone}</span>
+        ) : null}
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
         {rows.map((r) => (
@@ -251,13 +259,16 @@ function statusToTone(s: AppointmentRow['status']) {
 }
 
 function formatTime(iso: string): string {
-  // Pinned to clinic time and labelled with the active zone
-  // (BST/GMT) so a row reads the same on every staff device.
+  // Per-row time is rendered without the BST/GMT suffix to keep
+  // the 80px time column clean. The zone is surfaced once per
+  // section in the Morning / Afternoon header above so the time
+  // still reads unambiguously, just without the visual clutter of
+  // repeating "BST" on every row.
   const { hour: h, minute: m } = londonHourMinute(iso);
   const hh = h % 12 === 0 ? 12 : h % 12;
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
-  return `${hh}${mm}${ampm} ${fmtTzAbbr(iso)}`;
+  return `${hh}${mm}${ampm}`;
 }
 
 function londonHour(iso: string): number {

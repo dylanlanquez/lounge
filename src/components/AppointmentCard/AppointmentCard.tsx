@@ -334,15 +334,18 @@ function PhaseStrip({
 }
 
 function formatTimeRange(startIso: string, endIso: string): string {
-  // Zone suffix lands once at the end of the range so it reads as
-  // one phrase. e.g. "10am to 11am BST".
+  // Zone suffix kept on the aria-label so a screen reader still
+  // hears "BST" — visual cards inherit the zone from the grid's
+  // axis header (rendered once at the top of the time column).
   return `${formatTimeNoZone(startIso)} to ${formatTimeNoZone(endIso)} ${fmtTzAbbr(startIso)}`;
 }
 
 function formatTime(iso: string): string {
-  // Wrapped version with the zone suffix attached. Used by the
-  // single-time render at the head of the card.
-  return `${formatTimeNoZone(iso)} ${fmtTzAbbr(iso)}`;
+  // No zone suffix on per-card visuals — the schedule grid's
+  // axis label header carries the BST/GMT badge once for the
+  // whole column. Putting it on every card crowds the small
+  // 11px-wide time text into wrapping.
+  return formatTimeNoZone(iso);
 }
 
 // Computes the wall-clock hour/minute in clinic time so all

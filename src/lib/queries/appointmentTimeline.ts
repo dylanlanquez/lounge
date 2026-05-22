@@ -945,13 +945,21 @@ function joinDetail(...bits: Array<string | null | undefined>): string | undefin
 function formatBookingSlot(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-GB', {
+  // Pinned to clinic time + BST/GMT suffix so a Calendly booking
+  // placed by a customer on a non-UK device doesn't surface here
+  // as "16:00" when the clinic-side ribbon shows "14:00". The
+  // previous device-local format leaked whatever timezone the
+  // viewer's browser happened to be in into the timeline detail.
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     weekday: 'short',
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 // "12 May at 11:00 BST" — used for sibling appointment timestamps

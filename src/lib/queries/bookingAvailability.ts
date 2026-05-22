@@ -213,15 +213,27 @@ export function useAvailableDates(input: AvailableDatesInput): AvailableDatesRes
 // to repeat the timezone-correct formatting logic.
 // ─────────────────────────────────────────────────────────────────────
 
+// Both helpers pin to clinic time so the picker shows UK hours
+// regardless of the staff member's device timezone. Without this,
+// a server-returned 09:00 BST slot would have been rendered as
+// 11:00 in a Cairo browser, and the staff member submitting the
+// form would have stored an entirely wrong booking.
 function formatLocalDateIso(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 function formatLocalTimeHm(d: Date): string {
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
 }

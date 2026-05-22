@@ -316,12 +316,20 @@ export function aggregateBookingsVsWalkIns(
   const noShowCount = appointments.filter((a) => a.status === 'no_show').length;
   const noShowRate = totalBooked > 0 ? noShowCount / totalBooked : 0;
 
-  // Walk-in distribution by hour-of-day (0-23). Uses local time for
-  // intuition — staffing is a local-time concern.
+  // Walk-in distribution by hour-of-day (0-23). Pinned to clinic
+  // time so the buckets reflect actual UK wall-clock hours, not the
+  // staffer's browser timezone. Without this, an Egypt-based viewer
+  // would have seen walk-ins bucketed two hours later than they
+  // actually happened.
   const hourCounts: number[] = new Array(24).fill(0);
   for (const v of visits) {
     if (v.arrival_type !== 'walk_in') continue;
-    const hour = new Date(v.opened_at).getHours();
+    const hourParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date(v.opened_at));
+    const hour = Number(hourParts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
     if (hour >= 0 && hour < 24) {
       hourCounts[hour] = (hourCounts[hour] ?? 0) + 1;
     }

@@ -1458,19 +1458,54 @@ function WipeTestAppointmentsCard({
 function splitLaunchIso(iso: string): { date: string; time: string } {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return { date: '', time: '' };
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}` };
+  // Split into clinic-time wall components so the launch date/time
+  // inputs read in BST/GMT for every admin viewer regardless of
+  // device timezone.
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}`,
+  };
 }
 
 function composeLaunchIso(date: string, time: string): string | null {
   if (!date || !time) return null;
-  const d = new Date(`${date}T${time}:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+  // Treat the typed parts as clinic-time wall clock and back out
+  // the London offset so the stored UTC instant reads as the
+  // entered time when displayed in London tz.
+  const [Y, M, D] = date.split('-').map(Number);
+  const [hh, mi] = time.split(':').map(Number);
+  if (!Y || !M || !D || Number.isNaN(hh) || Number.isNaN(mi)) return null;
+  const naiveUtc = Date.UTC(Y, M - 1, D, hh, mi, 0);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(naiveUtc));
+  const n = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+  const londonAsUtc = Date.UTC(
+    n('year'),
+    n('month') - 1,
+    n('day'),
+    n('hour') % 24,
+    n('minute'),
+    n('second'),
+  );
+  return new Date(naiveUtc - (londonAsUtc - naiveUtc)).toISOString();
 }
 
 function formatLaunchDateLong(iso: string): string {

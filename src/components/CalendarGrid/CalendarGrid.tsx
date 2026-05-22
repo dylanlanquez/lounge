@@ -195,12 +195,14 @@ function NowLine({ offset, beforeStart }: { offset: number; beforeStart: boolean
 
 function NowPill({ offset, beforeStart }: { offset: number; beforeStart: boolean }) {
   const now = new Date();
-  // Pinned to clinic time so the "now" indicator on the schedule
-  // grid reads in BST/GMT for every viewer.
+  // Pinned to clinic time. No zone suffix on the pill itself —
+  // the axis header above already shows "BST" once for the whole
+  // column, so a pill reading "11:17 am" inherits that context
+  // without crowding.
   const { hour: h, minute: m } = londonHourMinute(now);
   const hh = h % 12 === 0 ? 12 : h % 12;
   const ampm = h < 12 ? 'am' : 'pm';
-  const label = `${hh}:${String(m).padStart(2, '0')} ${ampm} ${fmtTzAbbr(now.toISOString())}`;
+  const label = `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
 
   // Anchor to the right edge of the time-axis column so the pill ends just
   // before the slot column starts — never overlaps appointment cards.

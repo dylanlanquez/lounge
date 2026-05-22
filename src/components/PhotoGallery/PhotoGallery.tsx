@@ -6,6 +6,7 @@ import { EmptyState } from '../EmptyState/EmptyState.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
 import { Toast } from '../Toast/Toast.tsx';
 import { theme } from '../../theme/index.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useScrollLock } from '../../lib/useScrollLock.ts';
 import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import {
@@ -653,11 +654,14 @@ function LightboxNav({ side, onClick }: { side: 'left' | 'right'; onClick: () =>
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
