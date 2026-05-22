@@ -1274,22 +1274,16 @@ function buildApptRibbon(
   const now = Date.now();
   const timeRange = formatTimeRange(appt.start_at, appt.end_at);
   const startStr = formatTime(appt.start_at);
-  // For 'booked' rows we replace the misleading "09:15 — 09:45" range
-  // with just the start time. The end of the appointment can be
-  // hours later if the booking has a passive lab phase mid-flow
-  // (e.g. Click-in veneers: Book-in 10m + Impression 5m +
-  // Manufacture 4h + Try In 10m), so the patient and the
-  // receptionist were both reading a dishonest single-block window.
-  // We only swap when the timeline is actually available (caller
-  // passed a non-null onShowTimeline) — services with zero or one
-  // configured phase fall back to the original range string.
-  // The "Estimated appointment length" link is rendered separately
-  // as the ribbon's `secondary` row below so the time anchor stays
-  // a clean single phrase.
-  const canShowTimeline = onShowTimeline !== null;
-  const bookedForLine: ReactNode = canShowTimeline ? `Booked for ${startStr}` : `Booked for ${timeRange}`;
-  const timelineLink: ReactNode | null = canShowTimeline ? (
-    <TimelineLink onClick={onShowTimeline!} />
+  // Time anchor is always the START time only. We don't track the
+  // patient's "until" — the end_at on the row is a phase-driven
+  // estimate that can sit hours after start_at (Click-in veneers
+  // bake in a 4h Manufacture phase mid-flow), so showing a range
+  // would read as a dishonest single-block window. The "Estimated
+  // appointment length" link below carries duration separately when
+  // the service has a configured phase timeline.
+  const bookedForLine: ReactNode = `Booked for ${startStr}`;
+  const timelineLink: ReactNode | null = onShowTimeline !== null ? (
+    <TimelineLink onClick={onShowTimeline} />
   ) : null;
 
   switch (appt.status) {
