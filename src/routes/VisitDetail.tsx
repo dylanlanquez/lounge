@@ -128,6 +128,7 @@ import {
   useCart,
 } from '../lib/queries/carts.ts';
 import {
+  appointmentAcceptsPaidInFullLabel,
   shopifyOrderAppliesToVisit,
   useCartPayments,
   useVisitPaidStatus,
@@ -1666,7 +1667,8 @@ export function VisitDetail() {
                 issued (owed drops to 0) the dim returns. */}
             <div style={isUnsuitable && owedToPatientPence === 0 ? { opacity: 0.55 } : undefined}>
             <Card padding="lg">
-              {cart?.status === 'paid' ? (
+              {cart?.status === 'paid' &&
+              appointmentAcceptsPaidInFullLabel(appointment?.service_type ?? null) ? (
                 <PaidHeader
                   amountPence={cart.total_pence}
                   paidAt={cart.closed_at ?? null}
@@ -1786,16 +1788,23 @@ export function VisitDetail() {
                     setRefundOpen(true);
                   }}
                   // Suppress the giant "Outstanding £X.XX" row when the
-                  // cart is paid — the PaidHeader above already carries
-                  // that amount, and showing it twice was the exact
-                  // ambiguity that made it impossible to tell at a
-                  // glance whether the visit was paid or outstanding.
-                  hideTotalRow={cart?.status === 'paid'}
+                  // cart is paid AND a PaidHeader was rendered above
+                  // (i.e. the appointment accepts the "Paid in full"
+                  // label). Impression appointments skip both — no
+                  // PaidHeader is shown, so the total row stays
+                  // visible to confirm £0 was indeed the bill.
+                  hideTotalRow={
+                    cart?.status === 'paid' &&
+                    appointmentAcceptsPaidInFullLabel(appointment?.service_type ?? null)
+                  }
                   // Once paid, Subtotal / Discount / Deposit / Collected
                   // rows are reference-only — keep them readable but
                   // step them back so the eye stays on the PaidHeader
-                  // as the headline fact.
-                  dim={cart?.status === 'paid'}
+                  // as the headline fact. Same gate as above.
+                  dim={
+                    cart?.status === 'paid' &&
+                    appointmentAcceptsPaidInFullLabel(appointment?.service_type ?? null)
+                  }
                   // Approver row renders directly under the Discount
                   // line so the reason + amend / remove controls sit
                   // visually attached to what they affect. Was

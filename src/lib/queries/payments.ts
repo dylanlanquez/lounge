@@ -129,6 +129,25 @@ export function shopifyOrderAppliesToVisit(
   return serviceType === 'same_day_appliance' || serviceType === 'click_in_veneers';
 }
 
+// Whether the "Paid in full" / "Paid" label is honest for this kind
+// of appointment. Impression appointments (in-person + virtual) have
+// a £0 cart by design — nothing is ever charged at the impression
+// visit itself; the upgrade fee paid on Shopify credits against the
+// downstream same-day visit. Labelling the appointment "Paid in
+// full" or the visit cart "Paid" would imply money was settled
+// against this visit's bill when no bill existed. The rule applies
+// only to impression appointments — other £0-balance services
+// (e.g. a returning consult with nothing chargeable on the day)
+// still legitimately read as "Paid in full" once their cart closes.
+export function appointmentAcceptsPaidInFullLabel(
+  serviceType: string | null | undefined,
+): boolean {
+  return (
+    serviceType !== 'impression_appointment' &&
+    serviceType !== 'virtual_impression_appointment'
+  );
+}
+
 // Captured payments on a cart. Used by the Pay screen's
 // "Already collected" list so staff can see / void specific
 // methods without having to leave the till.

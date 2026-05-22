@@ -59,6 +59,7 @@ import {
   configFor,
   useAdminProductConfig,
 } from '../lib/queries/productWidgetConfig.ts';
+import { appointmentAcceptsPaidInFullLabel } from '../lib/queries/payments.ts';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
 import {
   MeetingJoinBlockSheet,
@@ -1130,7 +1131,14 @@ function Hero({
       // (soft accent fill) stays consistent on the hero, but swap
       // the copy + glyph so the receptionist doesn't go chasing a
       // balance that doesn't exist.
-      const fullyPaid = appt.paid_in_full_at_booking;
+      //
+      // Impression appointments are the one exception: their cart
+      // is £0 by design, so "Paid in full" reads as a lie — nothing
+      // was paid against THIS appointment. Fall back to the regular
+      // "Deposit paid" label even when paid_in_full_at_booking is
+      // true on the row.
+      const allowsPaidInFull = appointmentAcceptsPaidInFullLabel(appt.service_type);
+      const fullyPaid = appt.paid_in_full_at_booking && allowsPaidInFull;
       pills.push({
         tone: 'deposit_paid',
         label: fullyPaid ? 'Paid in full' : 'Deposit paid',
@@ -2251,7 +2259,13 @@ function DepositCard({ appt }: { appt: AppointmentDetailRow }) {
   // that doesn't exist (and the BadgeCheck/Deposit-glyph contrast
   // means a glance is enough).
   if (paid) {
-    const fullyPaid = appt.paid_in_full_at_booking;
+    // Same gate as the hero pill — impression appointments suppress
+    // the "Paid in full" label even when paid_in_full_at_booking is
+    // true on the row, because their cart is £0 and nothing was
+    // paid against this appointment's bill.
+    const fullyPaid =
+      appt.paid_in_full_at_booking &&
+      appointmentAcceptsPaidInFullLabel(appt.service_type);
     return (
       <Card
         padding="lg"
