@@ -20,6 +20,7 @@ import {
 import {
   recordCashPayment,
   useCartPayments,
+  shopifyOrderAppliesToVisit,
   useVisitPaidStatus,
   voidPayment,
   type CartPaymentRow,
@@ -64,7 +65,7 @@ interface PayEntryState {
 export function Pay() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
-  const { visit, patient, deposit, loading: visitLoading } = useVisitDetail(id);
+  const { visit, patient, deposit, appointment, shopifyOrder, loading: visitLoading } = useVisitDetail(id);
   const { cart, items, loading: cartLoading } = useCart(id);
   const navigate = useNavigate();
   const location = useLocation();
@@ -168,7 +169,16 @@ export function Pay() {
   // summing. Refresh after each successful payment so the next method
   // picker sees the new balance.
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
-  const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
+  // Subtract the un-applied Shopify credit on impression visits so the
+  // Pay screen doesn't show the £14.95 upgrade fee as collected against
+  // a £0 impression cart. See shopifyOrderAppliesToVisit for the gate
+  // — same rule as VisitDetail's cart math.
+  const rawShopifyCreditPence = shopifyOrder?.pence ?? 0;
+  const shopifyAppliesToBill = shopifyOrderAppliesToVisit(appointment?.service_type ?? null);
+  const amountPaidPence = Math.max(
+    0,
+    (paidStatus?.amount_paid_pence ?? 0) - (shopifyAppliesToBill ? 0 : rawShopifyCreditPence),
+  );
 
   // Refund totals split by source so the header credit line can show
   // the NET-of-refunds deposit + an audit sub-line ("£X paid · £Y

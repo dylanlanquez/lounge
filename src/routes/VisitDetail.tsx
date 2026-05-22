@@ -128,6 +128,7 @@ import {
   useCart,
 } from '../lib/queries/carts.ts';
 import {
+  shopifyOrderAppliesToVisit,
   useCartPayments,
   useVisitPaidStatus,
   type CartPaymentRow,
@@ -568,8 +569,12 @@ export function VisitDetail() {
       // the waiver signed at arrival already shows it as a
       // deduction. Without this the patient signs a doc that reads
       // "Total £399" + "Awaiting payment" and never sees that £140
-      // is already covered online.
-      shopifyCreditPence: shopifyOrder?.pence ?? 0,
+      // is already covered online. Gated on service_type — see
+      // shopifyOrderAppliesToVisit; impression visits don't credit
+      // the order against the impression cart.
+      shopifyCreditPence: shopifyOrderAppliesToVisit(appointment?.service_type ?? null)
+        ? shopifyOrder?.pence ?? 0
+        : 0,
       shopifyOrderName: shopifyOrder?.name ?? null,
       // Same reasoning for the deposit / paid-in-full collected at
       // booking. Top-level fields render on every waiver render
@@ -615,7 +620,9 @@ export function VisitDetail() {
               depositBrandId: deposit?.status === 'paid' ? deposit.brandId : null,
               depositPaidInFullAtBooking:
                 deposit?.status === 'paid' ? deposit.paidInFullAtBooking : false,
-              shopifyCreditPence: shopifyOrder?.pence ?? 0,
+              shopifyCreditPence: shopifyOrderAppliesToVisit(appointment?.service_type ?? null)
+                ? shopifyOrder?.pence ?? 0
+                : 0,
               shopifyOrderName: shopifyOrder?.name ?? null,
             }
           : null,
@@ -699,7 +706,18 @@ export function VisitDetail() {
   // Shopify-paid order linked to the appointment. Already-paid online,
   // so it nets against the bill the same way the deposit does — the
   // till only collects whatever's left over.
-  const shopifyCreditPence = shopifyOrder?.pence ?? 0;
+  //
+  // BUT: only same-day appliance / click-in veneers visits actually
+  // bill the Shopify order against the chair work. For impression
+  // appointments (in-person + virtual) the order pays for the
+  // FUTURE same-day visit, not this one — surfacing it as a credit
+  // here would manufacture an "owed back" against an impression
+  // cart that never charged for the £14.95 in the first place.
+  // lng_visit_paid_status sums every linked order regardless, so
+  // we subtract the un-applied amount client-side.
+  const rawShopifyCreditPence = shopifyOrder?.pence ?? 0;
+  const shopifyAppliesToBill = shopifyOrderAppliesToVisit(appointment?.service_type ?? null);
+  const shopifyCreditPence = shopifyAppliesToBill ? rawShopifyCreditPence : 0;
   // Outstanding balance: read amount_paid_pence from the canonical
   // lng_visit_paid_status view (which already sums deposit + Shopify
   // credit + every succeeded lng_payments row) and subtract from the
@@ -715,7 +733,12 @@ export function VisitDetail() {
   // showed "Outstanding £25" — staff could collect £273 again,
   // double-charging by the £248 already in the till.
   const subtotalAfterDiscount = Math.max(0, subtotal - discount);
-  const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
+  // Subtract the un-applied Shopify credit so impression visits don't
+  // appear over-paid against a £0 cart.
+  const amountPaidPence = Math.max(
+    0,
+    (paidStatus?.amount_paid_pence ?? 0) - (rawShopifyCreditPence - shopifyCreditPence),
+  );
   const total = Math.max(0, subtotalAfterDiscount - amountPaidPence);
   // Inverse of the outstanding balance: when the patient has paid
   // more than the cart owes (cart item removed after a full pre-pay,
@@ -1584,7 +1607,7 @@ export function VisitDetail() {
                 the hero so it lands in the first scan of the page. */}
             {shopifyOrder ? (
               <div style={{ marginBottom: theme.space[6] }}>
-                <ShopifyOrderCard order={shopifyOrder} />
+                <ShopifyOrderCard order={shopifyOrder} appliesToBill={shopifyAppliesToBill} />
               </div>
             ) : null}
 
@@ -4296,8 +4319,17 @@ function formatPaidAtDate(iso: string): string {
 
 function ShopifyOrderCard({
   order,
+  appliesToBill,
 }: {
   order: { id: string; name: string; pence: number; currency: string };
+  /** True when the order should reduce this visit's outstanding
+   *  balance (same-day appliance / click-in veneers). False for
+   *  impression appointments — the order is attached for audit
+   *  only and the credit will land on the downstream same-day
+   *  visit. Drives the copy so the receptionist never sees
+   *  "credited against the bill" for a visit where the bill
+   *  doesn't include the upgrade fee. */
+  appliesToBill: boolean;
 }) {
   // Loud, branded callout for visits that originated from a
   // venneir.com Shopify order. Anti-fraud guard rail — staff have
@@ -4378,7 +4410,9 @@ function ShopifyOrderCard({
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            Paid online · {formatPence(order.pence)} credited against the bill
+            {appliesToBill
+              ? `Paid online · ${formatPence(order.pence)} credited against the bill`
+              : `Paid online · ${formatPence(order.pence)} (credits against the future in-clinic visit)`}
           </span>
         </div>
 
@@ -4409,7 +4443,9 @@ function ShopifyOrderCard({
           lineHeight: theme.type.leading.snug,
         }}
       >
-        Open the order in Shopify to confirm the patient paid {formatPence(order.pence)} {order.currency} online. The same amount is automatically credited against the cart below.
+        {appliesToBill
+          ? `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. The same amount is automatically credited against the cart below.`
+          : `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. This is an impression appointment, so the upgrade fee credits against the patient's next in-clinic visit, not this one.`}
       </p>
     </div>
   );

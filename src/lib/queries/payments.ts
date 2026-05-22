@@ -108,6 +108,27 @@ export interface VisitPaidStatus {
   paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
 }
 
+// Whether the Shopify order linked to an appointment should credit
+// against THIS visit's cart. True for same-day appliance / click-in
+// veneers — the Shopify order pays for the chair-side work itself.
+// False for impression appointments (in-person + virtual): the
+// order pays for the downstream same-day-appliance visit, not for
+// the impression visit, so crediting it here would manufacture an
+// "owed back" that never existed (the £14.95 upgrade fee was never
+// against the impression cart in the first place).
+//
+// The DB view lng_visit_paid_status counts every linked Shopify
+// order as paid; callers MUST gate on this helper and subtract
+// out the un-applied amount on the client side. AppointmentDetail
+// already gates the pre-arrival credit card on the same allow-list
+// (see AppointmentDetail.tsx:676) — this puts the post-arrival
+// surfaces (VisitDetail, Pay) on the same rule.
+export function shopifyOrderAppliesToVisit(
+  serviceType: string | null | undefined,
+): boolean {
+  return serviceType === 'same_day_appliance' || serviceType === 'click_in_veneers';
+}
+
 // Captured payments on a cart. Used by the Pay screen's
 // "Already collected" list so staff can see / void specific
 // methods without having to leave the till.
