@@ -30,39 +30,52 @@ import { ServicePills } from './AdminEmailTemplatesTab.tsx';
 // "Customise" affordance that creates the override seeded from
 // General.
 
-// Pills for SMS. Shorter than the email pill list — the two
-// impression services don't merit SMS so they're omitted to keep
-// the surface focused on services that actually fire texts.
+// Pills for SMS. In-person impression is omitted (no SMS use case
+// today) but virtual impression has its own pill because the
+// virtual_call_waiting template is fired only on virtual bookings —
+// reception texts the join URL to the patient when they haven't
+// joined the meet yet.
 const SMS_SERVICE_PILLS: ReadonlyArray<{ label: string; value: string | null }> = [
   { label: 'General', value: null },
+  { label: 'Virtual impression', value: 'virtual_impression_appointment' },
   { label: 'Click-in veneers', value: 'click_in_veneers' },
   { label: 'Same-day appliance', value: 'same_day_appliance' },
   { label: 'Denture repair', value: 'denture_repair' },
 ];
 
 // Canonical row order. Visit-ready is the primary template; the
-// four below it are the manually-sent secondary keys; payment_receipt
-// is the till-side text that fires when a cashier picks SMS as the
-// receipt channel after taking payment. The receipt has no service-
-// typed variants — it's a one-off transactional text — so the
-// SMS_KEYS_FOR_SERVICE allowlist below drops it from every per-
-// service pill, the same way visit_shipped / payment_receipt are
-// dropped from service-typed email pills.
+// four below it are the manually-sent secondary keys;
+// virtual_call_waiting is the virtual-only join-link reminder
+// (shown only on the Virtual impression pill); payment_receipt is
+// the till-side text that fires when a cashier picks SMS as the
+// receipt channel after taking payment.
 const SMS_TEMPLATE_KEYS: ReadonlyArray<string> = [
   'visit_ready',
   'please_return',
   'please_call',
   'running_late',
   'reminder_to_attend',
+  'virtual_call_waiting',
   'payment_receipt',
 ];
 
-// Per-pill template-key allowlist. The General pill (selectedServiceType
-// === null) shows everything; each service-typed pill is constrained
-// to the keys that are actually service-customisable. payment_receipt
-// is intentionally absent from every service-typed set because the
-// receipt text doesn't change by booking type.
+// Per-pill template-key allowlist. Keyed off the pill's
+// service_type value (`'general'` for the null/General pill) so the
+// General pill can drop keys that don't make sense across all
+// services — virtual_call_waiting belongs under Virtual impression
+// only. payment_receipt is intentionally absent from every
+// service-typed set because the receipt text doesn't change by
+// booking type.
 const SMS_KEYS_FOR_SERVICE: Record<string, ReadonlySet<string>> = {
+  general: new Set([
+    'visit_ready',
+    'please_return',
+    'please_call',
+    'running_late',
+    'reminder_to_attend',
+    'payment_receipt',
+  ]),
+  virtual_impression_appointment: new Set(['virtual_call_waiting']),
   click_in_veneers: new Set([
     'visit_ready',
     'please_return',
@@ -158,12 +171,15 @@ export function AdminSmsTemplatesTab() {
         <Card padding="none">
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {(() => {
-              // Drop keys that have no business appearing on the
-              // selected pill — payment_receipt isn't service-typed,
-              // so the per-service pills filter it out.
-              const allow = selectedServiceType
-                ? SMS_KEYS_FOR_SERVICE[selectedServiceType] ?? null
-                : null;
+              // Each pill has an explicit allowlist (keyed off
+              // `general` for the null/General pill) so we can drop
+              // keys that don't belong on a given pill — payment_
+              // receipt is general-only, virtual_call_waiting is
+              // virtual-only, etc. If a pill has no allowlist (unknown
+              // service_type) fall through to the full set so the row
+              // doesn't silently disappear.
+              const allow =
+                SMS_KEYS_FOR_SERVICE[selectedServiceType ?? 'general'] ?? null;
               const visibleKeys = allow
                 ? SMS_TEMPLATE_KEYS.filter((k) => allow.has(k))
                 : SMS_TEMPLATE_KEYS;
