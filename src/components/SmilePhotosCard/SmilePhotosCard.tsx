@@ -89,25 +89,14 @@ export function SmilePhotosCard({
 }: SmilePhotosCardProps) {
   const { rows, loading, error, refresh } = useBookingIntakePhotos(appointmentId);
   const byKind = new Map(rows.map((r) => [r.kind, r] as const));
-  const uploadedCount = rows.length;
 
-  // Auto-open the FIRST time rows arrive with at least one upload.
-  // After that, the user's manual toggle takes over (tracked by
-  // userToggledRef). This means a fresh page load on a booking
-  // that has photos lands with the card already open, while a
-  // page with no photos stays compact.
+  // Card collapsed/expanded state. populatedCount (intake + profile
+  // fallback) is what drives the auto-open + badge below, but it
+  // depends on data fetched further down. We declare open/refs here
+  // and wire the auto-open effect after populatedCount is computed.
   const [open, setOpen] = useState(false);
   const userToggledRef = useRef(false);
   const autoOpenedRef = useRef(false);
-  useEffect(() => {
-    if (userToggledRef.current) return;
-    if (autoOpenedRef.current) return;
-    if (loading) return;
-    if (uploadedCount > 0) {
-      setOpen(true);
-      autoOpenedRef.current = true;
-    }
-  }, [loading, uploadedCount]);
 
   const toggle = () => {
     userToggledRef.current = true;
@@ -191,6 +180,37 @@ export function SmilePhotosCard({
       cancelled = true;
     };
   }, [profileByKind]);
+
+  // Number of slots the card actually has something to show for —
+  // an intake row OR a profile fallback. Drives the header badge
+  // and the auto-open behaviour: if the patient already has a
+  // smile photo on file (even without an intake upload for this
+  // appointment), staff should see it without having to expand
+  // the card manually.
+  const populatedKinds = useMemo(() => {
+    const s = new Set<Kind>();
+    for (const r of rows) s.add(r.kind as Kind);
+    for (const k of profileByKind.keys()) s.add(k);
+    return s;
+  }, [rows, profileByKind]);
+  const populatedCount = populatedKinds.size;
+
+  // Auto-open the FIRST time the card has anything to show. After
+  // that, the user's manual toggle takes over (tracked by
+  // userToggledRef). Waits for both queries — intake (`loading`)
+  // and profile fallback (signalled by profileSignedByKind being
+  // populated once profileByKind is non-empty) — so we don't
+  // collapse-then-expand mid-render if the profile sign step
+  // resolves a beat after the intake fetch.
+  useEffect(() => {
+    if (userToggledRef.current) return;
+    if (autoOpenedRef.current) return;
+    if (loading) return;
+    if (populatedCount > 0) {
+      setOpen(true);
+      autoOpenedRef.current = true;
+    }
+  }, [loading, populatedCount]);
 
   // Lightbox state — index into the lightboxPhotos array below
   // (NOT into SLOTS), or null when closed. Keeps navigation between
@@ -456,7 +476,7 @@ export function SmilePhotosCard({
                 gap: theme.space[2],
               }}
             >
-              {uploadedCount > 0 ? (
+              {populatedCount > 0 ? (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -473,9 +493,9 @@ export function SmilePhotosCard({
                     fontVariantNumeric: 'tabular-nums',
                     lineHeight: 1,
                   }}
-                  aria-label={`${uploadedCount} of ${SLOTS.length} uploaded`}
+                  aria-label={`${populatedCount} of ${SLOTS.length} on file`}
                 >
-                  {uploadedCount}
+                  {populatedCount}
                 </span>
               ) : null}
               <ChevronDown
