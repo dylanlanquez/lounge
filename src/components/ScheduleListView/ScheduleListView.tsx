@@ -151,26 +151,18 @@ export function ScheduleListRow({
             }}
           >
             {formatTime(row.start_at)}
-            <span
-              style={{
-                marginLeft: 3,
-                fontSize: '0.7em',
-                fontWeight: theme.type.weight.medium,
-                color: theme.color.inkSubtle,
-              }}
-            >
-              {fmtTzAbbr(row.start_at)}
-            </span>
           </p>
           <p
             style={{
               margin: `${theme.space[1]}px 0 0`,
               fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.medium,
               color: theme.color.inkSubtle,
+              letterSpacing: theme.type.tracking.wide,
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {durationLabel(row.start_at, row.end_at)}
+            {fmtTzAbbr(row.start_at)}
           </p>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -289,10 +281,3 @@ function londonHourMinute(iso: string): { hour: number; minute: number } {
   return { hour, minute };
 }
 
-function durationLabel(startIso: string, endIso: string): string {
-  const minutes = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60_000;
-  if (minutes < 60) return `${Math.round(minutes)} min`;
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes - h * 60);
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
