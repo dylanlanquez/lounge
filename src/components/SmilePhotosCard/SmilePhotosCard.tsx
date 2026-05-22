@@ -317,7 +317,15 @@ export function SmilePhotosCard({
         detail?: string;
       }>('staff-upload-intake-photo', { body: form });
       if (error) {
-        throw new Error(error.message);
+        // supabase.functions.invoke wraps non-2xx in FunctionsHttpError
+        // whose .message is the unhelpful "Edge Function returned a
+        // non-2xx status code". The real reason is in error.context
+        // (the Response). Pull the JSON body so the staff member sees
+        // the actual function-level error (service_not_supported,
+        // unsupported_mime, invalid_size, etc) rather than a generic
+        // gateway message.
+        const detail = await readFunctionErrorBody(error);
+        throw new Error(detail ?? error.message);
       }
       if (!data?.ok) {
         throw new Error(data?.error ?? 'Upload failed');
@@ -1087,4 +1095,31 @@ function useExistingSmilePhotoKinds(
     };
   }, [patientId, appointmentId]);
   return state;
+}
+
+// supabase.functions.invoke wraps non-2xx in FunctionsHttpError whose
+// .message is the generic "Edge Function returned a non-2xx status
+// code". The actual server-side error code lives in the response body
+// at error.context (a Response). Read it and return a human string so
+// the staff member sees the real reason (service_not_supported,
+// unsupported_mime, etc) instead of the gateway boilerplate.
+async function readFunctionErrorBody(error: unknown): Promise<string | null> {
+  const ctx = (error as { context?: unknown } | null)?.context;
+  if (!ctx || typeof (ctx as Response).json !== 'function') return null;
+  try {
+    const body = (await (ctx as Response).clone().json()) as {
+      error?: string;
+      detail?: string;
+    };
+    if (body?.detail) return `${body.error ?? 'upload_failed'}: ${body.detail}`;
+    if (body?.error) return body.error;
+    return null;
+  } catch {
+    try {
+      const text = await (ctx as Response).clone().text();
+      return text ? text.slice(0, 200) : null;
+    } catch {
+      return null;
+    }
+  }
 }
