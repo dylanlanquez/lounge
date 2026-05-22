@@ -1333,24 +1333,30 @@ function buildApptRibbon(
       }
       return {
         icon: <UserCheck size={16} aria-hidden />,
-        timeLine: 'Patient checked in',
-        relative: 'Opening visit',
+        timeLine: bookedForLine,
+        relative: 'Patient checked in',
         tone: 'accent',
       };
     }
     case 'complete': {
       return {
         icon: <CheckCircle2 size={16} aria-hidden />,
-        timeLine: appt.join_url ? 'Meeting complete' : 'Visit complete',
-        relative: null,
+        timeLine: bookedForLine,
+        relative: appt.join_url ? 'Meeting complete' : 'Visit complete',
         tone: 'neutral',
       };
     }
     case 'no_show': {
+      // Dylan's rule: the time the patient was *supposed* to be in
+      // for stays visible across every status, so the receptionist
+      // can answer "what slot did they miss" at a glance without
+      // having to navigate back into the booking. The descriptive
+      // copy + reason move into the relative slot instead.
+      const reason = humaniseCancelReason(appt.cancel_reason);
       return {
         icon: <UserX size={16} aria-hidden />,
-        timeLine: 'Patient did not turn up',
-        relative: humaniseCancelReason(appt.cancel_reason),
+        timeLine: bookedForLine,
+        relative: reason ?? 'Patient did not turn up',
         tone: 'warn',
       };
     }
@@ -1365,8 +1371,8 @@ function buildApptRibbon(
       const friendly = humaniseCancelReason(appt.cancel_reason);
       return {
         icon: <Ban size={16} aria-hidden />,
-        timeLine: 'Cancelled',
-        relative: friendly ? truncateRibbonReason(friendly) : null,
+        timeLine: bookedForLine,
+        relative: friendly ? truncateRibbonReason(friendly) : 'Cancelled',
         tone: 'alert',
       };
     }
