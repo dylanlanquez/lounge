@@ -67,9 +67,18 @@ export function VirtualCallReminder({
           appearance: 'none',
           width: '100%',
           marginTop: theme.space[3],
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
-          background: hover && !disabled ? theme.color.bg : theme.color.surface,
-          border: `1px solid ${theme.color.border}`,
+          // Bigger than ActionRow's stock padding so the call-to-action
+          // reads as the hero affordance on the page (it's the move
+          // staff make when the patient is late to the call), but
+          // shy of slab-button height — still a row, not a full CTA.
+          padding: `${theme.space[4]}px ${theme.space[5]}px`,
+          // Hero-tinted accent background so the row pops against the
+          // surrounding cards. Matches the "Booked for HH:MM" hero
+          // ribbon's tint above. Hover deepens the tint slightly.
+          background: hover && !disabled
+            ? 'rgba(31, 77, 58, 0.14)'
+            : theme.color.accentBg,
+          border: `1px solid ${theme.color.accent}`,
           borderRadius: theme.radius.input,
           display: 'flex',
           alignItems: 'center',
@@ -81,7 +90,6 @@ export function VirtualCallReminder({
           opacity: disabled ? 0.55 : 1,
           transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
           WebkitTapHighlightColor: 'transparent',
-          boxShadow: theme.shadow.card,
         }}
       >
         <span
@@ -90,24 +98,25 @@ export function VirtualCallReminder({
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: 28,
-            height: 28,
+            width: 36,
+            height: 36,
             borderRadius: theme.radius.pill,
-            background: theme.color.bg,
-            border: `1px solid ${theme.color.border}`,
-            color: theme.color.ink,
+            background: theme.color.surface,
+            border: `1px solid ${theme.color.accent}`,
+            color: theme.color.accent,
             flexShrink: 0,
           }}
         >
-          <MessageSquare size={16} aria-hidden />
+          <MessageSquare size={18} aria-hidden />
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
           <span
             style={{
               display: 'block',
-              fontSize: theme.type.size.sm,
+              fontSize: theme.type.size.base,
               fontWeight: theme.type.weight.semibold,
               color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
             }}
           >
             Text the join link to the patient
@@ -118,17 +127,18 @@ export function VirtualCallReminder({
               marginTop: 2,
               fontSize: theme.type.size.xs,
               color: theme.color.inkMuted,
+              lineHeight: theme.type.leading.snug,
             }}
           >
             {disabled
               ? 'No phone number on file'
-              : "Preview before it goes out — sends the meeting URL to the patient's mobile."}
+              : 'Preview the SMS, then send the meeting URL to the patient.'}
           </span>
         </span>
         <ChevronRight
-          size={16}
+          size={18}
           aria-hidden
-          style={{ color: theme.color.inkSubtle, flexShrink: 0 }}
+          style={{ color: theme.color.accent, flexShrink: 0 }}
         />
       </button>
       <ReminderSheet
