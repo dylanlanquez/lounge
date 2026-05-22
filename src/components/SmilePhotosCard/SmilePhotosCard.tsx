@@ -11,6 +11,7 @@ import {
   useBookingIntakePhotos,
   type IntakePhotoRow,
 } from '../../lib/queries/bookingIntakePhotos.ts';
+import { signedUrlFor as signedUrlForPatientFile } from '../../lib/queries/patientFiles.ts';
 import {
   promoteIntakePhotosToPatientProfile,
   type IntakePhotoKindForPromotion,
@@ -147,6 +148,50 @@ export function SmilePhotosCard({
     };
   }, [rows]);
 
+  // Already-added detection. On mount (and whenever the patient
+  // changes) check which smile-photo slots already exist on the
+  // patient profile so the affordance reads "Added" from page
+  // load, not just after the in-session promotion. Without this a
+  // refresh would re-arm the button and staff could promote the
+  // same photo twice. Also returns the profile photo info per kind
+  // so empty intake slots can fall back to whichever smile photo
+  // is already on file.
+  const { scopedToAppointment, anyOnProfile, profileByKind } = useExistingSmilePhotoKinds(
+    patientId,
+    appointmentId,
+  );
+
+  // Sign the patient-profile smile photos that we'll fall back to on
+  // empty intake slots. case-files (the profile bucket) is a separate
+  // bucket from lng-booking-intake-photos, so the sign path differs —
+  // use the patientFiles helper for these.
+  const [profileSignedByKind, setProfileSignedByKind] = useState<Map<Kind, string>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    if (profileByKind.size === 0) {
+      setProfileSignedByKind(new Map());
+      return;
+    }
+    void Promise.all(
+      Array.from(profileByKind.entries()).map(async ([kind, info]) => ({
+        kind,
+        url: await signedUrlForPatientFile(info.filePath),
+      })),
+    ).then((results) => {
+      if (cancelled) return;
+      const next = new Map<Kind, string>();
+      for (const { kind, url } of results) {
+        if (url) next.set(kind, url);
+      }
+      setProfileSignedByKind(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileByKind]);
+
   // Lightbox state — index into the lightboxPhotos array below
   // (NOT into SLOTS), or null when closed. Keeps navigation between
   // siblings working: tap Front, arrow-right walks to Left to
@@ -155,12 +200,16 @@ export function SmilePhotosCard({
   const lightboxPhotos = useMemo<LightboxPhoto[]>(() => {
     const out: LightboxPhoto[] = [];
     for (const slot of SLOTS) {
-      const url = signedByKind.get(slot.kind);
+      // Prefer the intake (appointment-scoped) photo when one
+      // exists; otherwise fall back to the patient profile photo
+      // so the lightbox stays in sync with what the tile is
+      // showing.
+      const url = signedByKind.get(slot.kind) ?? profileSignedByKind.get(slot.kind);
       if (!url) continue;
       out.push({ url, label: slot.label });
     }
     return out;
-  }, [signedByKind]);
+  }, [signedByKind, profileSignedByKind]);
   // Map from kind → index into lightboxPhotos so a tile click can
   // open the lightbox at the correct position. Recomputed alongside
   // lightboxPhotos so the indices always agree.
@@ -184,17 +233,6 @@ export function SmilePhotosCard({
     left: EMPTY_PROMOTE,
     right: EMPTY_PROMOTE,
   });
-
-  // Already-added detection. On mount (and whenever the patient
-  // changes) check which smile-photo slots already exist on the
-  // patient profile so the affordance reads "Added" from page
-  // load, not just after the in-session promotion. Without this a
-  // refresh would re-arm the button and staff could promote the
-  // same photo twice.
-  const { scopedToAppointment, anyOnProfile } = useExistingSmilePhotoKinds(
-    patientId,
-    appointmentId,
-  );
   useEffect(() => {
     if (scopedToAppointment.size === 0) return;
     setPromote((prev) => {
@@ -485,7 +523,19 @@ export function SmilePhotosCard({
             >
               {SLOTS.map((s) => {
                 const row = byKind.get(s.kind) ?? null;
-                const signedUrl = signedByKind.get(s.kind) ?? null;
+                const intakeSignedUrl = signedByKind.get(s.kind) ?? null;
+                // Profile fallback: when this appointment hasn't
+                // captured an intake photo for the slot but the
+                // patient already has one on their profile (from
+                // a prior appointment or a direct staff upload),
+                // show the profile photo so staff don't request
+                // it again. The tile renders read-only with an
+                // "On file" badge in that mode.
+                const profileSignedUrl = !row
+                  ? profileSignedByKind.get(s.kind) ?? null
+                  : null;
+                const signedUrl = intakeSignedUrl ?? profileSignedUrl;
+                const fromProfileFallback = !row && !!profileSignedUrl;
                 const lightboxIdx = lightboxIndexByKind.get(s.kind) ?? null;
                 return (
                   <PhotoTile
@@ -507,6 +557,7 @@ export function SmilePhotosCard({
                     onPickFile={(file) => handleUpload(s.kind, file)}
                     onRequestDelete={row ? () => setDeleteConfirm({ kind: s.kind }) : null}
                     deleteBusy={deleteByKind[s.kind].status === 'busy'}
+                    fromProfileFallback={fromProfileFallback}
                   />
                 );
               })}
@@ -682,6 +733,7 @@ function PhotoTile({
   onPickFile,
   onRequestDelete,
   deleteBusy,
+  fromProfileFallback,
 }: {
   label: string;
   loading: boolean;
@@ -717,6 +769,14 @@ function PhotoTile({
    *  for this slot. Disables the trash overlay so a double-tap can't
    *  fire two requests; a Loader2 spinner replaces the trash icon. */
   deleteBusy: boolean;
+  /** True when the tile is rendering a patient-profile smile photo
+   *  as a fallback because the appointment hasn't captured an
+   *  intake photo for this slot. Drives the "On file" corner badge
+   *  and suppresses the trash overlay (the source row belongs to
+   *  the patient profile, which has its own delete path on the
+   *  Patient Profile screen — staff shouldn't be able to remove it
+   *  from here). */
+  fromProfileFallback: boolean;
 }) {
   // Tile chrome matches PhotoGallery.tsx's UploadTile precisely:
   // square aspect, theme.radius.card corners, 1.5px dashed border in
@@ -897,6 +957,34 @@ function PhotoTile({
           </>
         )}
       </button>
+      {fromProfileFallback ? (
+        <span
+          aria-label={`${label} photo already on patient profile`}
+          title="Already on patient profile"
+          style={{
+            position: 'absolute',
+            top: 6,
+            left: 6,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            paddingInline: 8,
+            height: 22,
+            borderRadius: theme.radius.pill,
+            // Translucent dark wash matches the trash overlay so the
+            // two badges read as siblings sitting on the photo.
+            background: 'rgba(17, 17, 17, 0.55)',
+            color: '#fff',
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            pointerEvents: 'none',
+          }}
+        >
+          <Check size={12} aria-hidden />
+          <span>On file</span>
+        </span>
+      ) : null}
       {showDeleteOverlay ? (
         <button
           type="button"
@@ -1167,26 +1255,49 @@ function PromoteTileLink({
 // Only the label key + source_appointment_id are fetched — no urls,
 // sizes or mime types — so this stays cheaper than the full gallery
 // query.
+interface ProfileSmilePhoto {
+  filePath: string;
+  mimeType: string | null;
+  uploadedAt: string | null;
+}
+
 function useExistingSmilePhotoKinds(
   patientId: string | null | undefined,
   appointmentId: string | null | undefined,
-): { scopedToAppointment: Set<Kind>; anyOnProfile: Set<Kind> } {
+): {
+  scopedToAppointment: Set<Kind>;
+  anyOnProfile: Set<Kind>;
+  profileByKind: Map<Kind, ProfileSmilePhoto>;
+} {
   const [state, setState] = useState<{
     scopedToAppointment: Set<Kind>;
     anyOnProfile: Set<Kind>;
-  }>(() => ({ scopedToAppointment: new Set(), anyOnProfile: new Set() }));
+    profileByKind: Map<Kind, ProfileSmilePhoto>;
+  }>(() => ({
+    scopedToAppointment: new Set(),
+    anyOnProfile: new Set(),
+    profileByKind: new Map(),
+  }));
   useEffect(() => {
     if (!patientId) {
-      setState({ scopedToAppointment: new Set(), anyOnProfile: new Set() });
+      setState({
+        scopedToAppointment: new Set(),
+        anyOnProfile: new Set(),
+        profileByKind: new Map(),
+      });
       return;
     }
     let cancelled = false;
     (async () => {
       // One query returns rows for any-source presence; we partition
       // client-side by source_appointment_id for the scoped set.
+      // file_url + mime_type let us also surface the profile photo
+      // itself when this appointment has no intake row but the
+      // patient already has the slot on file — so staff don't
+      // re-request photos the clinic already has.
       const { data, error } = await supabase
         .from('patient_files')
-        .select('source_appointment_id, file_labels:label_id(key)')
+        .select('source_appointment_id, file_url, mime_type, uploaded_at, file_labels:label_id(key)')
         .eq('patient_id', patientId)
         .eq('status', 'active');
       if (cancelled) return;
@@ -1197,13 +1308,21 @@ function useExistingSmilePhotoKinds(
         // was already there (which is idempotent — Meridian's
         // version stamp keeps both rows + the latest wins).
         console.error('[useExistingSmilePhotoKinds]', error);
-        setState({ scopedToAppointment: new Set(), anyOnProfile: new Set() });
+        setState({
+          scopedToAppointment: new Set(),
+          anyOnProfile: new Set(),
+          profileByKind: new Map(),
+        });
         return;
       }
       const scopedToAppointment = new Set<Kind>();
       const anyOnProfile = new Set<Kind>();
+      const profileByKind = new Map<Kind, ProfileSmilePhoto>();
       const rows = ((data ?? []) as unknown) as Array<{
         source_appointment_id: string | null;
+        file_url: string | null;
+        mime_type: string | null;
+        uploaded_at: string | null;
         file_labels: { key?: string } | Array<{ key?: string }> | null;
       }>;
       for (const r of rows) {
@@ -1222,8 +1341,25 @@ function useExistingSmilePhotoKinds(
         if (appointmentId && r.source_appointment_id === appointmentId) {
           scopedToAppointment.add(kind);
         }
+        // Keep the newest row per kind — if Meridian's version stamp
+        // ever leaves two active rows on the same slot (mid-promote
+        // race), the most recent uploaded_at wins.
+        if (r.file_url) {
+          const existing = profileByKind.get(kind);
+          const fresher =
+            !existing ||
+            (r.uploaded_at &&
+              (!existing.uploadedAt || r.uploaded_at > existing.uploadedAt));
+          if (fresher) {
+            profileByKind.set(kind, {
+              filePath: r.file_url,
+              mimeType: r.mime_type ?? null,
+              uploadedAt: r.uploaded_at ?? null,
+            });
+          }
+        }
       }
-      setState({ scopedToAppointment, anyOnProfile });
+      setState({ scopedToAppointment, anyOnProfile, profileByKind });
     })();
     return () => {
       cancelled = true;
